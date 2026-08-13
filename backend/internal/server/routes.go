@@ -141,6 +141,7 @@ func (s *Server) routes() {
 		r.Post("/me/api-orders/{id}/cancel", s.handleCancelAPIOrder)
 		r.Post("/me/api-orders/{id}/confirm-complete", s.handleConfirmAPIOrderComplete)
 		r.Post("/me/api-orders/{id}/dispute", s.handleOpenAPIOrderDispute)
+		r.Post("/me/api-orders/{id}/report-late-payment", s.handleReportLateAPIOrderPayment)
 		r.Get("/me/notifications", s.handleMyNotifications)
 		r.Get("/me/notifications/unread-count", s.handleNotificationUnreadCount)
 		r.Post("/me/notifications/{id}/read", s.handleMarkNotificationRead)
@@ -186,6 +187,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-quota-batches/{id}/offers", s.handleCreateAPIQuotaOffer)
 		r.Get("/owner/api-quota-batches/{id}/rounds", s.handleOwnerAPIQuotaRounds)
 		r.Post("/owner/api-quota-batches/{id}/rounds", s.handleCreateAPIQuotaRound)
+		r.Post("/owner/api-quota-rounds/{id}/confirm-fulfillment", s.handleConfirmAPIQuotaRoundFulfillment)
 		r.Post("/owner/api-quota-batches/{id}/publish", func(w http.ResponseWriter, r *http.Request) {
 			s.handleAPIQuotaBatchAction(w, r, "publish")
 		})
@@ -210,6 +212,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-orders/{id}/report-payment-issue", s.handleReportAPIOrderPaymentIssue)
 		r.Post("/owner/api-orders/{id}/submit-delivery", s.handleSubmitAPIOrderDelivery)
 		r.Post("/owner/api-orders/{id}/dispute", s.handleOwnerOpenAPIOrderDispute)
+		r.Post("/owner/api-orders/{id}/resolve-late-payment", s.handleResolveLateAPIOrderPayment)
 
 		r.Get("/admin/official-price-leads", s.handleAdminOfficialPriceLeads)
 		r.Get("/admin/official-price-leads/{id}", s.handleAdminOfficialPriceLead)

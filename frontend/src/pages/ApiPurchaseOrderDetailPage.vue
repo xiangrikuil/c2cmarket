@@ -55,7 +55,6 @@ import {
   buildApiOrderCancelReason,
   formatApiOrderCancelReason,
   formatOrderDateTime,
-  merchantHandlingDeadline,
   orderCountdown,
 } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels, apiPaymentMethodRequiresQrCode } from '@/lib/apiPaymentSettings'
@@ -74,6 +73,8 @@ import {
   useConfirmApiOrderPaymentMutation,
   useOpenApiOrderDisputeMutation,
   useReportApiOrderPaymentIssueMutation,
+  useReportLateApiOrderPaymentMutation,
+  useResolveLateApiOrderPaymentMutation,
   useReviewCenterRows,
   useSubmitApiOrderDeliveryCredentialMutation,
   useSubmitApiOrderPaymentMutation,
@@ -109,6 +110,11 @@ const paymentIssueDialogOpen = ref(false)
 const paymentIssueReason = ref<ApiOrderPaymentIssueReason | ''>('')
 const paymentIssueNote = ref('')
 const paymentIssueResponseOpen = ref(false)
+const latePaymentDialogOpen = ref(false)
+const latePaymentNote = ref('')
+const latePaymentResolutionOpen = ref(false)
+const latePaymentResolution = ref<'not_received' | 'received_refund_pending'>('not_received')
+const latePaymentResolutionNote = ref('')
 const disputeDialogOpen = ref(false)
 const disputeIssueCode = ref<ApiOrderDisputeIssueCode>('service_unavailable')
 const disputeRequestedResolution = ref<ApiOrderDisputeResolution>('full_refund')
@@ -135,6 +141,8 @@ const cancelOrderMutation = useCancelApiOrderMutation()
 const confirmCompleteMutation = useConfirmApiOrderCompleteMutation()
 const confirmPaymentMutation = useConfirmApiOrderPaymentMutation()
 const reportPaymentIssueMutation = useReportApiOrderPaymentIssueMutation()
+const reportLatePaymentMutation = useReportLateApiOrderPaymentMutation()
+const resolveLatePaymentMutation = useResolveLateApiOrderPaymentMutation()
 const openDisputeMutation = useOpenApiOrderDisputeMutation()
 const submitDeliveryMutation = useSubmitApiOrderDeliveryCredentialMutation()
 
@@ -144,6 +152,8 @@ const canSubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerch
 const canResubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'payment_issue')
 const canConfirmPayment = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
 const canReportPaymentIssue = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
+const canReportLatePayment = computed(() => !isMerchantView.value && Boolean(order.value?.canReportLatePayment))
+const canResolveLatePayment = computed(() => isMerchantView.value && order.value?.latePaymentStatus === 'reported')
 const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
 const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
@@ -260,7 +270,10 @@ const canConfirmOffPlatformPayment = computed(() => {
   if (!paymentInstructions.value) return false
   return !apiPaymentMethodRequiresQrCode(paymentInstructions.value.paymentMethod) || Boolean(paymentInstructions.value.paymentQrCodeDataUrl)
 })
-const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmCompleteMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
+const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmCompleteMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || reportLatePaymentMutation.isPending.value || resolveLatePaymentMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
+const newDisputeResolutionLabels = computed(() => Object.fromEntries(
+  Object.entries(apiOrderDisputeResolutionLabels).filter(([value]) => value !== 'continue_fulfillment'),
+))
 const paymentIssueOptions: Array<{ value: ApiOrderPaymentIssueReason, label: string, description: string }> = [
   { value: 'not_received', label: '未到账', description: '收款记录中暂未找到对应付款。' },
   { value: 'amount_mismatch', label: '金额不符', description: '实收金额与订单金额不一致。' },
@@ -293,10 +306,10 @@ const currentFlowIndex = computed(() => {
 })
 const orderAmountText = computed(() => order.value ? formatDecimal(order.value.amountDecimal || String(order.value.amount), 2, 2) : '0.00')
 const orderAllowanceText = computed(() => order.value ? formatDecimal(order.value.requestedUsdAllowanceDecimal || String(order.value.requestedUsdAllowance), 2, 6) : '0.00')
-const merchantDeadline = computed(() => merchantHandlingDeadline(order.value?.paymentSubmittedAt, 10))
 const activeDeadline = computed(() => {
   if (order.value?.status === 'pending_payment') return order.value.paymentExpiresAt
-  if (order.value?.status === 'payment_submitted' || order.value?.status === 'paid_confirmed') return merchantDeadline.value
+  if (order.value?.status === 'payment_submitted') return order.value.merchantConfirmDueAt
+  if (order.value?.status === 'paid_confirmed') return order.value.deliveryDueAt
   if (!isMerchantView.value && order.value?.status === 'delivery_submitted') return order.value.deliveryReviewExpiresAt
   return null
 })
@@ -311,7 +324,8 @@ const countdownLabel = computed(() => {
 const countdownTitle = computed(() => {
   if (order.value?.status === 'pending_payment') return `请在 ${order.value.paymentWindowMinutes} 分钟内完成付款`
   if (order.value?.status === 'delivery_submitted') return '凭证核验剩余时间'
-  return '商户确认并交付剩余时间'
+  if (order.value?.status === 'payment_submitted') return '商户核对收款剩余时间'
+  return '商户交付剩余时间'
 })
 const pageTitle = computed(() => isMerchantView.value ? 'API 销售订单' : 'API 购买订单')
 const selectedCancelOption = computed(() => API_ORDER_CANCEL_OPTIONS.find(item => item.value === cancelReason.value))
@@ -320,10 +334,7 @@ const cancelSubmitDisabled = computed(() => {
   if (!selectedCancelOption.value || !cancelUnpaidConfirmed.value) return true
   return Boolean(selectedCancelOption.value.requiresNote && !cancelNote.value.trim())
 })
-const showMerchantTimeout = computed(() => Boolean(
-  countdown.value.expired
-  && (order.value?.status === 'payment_submitted' || order.value?.status === 'paid_confirmed'),
-))
+const showMerchantTimeout = computed(() => Boolean(order.value?.merchantConfirmOverdue || order.value?.deliveryOverdue))
 const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
@@ -391,6 +402,37 @@ async function cancelOrder() {
     toast.success('订单已取消，商户将收到取消说明。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '取消订单失败。')
+  }
+}
+
+async function reportLatePayment() {
+  if (!order.value) return
+  try {
+    await reportLatePaymentMutation.mutateAsync({ id: order.value.id, note: latePaymentNote.value.trim(), version: order.value.version })
+    latePaymentDialogOpen.value = false
+    latePaymentNote.value = ''
+    await refresh(order.value.id)
+    toast.success('逾期付款已记录，等待卖家核对。')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '逾期付款报告失败。')
+  }
+}
+
+async function resolveLatePayment() {
+  if (!order.value) return
+  try {
+    await resolveLatePaymentMutation.mutateAsync({
+      id: order.value.id,
+      status: latePaymentResolution.value,
+      note: latePaymentResolutionNote.value.trim(),
+      version: order.value.version,
+    })
+    latePaymentResolutionOpen.value = false
+    latePaymentResolutionNote.value = ''
+    await refresh(order.value.id)
+    toast.success('逾期付款核对结果已记录。')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '核对结果提交失败。')
   }
 }
 
@@ -625,7 +667,25 @@ onBeforeUnmount(() => {
     <Alert v-if="order.status === 'cancelled'" variant="destructive">
       <XCircle />
       <AlertTitle>订单已取消</AlertTitle>
-      <AlertDescription>{{ formatApiOrderCancelReason(order.cancelReason) }}</AlertDescription>
+      <AlertDescription class="space-y-3">
+        <div>{{ formatApiOrderCancelReason(order.cancelReason) }}</div>
+        <Button v-if="canReportLatePayment" size="sm" variant="outline" @click="latePaymentDialogOpen = true"><WalletCards class="h-4 w-4" />我已发生逾期付款</Button>
+      </AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.latePaymentStatus" class="border-warning/35 bg-warning/10">
+      <WalletCards class="text-warning" />
+      <AlertTitle>{{ order.latePaymentStatus === 'reported' ? '逾期付款待核对' : order.latePaymentStatus === 'not_received' ? '卖家未查到到账' : '已到账，待线下退款' }}</AlertTitle>
+      <AlertDescription class="space-y-3">
+        <div>该记录不会恢复订单、库存或抢购资格。<span v-if="order.latePaymentNote">说明：{{ order.latePaymentNote }}</span></div>
+        <Button v-if="canResolveLatePayment" size="sm" variant="outline" @click="latePaymentResolutionOpen = true">核对付款</Button>
+      </AlertDescription>
+    </Alert>
+
+    <Alert v-if="!isMerchantView && order.status === 'pending_payment'">
+      <ShieldAlert />
+      <AlertTitle>转账不会自动更新订单</AlertTitle>
+      <AlertDescription>完成站外转账后，请在付款截止前立即点击“我已完成付款”，否则订单仍会按未付款超时处理。</AlertDescription>
     </Alert>
 
     <Alert v-if="order.status === 'payment_issue'" class="border-warning/35 bg-warning/10">
@@ -1019,6 +1079,37 @@ onBeforeUnmount(() => {
       </DialogContent>
     </Dialog>
 
+    <Dialog v-model:open="latePaymentDialogOpen">
+      <DialogContent class="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>报告逾期付款</DialogTitle>
+          <DialogDescription>仅用于订单因付款超时取消，但你已经实际转账的情况。</DialogDescription>
+        </DialogHeader>
+        <Alert class="border-warning/35 bg-warning/10">
+          <ShieldAlert class="text-warning" />
+          <AlertTitle>不会恢复原订单</AlertTitle>
+          <AlertDescription>报告后不会恢复库存或抢购资格。如卖家确认到账，原则上由双方线下协商退款。</AlertDescription>
+        </Alert>
+        <label class="block space-y-2">
+          <span class="text-sm font-medium">付款核对信息（选填）</span>
+          <Textarea v-model="latePaymentNote" class="min-h-24" maxlength="500" placeholder="可填付款时间、金额、备注或交易尾号，不要填写完整账号。" />
+        </label>
+        <DialogFooter><Button variant="outline" @click="latePaymentDialogOpen = false">取消</Button><Button :disabled="actionBusy" @click="reportLatePayment">确认报告</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="latePaymentResolutionOpen">
+      <DialogContent class="sm:max-w-[520px]">
+        <DialogHeader><DialogTitle>核对逾期付款</DialogTitle><DialogDescription>只记录实际到账结果，不得恢复原订单履约。</DialogDescription></DialogHeader>
+        <RadioGroup v-model="latePaymentResolution" class="space-y-2">
+          <label class="flex items-start gap-3 rounded-md border border-border p-3"><RadioGroupItem value="not_received" class="mt-0.5" /><span><strong class="text-sm">未查到到账</strong><span class="mt-1 block text-xs text-muted-foreground">收款记录中没有对应转账。</span></span></label>
+          <label class="flex items-start gap-3 rounded-md border border-border p-3"><RadioGroupItem value="received_refund_pending" class="mt-0.5" /><span><strong class="text-sm">已到账，待退款</strong><span class="mt-1 block text-xs text-muted-foreground">原订单保持取消，与买家线下协商退款。</span></span></label>
+        </RadioGroup>
+        <label class="block space-y-2"><span class="text-sm font-medium">核对说明（选填）</span><Textarea v-model="latePaymentResolutionNote" class="min-h-24" maxlength="500" /></label>
+        <DialogFooter><Button variant="outline" @click="latePaymentResolutionOpen = false">取消</Button><Button :disabled="actionBusy" @click="resolveLatePayment">提交结果</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <Dialog v-model:open="credentialProblemOpen">
       <DialogContent class="max-h-[92dvh] overflow-y-auto sm:max-w-[560px]">
         <DialogHeader>
@@ -1072,7 +1163,7 @@ onBeforeUnmount(() => {
             <Select v-model="disputeRequestedResolution">
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="(label, value) in apiOrderDisputeResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
+                <SelectItem v-for="(label, value) in newDisputeResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
               </SelectContent>
             </Select>
           </label>

@@ -71,16 +71,14 @@ test('mock 固定场次按北京时间生成，并原子发布一个场次额度
   const slotsPromise = api.getApiQuotaSaleSlots()
   await vi.runAllTimersAsync()
   const slots = await slotsPromise
-  assert.equal(slots.items.length, 21)
-  assert.equal(slots.items[0]?.key, '2026-07-24@09:00')
-  assert.equal(slots.items[0]?.state, 'registration_closed')
-  assert.equal(slots.items[1]?.key, '2026-07-24@13:00')
-  assert.equal(slots.items[1]?.state, 'registration_open')
+  assert.equal(slots.items.length, 7)
+  assert.equal(slots.items[0]?.key, '2026-07-24@20:00')
+  assert.equal(slots.items[0]?.state, 'registration_open')
 
   const publicationPromise = api.createApiQuotaRushOffer({
     apiServiceId: 'a1',
     sourceType: 'sub2api',
-    name: '$25 午间额度',
+    name: '$25 晚间额度',
     usdAllowance: '25',
     priceCny: '3.50',
     modelMultiplier: '1.0000',
@@ -88,19 +86,19 @@ test('mock 固定场次按北京时间生成，并原子发布一个场次额度
     copies: 8,
     deliveryMode: 'manual',
     deliveryEtaMinutes: 10,
-    slotKey: '2026-07-24@13:00',
+    slotKey: '2026-07-24@20:00',
     expiresAt: '2026-07-25T05:30:00.000Z',
     sourceConfirmedAt: '2026-07-24T00:30:00.000Z',
   })
   await vi.runAllTimersAsync()
   const publication = await publicationPromise
-  assert.equal(publication.round.systemSlotKey, '2026-07-24@13:00')
+  assert.equal(publication.round.systemSlotKey, '2026-07-24@20:00')
   assert.equal(publication.round.allocations.length, 1)
   assert.equal(publication.round.allocations[0]?.copyLimit, 8)
   assert.equal(publication.offer.saleMode, 'scheduled')
   assert.equal(publication.batch.status, 'published')
 
-  const offersPromise = api.getApiQuotaOffers({ slotKey: '2026-07-24@13:00' })
+  const offersPromise = api.getApiQuotaOffers({ slotKey: '2026-07-24@20:00' })
   await vi.runAllTimersAsync()
   const offers = await offersPromise
   assert.equal(offers.some(item => item.id === publication.offer.id), true)
@@ -128,7 +126,7 @@ test('mock 拒绝发布新的预导入额度包', async () => {
     deliveryEtaMinutes: 2,
     deliveryKind: 'api_key_endpoint',
     file,
-    slotKey: '2026-07-24@13:00',
+    slotKey: '2026-07-24@20:00',
     expiresAt: '2026-07-25T05:30:00.000Z',
     sourceConfirmedAt: '2026-07-24T00:30:00.000Z',
   })

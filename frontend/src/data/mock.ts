@@ -524,6 +524,7 @@ export type ApiQuotaOrderabilityCode =
   | 'round_ended'
   | 'sold_out'
   | 'credential_unavailable'
+  | 'fulfillment_confirmation_required'
   | 'batch_expired'
 export type ApiPurchaseIntentStatus =
   | 'open'
@@ -668,6 +669,7 @@ export type ApiQuotaRound = {
   id: string
   batchId: string
   systemSlotKey?: string
+  fulfillmentConfirmedAt?: string
   name: string
   startsAt: string
   endsAt: string

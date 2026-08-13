@@ -340,6 +340,8 @@ type Service interface {
 	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ReportLateAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ResolveLateAPIOrderPaymentWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 
 	CreateContactMethod(ctx context.Context, input contact.ContactMethodInput) (contact.ContactMethod, *domain.AppError)
 	CreateContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input contact.ContactMethodInput, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -437,6 +439,7 @@ type APIQuotaService interface {
 	OwnerAPIQuotaRounds(ctx context.Context, user auth.User, batchID string) ([]apiquota.SaleRound, *domain.AppError)
 	CreateAPIQuotaRound(ctx context.Context, user auth.User, input apiquota.CreateRoundInput) (apiquota.SaleRound, *domain.AppError)
 	CreateAPIQuotaRoundWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateRoundInput, buildCompletion apiquota.SaleRoundCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ConfirmAPIQuotaRoundFulfillmentWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.SaleRoundActionInput, buildCompletion apiquota.SaleRoundCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublishAPIQuotaBatch(ctx context.Context, user auth.User, input apiquota.BatchActionInput) (apiquota.Batch, *domain.AppError)
 	PublishAPIQuotaBatchWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.BatchActionInput, buildCompletion apiquota.BatchCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAPIQuotaBatchStatus(ctx context.Context, user auth.User, input apiquota.BatchActionInput, action string) (apiquota.Batch, *domain.AppError)

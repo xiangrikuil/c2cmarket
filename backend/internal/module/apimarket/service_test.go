@@ -85,7 +85,7 @@ func TestHighestPrioritySalesStateSupportsMultipleSalesChannels(t *testing.T) {
 
 func TestSalesSummaryForMeteredServiceUsesAuthoritativeExpiryBoundary(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	expiresAt := now.Add(time.Hour)
+	expiresAt := now.Add(25 * time.Hour)
 	service := Service{
 		OwnerContactMethodID:  "contact-1",
 		ProbeConnectionID:     "probe-connection-1",
@@ -516,7 +516,7 @@ func TestBuildPaymentOptionsSkipsDisabledEmptyInstructions(t *testing.T) {
 
 func TestOrderableReasonsIgnoreLegacyUSDTPaymentOption(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	expiresAt := now.Add(time.Hour)
+	expiresAt := now.Add(25 * time.Hour)
 	service := Service{
 		OwnerContactMethodID:  "contact-1",
 		ProbeConnectionID:     "probe-connection-1",

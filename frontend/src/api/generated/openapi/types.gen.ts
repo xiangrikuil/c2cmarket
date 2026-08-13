@@ -2303,6 +2303,10 @@ export type ApiQuotaRound = {
     startsAt: string;
     endsAt: string;
     status: 'scheduled' | 'closed' | 'cancelled';
+    /**
+     * Present after the seller confirms readiness during the final 30 minutes before a platform fixed-slot round.
+     */
+    fulfillmentConfirmedAt?: string;
     allocations: Array<ApiQuotaAllocation>;
     version: number;
 };
@@ -2318,20 +2322,6 @@ export type ApiQuotaSystemSaleSlot = {
 export type ApiQuotaSystemSaleSlotList = {
     serverNow: string;
     items: [
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
         ApiQuotaSystemSaleSlot,
         ApiQuotaSystemSaleSlot,
         ApiQuotaSystemSaleSlot,
@@ -2394,7 +2384,7 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     availableCopies: number;
     credentialAvailableCopies: number;
     isOrderable: boolean;
-    orderabilityCode: 'orderable' | 'service_unavailable' | 'batch_paused' | 'offer_paused' | 'not_started' | 'round_ended' | 'sold_out' | 'credential_unavailable' | 'batch_expired';
+    orderabilityCode: 'orderable' | 'service_unavailable' | 'batch_paused' | 'offer_paused' | 'not_started' | 'round_ended' | 'sold_out' | 'credential_unavailable' | 'fulfillment_confirmation_required' | 'batch_expired';
     orderabilityReason: string;
 };
 
@@ -2590,6 +2580,14 @@ export type ApiOrderPaymentIssueRequest = {
     note?: string;
 };
 
+export type ApiOrderLatePaymentRequest = {
+    /**
+     * Required only for the seller resolution action.
+     */
+    status?: 'not_received' | 'received_refund_pending';
+    note?: string;
+};
+
 export type ApiOrderDeliveryRequest = {
     deliveryKind: 'api_key_endpoint' | 'login_account';
     /**
@@ -2649,7 +2647,7 @@ export type ApiOrderReasonRequest = {
 
 export type ApiOrderDisputeRequest = {
     issueCode: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
-    requestedResolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedResolution: 'full_refund' | 'partial_refund' | 'other';
     /**
      * Required only for partial_refund and must not exceed the API order amount.
      */
@@ -2767,10 +2765,14 @@ export type ApiOrder = {
     paymentExpiresAt: string;
     paymentSummary?: string;
     paymentSubmittedAt?: string | null;
+    merchantConfirmDueAt?: string | null;
+    merchantConfirmOverdue: boolean;
     paymentIssueReason?: 'not_received' | 'amount_mismatch' | 'remark_mismatch';
     paymentIssueNote?: string;
     paymentIssueReportedAt?: string | null;
     paidConfirmedAt?: string | null;
+    deliveryDueAt?: string | null;
+    deliveryOverdue: boolean;
     /**
      * Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
      */
@@ -2791,6 +2793,11 @@ export type ApiOrder = {
     completedAt?: string | null;
     cancelledAt?: string | null;
     cancelReason?: string;
+    latePaymentStatus?: 'reported' | 'not_received' | 'received_refund_pending';
+    latePaymentReportedAt?: string | null;
+    latePaymentNote?: string;
+    latePaymentResolvedAt?: string | null;
+    canReportLatePayment: boolean;
     version: number;
     createdAt: string;
     updatedAt: string;
@@ -8458,6 +8465,49 @@ export type OpenMyApiOrderDisputeResponses = {
 
 export type OpenMyApiOrderDisputeResponse = OpenMyApiOrderDisputeResponses[keyof OpenMyApiOrderDisputeResponses];
 
+export type ReportMyApiOrderLatePaymentData = {
+    body: ApiOrderLatePaymentRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/api-orders/{id}/report-late-payment';
+};
+
+export type ReportMyApiOrderLatePaymentErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReportMyApiOrderLatePaymentError = ReportMyApiOrderLatePaymentErrors[keyof ReportMyApiOrderLatePaymentErrors];
+
+export type ReportMyApiOrderLatePaymentResponses = {
+    /**
+     * Late-payment report recorded without reviving the order.
+     */
+    200: ApiOrder;
+};
+
+export type ReportMyApiOrderLatePaymentResponse = ReportMyApiOrderLatePaymentResponses[keyof ReportMyApiOrderLatePaymentResponses];
+
 export type ListMyNotificationsData = {
     body?: never;
     path?: never;
@@ -10158,6 +10208,45 @@ export type PublishOwnerApiQuotaBatchResponses = {
 
 export type PublishOwnerApiQuotaBatchResponse = PublishOwnerApiQuotaBatchResponses[keyof PublishOwnerApiQuotaBatchResponses];
 
+export type ConfirmOwnerApiQuotaRoundFulfillmentData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-quota-rounds/{id}/confirm-fulfillment';
+};
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentError = ConfirmOwnerApiQuotaRoundFulfillmentErrors[keyof ConfirmOwnerApiQuotaRoundFulfillmentErrors];
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentResponses = {
+    /**
+     * Round fulfillment readiness confirmed.
+     */
+    200: ApiQuotaRound;
+};
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentResponse = ConfirmOwnerApiQuotaRoundFulfillmentResponses[keyof ConfirmOwnerApiQuotaRoundFulfillmentResponses];
+
 export type PauseOwnerApiQuotaBatchData = {
     body: EmptyRequestWritable;
     headers: {
@@ -10699,6 +10788,49 @@ export type OpenOwnerApiOrderDisputeResponses = {
 };
 
 export type OpenOwnerApiOrderDisputeResponse = OpenOwnerApiOrderDisputeResponses[keyof OpenOwnerApiOrderDisputeResponses];
+
+export type ResolveOwnerApiOrderLatePaymentData = {
+    body: ApiOrderLatePaymentRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-orders/{id}/resolve-late-payment';
+};
+
+export type ResolveOwnerApiOrderLatePaymentErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ResolveOwnerApiOrderLatePaymentError = ResolveOwnerApiOrderLatePaymentErrors[keyof ResolveOwnerApiOrderLatePaymentErrors];
+
+export type ResolveOwnerApiOrderLatePaymentResponses = {
+    /**
+     * Late-payment report resolved.
+     */
+    200: ApiOrder;
+};
+
+export type ResolveOwnerApiOrderLatePaymentResponse = ResolveOwnerApiOrderLatePaymentResponses[keyof ResolveOwnerApiOrderLatePaymentResponses];
 
 export type ListAdminOfficialPriceLeadsData = {
     body?: never;

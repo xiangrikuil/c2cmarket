@@ -535,7 +535,7 @@ func flexibleQuotaSalesState(service Service, now time.Time) string {
 	if service.QuotaExpiresAt == nil {
 		return ServiceSalesStateOffline
 	}
-	if !service.QuotaExpiresAt.After(now) {
+	if !service.QuotaExpiresAt.After(now.Add(24 * time.Hour)) {
 		return ServiceSalesStateExpired
 	}
 	available := strings.TrimSpace(service.AvailableUSDAllowance)
@@ -1644,7 +1644,7 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 		}
 		if service.QuotaExpiresAt == nil {
 			reasons = append(reasons, "quota_expiration_required")
-		} else if !service.QuotaExpiresAt.After(now) {
+		} else if !service.QuotaExpiresAt.After(now.Add(24 * time.Hour)) {
 			reasons = append(reasons, "quota_expired")
 		}
 	case ServiceBillingModeFixedPackage:

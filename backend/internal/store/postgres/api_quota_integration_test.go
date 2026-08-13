@@ -368,7 +368,7 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 		t.Fatalf("refusing to run inventory integration test against non-dedicated database %q", databaseName)
 	}
 
-	slotStartsAt := time.Date(2026, 7, 25, 1, 0, 0, 0, time.UTC)
+	slotStartsAt := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	currentTime := slotStartsAt.Add(-2 * time.Hour)
 	sellerID := uuid.NewString()
 	contactID := uuid.NewString()
@@ -409,7 +409,7 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 			Copies:             2,
 			DeliveryMode:       apiquota.DeliveryModeManual,
 			DeliveryETAMinutes: 1,
-			SlotKey:            "2026-07-25@09:00",
+			SlotKey:            "2026-07-25@20:00",
 			ExpiresAt:          slotStartsAt.Add(90 * time.Minute),
 			SourceConfirmedAt:  currentTime,
 		},

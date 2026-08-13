@@ -56,6 +56,14 @@ func (s *Store) SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, entry
 	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "submit_delivery")
 }
 
+func (s *Store) ReportLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
+	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "report_late_payment")
+}
+
+func (s *Store) ResolveLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
+	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "resolve_late_payment")
+}
+
 func (s *Store) apiOrderWithIdempotency(ctx context.Context, entry idempotency.Entry, createInput apiorder.CreateInput, actionInput apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder, action string) (apiorder.Order, idempotency.Completion, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
@@ -279,12 +287,21 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if appErr := loadReadyProbeTargetInTx(ctx, tx, &service); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	service = apimarket.WithOrderability(service)
+	service = apimarket.WithOrderabilityAt(service, now)
 	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	order, appErr := newStoreAPIOrder(input, intent, service, now)
 	if appErr != nil {
+		return apiorder.Order{}, appErr
+	}
+	productKind := "service"
+	productID := order.APIServiceID
+	if order.SelectedPackageID != "" {
+		productKind = "package"
+		productID = order.SelectedPackageID
+	}
+	if appErr := ensureAPIBuyerPendingCapacityInTx(ctx, tx, order.BuyerUserID, productKind, productID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	if appErr := reserveAPIOrderInventoryInTx(ctx, tx, order, now); appErr != nil {
@@ -303,6 +320,39 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		return apiorder.Order{}, appErr
 	}
 	return apiorder.WithAfterSalesProjection(order, now), nil
+}
+
+func ensureAPIBuyerPendingCapacityInTx(ctx context.Context, tx pgx.Tx, buyerUserID, productKind, productID string, now time.Time) *domain.AppError {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended('api-order-pending-capacity:' || $1::uuid::text, 0))
+	`, buyerUserID); err != nil {
+		return internalStoreError()
+	}
+
+	var productPending, totalPending int
+	err := tx.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (
+				WHERE ($2 = 'quota' AND api_quota_offer_id = $3::uuid)
+				   OR ($2 = 'package' AND selected_package_id = $3::uuid)
+				   OR ($2 = 'service' AND purchase_kind = 'api_service' AND api_service_id = $3::uuid AND selected_package_id IS NULL)
+			)::integer,
+			count(*)::integer
+		FROM api_orders
+		WHERE buyer_user_id = $1
+		  AND status = 'pending_payment'
+		  AND payment_expires_at > $4
+	`, buyerUserID, productKind, productID, now).Scan(&productPending, &totalPending)
+	if err != nil {
+		return internalStoreError()
+	}
+	if productPending >= 1 {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Pending order already exists", "你在该商品下已有待付款订单，请先完成或等待其关闭。")
+	}
+	if totalPending >= 3 {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Pending order limit reached", "你当前已有 3 个待付款 API 订单，请先处理后再下单。")
+	}
+	return nil
 }
 
 func loadReadyProbeTargetInTx(ctx context.Context, tx pgx.Tx, service *apimarket.Service) *domain.AppError {
@@ -388,6 +438,9 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		}
 	}
 	if action == "submit_delivery" {
+		if expiresAt := apiorder.FulfillmentExpiresAt(order); expiresAt != nil && !now.Before(*expiresAt) {
+			return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Fulfillment expired", "所购额度已到期，不能再提交正常交付，请退款或进入纠纷处理。")
+		}
 		expiresAt, appErr := apiorder.PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, now)
 		if appErr != nil {
 			return apiorder.Order{}, appErr
@@ -923,10 +976,13 @@ const apiOrderColumns = `
 	amount::text, currency, selected_payment_method,
 	payment_window_minutes_snapshot, payment_expires_at, payment_instructions_snapshot,
 		COALESCE(payment_qr_code_data_url_snapshot, ''), COALESCE(payment_summary, ''), payment_submitted_at,
+		merchant_confirm_due_at,
 		COALESCE(payment_issue_reason, ''), COALESCE(payment_issue_note, ''), payment_issue_reported_at, paid_confirmed_at,
+		delivery_due_at,
 	COALESCE(delivery_note, ''), delivery_submitted_at,
 	delivery_review_expires_at, delivery_review_reminded_at, COALESCE(completion_source, ''), completed_at,
-	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version,
+		cancelled_at, COALESCE(cancel_reason, ''), COALESCE(late_payment_status, ''), late_payment_reported_at,
+		COALESCE(late_payment_note, ''), late_payment_resolved_at, created_at, updated_at, version,
 	order_no, prompt_audit_enabled_snapshot
 `
 
@@ -1188,10 +1244,12 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.PaymentQRCodeDataURLSnapshot,
 		&order.PaymentSummary,
 		&order.PaymentSubmittedAt,
+		&order.MerchantConfirmDueAt,
 		&order.PaymentIssueReason,
 		&order.PaymentIssueNote,
 		&order.PaymentIssueReportedAt,
 		&order.PaidConfirmedAt,
+		&order.DeliveryDueAt,
 		&order.DeliveryNote,
 		&order.DeliverySubmittedAt,
 		&order.DeliveryReviewExpiresAt,
@@ -1200,6 +1258,10 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.CompletedAt,
 		&order.CancelledAt,
 		&order.CancelReason,
+		&order.LatePaymentStatus,
+		&order.LatePaymentReportedAt,
+		&order.LatePaymentNote,
+		&order.LatePaymentResolvedAt,
 		&order.CreatedAt,
 		&order.UpdatedAt,
 		&order.Version,
@@ -1358,29 +1420,36 @@ func updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 			    dispute_case_id = $4,
 			    payment_summary = $5,
 			    payment_submitted_at = $6,
-			    payment_issue_reason = $7,
-			    payment_issue_note = $8,
-			    payment_issue_reported_at = $9,
-			    paid_confirmed_at = $10,
-			    delivery_note = $11,
-			    delivery_submitted_at = $12,
-			    delivery_review_expires_at = $13,
-			    delivery_review_reminded_at = $14,
-			    completion_source = $15,
-			    completed_at = $16,
-			    cancelled_at = $17,
-			    cancel_reason = $18,
-			    package_stock_reserved = $19,
-			    package_expires_at = $20,
-			    updated_at = $21,
-			    version = $22
+			    merchant_confirm_due_at = $7,
+			    payment_issue_reason = $8,
+			    payment_issue_note = $9,
+			    payment_issue_reported_at = $10,
+			    paid_confirmed_at = $11,
+			    delivery_due_at = $12,
+			    delivery_note = $13,
+			    delivery_submitted_at = $14,
+			    delivery_review_expires_at = $15,
+			    delivery_review_reminded_at = $16,
+			    completion_source = $17,
+			    completed_at = $18,
+			    cancelled_at = $19,
+			    cancel_reason = $20,
+			    late_payment_status = $21,
+			    late_payment_reported_at = $22,
+			    late_payment_note = $23,
+			    late_payment_resolved_at = $24,
+			    package_stock_reserved = $25,
+			    package_expires_at = $26,
+			    updated_at = $27,
+			    version = $28
 		WHERE id = $1
 		`, order.ID, order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID),
-		nullText(order.PaymentSummary), order.PaymentSubmittedAt,
-		nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt, order.PaidConfirmedAt,
+		nullText(order.PaymentSummary), order.PaymentSubmittedAt, order.MerchantConfirmDueAt,
+		nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt, order.PaidConfirmedAt, order.DeliveryDueAt,
 		nullText(order.DeliveryNote), order.DeliverySubmittedAt,
 		order.DeliveryReviewExpiresAt, order.DeliveryReviewRemindedAt, nullText(order.CompletionSource), order.CompletedAt,
-		order.CancelledAt, nullText(order.CancelReason), order.PackageStockReserved, order.PackageExpiresAt,
+		order.CancelledAt, nullText(order.CancelReason), nullText(order.LatePaymentStatus), order.LatePaymentReportedAt,
+		nullText(order.LatePaymentNote), order.LatePaymentResolvedAt, order.PackageStockReserved, order.PackageExpiresAt,
 		order.UpdatedAt, order.Version)
 	if err != nil {
 		return internalStoreError()
@@ -1643,9 +1712,9 @@ func storeResolveAPIOrderAmount(intent apiintent.Intent, service apimarket.Servi
 
 func storeCanActorAccessAPIOrder(order apiorder.Order, actorUserID, action string) bool {
 	switch action {
-	case "submit_payment", "cancel", "confirm_complete":
+	case "submit_payment", "cancel", "confirm_complete", "report_late_payment":
 		return order.BuyerUserID == actorUserID
-	case "confirm_payment", "report_payment_issue", "submit_delivery":
+	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
 	case "open_dispute":
 		return order.BuyerUserID == actorUserID || order.SellerUserID == actorUserID
@@ -1673,6 +1742,10 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 		return order.Status == apiorder.StatusDeliverySubmitted
 	case "open_dispute":
 		return apiorder.WithAfterSalesProjection(order, now).CanOpenDispute
+	case "report_late_payment":
+		return apiorder.WithAfterSalesProjection(order, now).CanReportLatePayment
+	case "resolve_late_payment":
+		return order.Status == apiorder.StatusCancelled && order.CancelReason == "payment_timeout" && order.LatePaymentStatus == apiorder.LatePaymentStatusReported
 	default:
 		return false
 	}
@@ -1690,6 +1763,13 @@ func storeValidateAPIOrderActionInput(input apiorder.ActionInput, action string)
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment issue reason invalid", "请选择有效的付款问题。", "paymentIssueReason", "invalid", "请选择未到账、金额不符或备注不符。")
 		}
 		return storeValidateOptionalNonSecretText("paymentIssueNote", input.PaymentIssueNote)
+	case "report_late_payment":
+		return storeValidateOptionalNonSecretText("note", input.LatePaymentNote)
+	case "resolve_late_payment":
+		if input.LatePaymentStatus != apiorder.LatePaymentStatusNotReceived && input.LatePaymentStatus != apiorder.LatePaymentStatusReceivedRefundPending {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Late payment resolution invalid", "请选择未到账或已到账待退款。", "status", "invalid", "请选择有效的处理结果。")
+		}
+		return storeValidateOptionalNonSecretText("note", input.LatePaymentNote)
 	case "submit_delivery":
 		if _, err := apiorder.NormalizeDeliveryCredentialForStore(input.DeliveryCredential); err != nil {
 			return err
@@ -1711,6 +1791,8 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.Status = apiorder.StatusPaymentSubmitted
 		order.PaymentSummary = strings.TrimSpace(input.PaymentSummary)
 		order.PaymentSubmittedAt = &now
+		merchantConfirmDueAt := now.Add(apiorder.MerchantConfirmWindow)
+		order.MerchantConfirmDueAt = &merchantConfirmDueAt
 		order.PaymentIssueReason = ""
 		order.PaymentIssueNote = ""
 		order.PaymentIssueReportedAt = nil
@@ -1726,6 +1808,8 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 	case "confirm_payment":
 		order.Status = apiorder.StatusPaidConfirmed
 		order.PaidConfirmedAt = &now
+		deliveryDueAt := now.Add(apiorder.DeliveryWindow(order))
+		order.DeliveryDueAt = &deliveryDueAt
 		order.PackageStockReserved = false
 	case "submit_delivery":
 		order.Status = apiorder.StatusDeliverySubmitted
@@ -1739,6 +1823,14 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.CompletedAt = &now
 	case "open_dispute":
 		order.DisputeStatus = apiorder.DisputeStatusNegotiating
+	case "report_late_payment":
+		order.LatePaymentStatus = apiorder.LatePaymentStatusReported
+		order.LatePaymentReportedAt = &now
+		order.LatePaymentNote = strings.TrimSpace(input.LatePaymentNote)
+	case "resolve_late_payment":
+		order.LatePaymentStatus = input.LatePaymentStatus
+		order.LatePaymentResolvedAt = &now
+		order.LatePaymentNote = strings.TrimSpace(input.LatePaymentNote)
 	}
 	order.UpdatedAt = now
 	order.Version++
@@ -1761,6 +1853,10 @@ func storeAPIOrderEventType(action string) string {
 		return apiorder.EventCompleted
 	case "open_dispute":
 		return apiorder.EventDisputeOpened
+	case "report_late_payment":
+		return apiorder.EventLatePaymentReported
+	case "resolve_late_payment":
+		return apiorder.EventLatePaymentResolved
 	default:
 		return "api_order.updated"
 	}
@@ -1776,6 +1872,8 @@ func storeAPIOrderActionNote(input apiorder.ActionInput, action string) string {
 		return apiorder.PaymentIssueLabel(input.PaymentIssueReason) + paymentIssueStoreNoteSuffix(input.PaymentIssueNote)
 	case "cancel", "open_dispute":
 		return input.Reason
+	case "report_late_payment", "resolve_late_payment":
+		return input.LatePaymentNote
 	default:
 		return ""
 	}

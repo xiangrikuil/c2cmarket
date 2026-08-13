@@ -15,7 +15,7 @@ const (
 	systemSlotCalendarDays = 7
 )
 
-var systemSlotHours = [...]int{9, 13, 20}
+var systemSlotHours = [...]int{20}
 
 func SystemSaleSlots(now time.Time) []SystemSaleSlot {
 	location := shanghaiLocation()

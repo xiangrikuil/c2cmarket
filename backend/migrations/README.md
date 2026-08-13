@@ -469,6 +469,11 @@ rows default to the buyer/dispute pair. A database check enforces a non-empty,
 deduplicated, allowlisted, canonically ordered scope array. The guarded down
 migration refuses to erase policy once a row carries a post-migration scope set.
 
+Version 94 (`000094_api_order_launch_hardening`) adds immutable merchant-confirm
+and delivery deadlines, a constrained late-payment recovery fact, buyer pending
+order capacity indexes, and seller fulfillment confirmation for fixed rush
+rounds. Historical orders and non-system rounds remain readable with null fields.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

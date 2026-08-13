@@ -349,6 +349,25 @@ func (m *Manager) OwnerRounds(ctx context.Context, user auth.User, batchID strin
 	return m.repo.ListAPIQuotaSaleRoundsForBatch(ctx, user.ID, strings.TrimSpace(batchID))
 }
 
+func (m *Manager) ConfirmRoundFulfillmentWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input SaleRoundActionInput, buildCompletion SaleRoundCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(input.SaleRoundID)); err != nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Quota sale round not found", "放量轮次不存在。")
+	}
+	input.OwnerUserID = user.ID
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
+	_, completion, appErr := m.repo.ConfirmAPIQuotaSaleRoundFulfillmentWithIdempotency(ctx, *entry, input, m.now().UTC(), buildCompletion)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+	}
+	return completion, appErr
+}
+
 func (m *Manager) PublishBatch(ctx context.Context, user auth.User, input BatchActionInput) (Batch, *domain.AppError) {
 	input.OwnerUserID = user.ID
 	if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
@@ -536,7 +555,7 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 	totalAllowance, ok := allocationAmount(input.USDAllowance, input.Copies)
 	if !ok || input.Copies > maxRushOfferCopies {
 		m.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, fieldError("copies", "可售份数必须在 1 到 5000 之间。")
+		return idempotency.Completion{}, fieldError("copies", "可售份数必须在 1 到 10 之间。")
 	}
 	batchInput := CreateBatchInput{
 		APIServiceID: input.APIServiceID, SourceType: input.SourceType, SourceLabel: input.SourceLabel,
@@ -657,6 +676,9 @@ func WithOrderability(card OfferCard, now time.Time) OfferCard {
 	case card.SaleMode == SaleModeScheduled && card.CurrentRound == nil:
 		card.OrderabilityCode = OrderabilityRoundEnded
 		card.OrderabilityReason = "当前没有可购买的放量轮次。"
+	case card.SaleMode == SaleModeScheduled && card.CurrentRound.SystemSlotKey != "" && card.CurrentRound.FulfillmentConfirmedAt == nil:
+		card.OrderabilityCode = OrderabilityConfirmationMissing
+		card.OrderabilityReason = "卖家尚未确认本场可按时履约。"
 	case card.AvailableCopies < 1:
 		card.OrderabilityCode = OrderabilitySoldOut
 		card.OrderabilityReason = "当前库存已售罄。"
@@ -868,7 +890,7 @@ func integerText(value int) string {
 	return new(big.Int).SetInt64(int64(value)).String()
 }
 
-const maxRushOfferCopies = 5000
+const maxRushOfferCopies = 10
 
 func allocationAmount(allowance string, copies int) (string, bool) {
 	value, ok := positiveDecimal(allowance)

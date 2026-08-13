@@ -21,6 +21,7 @@ type Repository interface {
 	CreateAPIQuotaSaleRound(ctx context.Context, round SaleRound, requested []RoundOfferInput, requestID string, now time.Time) (SaleRound, *domain.AppError)
 	CreateAPIQuotaSaleRoundWithIdempotency(ctx context.Context, entry idempotency.Entry, round SaleRound, requested []RoundOfferInput, requestID string, now time.Time, buildCompletion SaleRoundCompletionBuilder) (SaleRound, idempotency.Completion, *domain.AppError)
 	ListAPIQuotaSaleRoundsForBatch(ctx context.Context, ownerUserID, batchID string) ([]SaleRound, *domain.AppError)
+	ConfirmAPIQuotaSaleRoundFulfillmentWithIdempotency(ctx context.Context, entry idempotency.Entry, input SaleRoundActionInput, now time.Time, buildCompletion SaleRoundCompletionBuilder) (SaleRound, idempotency.Completion, *domain.AppError)
 	PublishAPIQuotaBatch(ctx context.Context, input BatchActionInput, now time.Time) (Batch, *domain.AppError)
 	PublishAPIQuotaBatchWithIdempotency(ctx context.Context, entry idempotency.Entry, input BatchActionInput, now time.Time, buildCompletion BatchCompletionBuilder) (Batch, idempotency.Completion, *domain.AppError)
 	UpdateAPIQuotaBatchStatus(ctx context.Context, input BatchActionInput, action string, now time.Time) (Batch, *domain.AppError)

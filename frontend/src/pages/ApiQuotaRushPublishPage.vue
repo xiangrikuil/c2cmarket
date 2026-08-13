@@ -500,7 +500,7 @@ function validateRush() {
   if (Number(rush.usdAllowance) <= 0) return '单份美元额度必须大于 0。'
   if (Number(rush.priceCny) <= 0) return '人民币总价必须大于 0。'
   if (rushQuotaPolicyError.value) return rushQuotaPolicyError.value
-  if (!Number.isInteger(rush.copies) || rush.copies < 1 || rush.copies > 5000) return '份数必须是 1-5000 的整数。'
+  if (!Number.isInteger(rush.copies) || rush.copies < 1 || rush.copies > 10) return '份数必须是 1-10 的整数。'
   if (rush.deliveryEtaMinutes < 1 || rush.deliveryEtaMinutes > 10) return '交付时限必须在 1-10 分钟之间。'
   if (rush.sourceType === 'other' && !rush.sourceLabel.trim()) return '其他来源需要填写来源说明。'
   return ''
@@ -642,7 +642,7 @@ function preview() {
       <div>
         <div class="flex items-center gap-2 text-sm font-medium text-primary"><CalendarClock class="h-4 w-4" />限量额度包</div>
         <h1 class="mt-1 text-2xl font-semibold">发布到固定抢购场次</h1>
-        <p class="mt-1 text-sm text-muted-foreground">选择服务、设置单份额度与库存，再选择北京时间 09:00、13:00 或 20:00 场次。</p>
+        <p class="mt-1 text-sm text-muted-foreground">选择服务、设置单份额度与库存，再选择北京时间 20:00 场次。</p>
       </div>
       <div class="flex gap-2">
         <Button variant="outline" @click="preview"><Eye class="h-4 w-4" />预览</Button>
@@ -758,7 +758,7 @@ function preview() {
             <label class="space-y-1.5 text-sm sm:col-span-2"><span class="font-medium">限时包名称</span><Input v-model="rush.name" maxlength="80" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份美元额度</span><Input v-model="rush.usdAllowance" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份人民币总价</span><Input v-model="rush.priceCny" inputmode="decimal" /></label>
-            <label class="space-y-1.5 text-sm"><span class="font-medium">计划份数</span><Input v-model.number="rush.copies" type="number" min="1" max="5000" /></label>
+            <label class="space-y-1.5 text-sm"><span class="font-medium">计划份数</span><Input v-model.number="rush.copies" type="number" min="1" max="10" /></label>
           </div>
           <div class="mt-4 border-t border-border pt-4">
             <ApiQuotaPolicyFields v-model="rush.quotaUsagePolicy" :error="rushQuotaPolicyError || undefined" />

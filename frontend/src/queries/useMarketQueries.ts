@@ -17,12 +17,15 @@ import {
   createApiQuotaOrder,
   createApiQuotaRushOffer,
   createApiQuotaRound,
+  confirmApiQuotaRoundFulfillment,
   createContactMethod,
   createContactReport,
   createPublicUserReport,
   confirmApiOrderComplete,
   confirmApiOrderPayment,
   reportApiOrderPaymentIssue,
+  reportLateApiOrderPayment,
+  resolveLateApiOrderPayment,
   createApiOrderFromIntent,
   confirmEmailVerification,
   deleteContactMethod,
@@ -585,6 +588,16 @@ export function useCreateApiQuotaRoundMutation() {
   })
 }
 
+export function useConfirmApiQuotaRoundFulfillmentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ roundId, version }: { roundId: string, version: number }) => confirmApiQuotaRoundFulfillment(roundId, version),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+    },
+  })
+}
+
 export function useApiQuotaBatchActionMutation() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -989,6 +1002,28 @@ export function useReportApiOrderPaymentIssueMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, reason, note, version }: { id: string, reason: ApiOrderPaymentIssueReason, note: string, version: number }) => reportApiOrderPaymentIssue(id, reason, note, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'merchant', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useReportLateApiOrderPaymentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, note, version }: { id: string, note: string, version: number }) => reportLateApiOrderPayment(id, note, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useResolveLateApiOrderPaymentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status, note, version }: { id: string, status: 'not_received' | 'received_refund_pending', note: string, version: number }) => resolveLateApiOrderPayment(id, status, note, version),
     onSuccess(data) {
       queryClient.setQueryData(['api-orders', 'merchant', data.id], data)
       invalidateApiOrderQueries(queryClient, data.id)

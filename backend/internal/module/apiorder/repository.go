@@ -24,4 +24,6 @@ type Repository interface {
 	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
 	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
 	SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
+	ReportLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
+	ResolveLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
 }

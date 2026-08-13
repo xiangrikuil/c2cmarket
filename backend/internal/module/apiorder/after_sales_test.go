@@ -52,3 +52,27 @@ func TestValidityExpiresAtFallsBackToPricingSnapshot(t *testing.T) {
 		t.Fatalf("unexpected pricing validity: got=%v want=%v", got, want)
 	}
 }
+
+func TestOrderDeadlineAndLatePaymentProjectionBoundaries(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	merchantDue := now.Add(time.Minute)
+	deliveryDue := now.Add(2 * time.Minute)
+	cancelledAt := now.Add(-24 * time.Hour)
+
+	merchant := WithAfterSalesProjection(Order{Status: StatusPaymentSubmitted, MerchantConfirmDueAt: &merchantDue}, merchantDue)
+	if !merchant.MerchantConfirmOverdue {
+		t.Fatal("merchant confirmation must become overdue exactly at the deadline")
+	}
+	delivery := WithAfterSalesProjection(Order{Status: StatusPaidConfirmed, DeliveryDueAt: &deliveryDue}, deliveryDue)
+	if !delivery.DeliveryOverdue {
+		t.Fatal("delivery must become overdue exactly at the deadline")
+	}
+	late := WithAfterSalesProjection(Order{Status: StatusCancelled, CancelReason: "payment_timeout", CancelledAt: &cancelledAt}, now.Add(-time.Nanosecond))
+	if !late.CanReportLatePayment {
+		t.Fatal("late payment must remain reportable immediately before 24 hours")
+	}
+	expired := WithAfterSalesProjection(Order{Status: StatusCancelled, CancelReason: "payment_timeout", CancelledAt: &cancelledAt}, now)
+	if expired.CanReportLatePayment {
+		t.Fatal("late payment reporting must close exactly at 24 hours")
+	}
+}

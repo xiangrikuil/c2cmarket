@@ -52,6 +52,11 @@ type apiOrderPaymentIssueRequest struct {
 	Note   string `json:"note"`
 }
 
+type apiOrderLatePaymentRequest struct {
+	Status string `json:"status"`
+	Note   string `json:"note"`
+}
+
 type apiOrderResponse struct {
 	ID                            string                              `json:"id"`
 	OrderNo                       string                              `json:"orderNo"`
@@ -107,10 +112,14 @@ type apiOrderResponse struct {
 	PaymentExpiresAt              string                              `json:"paymentExpiresAt"`
 	PaymentSummary                string                              `json:"paymentSummary,omitempty"`
 	PaymentSubmittedAt            *string                             `json:"paymentSubmittedAt,omitempty"`
+	MerchantConfirmDueAt          *string                             `json:"merchantConfirmDueAt,omitempty"`
+	MerchantConfirmOverdue        bool                                `json:"merchantConfirmOverdue"`
 	PaymentIssueReason            string                              `json:"paymentIssueReason,omitempty"`
 	PaymentIssueNote              string                              `json:"paymentIssueNote,omitempty"`
 	PaymentIssueReportedAt        *string                             `json:"paymentIssueReportedAt,omitempty"`
 	PaidConfirmedAt               *string                             `json:"paidConfirmedAt,omitempty"`
+	DeliveryDueAt                 *string                             `json:"deliveryDueAt,omitempty"`
+	DeliveryOverdue               bool                                `json:"deliveryOverdue"`
 	DeliveryNote                  string                              `json:"deliveryNote,omitempty"`
 	DeliverySubmittedAt           *string                             `json:"deliverySubmittedAt,omitempty"`
 	DeliveryReviewExpiresAt       *string                             `json:"deliveryReviewExpiresAt,omitempty"`
@@ -119,6 +128,11 @@ type apiOrderResponse struct {
 	CompletedAt                   *string                             `json:"completedAt,omitempty"`
 	CancelledAt                   *string                             `json:"cancelledAt,omitempty"`
 	CancelReason                  string                              `json:"cancelReason,omitempty"`
+	LatePaymentStatus             string                              `json:"latePaymentStatus,omitempty"`
+	LatePaymentReportedAt         *string                             `json:"latePaymentReportedAt,omitempty"`
+	LatePaymentNote               string                              `json:"latePaymentNote,omitempty"`
+	LatePaymentResolvedAt         *string                             `json:"latePaymentResolvedAt,omitempty"`
+	CanReportLatePayment          bool                                `json:"canReportLatePayment"`
 	AfterSalesExpiresAt           *string                             `json:"afterSalesExpiresAt,omitempty"`
 	CanOpenDispute                bool                                `json:"canOpenDispute"`
 	DisputeEligibilityReason      string                              `json:"disputeEligibilityReason"`
@@ -367,6 +381,12 @@ func (s *Server) handleOpenAPIOrderDispute(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (s *Server) handleReportLateAPIOrderPayment(w http.ResponseWriter, r *http.Request) {
+	s.handleBuyerAPIOrderAction(w, r, "report-late-payment", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.app.ReportLateAPIOrderPaymentWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
+	})
+}
+
 func (s *Server) handleBuyerAPIOrderAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -455,6 +475,12 @@ func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (s *Server) handleResolveLateAPIOrderPayment(w http.ResponseWriter, r *http.Request) {
+	s.handleOwnerAPIOrderAction(w, r, "resolve-late-payment", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.app.ResolveLateAPIOrderPaymentWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+	})
+}
+
 func (s *Server) handleOwnerAPIOrderAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -505,6 +531,12 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 	case "report-payment-issue":
 		body, req, appErr := decodeStrictJSON[apiOrderPaymentIssueRequest](r)
 		return body, apiorder.ActionInput{PaymentIssueReason: req.Reason, PaymentIssueNote: req.Note}, appErr
+	case "report-late-payment":
+		body, req, appErr := decodeStrictJSON[apiOrderLatePaymentRequest](r)
+		return body, apiorder.ActionInput{LatePaymentNote: req.Note}, appErr
+	case "resolve-late-payment":
+		body, req, appErr := decodeStrictJSON[apiOrderLatePaymentRequest](r)
+		return body, apiorder.ActionInput{LatePaymentStatus: req.Status, LatePaymentNote: req.Note}, appErr
 	case "cancel":
 		body, req, appErr := decodeStrictJSON[apiOrderReasonRequest](r)
 		return body, apiorder.ActionInput{Reason: req.Reason}, appErr
@@ -602,9 +634,13 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		PaymentSummary:                order.PaymentSummary,
 		PaidConfirmedAt:               formatOptionalTime(order.PaidConfirmedAt),
 		PaymentSubmittedAt:            formatOptionalTime(order.PaymentSubmittedAt),
+		MerchantConfirmDueAt:          formatOptionalTime(order.MerchantConfirmDueAt),
+		MerchantConfirmOverdue:        order.MerchantConfirmOverdue,
 		PaymentIssueReason:            order.PaymentIssueReason,
 		PaymentIssueNote:              order.PaymentIssueNote,
 		PaymentIssueReportedAt:        formatOptionalTime(order.PaymentIssueReportedAt),
+		DeliveryDueAt:                 formatOptionalTime(order.DeliveryDueAt),
+		DeliveryOverdue:               order.DeliveryOverdue,
 		DeliveryNote:                  order.DeliveryNote,
 		DeliverySubmittedAt:           formatOptionalTime(order.DeliverySubmittedAt),
 		DeliveryReviewExpiresAt:       formatOptionalTime(order.DeliveryReviewExpiresAt),
@@ -612,6 +648,11 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		CompletedAt:                   formatOptionalTime(order.CompletedAt),
 		CancelledAt:                   formatOptionalTime(order.CancelledAt),
 		CancelReason:                  order.CancelReason,
+		LatePaymentStatus:             order.LatePaymentStatus,
+		LatePaymentReportedAt:         formatOptionalTime(order.LatePaymentReportedAt),
+		LatePaymentNote:               order.LatePaymentNote,
+		LatePaymentResolvedAt:         formatOptionalTime(order.LatePaymentResolvedAt),
+		CanReportLatePayment:          order.CanReportLatePayment,
 		AfterSalesExpiresAt:           formatOptionalTime(order.AfterSalesExpiresAt),
 		CanOpenDispute:                order.CanOpenDispute,
 		DisputeEligibilityReason:      order.DisputeEligibilityReason,

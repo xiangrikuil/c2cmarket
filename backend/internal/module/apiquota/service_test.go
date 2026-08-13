@@ -157,6 +157,38 @@ func TestOfferOrderabilityUsesServerTimeAndCredentialInventory(t *testing.T) {
 	}
 }
 
+func TestSystemOfferRequiresFulfillmentConfirmation(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	card := OfferCard{
+		Offer:       Offer{Status: OfferStatusPublished, SaleMode: SaleModeScheduled, DeliveryMode: DeliveryModeManual},
+		BatchStatus: BatchStatusPublished, ServiceOrderable: true,
+		SaleCutoffAt: now.Add(time.Hour), ExpiresAt: now.Add(2 * time.Hour), AvailableCopies: 1,
+		CurrentRound: &SaleRound{SystemSlotKey: "2026-08-14@20:00", StartsAt: now.Add(-time.Minute), EndsAt: now.Add(time.Hour)},
+	}
+	projected := WithOrderability(card, now)
+	if projected.IsOrderable || projected.OrderabilityCode != OrderabilityConfirmationMissing {
+		t.Fatalf("expected confirmation requirement, got %+v", projected)
+	}
+	confirmedAt := now.Add(-10 * time.Minute)
+	card.CurrentRound.FulfillmentConfirmedAt = &confirmedAt
+	projected = WithOrderability(card, now)
+	if !projected.IsOrderable || projected.OrderabilityCode != OrderabilityOrderable {
+		t.Fatalf("expected confirmed system round to be orderable, got %+v", projected)
+	}
+}
+
+func TestCreateRushOfferRejectsMoreThanTenCopies(t *testing.T) {
+	now := beijingTime(t, "2026-07-24T07:00:00+08:00")
+	repo := &fakeRepository{}
+	manager := NewManager(repo, func() time.Time { return now })
+	input := validRushOfferInput(t, now)
+	input.Copies = 11
+	_, appErr := manager.CreateRushOfferWithIdempotency(context.Background(), auth.User{ID: "10000000-0000-0000-0000-000000000010"}, "rush", "rush-limit", "rush-limit-hash", input, testRushOfferCompletion)
+	if appErr == nil || appErr.Code != domain.CodeValidationFailed || repo.rushCreateCalls != 0 {
+		t.Fatalf("expected 10-copy validation before persistence, got error=%v calls=%d", appErr, repo.rushCreateCalls)
+	}
+}
+
 func TestCreateRushOfferPublishesOneManualDeliverySlot(t *testing.T) {
 	now := beijingTime(t, "2026-07-24T07:00:00+08:00")
 	repo := &fakeRepository{}
@@ -184,7 +216,7 @@ func TestCreateRushOfferPublishesOneManualDeliverySlot(t *testing.T) {
 	if publication.Offer.SaleMode != SaleModeScheduled || publication.Offer.DeliveryMode != DeliveryModeManual {
 		t.Fatalf("unexpected generated offer: %+v", publication.Offer)
 	}
-	if publication.Round.SystemSlotKey != "2026-07-24@09:00" || len(publication.Round.Allocations) != 1 {
+	if publication.Round.SystemSlotKey != "2026-07-24@20:00" || len(publication.Round.Allocations) != 1 {
 		t.Fatalf("unexpected generated round: %+v", publication.Round)
 	}
 	if allocation := publication.Round.Allocations[0]; allocation.CopyLimit != 3 || allocation.AllocatedUSDAllowance != "150.000000" {
@@ -259,13 +291,13 @@ func TestCreateRushOfferRejectsNewPreimportedDeliveryWithStableFieldReason(t *te
 }
 
 func TestCreateRushOfferRejectsClosedAndArbitrarySlots(t *testing.T) {
-	now := beijingTime(t, "2026-07-24T08:00:00+08:00")
+	now := beijingTime(t, "2026-07-24T19:00:00+08:00")
 	tests := []struct {
 		name     string
 		slotKey  string
 		wantCode string
 	}{
-		{name: "registration closed", slotKey: "2026-07-24@09:00", wantCode: domain.CodeInvalidStateTransition},
+		{name: "registration closed", slotKey: "2026-07-24@20:00", wantCode: domain.CodeInvalidStateTransition},
 		{name: "arbitrary minute", slotKey: "2026-07-24@10:15", wantCode: domain.CodeValidationFailed},
 	}
 	for _, test := range tests {
@@ -528,6 +560,12 @@ func (f *fakeRepository) CreateSystemRushOfferWithIdempotency(_ context.Context,
 	return publication, completion, appErr
 }
 
+func (f *fakeRepository) ConfirmAPIQuotaSaleRoundFulfillmentWithIdempotency(_ context.Context, entry idempotency.Entry, input SaleRoundActionInput, now time.Time, buildCompletion SaleRoundCompletionBuilder) (SaleRound, idempotency.Completion, *domain.AppError) {
+	round := SaleRound{ID: input.SaleRoundID, OwnerUserID: input.OwnerUserID, Version: input.ExpectedVersion + 1, FulfillmentConfirmedAt: &now}
+	completion, appErr := buildCompletion(round)
+	return round, completion, appErr
+}
+
 func (f *fakeRepository) BeginIdempotency(_ context.Context, entry idempotency.Entry) (*idempotency.Entry, *domain.AppError) {
 	if f.idempotencyEntry != nil {
 		return f.idempotencyEntry, nil
@@ -558,7 +596,7 @@ func (f *fakeRepository) CancelIdempotency(_ context.Context, entry *idempotency
 
 func validRushOfferInput(t *testing.T, now time.Time) CreateRushOfferInput {
 	t.Helper()
-	slot, appErr := ResolveOpenSystemSaleSlot("2026-07-24@09:00", now)
+	slot, appErr := ResolveOpenSystemSaleSlot("2026-07-24@20:00", now)
 	if appErr != nil {
 		t.Fatalf("resolve open rush slot: %v", appErr)
 	}

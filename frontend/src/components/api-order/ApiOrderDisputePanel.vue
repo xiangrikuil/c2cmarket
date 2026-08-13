@@ -39,6 +39,9 @@ const disputeQuery = useMyDisputeQuery(disputeId)
 const dispute = computed(() => disputeQuery.data.value ?? null)
 const messageBody = ref('')
 const proposalResolution = ref<ApiOrderDisputeResolution>('full_refund')
+const proposalResolutionLabels = Object.fromEntries(
+  Object.entries(apiOrderDisputeResolutionLabels).filter(([value]) => value !== 'continue_fulfillment'),
+)
 const proposalAmount = ref('')
 const proposalTerms = ref('')
 const rejectReason = ref('')
@@ -369,7 +372,7 @@ async function contestRemedy() {
           <Select v-model="proposalResolution">
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="(label, value) in apiOrderDisputeResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
+              <SelectItem v-for="(label, value) in proposalResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
             </SelectContent>
           </Select>
           <Input v-if="proposalResolution === 'partial_refund'" v-model="proposalAmount" inputmode="decimal" placeholder="退款金额（元）" />

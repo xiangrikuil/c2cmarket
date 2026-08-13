@@ -42,6 +42,10 @@ func ValidityExpiresAt(order Order) *time.Time {
 }
 
 func WithAfterSalesProjection(order Order, now time.Time) Order {
+	order.MerchantConfirmOverdue = order.Status == StatusPaymentSubmitted && order.MerchantConfirmDueAt != nil && !now.Before(*order.MerchantConfirmDueAt)
+	order.DeliveryOverdue = order.Status == StatusPaidConfirmed && order.DeliveryDueAt != nil && !now.Before(*order.DeliveryDueAt)
+	order.CanReportLatePayment = order.Status == StatusCancelled && order.CancelReason == "payment_timeout" &&
+		order.CancelledAt != nil && order.LatePaymentStatus == "" && now.Before(order.CancelledAt.Add(LatePaymentWindow))
 	validityExpiresAt := ValidityExpiresAt(order)
 	if validityExpiresAt != nil {
 		deadline := validityExpiresAt.Add(AfterSalesReportingGracePeriod)
@@ -62,6 +66,31 @@ func WithAfterSalesProjection(order Order, now time.Time) Order {
 		order.DisputeEligibilityReason = DisputeEligibilityEligible
 	}
 	return order
+}
+
+func DeliveryWindow(order Order) time.Duration {
+	if order.PurchaseKind == PurchaseKindLimitedQuotaOffer && order.QuotaDeliveryETAMinutes >= 1 {
+		return time.Duration(order.QuotaDeliveryETAMinutes) * time.Minute
+	}
+	return DefaultDeliveryWindow
+}
+
+func FulfillmentExpiresAt(order Order) *time.Time {
+	if order.QuotaExpiresAtSnapshot != nil {
+		value := order.QuotaExpiresAtSnapshot.UTC()
+		return &value
+	}
+	if strings.TrimSpace(order.PricingSnapshot) == "" {
+		return nil
+	}
+	var snapshot struct {
+		ServiceValidityExpiresAt *time.Time `json:"serviceValidityExpiresAt"`
+	}
+	if err := json.Unmarshal([]byte(order.PricingSnapshot), &snapshot); err != nil || snapshot.ServiceValidityExpiresAt == nil {
+		return nil
+	}
+	value := snapshot.ServiceValidityExpiresAt.UTC()
+	return &value
 }
 
 func ValidateDisputeOccurrence(order Order, raw string, now time.Time) (*time.Time, *domain.AppError) {

@@ -24,7 +24,7 @@ import (
 
 var apiQuotaBatchColumns = `
 	b.id::text, b.api_service_id::text, b.owner_user_id::text,
-	s.title, s.distribution_system, (` + publicAPIServiceOrderablePredicate("s") + `),
+	s.title, s.distribution_system, (` + apiServiceFulfillmentReadyPredicate("s") + `),
 	COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0), s.performance_confirmed_at,
 	s.prompt_audit_enabled,
 	b.source_type, COALESCE(b.source_label, ''), b.status,
@@ -396,7 +396,7 @@ func (s *Store) ListAPIQuotaSaleRoundsForBatch(ctx context.Context, ownerUserID,
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, batch_id::text, api_service_id::text, owner_user_id::text,
-		       COALESCE(system_slot_key, ''), name, starts_at, ends_at, status, created_at, updated_at, version
+		       COALESCE(system_slot_key, ''), name, starts_at, ends_at, status, fulfillment_confirmed_at, created_at, updated_at, version
 		FROM api_quota_sale_rounds
 		WHERE owner_user_id = $1 AND batch_id = $2
 		ORDER BY starts_at, id
@@ -422,6 +422,76 @@ func (s *Store) ListAPIQuotaSaleRoundsForBatch(ctx context.Context, ownerUserID,
 		return nil, internalStoreError()
 	}
 	return result, nil
+}
+
+func (s *Store) ConfirmAPIQuotaSaleRoundFulfillmentWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiquota.SaleRoundActionInput, now time.Time, buildCompletion apiquota.SaleRoundCompletionBuilder) (apiquota.SaleRound, idempotency.Completion, *domain.AppError) {
+	return executeAPIQuotaCommand(ctx, s, &entry, now, func(tx pgx.Tx) (apiquota.SaleRound, *domain.AppError) {
+		var round apiquota.SaleRound
+		err := tx.QueryRow(ctx, `
+			SELECT id::text, batch_id::text, api_service_id::text, owner_user_id::text,
+			       COALESCE(system_slot_key, ''), name, starts_at, ends_at, status,
+			       fulfillment_confirmed_at, created_at, updated_at, version
+			FROM api_quota_sale_rounds
+			WHERE id = $1 AND owner_user_id = $2
+			FOR UPDATE
+		`, input.SaleRoundID, input.OwnerUserID).Scan(
+			&round.ID, &round.BatchID, &round.APIServiceID, &round.OwnerUserID,
+			&round.SystemSlotKey, &round.Name, &round.StartsAt, &round.EndsAt, &round.Status,
+			&round.FulfillmentConfirmedAt, &round.CreatedAt, &round.UpdatedAt, &round.Version,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apiquota.SaleRound{}, quotaNotFound("放量轮次不存在。")
+		}
+		if err != nil {
+			return apiquota.SaleRound{}, internalStoreError()
+		}
+		if input.ExpectedVersion > 0 && round.Version != input.ExpectedVersion {
+			return apiquota.SaleRound{}, quotaVersionConflict()
+		}
+		if round.SystemSlotKey == "" || round.Status != apiquota.RoundStatusScheduled || now.Before(round.StartsAt.Add(-30*time.Minute)) || !now.Before(round.StartsAt) {
+			return apiquota.SaleRound{}, invalidQuotaState("仅可在平台场次开始前 30 分钟内确认履约。")
+		}
+		var serviceReady, batchReady bool
+		if err := tx.QueryRow(ctx, `
+			SELECT (`+apiServiceFulfillmentReadyPredicate("service")+`),
+			       batch.status = 'published' AND batch.sale_cutoff_at > $3 AND batch.expires_at > $3
+			FROM api_services service
+			JOIN api_quota_batches batch ON batch.api_service_id = service.id AND batch.id = $2
+			WHERE service.id = $1 AND service.owner_user_id = $4
+			FOR SHARE OF service, batch
+		`, round.APIServiceID, round.BatchID, now, input.OwnerUserID).Scan(&serviceReady, &batchReady); err != nil {
+			return apiquota.SaleRound{}, internalStoreError()
+		}
+		if !serviceReady || !batchReady {
+			return apiquota.SaleRound{}, invalidQuotaState("卖家账号、服务、探针、收款配置或额度批次当前不可履约。")
+		}
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, input.OwnerUserID, now); appErr != nil {
+			return apiquota.SaleRound{}, appErr
+		}
+		if round.FulfillmentConfirmedAt == nil {
+			confirmedAt := now
+			if err := tx.QueryRow(ctx, `
+				UPDATE api_quota_sale_rounds
+				SET fulfillment_confirmed_at = $2, updated_at = $2, version = version + 1
+				WHERE id = $1
+				RETURNING updated_at, version
+			`, round.ID, now).Scan(&round.UpdatedAt, &round.Version); err != nil {
+				return apiquota.SaleRound{}, internalStoreError()
+			}
+			round.FulfillmentConfirmedAt = &confirmedAt
+			if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_quota_sale_round", round.ID, "api_quota_sale_round.fulfillment_confirmed", input.OwnerUserID, apiOperationActorUser, round.Version, input.RequestID, map[string]any{
+				"fulfillmentConfirmedAt": now,
+			}, now); appErr != nil {
+				return apiquota.SaleRound{}, appErr
+			}
+		}
+		allocations, appErr := listAPIQuotaAllocations(ctx, tx, input.OwnerUserID, round.BatchID, round.ID)
+		if appErr != nil {
+			return apiquota.SaleRound{}, appErr
+		}
+		round.Allocations = allocations
+		return round, nil
+	}, buildCompletion)
 }
 
 func (s *Store) PublishAPIQuotaBatch(ctx context.Context, input apiquota.BatchActionInput, now time.Time) (apiquota.Batch, *domain.AppError) {
@@ -456,6 +526,20 @@ func publishAPIQuotaBatchInTx(ctx context.Context, tx pgx.Tx, input apiquota.Bat
 	}
 	if !batch.ServiceOrderable {
 		return apiquota.Batch{}, invalidQuotaState("关联 API 服务当前不可接单。")
+	}
+	var flexibleQuotaSaleOpen bool
+	if err := tx.QueryRow(ctx, `
+		SELECT billing_mode = 'metered_usd_quota'
+		   AND accepting_orders = true
+		   AND available_usd_allowance > 0
+		   AND quota_expires_at > $2 + interval '24 hours'
+		FROM api_services
+		WHERE id = $1
+	`, batch.APIServiceID, now).Scan(&flexibleQuotaSaleOpen); err != nil {
+		return apiquota.Batch{}, internalStoreError()
+	}
+	if flexibleQuotaSaleOpen {
+		return apiquota.Batch{}, invalidQuotaState("请先关闭该服务的自选额度接单，再发布限量额度包。")
 	}
 	if !now.Before(batch.SaleCutoffAt) || !now.Before(batch.ExpiresAt) {
 		return apiquota.Batch{}, domain.NewError(http.StatusConflict, domain.CodeAPIQuotaBatchExpired, "Quota batch expired", "额度批次已超过最晚下单时间。")
@@ -854,10 +938,10 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		  AND (
 		    NOT $7 OR (
 		      b.status = 'published' AND o.status = 'published'
-		      AND `+publicAPIServiceOrderablePredicate("s")+`
+		      AND `+apiServiceFulfillmentReadyPredicate("s")+`
 		      AND $1 < b.sale_cutoff_at AND $1 < b.expires_at
 		      AND stock.available_copies > 0
-		      AND (o.sale_mode = 'continuous' OR current_round.id IS NOT NULL)
+		      AND (o.sale_mode = 'continuous' OR (current_round.id IS NOT NULL AND (current_round.system_slot_key IS NULL OR current_round.fulfillment_confirmed_at IS NOT NULL)))
 		      AND (o.delivery_mode = 'manual' OR credentials.available_copies >= stock.available_copies)
 		    )
 		  )
@@ -1103,7 +1187,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	var declaredMaxConcurrency int
 	var performanceConfirmedAt *time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT s.title, s.distribution_system, (`+publicAPIServiceOrderablePredicate("s")+`),
+		SELECT s.title, s.distribution_system, (`+apiServiceFulfillmentReadyPredicate("s")+`),
 		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0),
 		       s.performance_confirmed_at
 		FROM api_services s
@@ -1131,6 +1215,38 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	}
 	if declaredTTFTBand == "" || declaredMaxConcurrency < 1 || performanceConfirmedAt == nil {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、商户声明最大并发和最近确认时间。")
+	}
+	var flexibleQuotaSaleOpen bool
+	if err := tx.QueryRow(ctx, `
+		SELECT billing_mode = 'metered_usd_quota'
+		   AND accepting_orders = true
+		   AND available_usd_allowance > 0
+		   AND quota_expires_at > $2 + interval '24 hours'
+		FROM api_services
+		WHERE id = $1
+	`, publication.Batch.APIServiceID, now).Scan(&flexibleQuotaSaleOpen); err != nil {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, internalStoreError()
+	}
+	if flexibleQuotaSaleOpen {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, invalidQuotaState("请先关闭该服务的自选额度接单，再发布限量额度包。")
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended('api-quota-system-slot:' || $1::uuid::text || ':' || $2, 0))
+	`, publication.Batch.OwnerUserID, publication.Round.SystemSlotKey); err != nil {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, internalStoreError()
+	}
+	var allocatedCopies int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(sum(allocation.copy_limit), 0)::integer
+		FROM api_quota_allocations allocation
+		JOIN api_quota_sale_rounds round ON round.id = allocation.sale_round_id
+		WHERE round.owner_user_id = $1 AND round.system_slot_key = $2
+		  AND round.status = 'scheduled' AND allocation.status IN ('planned', 'active')
+	`, publication.Batch.OwnerUserID, publication.Round.SystemSlotKey).Scan(&allocatedCopies); err != nil {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, internalStoreError()
+	}
+	if allocatedCopies+publication.Round.Allocations[0].CopyLimit > 10 {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Rush slot copy limit exceeded", "同一卖家在同一平台场次最多发布 10 份。", "copies", "slot_limit", "本场剩余可发布份数不足。")
 	}
 
 	publication.Batch.ServiceTitle = serviceTitle
@@ -1502,6 +1618,9 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if err != nil {
 		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
 	}
+	if appErr := ensureAPIBuyerPendingCapacityInTx(ctx, tx, input.BuyerUserID, "quota", orderContext.OfferID, now); appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
 
 	allocationID, round, appErr := claimAPIQuotaRoundAndAllocation(ctx, tx, input, orderContext, now)
 	if appErr != nil {
@@ -1831,7 +1950,7 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0),
 			       s.performance_confirmed_at, s.prompt_audit_enabled,
 			       probe_connection.id::text, probe_connection.base_url, probe_connection.normalized_base_url,
-			       (`+publicAPIServiceOrderablePredicate("s")+`)
+			       (`+apiServiceFulfillmentReadyPredicate("s")+`)
 		FROM api_quota_offers o
 		JOIN api_quota_batches b ON b.id = o.batch_id AND b.api_service_id = o.api_service_id AND b.owner_user_id = o.owner_user_id
 			JOIN api_services s ON s.id = o.api_service_id AND s.owner_user_id = o.owner_user_id
@@ -1905,13 +2024,13 @@ func claimAPIQuotaRoundAndAllocation(ctx context.Context, tx pgx.Tx, input apiqu
 	round := apiquota.SaleRound{ID: strings.TrimSpace(input.SaleRoundID)}
 	err := tx.QueryRow(ctx, `
 		SELECT batch_id::text, api_service_id::text, owner_user_id::text,
-		       name, starts_at, ends_at, status, created_at, updated_at, version
+		       COALESCE(system_slot_key, ''), name, starts_at, ends_at, status, fulfillment_confirmed_at, created_at, updated_at, version
 		FROM api_quota_sale_rounds
 		WHERE id = $1 AND batch_id = $2 AND status = 'scheduled'
 		FOR SHARE
 	`, round.ID, item.BatchID).Scan(
-		&round.BatchID, &round.APIServiceID, &round.OwnerUserID, &round.Name,
-		&round.StartsAt, &round.EndsAt, &round.Status, &round.CreatedAt, &round.UpdatedAt, &round.Version,
+		&round.BatchID, &round.APIServiceID, &round.OwnerUserID, &round.SystemSlotKey, &round.Name,
+		&round.StartsAt, &round.EndsAt, &round.Status, &round.FulfillmentConfirmedAt, &round.CreatedAt, &round.UpdatedAt, &round.Version,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", apiquota.SaleRound{}, domain.NewError(http.StatusConflict, domain.CodeAPIQuotaRoundEnded, "Sale round unavailable", "放量轮次不存在或已结束。")
@@ -1924,6 +2043,9 @@ func claimAPIQuotaRoundAndAllocation(ctx context.Context, tx pgx.Tx, input apiqu
 	}
 	if !now.Before(round.EndsAt) {
 		return "", apiquota.SaleRound{}, domain.NewError(http.StatusConflict, domain.CodeAPIQuotaRoundEnded, "Sale round ended", "本轮已经结束。")
+	}
+	if round.SystemSlotKey != "" && round.FulfillmentConfirmedAt == nil {
+		return "", apiquota.SaleRound{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Fulfillment confirmation required", "卖家尚未确认本场可按时履约，当前不能下单。")
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO api_quota_round_claims (id, sale_round_id, buyer_user_id, created_at)
@@ -1988,7 +2110,7 @@ func buildAPIQuotaSnapshot(item apiQuotaOrderContext, round apiquota.SaleRound) 
 
 var publicAPIQuotaOffersQuery = `
 	SELECT ` + apiQuotaOfferColumns + `,
-	       b.status, s.title, (` + publicAPIServiceOrderablePredicate("s") + `),
+	       b.status, s.title, (` + apiServiceFulfillmentReadyPredicate("s") + `),
 	       CASE WHEN s.merchant_identity_mode = 'store_alias'
 	            THEN COALESCE(mp.display_name, u.display_name)
 	            ELSE u.display_name END,
@@ -1997,8 +2119,8 @@ var publicAPIQuotaOffersQuery = `
 		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0), s.performance_confirmed_at,
 		       s.prompt_audit_enabled,
 	       b.sale_cutoff_at, b.expires_at,
-	       COALESCE(current_round.id::text, ''), COALESCE(current_round.system_slot_key, ''), COALESCE(current_round.name, ''), current_round.starts_at, current_round.ends_at, COALESCE(current_round.status, ''),
-	       COALESCE(next_round.id::text, ''), COALESCE(next_round.system_slot_key, ''), COALESCE(next_round.name, ''), next_round.starts_at, next_round.ends_at, COALESCE(next_round.status, ''),
+	       COALESCE(current_round.id::text, ''), COALESCE(current_round.system_slot_key, ''), COALESCE(current_round.name, ''), current_round.starts_at, current_round.ends_at, COALESCE(current_round.status, ''), current_round.fulfillment_confirmed_at,
+	       COALESCE(next_round.id::text, ''), COALESCE(next_round.system_slot_key, ''), COALESCE(next_round.name, ''), next_round.starts_at, next_round.ends_at, COALESCE(next_round.status, ''), next_round.fulfillment_confirmed_at,
 	       stock.available_copies, credentials.available_copies
 	FROM api_quota_offers o
 	JOIN api_quota_batches b ON b.id = o.batch_id AND b.api_service_id = o.api_service_id AND b.owner_user_id = o.owner_user_id
@@ -2006,7 +2128,7 @@ var publicAPIQuotaOffersQuery = `
 	JOIN users u ON u.id = o.owner_user_id
 	LEFT JOIN merchant_profiles mp ON mp.id = s.merchant_profile_id AND mp.owner_user_id = s.owner_user_id
 	LEFT JOIN LATERAL (
-		SELECT r.id, r.system_slot_key, r.name, r.starts_at, r.ends_at, r.status
+		SELECT r.id, r.system_slot_key, r.name, r.starts_at, r.ends_at, r.status, r.fulfillment_confirmed_at
 		FROM api_quota_sale_rounds r
 		WHERE r.batch_id = b.id AND r.status = 'scheduled'
 		  AND r.starts_at <= $1 AND r.ends_at > $1
@@ -2020,7 +2142,7 @@ var publicAPIQuotaOffersQuery = `
 		LIMIT 1
 	) current_round ON true
 	LEFT JOIN LATERAL (
-		SELECT r.id, r.system_slot_key, r.name, r.starts_at, r.ends_at, r.status
+		SELECT r.id, r.system_slot_key, r.name, r.starts_at, r.ends_at, r.status, r.fulfillment_confirmed_at
 		FROM api_quota_sale_rounds r
 		WHERE r.batch_id = b.id AND r.status = 'scheduled' AND r.starts_at > $1
 		  AND EXISTS (
@@ -2112,7 +2234,7 @@ func scanAPIQuotaOffers(rows pgx.Rows) ([]apiquota.Offer, *domain.AppError) {
 func scanAPIQuotaRound(row scanner, round *apiquota.SaleRound) error {
 	return row.Scan(
 		&round.ID, &round.BatchID, &round.APIServiceID, &round.OwnerUserID,
-		&round.SystemSlotKey, &round.Name, &round.StartsAt, &round.EndsAt, &round.Status,
+		&round.SystemSlotKey, &round.Name, &round.StartsAt, &round.EndsAt, &round.Status, &round.FulfillmentConfirmedAt,
 		&round.CreatedAt, &round.UpdatedAt, &round.Version,
 	)
 }
@@ -2160,9 +2282,9 @@ func listAPIQuotaAllocations(ctx context.Context, q queryer, ownerUserID, batchI
 func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 	var card apiquota.OfferCard
 	var currentID, currentSystemSlotKey, currentName, currentStatus string
-	var currentStarts, currentEnds *time.Time
+	var currentStarts, currentEnds, currentFulfillmentConfirmedAt *time.Time
 	var nextID, nextSystemSlotKey, nextName, nextStatus string
-	var nextStarts, nextEnds *time.Time
+	var nextStarts, nextEnds, nextFulfillmentConfirmedAt *time.Time
 	err := row.Scan(
 		&card.ID, &card.BatchID, &card.APIServiceID, &card.OwnerUserID,
 		&card.PreviousVersionID, &card.DistributionSystem, &card.Name,
@@ -2176,18 +2298,18 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 		&card.DeclaredTTFTBand, &card.DeclaredMaxConcurrency, &card.PerformanceConfirmedAt,
 		&card.PromptAuditEnabled,
 		&card.SaleCutoffAt, &card.ExpiresAt,
-		&currentID, &currentSystemSlotKey, &currentName, &currentStarts, &currentEnds, &currentStatus,
-		&nextID, &nextSystemSlotKey, &nextName, &nextStarts, &nextEnds, &nextStatus,
+		&currentID, &currentSystemSlotKey, &currentName, &currentStarts, &currentEnds, &currentStatus, &currentFulfillmentConfirmedAt,
+		&nextID, &nextSystemSlotKey, &nextName, &nextStarts, &nextEnds, &nextStatus, &nextFulfillmentConfirmedAt,
 		&card.AvailableCopies, &card.CredentialAvailableCopies,
 	)
 	if err != nil {
 		return apiquota.OfferCard{}, err
 	}
 	if currentID != "" && currentStarts != nil && currentEnds != nil {
-		card.CurrentRound = &apiquota.SaleRound{ID: currentID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: currentSystemSlotKey, Name: currentName, StartsAt: *currentStarts, EndsAt: *currentEnds, Status: currentStatus}
+		card.CurrentRound = &apiquota.SaleRound{ID: currentID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: currentSystemSlotKey, Name: currentName, StartsAt: *currentStarts, EndsAt: *currentEnds, Status: currentStatus, FulfillmentConfirmedAt: currentFulfillmentConfirmedAt}
 	}
 	if nextID != "" && nextStarts != nil && nextEnds != nil {
-		card.NextRound = &apiquota.SaleRound{ID: nextID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: nextSystemSlotKey, Name: nextName, StartsAt: *nextStarts, EndsAt: *nextEnds, Status: nextStatus}
+		card.NextRound = &apiquota.SaleRound{ID: nextID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: nextSystemSlotKey, Name: nextName, StartsAt: *nextStarts, EndsAt: *nextEnds, Status: nextStatus, FulfillmentConfirmedAt: nextFulfillmentConfirmedAt}
 	}
 	return card, nil
 }

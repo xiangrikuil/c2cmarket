@@ -2310,14 +2310,14 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	disputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-dispute-intent")
 	disputeOrder := createAPIOrder(t, server, buyerSession, disputeIntent.ID, "wechat", "api-order-dispute-create")
 	disputePaid := apiOrderAction(t, server, buyerSession, "me", disputeOrder.ID, "submit-payment", disputeOrder.Version, "api-order-dispute-submit-payment", `{"paymentSummary":"已付款但站外确认存在争议。"}`)
-	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"issueCode":"not_delivered","requestedResolution":"continue_fulfillment","requestedAmountCny":"","reason":"付款后商户未按站外确认说明继续处理。"}`)
+	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"issueCode":"not_delivered","requestedResolution":"full_refund","requestedAmountCny":"","reason":"付款后商户未按站外确认说明继续处理。"}`)
 	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "negotiating" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
 	}
 	buyerDisputeDetail := getMyDispute(t, server, buyerSession, disputed.DisputeCaseID)
 	ownerDisputeDetail := getMyDispute(t, server, ownerSession, disputed.DisputeCaseID)
 	if buyerDisputeDetail.IssueCode != "not_delivered" ||
-		buyerDisputeDetail.RequestedResolution != "continue_fulfillment" ||
+		buyerDisputeDetail.RequestedResolution != "full_refund" ||
 		buyerDisputeDetail.RequestedAmountCNY != "" ||
 		len(buyerDisputeDetail.Messages) != 1 ||
 		buyerDisputeDetail.Messages[0].SenderUserID != buyerSession.userID ||

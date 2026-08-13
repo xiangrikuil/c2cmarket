@@ -341,7 +341,7 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		  )
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
-		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > %[3]s)
+		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > %[3]s + interval '24 hours')
 		  AND (%[1]s.billing_mode <> 'fixed_package' OR EXISTS (
 		    SELECT 1
 		    FROM api_service_packages package_row
@@ -360,6 +360,34 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		      AND po.enabled = true
 		      AND po.payment_method IN (%[2]s)
 		  )`, alias, apiServiceSupportedPaymentMethodsSQL, currentTimeExpression)
+}
+
+func apiServiceFulfillmentReadyPredicate(alias string) string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		alias = "api_services"
+	}
+	return fmt.Sprintf(`%[1]s.review_status = 'approved'
+		  AND %[1]s.publication_status = 'online'
+		  AND %[1]s.moderation_status = 'clear'
+		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
+		  AND EXISTS (
+		    SELECT 1 FROM api_probe_connections probe_connection
+		    WHERE probe_connection.id = %[1]s.probe_connection_id
+		      AND probe_connection.owner_user_id = %[1]s.owner_user_id
+		      AND probe_connection.enabled = true
+		      AND probe_connection.verification_status = 'verified'
+		  )
+		  AND EXISTS (
+		    SELECT 1 FROM users owner
+		    WHERE owner.id = %[1]s.owner_user_id AND owner.account_status = 'active'
+		  )
+		  AND EXISTS (
+		    SELECT 1 FROM api_service_payment_options payment_option
+		    WHERE payment_option.api_service_id = %[1]s.id
+		      AND payment_option.enabled = true
+		      AND payment_option.payment_method IN (%[2]s)
+		  )`, alias, apiServiceSupportedPaymentMethodsSQL)
 }
 
 func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -619,6 +647,22 @@ func (s *Store) updateAPIServiceOrderSettingsInTx(ctx context.Context, tx pgx.Tx
 	}
 	if appErr := storeValidateAPIServiceOrderSettings(input); appErr != nil {
 		return apimarket.Service{}, appErr
+	}
+	if input.AcceptingOrders && service.BillingMode == apimarket.ServiceBillingModeMetered {
+		var limitedQuotaActive bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+			  SELECT 1 FROM api_quota_batches batch
+			  WHERE batch.api_service_id = $1
+			    AND batch.status IN ('published', 'paused')
+			    AND batch.sale_cutoff_at > $2 AND batch.expires_at > $2
+			)
+		`, service.ID, now).Scan(&limitedQuotaActive); err != nil {
+			return apimarket.Service{}, internalStoreError()
+		}
+		if limitedQuotaActive {
+			return apimarket.Service{}, domain.NewFieldError(http.StatusConflict, domain.CodeInvalidStateTransition, "Limited quota channel active", "该服务仍有未结束的限量额度批次，暂不能重新开启自选额度接单。", "acceptingOrders", "limited_quota_active", "请先归档或等待限量额度批次结束。")
+		}
 	}
 	if service.AcceptingOrders == input.AcceptingOrders &&
 		service.PaymentWindowMinutes == input.PaymentWindowMinutes &&

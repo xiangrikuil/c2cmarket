@@ -1164,6 +1164,13 @@ func (s *Service) CreateAPIQuotaRoundWithIdempotency(ctx context.Context, user U
 	return s.apiQuota.CreateRoundWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
+func (s *Service) ConfirmAPIQuotaRoundFulfillmentWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.SaleRoundActionInput, buildCompletion apiquota.SaleRoundCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.ConfirmRoundFulfillmentWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) PublishAPIQuotaBatch(ctx context.Context, user User, input apiquota.BatchActionInput) (apiquota.Batch, *domain.AppError) {
 	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
 		return apiquota.Batch{}, appErr
@@ -1443,6 +1450,17 @@ func (s *Service) SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, use
 		return IdempotencyCompletion{}, appErr
 	}
 	return s.apiOrder.SubmitDeliveryWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) ReportLateAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.apiOrder.ReportLatePaymentWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) ResolveLateAPIOrderPaymentWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiOrder.ResolveLatePaymentWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) CreateCarpoolListing(ctx context.Context, user User, input CreateCarpoolListingInput) (CarpoolListing, *domain.AppError) {
