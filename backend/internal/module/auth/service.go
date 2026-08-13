@@ -36,11 +36,13 @@ const (
 	SessionIdleLifetime                            = 7 * 24 * time.Hour
 	SessionRenewalInterval                         = 24 * time.Hour
 	SessionAbsoluteLifetime                        = 30 * 24 * time.Hour
+	RestrictedBusinessSessionLifetime              = 24 * time.Hour
 	AccountAppealSessionLifetime                   = 15 * time.Minute
 	EmailRegistrationCodeLifetime                  = 15 * time.Minute
 	EmailRegistrationMaxAttempts                   = 5
 	RecentPasswordReauthenticationWindow           = 10 * time.Minute
 	OAuthLinkStateLifetime                         = 10 * time.Minute
+	GovernanceOAuthStateLifetime                   = 10 * time.Minute
 	localEmailVerificationPepper                   = "c2cmarket-local-email-verification-pepper-v1"
 	EmailRegistrationPurpose                       = "email_registration"
 	OAuthPurposeLinkLinuxDo                        = "link_linuxdo"
@@ -64,6 +66,10 @@ type Service struct {
 	adminBootstrapRuns          map[string]adminBootstrapRun
 	sessions                    map[string]Session
 	accountAppealSessions       map[string]AccountAppealSession
+	restrictedBusinessSessions  map[string]RestrictedBusinessSession
+	adminReauthenticationGrants map[string]AdminReauthenticationGrant
+	adminReauthenticationStates map[string]adminReauthenticationOAuthState
+	governanceOAuthStates       map[string]governanceOAuthState
 	emailRegistrationCodes      map[string]emailRegistrationChallenge
 	studentRegistrationSetting  StudentRegistrationConfig
 	studentInstitutionDomains   map[string]StudentInstitutionDomain
@@ -120,6 +126,10 @@ func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now fu
 		adminBootstrapRuns:          make(map[string]adminBootstrapRun),
 		sessions:                    make(map[string]Session),
 		accountAppealSessions:       make(map[string]AccountAppealSession),
+		restrictedBusinessSessions:  make(map[string]RestrictedBusinessSession),
+		adminReauthenticationGrants: make(map[string]AdminReauthenticationGrant),
+		adminReauthenticationStates: make(map[string]adminReauthenticationOAuthState),
+		governanceOAuthStates:       make(map[string]governanceOAuthState),
 		emailRegistrationCodes:      make(map[string]emailRegistrationChallenge),
 		studentRegistrationSetting:  StudentRegistrationConfig{Enabled: false, Version: 1, Institutions: []StudentInstitutionDomain{}},
 		studentInstitutionDomains:   make(map[string]StudentInstitutionDomain),
@@ -128,6 +138,21 @@ func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now fu
 		passwordCredentialsByUserID: make(map[string]PasswordCredential),
 	}
 	return service
+}
+
+type adminReauthenticationOAuthState struct {
+	AdminUserID string
+	SessionID   string
+	StateHash   string
+	ExpiresAt   time.Time
+	ConsumedAt  *time.Time
+}
+
+type governanceOAuthState struct {
+	Purpose    string
+	StateHash  string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
 }
 
 // SetEmailVerificationPepper injects the purpose-bound challenge HMAC key.
@@ -266,12 +291,23 @@ func (s *Service) UserByID(ctx context.Context, userID string) (User, *domain.Ap
 }
 
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
+	result, appErr := s.AuthenticateWithOAuthProfile(ctx, profile)
+	if appErr != nil {
+		return User{}, Session{}, appErr
+	}
+	if result.Audience != SessionAudienceNormal {
+		return User{}, Session{}, accountRestrictedError()
+	}
+	return result.User, result.Session, nil
+}
+
+func (s *Service) AuthenticateWithOAuthProfile(ctx context.Context, profile OAuthProfile) (AuthenticationResult, *domain.AppError) {
 	profile.Provider = CanonicalOAuthProvider(profile.Provider)
 	profile.Subject = CanonicalOAuthSubject(profile.Subject)
 	rawUsername := strings.TrimSpace(profile.Username)
 	profile.Username = OAuthUsernameCandidate(profile.Username, profile.Provider, profile.Subject, 0)
 	if profile.Provider == "" || profile.Subject == "" || rawUsername == "" {
-		return User{}, Session{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid OAuth profile", "OAuth 用户资料不完整。", "profile", "required", "OAuth 用户资料不完整。")
+		return AuthenticationResult{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid OAuth profile", "OAuth 用户资料不完整。", "profile", "required", "OAuth 用户资料不完整。")
 	}
 	if profile.DisplayName == "" {
 		profile.DisplayName = profile.Username
@@ -287,7 +323,7 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 	if s.repo != nil {
 		result, appErr := s.repo.UpsertOAuthUser(ctx, profile, now)
 		if appErr != nil {
-			return User{}, Session{}, appErr
+			return AuthenticationResult{}, appErr
 		}
 		user = result.User
 		created = result.Created
@@ -339,14 +375,28 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		s.users[user.ID] = user
 		s.mu.Unlock()
 	}
-	if user.Status != "active" {
-		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
+	if user.SecurityLockedAt != nil || user.Status == AccountStatusArchived {
+		return AuthenticationResult{}, accountRestrictedError()
+	}
+	if IsRestrictedBusinessAccountStatus(user.Status) {
+		restricted, appErr := s.createRestrictedBusinessSession(ctx, user, now)
+		if appErr != nil {
+			return AuthenticationResult{}, appErr
+		}
+		return AuthenticationResult{
+			User:              user,
+			Audience:          SessionAudienceRestrictedBusiness,
+			RestrictedSession: restricted,
+		}, nil
+	}
+	if user.Status != AccountStatusActive {
+		return AuthenticationResult{}, accountRestrictedError()
 	}
 	session := newSession(user.ID, now)
 	session.NewRegistration = created
 	if s.repo != nil {
 		if appErr := s.persistSession(ctx, session, now); appErr != nil {
-			return User{}, Session{}, appErr
+			return AuthenticationResult{}, appErr
 		}
 	} else {
 		s.mu.Lock()
@@ -354,7 +404,178 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		s.mu.Unlock()
 	}
 	s.sendRegistrationSuccessIfNeeded(ctx, created, user, profile.Email, now)
-	return user, session, nil
+	return AuthenticationResult{User: user, Audience: SessionAudienceNormal, Session: session}, nil
+}
+
+func (s *Service) StartRestrictedBusinessOAuth(ctx context.Context) (string, *domain.AppError) {
+	return s.startGovernanceOAuth(ctx, SessionAudienceRestrictedBusiness)
+}
+
+func (s *Service) CompleteRestrictedBusinessOAuth(ctx context.Context, state string, profile OAuthProfile) (AuthenticationResult, *domain.AppError) {
+	provider := CanonicalOAuthProvider(profile.Provider)
+	subject := CanonicalOAuthSubject(profile.Subject)
+	if !IsLinuxDoProvider(provider) || subject == "" {
+		return AuthenticationResult{}, accountRestrictedError()
+	}
+	now := s.now()
+	session := RestrictedBusinessSession{
+		ID:        newSecret("restricted_sess"),
+		CSRFToken: newSecret("restricted_csrf"),
+		CreatedAt: now,
+		ExpiresAt: now.Add(RestrictedBusinessSessionLifetime),
+	}
+	if repo, ok := s.repo.(GovernanceOAuthRepository); ok {
+		user, stored, appErr := repo.CompleteRestrictedBusinessOAuth(
+			ctx,
+			hashOpaqueToken(state),
+			profile,
+			hashOpaqueToken(session.ID),
+			hashOpaqueToken(session.CSRFToken),
+			session.ExpiresAt,
+			now,
+		)
+		if appErr != nil {
+			return AuthenticationResult{}, appErr
+		}
+		stored.ID = session.ID
+		stored.CSRFToken = session.CSRFToken
+		return AuthenticationResult{User: HydrateCapabilities(user), Audience: SessionAudienceRestrictedBusiness, RestrictedSession: stored}, nil
+	}
+	if s.repo != nil {
+		return AuthenticationResult{}, internalAuthDependencyError()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.consumeGovernanceOAuthStateLocked(SessionAudienceRestrictedBusiness, state, now) {
+		return AuthenticationResult{}, governanceOAuthStateInvalidError()
+	}
+	userID := s.oauthUserIDs[OAuthIdentityKey(provider, subject)]
+	user := s.users[userID]
+	if user.ID == "" || !IsRestrictedBusinessAccountStatus(user.Status) || user.SecurityLockedAt != nil ||
+		user.CurrentGovernanceActionID == "" || user.GovernanceVersion < 1 {
+		return AuthenticationResult{}, accountRestrictedError()
+	}
+	for id, existing := range s.restrictedBusinessSessions {
+		if existing.UserID != user.ID || existing.RevokedAt != nil {
+			continue
+		}
+		revokedAt := now
+		existing.RevokedAt = &revokedAt
+		s.restrictedBusinessSessions[id] = existing
+	}
+	session.UserID = user.ID
+	session.GovernanceActionID = user.CurrentGovernanceActionID
+	session.GovernanceVersion = user.GovernanceVersion
+	session.RestrictionEffectiveAt = now
+	session.LastSeenAt = now
+	s.restrictedBusinessSessions[session.ID] = session
+	return AuthenticationResult{User: HydrateCapabilities(user), Audience: SessionAudienceRestrictedBusiness, RestrictedSession: session}, nil
+}
+
+func (s *Service) StartAccountAppealOAuth(ctx context.Context) (string, *domain.AppError) {
+	return s.startGovernanceOAuth(ctx, SessionAudienceAccountAppeal)
+}
+
+func (s *Service) CompleteAccountAppealOAuth(ctx context.Context, state string, profile OAuthProfile) (User, AccountAppealSession, *domain.AppError) {
+	provider := CanonicalOAuthProvider(profile.Provider)
+	subject := CanonicalOAuthSubject(profile.Subject)
+	if !IsLinuxDoProvider(provider) || subject == "" {
+		return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+	}
+	now := s.now()
+	session := AccountAppealSession{
+		ID:        newSecret("appeal_sess"),
+		CSRFToken: newSecret("appeal_csrf"),
+		CreatedAt: now,
+		ExpiresAt: now.Add(AccountAppealSessionLifetime),
+	}
+	if repo, ok := s.repo.(GovernanceOAuthRepository); ok {
+		user, stored, appErr := repo.CompleteAccountAppealOAuth(
+			ctx,
+			hashOpaqueToken(state),
+			profile,
+			hashOpaqueToken(session.ID),
+			hashOpaqueToken(session.CSRFToken),
+			session.ExpiresAt,
+			now,
+		)
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		stored.ID = session.ID
+		stored.CSRFToken = session.CSRFToken
+		return HydrateCapabilities(user), stored, nil
+	}
+	if s.repo != nil {
+		return User{}, AccountAppealSession{}, internalAuthDependencyError()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.consumeGovernanceOAuthStateLocked(SessionAudienceAccountAppeal, state, now) {
+		return User{}, AccountAppealSession{}, governanceOAuthStateInvalidError()
+	}
+	userID := s.oauthUserIDs[OAuthIdentityKey(provider, subject)]
+	user := s.users[userID]
+	if user.ID == "" || !eligibleAccountAppealStatus(user.Status) {
+		return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+	}
+	for sessionID, existing := range s.accountAppealSessions {
+		if existing.UserID != user.ID || existing.RevokedAt != nil {
+			continue
+		}
+		revokedAt := now
+		existing.RevokedAt = &revokedAt
+		s.accountAppealSessions[sessionID] = existing
+	}
+	session.UserID = user.ID
+	s.accountAppealSessions[session.ID] = session
+	return HydrateCapabilities(user), session, nil
+}
+
+func (s *Service) startGovernanceOAuth(ctx context.Context, purpose string) (string, *domain.AppError) {
+	now := s.now()
+	state := newSecret("governance_oauth")
+	expiresAt := now.Add(GovernanceOAuthStateLifetime)
+	if repo, ok := s.repo.(GovernanceOAuthRepository); ok {
+		var appErr *domain.AppError
+		switch purpose {
+		case SessionAudienceRestrictedBusiness:
+			appErr = repo.StartRestrictedBusinessOAuth(ctx, hashOpaqueToken(state), expiresAt, now)
+		case SessionAudienceAccountAppeal:
+			appErr = repo.StartAccountAppealOAuth(ctx, hashOpaqueToken(state), expiresAt, now)
+		default:
+			return "", governanceOAuthStateInvalidError()
+		}
+		if appErr != nil {
+			return "", appErr
+		}
+		return state, nil
+	}
+	if s.repo != nil {
+		return "", internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	s.governanceOAuthStates[purpose+":"+hashOpaqueToken(state)] = governanceOAuthState{
+		Purpose:   purpose,
+		StateHash: hashOpaqueToken(state),
+		ExpiresAt: expiresAt,
+	}
+	s.mu.Unlock()
+	return state, nil
+}
+
+func (s *Service) consumeGovernanceOAuthStateLocked(purpose, state string, now time.Time) bool {
+	key := purpose + ":" + hashOpaqueToken(state)
+	oauthState, ok := s.governanceOAuthStates[key]
+	if !ok || oauthState.ConsumedAt != nil || !now.Before(oauthState.ExpiresAt) ||
+		subtle.ConstantTimeCompare([]byte(oauthState.StateHash), []byte(hashOpaqueToken(state))) != 1 {
+		return false
+	}
+	oauthState.ConsumedAt = &now
+	s.governanceOAuthStates[key] = oauthState
+	return true
 }
 
 func (s *Service) StartAccountAppealSession(ctx context.Context, profile OAuthProfile) (User, AccountAppealSession, *domain.AppError) {
@@ -453,6 +674,152 @@ func (s *Service) GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.accountAppealSessionLocked(sessionID, csrfToken, true)
+}
+
+func (s *Service) GetRestrictedBusinessSession(ctx context.Context, sessionID string) (User, RestrictedBusinessSession, *domain.AppError) {
+	if repo, ok := s.repo.(RestrictedBusinessSessionRepository); ok {
+		user, session, appErr := repo.GetRestrictedBusinessSession(ctx, hashOpaqueToken(sessionID), s.now())
+		if appErr != nil {
+			return User{}, RestrictedBusinessSession{}, appErr
+		}
+		session.ID = sessionID
+		return HydrateCapabilities(user), session, nil
+	}
+	if s.repo != nil {
+		return User{}, RestrictedBusinessSession{}, internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.restrictedBusinessSessionLocked(sessionID, "", false)
+}
+
+func (s *Service) GetRestrictedBusinessSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, RestrictedBusinessSession, *domain.AppError) {
+	if repo, ok := s.repo.(RestrictedBusinessSessionRepository); ok {
+		user, session, appErr := repo.GetRestrictedBusinessSessionWithCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now())
+		if appErr != nil {
+			return User{}, RestrictedBusinessSession{}, appErr
+		}
+		session.ID = sessionID
+		return HydrateCapabilities(user), session, nil
+	}
+	if s.repo != nil {
+		return User{}, RestrictedBusinessSession{}, internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.restrictedBusinessSessionLocked(sessionID, csrfToken, true)
+}
+
+func (s *Service) RefreshRestrictedBusinessSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError) {
+	csrfToken := newSecret("restricted_csrf")
+	if repo, ok := s.repo.(RestrictedBusinessSessionRepository); ok {
+		if _, _, appErr := repo.RotateRestrictedBusinessSessionCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now()); appErr != nil {
+			return "", appErr
+		}
+		return csrfToken, nil
+	}
+	if s.repo != nil {
+		return "", internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.restrictedBusinessSessions[sessionID]
+	if !ok || session.RevokedAt != nil || !s.now().Before(session.ExpiresAt) {
+		return "", restrictedBusinessSessionExpiredError()
+	}
+	session.CSRFToken = csrfToken
+	session.LastSeenAt = s.now()
+	s.restrictedBusinessSessions[sessionID] = session
+	return csrfToken, nil
+}
+
+func (s *Service) LogoutRestrictedBusinessSession(ctx context.Context, sessionID string) {
+	if repo, ok := s.repo.(RestrictedBusinessSessionRepository); ok {
+		_ = repo.RevokeRestrictedBusinessSession(ctx, hashOpaqueToken(sessionID), s.now())
+		return
+	}
+	if s.repo != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.restrictedBusinessSessions[sessionID]
+	if !ok || session.RevokedAt != nil {
+		return
+	}
+	now := s.now()
+	session.RevokedAt = &now
+	s.restrictedBusinessSessions[sessionID] = session
+}
+
+func (s *Service) createRestrictedBusinessSession(ctx context.Context, user User, now time.Time) (RestrictedBusinessSession, *domain.AppError) {
+	if !IsRestrictedBusinessAccountStatus(user.Status) || user.SecurityLockedAt != nil {
+		return RestrictedBusinessSession{}, accountRestrictedError()
+	}
+	session := RestrictedBusinessSession{
+		ID:                     newSecret("restricted_sess"),
+		UserID:                 user.ID,
+		CSRFToken:              newSecret("restricted_csrf"),
+		GovernanceActionID:     user.CurrentGovernanceActionID,
+		GovernanceVersion:      user.GovernanceVersion,
+		RestrictionEffectiveAt: now,
+		CreatedAt:              now,
+		ExpiresAt:              now.Add(RestrictedBusinessSessionLifetime),
+		LastSeenAt:             now,
+	}
+	if repo, ok := s.repo.(RestrictedBusinessSessionRepository); ok {
+		stored, appErr := repo.CreateRestrictedBusinessSession(
+			ctx,
+			user.ID,
+			hashOpaqueToken(session.ID),
+			hashOpaqueToken(session.CSRFToken),
+			session.ExpiresAt,
+			now,
+		)
+		if appErr != nil {
+			return RestrictedBusinessSession{}, appErr
+		}
+		stored.ID = session.ID
+		stored.CSRFToken = session.CSRFToken
+		return stored, nil
+	}
+	if s.repo != nil {
+		return RestrictedBusinessSession{}, accountRestrictedError()
+	}
+	if session.GovernanceActionID == "" || session.GovernanceVersion < 1 {
+		return RestrictedBusinessSession{}, accountRestrictedError()
+	}
+	s.mu.Lock()
+	for id, existing := range s.restrictedBusinessSessions {
+		if existing.UserID != user.ID || existing.RevokedAt != nil {
+			continue
+		}
+		revokedAt := now
+		existing.RevokedAt = &revokedAt
+		s.restrictedBusinessSessions[id] = existing
+	}
+	s.restrictedBusinessSessions[session.ID] = session
+	s.mu.Unlock()
+	return session, nil
+}
+
+func (s *Service) restrictedBusinessSessionLocked(sessionID, csrfToken string, requireCSRF bool) (User, RestrictedBusinessSession, *domain.AppError) {
+	session, ok := s.restrictedBusinessSessions[sessionID]
+	if !ok || session.RevokedAt != nil || !s.now().Before(session.ExpiresAt) {
+		return User{}, RestrictedBusinessSession{}, restrictedBusinessSessionExpiredError()
+	}
+	if requireCSRF && subtle.ConstantTimeCompare([]byte(session.CSRFToken), []byte(csrfToken)) != 1 {
+		return User{}, RestrictedBusinessSession{}, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "CSRF token invalid", "受限业务 CSRF token 无效或缺失。")
+	}
+	user := s.users[session.UserID]
+	if !IsRestrictedBusinessAccountStatus(user.Status) || user.SecurityLockedAt != nil ||
+		user.CurrentGovernanceActionID != session.GovernanceActionID ||
+		user.GovernanceVersion != session.GovernanceVersion {
+		return User{}, RestrictedBusinessSession{}, restrictedBusinessSessionExpiredError()
+	}
+	session.LastSeenAt = s.now()
+	s.restrictedBusinessSessions[sessionID] = session
+	return HydrateCapabilities(user), session, nil
 }
 
 func (s *Service) accountAppealSessionLocked(sessionID, csrfToken string, requireCSRF bool) (User, AccountAppealSession, *domain.AppError) {
@@ -871,17 +1238,28 @@ func (s *Service) UpdateStudentInstitutionDomainWithIdempotency(ctx context.Cont
 }
 
 func (s *Service) LoginWithPassword(ctx context.Context, username, password string) (User, Session, *domain.AppError) {
+	result, appErr := s.AuthenticateWithPassword(ctx, username, password)
+	if appErr != nil {
+		return User{}, Session{}, appErr
+	}
+	if result.Audience != SessionAudienceNormal {
+		return User{}, Session{}, accountRestrictedError()
+	}
+	return result.User, result.Session, nil
+}
+
+func (s *Service) AuthenticateWithPassword(ctx context.Context, username, password string) (AuthenticationResult, *domain.AppError) {
 	username = strings.TrimSpace(strings.ToLower(username))
 	password = strings.TrimSpace(password)
 	if username == "" || password == "" {
-		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
+		return AuthenticationResult{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
 	}
 	var credential PasswordCredential
 	var appErr *domain.AppError
 	if s.repo != nil {
 		credential, appErr = s.repo.PasswordCredential(ctx, username)
 		if appErr != nil {
-			return User{}, Session{}, appErr
+			return AuthenticationResult{}, appErr
 		}
 	} else {
 		s.mu.Lock()
@@ -893,39 +1271,53 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 		user := s.users[userID]
 		if user.ID == "" || credential.User.ID == "" {
 			s.mu.Unlock()
-			return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
+			return AuthenticationResult{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
 		}
 		credential.User = user
 		s.mu.Unlock()
 	}
 	matched, needsRehash := passwordCredentialMatches(credential, password)
 	if !matched {
-		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
-	}
-	if credential.User.Status != "active" {
-		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
+		return AuthenticationResult{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
 	}
 	if appErr := requireNativePasswordUser(credential.User); appErr != nil {
-		return User{}, Session{}, appErr
+		return AuthenticationResult{}, appErr
 	}
 
 	now := s.now()
 	if needsRehash {
 		if appErr := s.rehashPasswordCredential(ctx, credential, password, now); appErr != nil {
-			return User{}, Session{}, appErr
+			return AuthenticationResult{}, appErr
 		}
+	}
+	if credential.User.SecurityLockedAt != nil || credential.User.Status == AccountStatusArchived {
+		return AuthenticationResult{}, accountRestrictedError()
+	}
+	if IsRestrictedBusinessAccountStatus(credential.User.Status) {
+		restricted, appErr := s.createRestrictedBusinessSession(ctx, credential.User, now)
+		if appErr != nil {
+			return AuthenticationResult{}, appErr
+		}
+		return AuthenticationResult{
+			User:              HydrateCapabilities(credential.User),
+			Audience:          SessionAudienceRestrictedBusiness,
+			RestrictedSession: restricted,
+		}, nil
+	}
+	if credential.User.Status != AccountStatusActive {
+		return AuthenticationResult{}, accountRestrictedError()
 	}
 	session := newSession(credential.User.ID, now)
 	if s.repo != nil {
 		if appErr := s.persistSession(ctx, session, now); appErr != nil {
-			return User{}, Session{}, appErr
+			return AuthenticationResult{}, appErr
 		}
 	} else {
 		s.mu.Lock()
 		s.sessions[session.ID] = session
 		s.mu.Unlock()
 	}
-	return HydrateCapabilities(credential.User), session, nil
+	return AuthenticationResult{User: HydrateCapabilities(credential.User), Audience: SessionAudienceNormal, Session: session}, nil
 }
 
 func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (BootstrapAdminResult, *domain.AppError) {
@@ -1085,6 +1477,14 @@ func (s *Service) PasswordConfigured(ctx context.Context, userID string) (bool, 
 }
 
 func (s *Service) ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError {
+	return s.ReauthenticatePasswordForPurpose(ctx, sessionID, csrfToken, password, "")
+}
+
+func (s *Service) ReauthenticatePasswordForPurpose(ctx context.Context, sessionID, csrfToken, password, purpose string) *domain.AppError {
+	purpose = strings.TrimSpace(purpose)
+	if purpose != "" && purpose != AdminReauthenticationPurposeGrantAdmin {
+		return adminReauthenticationPurposeInvalidError()
+	}
 	user, session, appErr := s.GetSessionWithCSRF(ctx, sessionID, csrfToken)
 	if appErr != nil {
 		return appErr
@@ -1115,7 +1515,25 @@ func (s *Service) ReauthenticatePassword(ctx context.Context, sessionID, csrfTok
 		}
 	}
 	if repo, ok := s.repo.(OAuthLinkRepository); ok {
-		return repo.MarkSessionPasswordReauthenticated(ctx, hashOpaqueToken(sessionID), now)
+		if appErr := repo.MarkSessionPasswordReauthenticated(ctx, hashOpaqueToken(sessionID), now); appErr != nil {
+			return appErr
+		}
+		if purpose == "" {
+			return nil
+		}
+		adminRepo, ok := s.repo.(AdminReauthenticationRepository)
+		if !ok {
+			return internalAuthDependencyError()
+		}
+		_, appErr := adminRepo.CreateAdminReauthenticationGrant(
+			ctx,
+			hashOpaqueToken(sessionID),
+			purpose,
+			AdminReauthenticationMethodPassword,
+			now,
+			now.Add(RecentPasswordReauthenticationWindow),
+		)
+		return appErr
 	}
 	if s.repo != nil {
 		return internalAuthDependencyError()
@@ -1123,7 +1541,103 @@ func (s *Service) ReauthenticatePassword(ctx context.Context, sessionID, csrfTok
 	s.mu.Lock()
 	session.PasswordReauthenticatedAt = &now
 	s.sessions[sessionID] = session
+	if purpose != "" {
+		if !user.IsAdmin || user.Status != AccountStatusActive || user.SecurityLockedAt != nil {
+			s.mu.Unlock()
+			return adminReauthenticationPurposeInvalidError()
+		}
+		grant := AdminReauthenticationGrant{
+			ID:            newSecret("admin_reauth"),
+			AdminUserID:   user.ID,
+			AuthSessionID: sessionID,
+			Purpose:       purpose,
+			Method:        AdminReauthenticationMethodPassword,
+			VerifiedAt:    now,
+			ExpiresAt:     now.Add(RecentPasswordReauthenticationWindow),
+		}
+		s.adminReauthenticationGrants[hashOpaqueToken(sessionID)+":"+purpose] = grant
+	}
 	s.mu.Unlock()
+	return nil
+}
+
+func (s *Service) StartAdminReauthenticationOAuth(ctx context.Context, sessionID string) (string, *domain.AppError) {
+	user, _, appErr := s.GetSession(ctx, sessionID)
+	if appErr != nil {
+		return "", appErr
+	}
+	if !user.IsAdmin || user.Status != AccountStatusActive || user.SecurityLockedAt != nil {
+		return "", RecentReauthenticationRequiredError()
+	}
+	now := s.now()
+	state := newSecret("admin_reauth_oauth")
+	expiresAt := now.Add(RecentPasswordReauthenticationWindow)
+	if repo, ok := s.repo.(AdminReauthenticationRepository); ok {
+		if appErr := repo.StartAdminReauthenticationOAuth(
+			ctx,
+			hashOpaqueToken(sessionID),
+			hashOpaqueToken(state),
+			OAuthPurposeGrantAdminReauthentication,
+			expiresAt,
+			now,
+		); appErr != nil {
+			return "", appErr
+		}
+		return state, nil
+	}
+	if s.repo != nil {
+		return "", internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	s.adminReauthenticationStates[sessionID] = adminReauthenticationOAuthState{
+		AdminUserID: user.ID,
+		SessionID:   sessionID,
+		StateHash:   hashOpaqueToken(state),
+		ExpiresAt:   expiresAt,
+	}
+	s.mu.Unlock()
+	return state, nil
+}
+
+func (s *Service) CompleteAdminReauthenticationOAuth(ctx context.Context, sessionID, state string, profile OAuthProfile) *domain.AppError {
+	now := s.now()
+	if repo, ok := s.repo.(AdminReauthenticationRepository); ok {
+		_, appErr := repo.CompleteAdminReauthenticationOAuth(
+			ctx,
+			hashOpaqueToken(sessionID),
+			hashOpaqueToken(state),
+			profile,
+			now,
+			now.Add(RecentPasswordReauthenticationWindow),
+		)
+		return appErr
+	}
+	if s.repo != nil {
+		return internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	oauthState, ok := s.adminReauthenticationStates[sessionID]
+	user := s.users[oauthState.AdminUserID]
+	if !ok || oauthState.ConsumedAt != nil || !now.Before(oauthState.ExpiresAt) ||
+		subtle.ConstantTimeCompare([]byte(oauthState.StateHash), []byte(hashOpaqueToken(state))) != 1 ||
+		!user.IsAdmin || user.Status != AccountStatusActive || user.SecurityLockedAt != nil ||
+		user.LinuxDoBinding == nil ||
+		CanonicalOAuthSubject(user.LinuxDoBinding.LinuxDoUserID) != CanonicalOAuthSubject(profile.Subject) {
+		return RecentReauthenticationRequiredError()
+	}
+	oauthState.ConsumedAt = &now
+	s.adminReauthenticationStates[sessionID] = oauthState
+	grant := AdminReauthenticationGrant{
+		ID:            newSecret("admin_reauth"),
+		AdminUserID:   user.ID,
+		AuthSessionID: sessionID,
+		Purpose:       AdminReauthenticationPurposeGrantAdmin,
+		Method:        AdminReauthenticationMethodLinuxDoOAuth,
+		VerifiedAt:    now,
+		ExpiresAt:     now.Add(RecentPasswordReauthenticationWindow),
+	}
+	s.adminReauthenticationGrants[hashOpaqueToken(sessionID)+":"+AdminReauthenticationPurposeGrantAdmin] = grant
 	return nil
 }
 
@@ -1413,8 +1927,22 @@ func (s *Service) UpdateAdminUserStatusWithIdempotency(ctx context.Context, user
 	input.TargetUserID = strings.TrimSpace(input.TargetUserID)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Reason = strings.TrimSpace(input.Reason)
+	input.ReasonCode = strings.TrimSpace(input.ReasonCode)
+	if input.ReasonCode == "" {
+		input.ReasonCode = GovernanceReasonManual
+	}
+	input.PublicReason = strings.TrimSpace(input.PublicReason)
+	if input.PublicReason == "" {
+		input.PublicReason = input.Reason
+	}
+	input.InternalNote = strings.TrimSpace(input.InternalNote)
+	input.LinkedCaseType = strings.TrimSpace(input.LinkedCaseType)
+	input.LinkedCaseID = strings.TrimSpace(input.LinkedCaseID)
 	if appErr := validateAdminUserStatusInput(input); appErr != nil {
 		return idempotency.Completion{}, appErr
+	}
+	if input.ExpiresAt != nil && !input.ExpiresAt.After(s.now()) {
+		return idempotency.Completion{}, adminUserValidationError("expiresAt", "暂停到期时间必须晚于当前时间。")
 	}
 	if buildCompletion == nil {
 		return idempotency.Completion{}, adminUserInternalError()
@@ -1450,6 +1978,7 @@ func (s *Service) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, 
 	input.AdminUserID = strings.TrimSpace(user.ID)
 	input.TargetUserID = strings.TrimSpace(input.TargetUserID)
 	input.Reason = strings.TrimSpace(input.Reason)
+	input.AdminSessionTokenHash = hashOpaqueToken(strings.TrimSpace(input.AdminSessionTokenHash))
 	if appErr := validateAdminUserPermissionInput(input); appErr != nil {
 		return idempotency.Completion{}, appErr
 	}
@@ -1731,8 +2260,24 @@ func validateAdminUserStatusInput(input AdminUserStatusInput) *domain.AppError {
 	if input.TargetUserID == input.AdminUserID {
 		return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Self management forbidden", "不能修改自己的账号状态。")
 	}
-	if !stringIn(input.Status, AccountStatusActive, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived) {
+	if !stringIn(input.Status, AccountStatusActive, AccountStatusSuspended, AccountStatusBanned) {
 		return adminUserValidationError("status", "目标账号状态不受支持。")
+	}
+	if input.Status == AccountStatusSuspended {
+		if input.IsIndefinite == (input.ExpiresAt != nil) {
+			return adminUserValidationError("expiresAt", "暂停账号必须明确选择到期时间或长期暂停。")
+		}
+	} else if input.IsIndefinite || input.ExpiresAt != nil {
+		return adminUserValidationError("expiresAt", "只有暂停账号可以设置期限。")
+	}
+	if strings.TrimSpace(input.PublicReason) == "" {
+		return adminUserValidationError("publicReason", "必须提供公开原因。")
+	}
+	if utf8.RuneCountInString(input.PublicReason) > 500 {
+		return adminUserValidationError("publicReason", "公开原因最多 500 字。")
+	}
+	if utf8.RuneCountInString(input.InternalNote) > 2000 {
+		return adminUserValidationError("internalNote", "内部备注最多 2000 字。")
 	}
 	return validateAdminUserMutationReason(input.ExpectedVersion, input.Reason)
 }
@@ -1924,13 +2469,25 @@ func (s *Service) updateAdminUserStatusMemory(input AdminUserStatusInput) (Admin
 	}
 	beforeStatus := current.Status
 	now := s.now()
+	governanceVersion := max(user.GovernanceVersion, current.GovernanceVersion) + 1
+	actionID := uuid.NewString()
 	user.Status = input.Status
+	user.GovernanceVersion = governanceVersion
+	user.CurrentGovernanceActionID = actionID
 	s.users[user.ID] = user
 	current.Status = input.Status
+	current.GovernanceVersion = governanceVersion
+	current.CurrentGovernanceActionID = actionID
 	current.Version++
 	current.UpdatedAt = now
 	s.adminUsers[user.ID] = current
 	if beforeStatus == AccountStatusActive && input.Status != AccountStatusActive {
+		if user.IsAdmin {
+			user.IsAdmin = false
+			s.users[user.ID] = user
+			current.IsAdmin = false
+			s.adminUsers[user.ID] = current
+		}
 		for id, session := range s.sessions {
 			if session.UserID == user.ID && session.RevokedAt == nil {
 				revokedAt := now
@@ -1938,6 +2495,14 @@ func (s *Service) updateAdminUserStatusMemory(input AdminUserStatusInput) (Admin
 				s.sessions[id] = session
 			}
 		}
+	}
+	for id, session := range s.restrictedBusinessSessions {
+		if session.UserID != user.ID || session.RevokedAt != nil {
+			continue
+		}
+		revokedAt := now
+		session.RevokedAt = &revokedAt
+		s.restrictedBusinessSessions[id] = session
 	}
 	s.appendAdminAuditEntryLocked(user.ID, AdminAccountAuditEntry{
 		ID:           uuid.NewString(),
@@ -1972,6 +2537,16 @@ func (s *Service) updateAdminUserPermissionMemory(input AdminUserPermissionInput
 	}
 	if input.Grant && isStudentOnlyIdentity(user) {
 		return AdminUserMutationResult{}, adminUserInvalidTransition("高校邮箱账号绑定 Linux.do 后才能获得管理员权限。")
+	}
+	if input.Grant {
+		grantKey := input.AdminSessionTokenHash + ":" + AdminReauthenticationPurposeGrantAdmin
+		grant, ok := s.adminReauthenticationGrants[grantKey]
+		if !ok || grant.AdminUserID != input.AdminUserID || grant.ConsumedAt != nil || grant.RevokedAt != nil || !s.now().Before(grant.ExpiresAt) {
+			return AdminUserMutationResult{}, RecentReauthenticationRequiredError()
+		}
+		now := s.now()
+		grant.ConsumedAt = &now
+		s.adminReauthenticationGrants[grantKey] = grant
 	}
 	if !input.Grant && current.Status == AccountStatusActive && s.activeAdminCountLocked() <= 1 {
 		return AdminUserMutationResult{}, adminUserInvalidTransition("不能撤销最后一个有效管理员的权限。")
@@ -2035,7 +2610,7 @@ func decorateAdminUserDetail(detail AdminUserDetail, adminUserID string) AdminUs
 
 func adminUserGovernanceActions(detail AdminUserDetail, adminUserID string) []AdminUserGovernanceAction {
 	actions := make([]AdminUserGovernanceAction, 0, 4)
-	for _, targetStatus := range []string{AccountStatusActive, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived} {
+	for _, targetStatus := range []string{AccountStatusActive, AccountStatusSuspended, AccountStatusBanned} {
 		if !AllowedAdminUserStatusTransition(detail.User.Status, targetStatus) {
 			continue
 		}
@@ -2164,12 +2739,10 @@ func stringPointerOrNil(value string) *string {
 func AllowedAdminUserStatusTransition(current, next string) bool {
 	switch current {
 	case AccountStatusActive:
-		return stringIn(next, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived)
+		return stringIn(next, AccountStatusSuspended, AccountStatusBanned)
 	case AccountStatusSuspended:
-		return stringIn(next, AccountStatusActive, AccountStatusBanned, AccountStatusArchived)
+		return stringIn(next, AccountStatusActive, AccountStatusBanned)
 	case AccountStatusBanned:
-		return stringIn(next, AccountStatusActive, AccountStatusArchived)
-	case AccountStatusArchived:
 		return next == AccountStatusActive
 	default:
 		return false
@@ -2191,6 +2764,14 @@ func boolPointer(value bool) *bool {
 
 func adminPermissionRequired() *domain.AppError {
 	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+}
+
+func accountRestrictedError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
+}
+
+func restrictedBusinessSessionExpiredError() *domain.AppError {
+	return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Restricted business session expired", "受限业务会话已失效，请重新验证身份。")
 }
 
 func adminUserValidationError(field, detail string) *domain.AppError {
@@ -2488,12 +3069,20 @@ func internalAuthDependencyError() *domain.AppError {
 	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Authentication dependency unavailable", "认证服务依赖未正确配置。")
 }
 
+func governanceOAuthStateInvalidError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "OAuth state 无效或已过期。")
+}
+
 func recentReauthenticationRequiredError() *domain.AppError {
 	return domain.NewError(http.StatusForbidden, domain.CodeRecentReauthenticationRequired, "Recent reauthentication required", "请先使用当前密码重新验证身份。")
 }
 
 func RecentReauthenticationRequiredError() *domain.AppError {
 	return recentReauthenticationRequiredError()
+}
+
+func adminReauthenticationPurposeInvalidError() *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reauthentication purpose invalid", "重验用途无效。", "purpose", "invalid", "重验用途无效。")
 }
 
 func oauthIdentityConflictError() *domain.AppError {

@@ -152,6 +152,38 @@ paths:
                 $ref: "#/components/schemas/SessionResponse"
         "401":
           $ref: "#/components/responses/Problem"
+  /api/v1/auth/restricted-business/session:
+    get:
+      operationId: getRestrictedBusinessSession
+      tags: [Auth]
+      security:
+        - restrictedBusinessCookie: []
+      summary: Read the current restricted-business session.
+      description: Rotates only the restricted-business CSRF token. It never reads or falls back to the normal or account-appeal cookie.
+      responses:
+        "200":
+          description: Current restricted-business session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /api/v1/auth/restricted-business/logout:
+    post:
+      operationId: logoutRestrictedBusinessSession
+      tags: [Auth]
+      security:
+        - restrictedBusinessCookie: []
+          restrictedBusinessCSRF: []
+      summary: Revoke only the current restricted-business session.
+      responses:
+        "204":
+          description: Restricted-business session revoked.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
   /api/v1/auth/password/login:
     post:
       operationId: loginWithPassword
@@ -188,8 +220,8 @@ paths:
     post:
       operationId: reauthenticatePassword
       tags: [Auth]
-      summary: Reauthenticate the current session before linking linux.do.
-      description: Verifies the current native password and records a ten-minute, session-bound recent-authentication fact. It does not create another session or expose credential material.
+      summary: Reauthenticate the current session for a declared purpose.
+      description: Verifies the current native password. With `grant_admin`, it creates a ten-minute, session-bound, single-use administrator grant; an omitted purpose retains the linux.do-link compatibility fact.
       security:
         - sessionCookie: []
           csrfToken: []
@@ -324,10 +356,10 @@ paths:
         - name: purpose
           in: query
           required: false
-          description: "`link_linuxdo` starts a current-session identity-link flow and requires a recent password reauthentication; omitted starts ordinary login or registration."
+          description: "`link_linuxdo` starts identity linking; `restricted_business` uses a dedicated one-time state and resolves only an existing suspended or banned identity; `grant_admin_reauth` uses its own state bound to the current administrator session."
           schema:
             type: string
-            enum: [link_linuxdo]
+            enum: [link_linuxdo, restricted_business, grant_admin_reauth]
         - name: returnTo
           in: query
           required: false
@@ -384,7 +416,9 @@ paths:
       security: []
       summary: Start linux.do verification for a restricted-account appeal.
       description: |
-        Starts a purpose-scoped OAuth flow that may resolve only an existing linux.do identity.
+        Starts account-appeal OAuth with a dedicated one-time state and Cookie. It may resolve only
+        an existing linux.do identity and cannot consume normal-login, restricted-business,
+        identity-linking, or administrator-reauthentication state.
         It never creates or updates a user, registration attribution, referral reward, ordinary
         session, profile, or last-login fact.
       responses:
@@ -8676,6 +8710,14 @@ components:
       type: apiKey
       in: header
       name: X-Account-Appeal-CSRF
+    restrictedBusinessCookie:
+      type: apiKey
+      in: cookie
+      name: c2c_restricted_business_session
+    restrictedBusinessCSRF:
+      type: apiKey
+      in: header
+      name: X-Restricted-Business-CSRF
     metricsBearer:
       type: http
       scheme: bearer
@@ -10551,10 +10593,13 @@ components:
           type: string
     SessionResponse:
       type: object
-      required: [user, csrfToken, expiresAt]
+      required: [user, audience, csrfToken, expiresAt]
       properties:
         user:
           $ref: "#/components/schemas/User"
+        audience:
+          type: string
+          enum: [normal, restricted_business]
         csrfToken:
           type: string
         expiresAt:
@@ -10596,6 +10641,9 @@ components:
           type: string
           minLength: 1
           maxLength: 256
+        purpose:
+          type: string
+          enum: [grant_admin]
         turnstileToken:
           type: string
           minLength: 1
@@ -16794,13 +16842,13 @@ components:
       properties:
         action:
           type: string
-          enum: [suspend, ban, archive, restore, grant_admin, revoke_admin]
+          enum: [suspend, ban, restore, grant_admin, revoke_admin]
         kind:
           type: string
           enum: [status, permission]
         targetStatus:
           type: string
-          enum: [active, suspended, banned, archived]
+          enum: [active, suspended, banned]
         targetIsAdmin:
           type: boolean
         allowed:
@@ -16897,11 +16945,28 @@ components:
       properties:
         status:
           type: string
-          enum: [active, suspended, banned, archived]
+          enum: [active, suspended, banned]
         reason:
           type: string
           minLength: 1
           maxLength: 500
+        publicReason:
+          type: string
+          maxLength: 500
+        internalNote:
+          type: string
+          maxLength: 2000
+        expiresAt:
+          type: string
+          format: date-time
+        isIndefinite:
+          type: boolean
+        linkedCaseType:
+          type: string
+          maxLength: 80
+        linkedCaseId:
+          type: string
+          maxLength: 160
     AdminUserPermissionRequest:
       type: object
       additionalProperties: false

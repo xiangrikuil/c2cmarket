@@ -168,10 +168,16 @@ type PromotionRewardService interface {
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
+	AuthenticateWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.AuthenticationResult, *domain.AppError)
+	StartRestrictedBusinessOAuth(ctx context.Context) (string, *domain.AppError)
+	CompleteRestrictedBusinessOAuth(ctx context.Context, state string, profile auth.OAuthProfile) (auth.AuthenticationResult, *domain.AppError)
+	StartAccountAppealOAuth(ctx context.Context) (string, *domain.AppError)
+	CompleteAccountAppealOAuth(ctx context.Context, state string, profile auth.OAuthProfile) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	StartAccountAppealSession(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	GetAccountAppealSession(ctx context.Context, sessionID string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
+	AuthenticateWithPassword(ctx context.Context, username, password string) (auth.AuthenticationResult, *domain.AppError)
 	StudentRegistrationConfig(ctx context.Context) (auth.StudentRegistrationConfig, *domain.AppError)
 	AdminStudentRegistration(ctx context.Context, user auth.User) (auth.StudentRegistrationConfig, *domain.AppError)
 	UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentRegistrationSettingUpdate, build auth.StudentRegistrationCompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -181,11 +187,18 @@ type Service interface {
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
 	ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError
+	ReauthenticatePasswordForPurpose(ctx context.Context, sessionID, csrfToken, password, purpose string) *domain.AppError
+	StartAdminReauthenticationOAuth(ctx context.Context, sessionID string) (string, *domain.AppError)
+	CompleteAdminReauthenticationOAuth(ctx context.Context, sessionID, state string, profile auth.OAuthProfile) *domain.AppError
 	StartLinuxDoLink(ctx context.Context, sessionID string) (string, *domain.AppError)
 	CompleteLinuxDoLink(ctx context.Context, sessionID, state string, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
 	GetSession(ctx context.Context, sessionID string) (auth.User, auth.Session, *domain.AppError)
 	GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.Session, *domain.AppError)
+	GetRestrictedBusinessSession(ctx context.Context, sessionID string) (auth.User, auth.RestrictedBusinessSession, *domain.AppError)
+	GetRestrictedBusinessSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.RestrictedBusinessSession, *domain.AppError)
+	RefreshRestrictedBusinessSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError)
+	LogoutRestrictedBusinessSession(ctx context.Context, sessionID string)
 	RenewSession(ctx context.Context, sessionID string) (auth.Session, bool, *domain.AppError)
 	RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError)
 	Logout(ctx context.Context, sessionID string)

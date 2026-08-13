@@ -16,6 +16,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 function adminSession() {
   return {
+		audience: 'normal',
     csrfToken: 'csrf-admin-audit',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {

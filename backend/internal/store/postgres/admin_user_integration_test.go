@@ -103,6 +103,7 @@ func TestPostgresAdminUserDirectoryAndGovernance(t *testing.T) {
 			Status:          auth.AccountStatusSuspended,
 			ExpectedVersion: detail.User.Version,
 			Reason:          "PostgreSQL 集成核查",
+			IsIndefinite:    true,
 			RequestID:       "postgres-admin-user-" + suffix,
 		},
 		completionBuilder,
@@ -195,7 +196,7 @@ func TestPostgresAdminUserDirectoryAndGovernance(t *testing.T) {
 		"last-admin-hash-"+suffix,
 		auth.AdminUserStatusInput{
 			TargetUserID:    adminUser.ID,
-			Status:          auth.AccountStatusArchived,
+			Status:          auth.AccountStatusBanned,
 			ExpectedVersion: 1,
 			Reason:          "验证最后管理员保护",
 			RequestID:       "postgres-last-admin-" + suffix,
@@ -426,6 +427,14 @@ func TestPostgresAdminGrantAndLinuxDoLinkUseOneLockOrder(t *testing.T) {
 			ResourceType: "user", ResourceID: result.Detail.User.ID,
 		}, nil
 	}
+	adminSessionRaw := "link-admin-session-" + suffix
+	adminSessionHash := accountAppealTestHash(adminSessionRaw)
+	if appErr := store.CreateSession(ctx, adminUser.ID, adminSessionHash, accountAppealTestHash("link-admin-csrf-"+suffix), now.Add(time.Hour), now.Add(24*time.Hour), now); appErr != nil {
+		t.Fatalf("create link-test administrator session: %v", appErr)
+	}
+	if _, appErr := store.CreateAdminReauthenticationGrant(ctx, adminSessionHash, auth.AdminReauthenticationPurposeGrantAdmin, auth.AdminReauthenticationMethodPassword, now, now.Add(10*time.Minute)); appErr != nil {
+		t.Fatalf("create link-test administrator reauthentication grant: %v", appErr)
+	}
 	grantResults := make(chan *domain.AppError, 1)
 	go func() {
 		_, grantErr := authService.UpdateAdminUserPermissionWithIdempotency(
@@ -434,7 +443,7 @@ func TestPostgresAdminGrantAndLinuxDoLinkUseOneLockOrder(t *testing.T) {
 			"concurrent-link-grant-"+suffix, "concurrent-link-grant-hash-"+suffix,
 			auth.AdminUserPermissionInput{
 				TargetUserID: studentUserID, Grant: true, ExpectedVersion: detail.User.Version,
-				Reason: "验证绑定与授权锁顺序", RequestID: "concurrent-link-grant-" + suffix,
+				Reason: "验证绑定与授权锁顺序", AdminSessionTokenHash: adminSessionRaw, RequestID: "concurrent-link-grant-" + suffix,
 			},
 			completionBuilder,
 		)
@@ -483,7 +492,7 @@ func TestPostgresAdminGrantAndLinuxDoLinkUseOneLockOrder(t *testing.T) {
 		"concurrent-link-grant-retry-"+suffix, "concurrent-link-grant-retry-hash-"+suffix,
 		auth.AdminUserPermissionInput{
 			TargetUserID: studentUserID, Grant: true, ExpectedVersion: freshDetail.User.Version,
-			Reason: "绑定完成后按最新版本重试授权", RequestID: "concurrent-link-grant-retry-" + suffix,
+			Reason: "绑定完成后按最新版本重试授权", AdminSessionTokenHash: adminSessionRaw, RequestID: "concurrent-link-grant-retry-" + suffix,
 		},
 		completionBuilder,
 	)
@@ -551,6 +560,14 @@ func TestPostgresAdminGovernanceDoesNotDeadlockWithOrdinaryUserUpdate(t *testing
 			ResourceType: "user", ResourceID: result.Detail.User.ID,
 		}, nil
 	}
+	adminSessionRaw := "ordinary-update-admin-session-" + suffix
+	adminSessionHash := accountAppealTestHash(adminSessionRaw)
+	if appErr := store.CreateSession(ctx, adminUser.ID, adminSessionHash, accountAppealTestHash("ordinary-update-admin-csrf-"+suffix), now.Add(time.Hour), now.Add(24*time.Hour), now); appErr != nil {
+		t.Fatalf("create ordinary-update administrator session: %v", appErr)
+	}
+	if _, appErr := store.CreateAdminReauthenticationGrant(ctx, adminSessionHash, auth.AdminReauthenticationPurposeGrantAdmin, auth.AdminReauthenticationMethodPassword, now, now.Add(10*time.Minute)); appErr != nil {
+		t.Fatalf("create ordinary-update administrator reauthentication grant: %v", appErr)
+	}
 	governanceResults := make(chan *domain.AppError, 1)
 	go func() {
 		_, governanceErr := authService.UpdateAdminUserPermissionWithIdempotency(
@@ -559,7 +576,7 @@ func TestPostgresAdminGovernanceDoesNotDeadlockWithOrdinaryUserUpdate(t *testing
 			"ordinary-update-grant-"+suffix, "ordinary-update-grant-hash-"+suffix,
 			auth.AdminUserPermissionInput{
 				TargetUserID: targetUser.ID, Grant: true, ExpectedVersion: detail.User.Version,
-				Reason: "验证普通用户更新与管理员治理锁顺序", RequestID: "ordinary-update-grant-" + suffix,
+				Reason: "验证普通用户更新与管理员治理锁顺序", AdminSessionTokenHash: adminSessionRaw, RequestID: "ordinary-update-grant-" + suffix,
 			},
 			completionBuilder,
 		)

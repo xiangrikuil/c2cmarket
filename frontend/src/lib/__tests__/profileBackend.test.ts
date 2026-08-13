@@ -75,6 +75,7 @@ test('backend profile mapper normalizes nullable array fields', async () => {
   vi.stubGlobal('fetch', fetchMock)
   fetchMock
     .mockResolvedValueOnce(jsonResponse({
+		audience: 'normal',
       csrfToken: 'csrf-profile',
       expiresAt: '2999-01-01T00:00:00Z',
       user: {
@@ -114,6 +115,7 @@ test('account recovery remains complete after the profile is fetched again', asy
     }))
     .mockResolvedValueOnce(jsonResponse(completedProfile))
     .mockResolvedValueOnce(jsonResponse({
+		audience: 'normal',
       csrfToken: 'csrf-profile',
       expiresAt: '2999-01-01T00:00:00Z',
       user: {
@@ -183,6 +185,7 @@ test('linux.do avatar shortcut persists through the real profile PATCH', async (
   })
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(jsonResponse({
+		audience: 'normal',
       csrfToken: 'csrf-profile',
       expiresAt: '2999-01-01T00:00:00Z',
       user: {

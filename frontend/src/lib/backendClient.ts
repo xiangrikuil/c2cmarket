@@ -91,7 +91,9 @@ const SESSION_LOGIN_REQUIRED_CODES = new Set([
 
 let csrfToken: string | null = null
 let accountAppealCSRFToken: string | null = null
+let restrictedBusinessCSRFToken: string | null = null
 let cachedSession: BackendSession | null = null
+let cachedRestrictedBusinessSession: BackendSession | null = null
 let sessionRequest: Promise<BackendSession> | null = null
 let sessionGeneration = 0
 const pendingGetRequests = new Map<string, Promise<unknown>>()
@@ -123,10 +125,22 @@ export function getBackendCSRFToken() {
 }
 
 function cacheBackendSession(session: BackendSession) {
+	if (session.audience !== 'normal') {
+		throw new Error('Normal session endpoint returned a non-normal audience.')
+	}
   cachedSession = session
   setBackendCSRFToken(session.csrfToken)
   identifyAnalyticsUser(session.user.analyticsUserId)
   return session
+}
+
+function cacheRestrictedBusinessSession(session: BackendSession) {
+	if (session.audience !== 'restricted_business') {
+		throw new Error('Restricted-business endpoint returned an invalid audience.')
+	}
+	cachedRestrictedBusinessSession = session
+	restrictedBusinessCSRFToken = session.csrfToken
+	return session
 }
 
 function invalidateInFlightSessionRequests() {
@@ -160,6 +174,7 @@ function backendProblemFromMock(error: unknown): never {
 
 function mockSession(identity: MockIdentity): BackendSession {
   return {
+		audience: 'normal',
     csrfToken: `mock-csrf-${identity.persona}`,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     user: {
@@ -357,8 +372,9 @@ export async function loginWithPassword(payload: PasswordLoginRequest) {
       return backendProblemFromMock(error)
     }
   }
-  const session = await backendJSON<BackendSession>('/api/v1/auth/password/login', payload)
-  return replaceBackendSession(session)
+	const session = await backendJSON<BackendSession>('/api/v1/auth/password/login', payload)
+	if (session.audience === 'restricted_business') return cacheRestrictedBusinessSession(session)
+	return replaceBackendSession(session)
 }
 
 export async function getEmailRegistrationConfig(): Promise<EmailRegistrationConfig> {
@@ -404,7 +420,7 @@ export async function confirmEmailRegistration(
   return replaceBackendSession(session)
 }
 
-export async function reauthenticatePassword(password: string): Promise<void> {
+export async function reauthenticatePassword(password: string, purpose?: 'grant_admin'): Promise<void> {
   if (!shouldUseRealBackend()) {
     try {
       reauthenticateMockPassword(password)
@@ -413,7 +429,33 @@ export async function reauthenticatePassword(password: string): Promise<void> {
       return backendProblemFromMock(error)
     }
   }
-  await backendMutation<void>('/api/v1/auth/password/reauthenticate', { password })
+	await backendMutation<void>('/api/v1/auth/password/reauthenticate', { password, ...(purpose ? { purpose } : {}) })
+}
+
+export async function startAdminGrantReauthentication(returnTo = '/admin/users'): Promise<OAuthStartResponse> {
+  if (!shouldUseRealBackend()) {
+    return { authorizationUrl: returnTo }
+  }
+  const params = new URLSearchParams({ purpose: 'grant_admin_reauth', returnTo })
+  return backendRequest<OAuthStartResponse>(`/api/v1/auth/oauth/start?${params.toString()}`, {}, {
+    affectsSessionCache: false,
+  })
+}
+
+export async function getRestrictedBusinessSession(options: { forceRefresh?: boolean } = {}) {
+	if (!shouldUseRealBackend()) throw new Error('Restricted business requires the real backend.')
+	if (!options.forceRefresh && cachedRestrictedBusinessSession) return cachedRestrictedBusinessSession
+	const session = await backendRequest<BackendSession>('/api/v1/auth/restricted-business/session', {}, { affectsSessionCache: false })
+	return cacheRestrictedBusinessSession(session)
+}
+
+export async function logoutRestrictedBusinessSession() {
+	if (!shouldUseRealBackend()) return
+	await backendJSON<void>('/api/v1/auth/restricted-business/logout', {}, {
+		headers: restrictedBusinessCSRFToken ? { 'X-Restricted-Business-CSRF': restrictedBusinessCSRFToken } : {},
+	})
+	cachedRestrictedBusinessSession = null
+	restrictedBusinessCSRFToken = null
 }
 
 export async function startLinuxDoLink(returnTo = '/my/account'): Promise<OAuthStartResponse> {

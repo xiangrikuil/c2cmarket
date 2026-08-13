@@ -709,6 +709,7 @@ export type ReadinessResponse = {
 
 export type SessionResponse = {
     user: User;
+    audience: 'normal' | 'restricted_business';
     csrfToken: string;
     expiresAt: string;
 };
@@ -727,6 +728,7 @@ export type DevPersonaSessionResponse = {
 export type PasswordLoginRequest = {
     username: string;
     password: string;
+    purpose?: 'grant_admin';
     turnstileToken: string;
 };
 
@@ -3902,9 +3904,9 @@ export type AdminOperationAuditEntryList = {
 };
 
 export type AdminUserGovernanceAction = {
-    action: 'suspend' | 'ban' | 'archive' | 'restore' | 'grant_admin' | 'revoke_admin';
+    action: 'suspend' | 'ban' | 'restore' | 'grant_admin' | 'revoke_admin';
     kind: 'status' | 'permission';
-    targetStatus?: 'active' | 'suspended' | 'banned' | 'archived';
+    targetStatus?: 'active' | 'suspended' | 'banned';
     targetIsAdmin?: boolean;
     allowed: boolean;
     severity: 'normal' | 'warning' | 'danger';
@@ -3947,8 +3949,14 @@ export type AdminUserDetail = {
 };
 
 export type AdminUserStatusRequest = {
-    status: 'active' | 'suspended' | 'banned' | 'archived';
+    status: 'active' | 'suspended' | 'banned';
     reason: string;
+    publicReason?: string;
+    internalNote?: string;
+    expiresAt?: string;
+    isIndefinite?: boolean;
+    linkedCaseType?: string;
+    linkedCaseId?: string;
 };
 
 export type AdminUserPermissionRequest = {
@@ -4928,6 +4936,60 @@ export type GetSessionResponses = {
 
 export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
 
+export type GetRestrictedBusinessSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/restricted-business/session';
+};
+
+export type GetRestrictedBusinessSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type GetRestrictedBusinessSessionError = GetRestrictedBusinessSessionErrors[keyof GetRestrictedBusinessSessionErrors];
+
+export type GetRestrictedBusinessSessionResponses = {
+    /**
+     * Current restricted-business session.
+     */
+    200: SessionResponse;
+};
+
+export type GetRestrictedBusinessSessionResponse = GetRestrictedBusinessSessionResponses[keyof GetRestrictedBusinessSessionResponses];
+
+export type LogoutRestrictedBusinessSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/restricted-business/logout';
+};
+
+export type LogoutRestrictedBusinessSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type LogoutRestrictedBusinessSessionError = LogoutRestrictedBusinessSessionErrors[keyof LogoutRestrictedBusinessSessionErrors];
+
+export type LogoutRestrictedBusinessSessionResponses = {
+    /**
+     * Restricted-business session revoked.
+     */
+    204: void;
+};
+
+export type LogoutRestrictedBusinessSessionResponse = LogoutRestrictedBusinessSessionResponses[keyof LogoutRestrictedBusinessSessionResponses];
+
 export type LoginWithPasswordData = {
     body: PasswordLoginRequest;
     path?: never;
@@ -5130,9 +5192,9 @@ export type StartOAuthLoginData = {
     path?: never;
     query?: {
         /**
-         * `link_linuxdo` starts a current-session identity-link flow and requires a recent password reauthentication; omitted starts ordinary login or registration.
+         * `link_linuxdo` starts identity linking; `restricted_business` uses a dedicated one-time state and resolves only an existing suspended or banned identity; `grant_admin_reauth` uses its own state bound to the current administrator session.
          */
-        purpose?: 'link_linuxdo';
+        purpose?: 'link_linuxdo' | 'restricted_business' | 'grant_admin_reauth';
         returnTo?: string;
         utmSource?: string;
         utmMedium?: string;

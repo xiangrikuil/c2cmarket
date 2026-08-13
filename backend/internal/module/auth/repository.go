@@ -57,3 +57,29 @@ type OAuthLinkRepository interface {
 	StartOAuthLink(ctx context.Context, sessionTokenHash, stateHash, purpose string, expiresAt, now time.Time) *domain.AppError
 	CompleteOAuthLink(ctx context.Context, sessionTokenHash, stateHash string, profile OAuthProfile, replacementSessionTokenHash, replacementCSRFTokenHash string, replacementExpiresAt, replacementAbsoluteExpiresAt, now time.Time) (User, *domain.AppError)
 }
+
+// RestrictedBusinessSessionRepository keeps restricted credentials isolated
+// from normal and account-appeal sessions.
+type RestrictedBusinessSessionRepository interface {
+	CreateRestrictedBusinessSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, now time.Time) (RestrictedBusinessSession, *domain.AppError)
+	GetRestrictedBusinessSession(ctx context.Context, sessionTokenHash string, now time.Time) (User, RestrictedBusinessSession, *domain.AppError)
+	GetRestrictedBusinessSessionWithCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, RestrictedBusinessSession, *domain.AppError)
+	RotateRestrictedBusinessSessionCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, RestrictedBusinessSession, *domain.AppError)
+	RevokeRestrictedBusinessSession(ctx context.Context, sessionTokenHash string, revokedAt time.Time) *domain.AppError
+}
+
+// GovernanceOAuthRepository keeps restricted-business and account-appeal
+// authorization states in separate, one-time persistence boundaries.
+type GovernanceOAuthRepository interface {
+	StartRestrictedBusinessOAuth(ctx context.Context, stateHash string, expiresAt, now time.Time) *domain.AppError
+	CompleteRestrictedBusinessOAuth(ctx context.Context, stateHash string, profile OAuthProfile, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, now time.Time) (User, RestrictedBusinessSession, *domain.AppError)
+	StartAccountAppealOAuth(ctx context.Context, stateHash string, expiresAt, now time.Time) *domain.AppError
+	CompleteAccountAppealOAuth(ctx context.Context, stateHash string, profile OAuthProfile, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, now time.Time) (User, AccountAppealSession, *domain.AppError)
+}
+
+// AdminReauthenticationRepository owns purpose-bound, session-bound grants.
+type AdminReauthenticationRepository interface {
+	CreateAdminReauthenticationGrant(ctx context.Context, sessionTokenHash, purpose, method string, verifiedAt, expiresAt time.Time) (AdminReauthenticationGrant, *domain.AppError)
+	StartAdminReauthenticationOAuth(ctx context.Context, sessionTokenHash, stateHash, purpose string, expiresAt, now time.Time) *domain.AppError
+	CompleteAdminReauthenticationOAuth(ctx context.Context, sessionTokenHash, stateHash string, profile OAuthProfile, verifiedAt, expiresAt time.Time) (AdminReauthenticationGrant, *domain.AppError)
+}

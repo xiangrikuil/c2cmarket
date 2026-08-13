@@ -36,6 +36,68 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (auth.Us
 	return s.renewAuthenticatedSession(w, r, sessionToken, user, session, appErr)
 }
 
+func (s *Server) requireBusinessActor(r *http.Request, allowRestricted, requireCSRF bool) (auth.BusinessActor, *domain.AppError) {
+	audience := middleware.SessionAudience(r)
+	if audience == "" {
+		audience = auth.SessionAudienceNormal
+	}
+	switch audience {
+	case auth.SessionAudienceNormal:
+		sessionToken, ok := middleware.SessionToken(r)
+		if !ok {
+			return auth.BusinessActor{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
+		}
+		var user auth.User
+		var appErr *domain.AppError
+		if requireCSRF {
+			csrfToken := middleware.CSRFToken(r)
+			if csrfToken == "" {
+				return auth.BusinessActor{}, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "CSRF token invalid", "CSRF token 无效或缺失。")
+			}
+			user, _, appErr = s.app.GetSessionWithCSRF(r.Context(), sessionToken, csrfToken)
+		} else {
+			user, _, appErr = s.app.GetSession(r.Context(), sessionToken)
+		}
+		if appErr != nil {
+			return auth.BusinessActor{}, appErr
+		}
+		return auth.BusinessActor{UserID: user.ID, Audience: audience, AccountStatus: user.Status}, nil
+	case auth.SessionAudienceRestrictedBusiness:
+		if !allowRestricted {
+			return auth.BusinessActor{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Session audience forbidden", "该接口不接受受限业务会话。")
+		}
+		sessionToken, ok := middleware.RestrictedBusinessSessionToken(r)
+		if !ok {
+			return auth.BusinessActor{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Restricted business session required", "请先完成受限业务身份验证。")
+		}
+		var user auth.User
+		var session auth.RestrictedBusinessSession
+		var appErr *domain.AppError
+		if requireCSRF {
+			csrfToken := middleware.RestrictedBusinessCSRFToken(r)
+			if csrfToken == "" {
+				return auth.BusinessActor{}, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "CSRF token invalid", "受限业务 CSRF token 无效或缺失。")
+			}
+			user, session, appErr = s.app.GetRestrictedBusinessSessionWithCSRF(r.Context(), sessionToken, csrfToken)
+		} else {
+			user, session, appErr = s.app.GetRestrictedBusinessSession(r.Context(), sessionToken)
+		}
+		if appErr != nil {
+			return auth.BusinessActor{}, appErr
+		}
+		return auth.BusinessActor{
+			UserID:                 user.ID,
+			Audience:               audience,
+			AccountStatus:          user.Status,
+			GovernanceActionID:     session.GovernanceActionID,
+			GovernanceVersion:      session.GovernanceVersion,
+			RestrictionEffectiveAt: session.RestrictionEffectiveAt,
+		}, nil
+	default:
+		return auth.BusinessActor{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Session audience invalid", "会话 audience 无效。", middleware.SessionAudienceHeaderName, "invalid", "会话 audience 无效。")
+	}
+}
+
 func (s *Server) renewAuthenticatedSession(w http.ResponseWriter, r *http.Request, sessionToken string, user auth.User, session auth.Session, appErr *domain.AppError) (auth.User, auth.Session, *domain.AppError) {
 	if appErr != nil || !shouldRenewSessionForRequest(r) {
 		return user, session, appErr

@@ -11,6 +11,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 function session() {
   return {
+		audience: 'normal',
     csrfToken: 'csrf-user',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {

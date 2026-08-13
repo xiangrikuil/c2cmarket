@@ -252,6 +252,28 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 	return user, session, appErr
 }
 
+func (s *Service) AuthenticateWithOAuthProfile(ctx context.Context, profile OAuthProfile) (authmodule.AuthenticationResult, *domain.AppError) {
+	result, appErr := s.authService.AuthenticateWithOAuthProfile(ctx, profile)
+	s.recordAuthenticatedActivity(ctx, result.User, appErr)
+	return result, appErr
+}
+
+func (s *Service) StartRestrictedBusinessOAuth(ctx context.Context) (string, *domain.AppError) {
+	return s.authService.StartRestrictedBusinessOAuth(ctx)
+}
+
+func (s *Service) CompleteRestrictedBusinessOAuth(ctx context.Context, state string, profile authmodule.OAuthProfile) (authmodule.AuthenticationResult, *domain.AppError) {
+	return s.authService.CompleteRestrictedBusinessOAuth(ctx, state, profile)
+}
+
+func (s *Service) StartAccountAppealOAuth(ctx context.Context) (string, *domain.AppError) {
+	return s.authService.StartAccountAppealOAuth(ctx)
+}
+
+func (s *Service) CompleteAccountAppealOAuth(ctx context.Context, state string, profile authmodule.OAuthProfile) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
+	return s.authService.CompleteAccountAppealOAuth(ctx, state, profile)
+}
+
 func (s *Service) StartAccountAppealSession(ctx context.Context, profile authmodule.OAuthProfile) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
 	return s.authService.StartAccountAppealSession(ctx, profile)
 }
@@ -268,6 +290,12 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 	user, session, appErr := s.authService.LoginWithPassword(ctx, username, password)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
 	return user, session, appErr
+}
+
+func (s *Service) AuthenticateWithPassword(ctx context.Context, username, password string) (authmodule.AuthenticationResult, *domain.AppError) {
+	result, appErr := s.authService.AuthenticateWithPassword(ctx, username, password)
+	s.recordAuthenticatedActivity(ctx, result.User, appErr)
+	return result, appErr
 }
 
 func (s *Service) StudentRegistrationConfig(ctx context.Context) (authmodule.StudentRegistrationConfig, *domain.AppError) {
@@ -296,6 +324,18 @@ func (s *Service) UpdateStudentInstitutionDomainWithIdempotency(ctx context.Cont
 
 func (s *Service) ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError {
 	return s.authService.ReauthenticatePassword(ctx, sessionID, csrfToken, password)
+}
+
+func (s *Service) ReauthenticatePasswordForPurpose(ctx context.Context, sessionID, csrfToken, password, purpose string) *domain.AppError {
+	return s.authService.ReauthenticatePasswordForPurpose(ctx, sessionID, csrfToken, password, purpose)
+}
+
+func (s *Service) StartAdminReauthenticationOAuth(ctx context.Context, sessionID string) (string, *domain.AppError) {
+	return s.authService.StartAdminReauthenticationOAuth(ctx, sessionID)
+}
+
+func (s *Service) CompleteAdminReauthenticationOAuth(ctx context.Context, sessionID, state string, profile authmodule.OAuthProfile) *domain.AppError {
+	return s.authService.CompleteAdminReauthenticationOAuth(ctx, sessionID, state, profile)
 }
 
 func (s *Service) StartLinuxDoLink(ctx context.Context, sessionID string) (string, *domain.AppError) {
@@ -330,6 +370,22 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 
 func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, Session, *domain.AppError) {
 	return s.authService.GetSessionWithCSRF(ctx, sessionID, csrfToken)
+}
+
+func (s *Service) GetRestrictedBusinessSession(ctx context.Context, sessionID string) (User, authmodule.RestrictedBusinessSession, *domain.AppError) {
+	return s.authService.GetRestrictedBusinessSession(ctx, sessionID)
+}
+
+func (s *Service) GetRestrictedBusinessSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, authmodule.RestrictedBusinessSession, *domain.AppError) {
+	return s.authService.GetRestrictedBusinessSessionWithCSRF(ctx, sessionID, csrfToken)
+}
+
+func (s *Service) RefreshRestrictedBusinessSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError) {
+	return s.authService.RefreshRestrictedBusinessSessionCSRF(ctx, sessionID)
+}
+
+func (s *Service) LogoutRestrictedBusinessSession(ctx context.Context, sessionID string) {
+	s.authService.LogoutRestrictedBusinessSession(ctx, sessionID)
 }
 
 func (s *Service) recordAuthenticatedActivity(ctx context.Context, user User, authErr *domain.AppError) {

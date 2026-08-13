@@ -34,6 +34,8 @@ func (s *Server) routes() {
 		r.Post("/account-appeal/appeals", s.limitPolicy(accountAppealCreateRateLimit, s.handleCreateAccountGovernanceAppeal))
 		r.Get("/auth/session", s.handleGetSession)
 		r.Post("/auth/logout", s.handleLogout)
+		r.Get("/auth/restricted-business/session", s.handleGetRestrictedBusinessSession)
+		r.Post("/auth/restricted-business/logout", s.handleRestrictedBusinessLogout)
 		r.Get("/search", s.limitHandler("search", 60, s.handleSearch))
 		r.Get("/me/profile", s.handleMyProfile)
 		r.Get("/me/api-payment-settings", s.handleMyAPIAccountPaymentSettings)
