@@ -26,11 +26,15 @@ type OrderExistenceChecker interface {
 	HasOrderForIntent(intentID string) bool
 }
 
+// CreateGuard 在幂等记录确认本次请求需要执行后、写入购买意向前校验当前买卖双方是否仍可交易。
+type CreateGuard func(ctx context.Context, buyerUserID string, service apimarket.Service) *domain.AppError
+
 type Manager struct {
 	mu          sync.Mutex
 	now         func() time.Time
 	repo        Repository
 	services    PublicServiceResolver
+	createGuard CreateGuard
 	orders      OrderExistenceChecker
 	contact     *contact.Service
 	idempotency *idempotency.Service
@@ -60,6 +64,11 @@ func NewManager(repo Repository, serviceResolver PublicServiceResolver, contactS
 
 func (s *Manager) SetOrderExistenceChecker(checker OrderExistenceChecker) {
 	s.orders = checker
+}
+
+// SetCreateGuard 注入只针对全新购买意向执行的动态交易资格校验。
+func (s *Manager) SetCreateGuard(guard CreateGuard) {
+	s.createGuard = guard
 }
 
 // MarkOrdered 将已生成订单的意向移出活动意向集合，后续履约由订单生命周期负责。
@@ -117,6 +126,12 @@ func (s *Manager) CreateWithIdempotency(ctx context.Context, userID, routeKey, k
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
 		return Intent{}, idempotency.Completion{}, false, appErr
+	}
+	if s.createGuard != nil {
+		if appErr := s.createGuard(ctx, userID, service); appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return Intent{}, idempotency.Completion{}, false, appErr
+		}
 	}
 	if err := validateCreateInput(input, service); err != nil {
 		s.idempotency.Cancel(ctx, entry)
@@ -387,22 +402,41 @@ func (s *Manager) createInMemory(input CreateIntentInput, service apimarket.Serv
 	if !ok || !buyerMethod.Enabled {
 		return Intent{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用或不属于当前用户。")
 	}
-	ownerMethod, ownerVersion, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, service.OwnerUserID)
-	if !ok || !ownerMethod.Enabled {
-		return Intent{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或归属不正确。")
+	ownerContactMethodIDs := service.OwnerContactMethodIDs
+	if len(ownerContactMethodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
+		ownerContactMethodIDs = []string{service.OwnerContactMethodID}
+	}
+	ownerSnapshots := make([]OwnerContactSnapshot, 0, len(ownerContactMethodIDs))
+	merchantContacts := make([]contact.ContactItemView, 0, len(ownerContactMethodIDs))
+	for _, methodID := range ownerContactMethodIDs {
+		ownerMethod, ownerVersion, ok := s.contact.VersionForOwner(methodID, service.OwnerUserID)
+		if !ok || !ownerMethod.Enabled {
+			return Intent{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或归属不正确。")
+		}
+		ownerSnapshots = append(ownerSnapshots, OwnerContactSnapshot{
+			ContactMethodID:        ownerMethod.ID,
+			ContactMethodVersionID: ownerVersion.ID,
+			Type:                   ownerMethod.Type,
+			Label:                  ownerMethod.Label,
+		})
+		merchantContacts = append(merchantContacts, contact.ContactItemView{
+			Side:        "merchant",
+			SubjectID:   service.OwnerUserID,
+			Type:        ownerMethod.Type,
+			Label:       ownerMethod.Label,
+			Value:       ownerVersion.Value,
+			MaskedValue: ownerVersion.MaskedValue,
+		})
 	}
 
-	intent, appErr := NewIntent(input, service, buyerMethod, buyerVersion, ownerMethod, ownerVersion, s.now())
+	intent, appErr := NewIntentWithOwnerContacts(input, service, buyerMethod, buyerVersion, ownerSnapshots, s.now())
 	if appErr != nil {
 		return Intent{}, appErr
 	}
-	intent.MerchantContact = &contact.ContactItemView{
-		Side:        "merchant",
-		SubjectID:   service.OwnerUserID,
-		Type:        ownerMethod.Type,
-		Label:       ownerMethod.Label,
-		Value:       ownerVersion.Value,
-		MaskedValue: ownerVersion.MaskedValue,
+	intent.MerchantContacts = merchantContacts
+	if len(merchantContacts) > 0 {
+		primary := merchantContacts[0]
+		intent.MerchantContact = &primary
 	}
 
 	s.mu.Lock()
@@ -465,14 +499,32 @@ func (s *Manager) updateInMemory(input ActionInput, action string) (Intent, *dom
 }
 
 func (s *Manager) withMerchantContactLocked(intent Intent) Intent {
-	if version, ok := s.contact.Version(intent.OwnerContactMethodVersionID); ok {
-		intent.MerchantContact = &contact.ContactItemView{
-			Side:        "merchant",
-			Type:        intent.OwnerContactTypeSnapshot,
-			Label:       intent.OwnerContactLabelSnapshot,
-			Value:       version.Value,
-			MaskedValue: version.MaskedValue,
+	snapshots := intent.OwnerContactSnapshots
+	if len(snapshots) == 0 && strings.TrimSpace(intent.OwnerContactMethodVersionID) != "" {
+		snapshots = []OwnerContactSnapshot{{
+			ContactMethodID:        intent.OwnerContactMethodID,
+			ContactMethodVersionID: intent.OwnerContactMethodVersionID,
+			Type:                   intent.OwnerContactTypeSnapshot,
+			Label:                  intent.OwnerContactLabelSnapshot,
+		}}
+	}
+	intent.MerchantContacts = nil
+	intent.MerchantContact = nil
+	for _, snapshot := range snapshots {
+		if version, ok := s.contact.Version(snapshot.ContactMethodVersionID); ok {
+			intent.MerchantContacts = append(intent.MerchantContacts, contact.ContactItemView{
+				Side:        "merchant",
+				SubjectID:   intent.OwnerUserID,
+				Type:        snapshot.Type,
+				Label:       snapshot.Label,
+				Value:       version.Value,
+				MaskedValue: version.MaskedValue,
+			})
 		}
+	}
+	if len(intent.MerchantContacts) > 0 {
+		primary := intent.MerchantContacts[0]
+		intent.MerchantContact = &primary
 	}
 	return intent
 }

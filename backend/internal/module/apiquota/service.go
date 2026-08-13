@@ -45,6 +45,17 @@ func NewManager(repo Repository, now func() time.Time) *Manager {
 	return &Manager{repo: repo, idempotency: idempotency.NewService(idempotencyRepo, now), now: now}
 }
 
+func (m *Manager) beginQuotaIdempotency(ctx context.Context, userID, routeKey, key, requestHash string) (*idempotency.Entry, idempotency.Completion, *domain.AppError) {
+	entry, appErr := m.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
+	if appErr != nil {
+		return nil, idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return nil, idempotency.CompletionFromEntry(entry), nil
+	}
+	return entry, idempotency.Completion{}, nil
+}
+
 func (m *Manager) CreateOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateOrderInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.BuyerUserID = strings.TrimSpace(userID)
 	if appErr := validateCreateOrderInput(input); appErr != nil {
@@ -94,11 +105,33 @@ func (m *Manager) ImportCredentials(ctx context.Context, user auth.User, input C
 	if appErr != nil {
 		return CredentialImportResult{}, appErr
 	}
-	summary, appErr := m.repo.ImportAPIQuotaCredentials(ctx, user.ID, strings.TrimSpace(input.OfferID), rows, m.now().UTC())
+	summary, appErr := m.repo.ImportAPIQuotaCredentials(ctx, user.ID, strings.TrimSpace(input.OfferID), input.RequestID, rows, m.now().UTC())
 	if appErr != nil {
 		return CredentialImportResult{}, appErr
 	}
 	return CredentialImportResult{Imported: len(rows), Summary: summary}, nil
+}
+
+func (m *Manager) ImportCredentialsWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CredentialImportInput, buildCompletion CredentialImportCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(input.OfferID)); err != nil {
+		return idempotency.Completion{}, fieldError("offerId", "必须选择有效的额度包。")
+	}
+	rows, appErr := ParseCredentialCSV(input.CSV, strings.TrimSpace(input.DeliveryKind))
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
+	_, completion, appErr := m.repo.ImportAPIQuotaCredentialsWithIdempotency(ctx, *entry, user.ID, strings.TrimSpace(input.OfferID), input.RequestID, rows, m.now().UTC(), buildCompletion)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+	}
+	return completion, appErr
 }
 
 func (m *Manager) CredentialSummary(ctx context.Context, user auth.User, offerID string) (CredentialSummary, *domain.AppError) {
@@ -130,7 +163,35 @@ func (m *Manager) CreateBatch(ctx context.Context, user auth.User, input CreateB
 		UpdatedAt:                 now,
 		Version:                   1,
 	}
-	return m.repo.CreateAPIQuotaBatch(ctx, batch)
+	return m.repo.CreateAPIQuotaBatch(ctx, batch, input.RequestID)
+}
+
+func (m *Manager) CreateBatchWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CreateBatchInput, buildCompletion BatchCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
+	if appErr := validateCreateBatchInput(input, m.now()); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	now := m.now().UTC()
+	batch := Batch{
+		ID: uuid.NewString(), APIServiceID: strings.TrimSpace(input.APIServiceID), OwnerUserID: user.ID,
+		SourceType: strings.TrimSpace(input.SourceType), SourceLabel: strings.TrimSpace(input.SourceLabel), Status: BatchStatusDraft,
+		DeclaredTotalUSDAllowance: decimalStringMust(input.DeclaredTotalUSDAllowance, 6), UnallocatedUSDAllowance: decimalStringMust(input.DeclaredTotalUSDAllowance, 6),
+		SaleCutoffAt: input.SaleCutoffAt.UTC(), ExpiresAt: input.ExpiresAt.UTC(), SourceConfirmedAt: input.SourceConfirmedAt.UTC(),
+		CreatedAt: now, UpdatedAt: now, Version: 1,
+	}
+	_, completion, appErr := m.repo.CreateAPIQuotaBatchWithIdempotency(ctx, *entry, batch, input.RequestID, now, buildCompletion)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+	}
+	return completion, appErr
 }
 
 func (m *Manager) OwnerBatches(ctx context.Context, user auth.User, apiServiceID string, page domain.PageRequest) (domain.Page[Batch], *domain.AppError) {
@@ -172,7 +233,40 @@ func (m *Manager) CreateOffer(ctx context.Context, user auth.User, input CreateO
 		UpdatedAt:          now,
 		Version:            1,
 	}
-	return m.repo.CreateAPIQuotaOffer(ctx, offer, input.ContinuousCopies, now)
+	return m.repo.CreateAPIQuotaOffer(ctx, offer, input.ContinuousCopies, input.RequestID, now)
+}
+
+func (m *Manager) CreateOfferWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CreateOfferInput, buildCompletion OfferCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
+	batch, appErr := m.repo.GetAPIQuotaBatchForOwner(ctx, user.ID, strings.TrimSpace(input.BatchID))
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := validateCreateOfferInput(input, batch); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	now := m.now().UTC()
+	offer := Offer{
+		ID: uuid.NewString(), BatchID: batch.ID, APIServiceID: batch.APIServiceID, OwnerUserID: user.ID, DistributionSystem: batch.DistributionSystem,
+		Name: strings.TrimSpace(input.Name), USDAllowance: decimalStringMust(input.USDAllowance, 6), PriceCNY: decimalStringMust(input.PriceCNY, 2),
+		CNYPerUSD: divideDecimal(input.PriceCNY, input.USDAllowance, 6), ModelMultiplier: decimalStringMust(input.ModelMultiplier, 4),
+		QuotaUsagePolicy: apimarket.NormalizeQuotaUsagePolicy(input.QuotaUsagePolicy), DeliveryMode: strings.TrimSpace(input.DeliveryMode), DeliveryETAMinutes: input.DeliveryETAMinutes,
+		SaleMode: strings.TrimSpace(input.SaleMode), Status: OfferStatusDraft, SortOrder: input.SortOrder, CreatedAt: now, UpdatedAt: now, Version: 1,
+	}
+	_, completion, appErr := m.repo.CreateAPIQuotaOfferWithIdempotency(ctx, *entry, offer, input.ContinuousCopies, input.RequestID, now, buildCompletion)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+	}
+	return completion, appErr
 }
 
 func (m *Manager) OwnerOffers(ctx context.Context, user auth.User, batchID string) ([]Offer, *domain.AppError) {
@@ -209,7 +303,43 @@ func (m *Manager) CreateRound(ctx context.Context, user auth.User, input CreateR
 		UpdatedAt:    now,
 		Version:      1,
 	}
-	return m.repo.CreateAPIQuotaSaleRound(ctx, round, input.Offers, now)
+	return m.repo.CreateAPIQuotaSaleRound(ctx, round, input.Offers, input.RequestID, now)
+}
+
+func (m *Manager) CreateRoundWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CreateRoundInput, buildCompletion SaleRoundCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
+	batch, appErr := m.repo.GetAPIQuotaBatchForOwner(ctx, user.ID, strings.TrimSpace(input.BatchID))
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	offers, appErr := m.repo.ListAPIQuotaOffersForBatch(ctx, user.ID, batch.ID)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := validateCreateRoundInput(input, batch, offers, m.now()); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	now := m.now().UTC()
+	round := SaleRound{
+		ID: uuid.NewString(), BatchID: batch.ID, APIServiceID: batch.APIServiceID, OwnerUserID: user.ID,
+		Name: strings.TrimSpace(input.Name), StartsAt: input.StartsAt.UTC(), EndsAt: input.EndsAt.UTC(), Status: RoundStatusScheduled,
+		CreatedAt: now, UpdatedAt: now, Version: 1,
+	}
+	_, completion, appErr := m.repo.CreateAPIQuotaSaleRoundWithIdempotency(ctx, *entry, round, input.Offers, input.RequestID, now, buildCompletion)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+	}
+	return completion, appErr
 }
 
 func (m *Manager) OwnerRounds(ctx context.Context, user auth.User, batchID string) ([]SaleRound, *domain.AppError) {
@@ -221,6 +351,9 @@ func (m *Manager) OwnerRounds(ctx context.Context, user auth.User, batchID strin
 
 func (m *Manager) PublishBatch(ctx context.Context, user auth.User, input BatchActionInput) (Batch, *domain.AppError) {
 	input.OwnerUserID = user.ID
+	if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+		return Batch{}, appErr
+	}
 	batch, appErr := m.repo.GetAPIQuotaBatchForOwner(ctx, user.ID, strings.TrimSpace(input.BatchID))
 	if appErr != nil {
 		return Batch{}, appErr
@@ -231,11 +364,45 @@ func (m *Manager) PublishBatch(ctx context.Context, user auth.User, input BatchA
 	return m.repo.PublishAPIQuotaBatch(ctx, input, m.now().UTC())
 }
 
+func (m *Manager) PublishBatchWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input BatchActionInput, buildCompletion BatchCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
+	if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	batch, appErr := m.repo.GetAPIQuotaBatchForOwner(ctx, user.ID, strings.TrimSpace(input.BatchID))
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := validatePublishableBatch(batch, m.now()); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	_, completion, appErr := m.repo.PublishAPIQuotaBatchWithIdempotency(ctx, *entry, input, m.now().UTC(), buildCompletion)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+	}
+	return completion, appErr
+}
+
 func (m *Manager) UpdateBatchStatus(ctx context.Context, user auth.User, input BatchActionInput, action string) (Batch, *domain.AppError) {
 	input.OwnerUserID = user.ID
 	action = strings.TrimSpace(action)
 	if action != "pause" && action != "resume" && action != "archive" {
 		return Batch{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid action", "额度批次操作无效。", "action", "invalid", "额度批次操作无效。")
+	}
+	if action == "resume" {
+		if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+			return Batch{}, appErr
+		}
 	}
 	if action == "pause" || action == "archive" {
 		rounds, appErr := m.repo.ListAPIQuotaSaleRoundsForBatch(ctx, user.ID, strings.TrimSpace(input.BatchID))
@@ -255,6 +422,46 @@ func (m *Manager) UpdateBatchStatus(ctx context.Context, user auth.User, input B
 		}
 	}
 	return m.repo.UpdateAPIQuotaBatchStatus(ctx, input, action, m.now().UTC())
+}
+
+func (m *Manager) UpdateBatchStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input BatchActionInput, action string, buildCompletion BatchCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	action = strings.TrimSpace(action)
+	if action != "pause" && action != "resume" && action != "archive" {
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid action", "额度批次操作无效。", "action", "invalid", "额度批次操作无效。")
+	}
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
+	if action == "resume" {
+		if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+			m.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+	}
+	if action == "pause" || action == "archive" {
+		rounds, appErr := m.repo.ListAPIQuotaSaleRoundsForBatch(ctx, user.ID, strings.TrimSpace(input.BatchID))
+		if appErr != nil {
+			m.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		now := m.now().UTC()
+		for _, round := range rounds {
+			if strings.TrimSpace(round.SystemSlotKey) != "" && !now.Before(round.StartsAt.Add(-systemSlotRegistration)) {
+				m.idempotency.Cancel(ctx, entry)
+				return idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "System sale slot locked", "固定场次已进入开抢前 1 小时锁定期，卖家不能暂停或归档。")
+			}
+		}
+	}
+	_, completion, appErr := m.repo.UpdateAPIQuotaBatchStatusWithIdempotency(ctx, *entry, input, action, m.now().UTC(), buildCompletion)
+	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+	}
+	return completion, appErr
 }
 
 func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, page domain.PageRequest) (domain.Page[OfferCard], *domain.AppError) {
@@ -316,13 +523,19 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 	if buildCompletion == nil {
 		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
+	entry, replay, appErr := m.beginQuotaIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil || entry == nil {
+		return replay, appErr
+	}
 	now := m.now()
 	slot, appErr := ResolveOpenSystemSaleSlot(input.SlotKey, now)
 	if appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
 	}
 	totalAllowance, ok := allocationAmount(input.USDAllowance, input.Copies)
 	if !ok || input.Copies > maxRushOfferCopies {
+		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, fieldError("copies", "可售份数必须在 1 到 5000 之间。")
 	}
 	batchInput := CreateBatchInput{
@@ -331,9 +544,11 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 		ExpiresAt: input.ExpiresAt, SourceConfirmedAt: input.SourceConfirmedAt,
 	}
 	if appErr := validateCreateBatchInput(batchInput, now); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
 	}
 	if input.ExpiresAt.Before(slot.EndsAt.Add(time.Hour)) {
+		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, fieldError("expiresAt", "额度失效时间必须至少晚于场次结束 1 小时。")
 	}
 	offerInput := CreateOfferInput{
@@ -342,9 +557,11 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 		DeliveryETAMinutes: input.DeliveryETAMinutes, SaleMode: SaleModeScheduled,
 	}
 	if appErr := validateCreateOfferInput(offerInput, Batch{Status: BatchStatusDraft}); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
 	}
 	if appErr := validateRushOfferCredentials(input); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
 	}
 
@@ -354,6 +571,7 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 	roundID := uuid.NewString()
 	allocationID := uuid.NewString()
 	publication := RushOfferPublication{
+		RequestID: input.RequestID,
 		Batch: Batch{
 			ID: batchID, APIServiceID: strings.TrimSpace(input.APIServiceID), OwnerUserID: user.ID,
 			SourceType: strings.TrimSpace(input.SourceType), SourceLabel: strings.TrimSpace(input.SourceLabel),
@@ -385,12 +603,9 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 		CredentialImported: len(input.CredentialRows),
 	}
 
-	entry, appErr := m.idempotency.Begin(ctx, user.ID, routeKey, key, requestHash)
-	if appErr != nil {
+	if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
-	}
-	if entry.State == "completed" {
-		return idempotency.CompletionFromEntry(entry), nil
 	}
 	_, completion, appErr := m.repo.CreateSystemRushOfferWithIdempotency(ctx, *entry, publication, input.CredentialRows, nowUTC, buildCompletion)
 	if appErr != nil {
@@ -398,6 +613,13 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 		return idempotency.Completion{}, appErr
 	}
 	return completion, nil
+}
+
+func (m *Manager) checkSellerPublishAllowed(ctx context.Context, userID string) *domain.AppError {
+	if m.actionChecker == nil {
+		return nil
+	}
+	return m.actionChecker.CheckActionAllowed(ctx, userID, reputation.RoleSeller, reputation.ActionAPIServicePublish)
 }
 
 func (m *Manager) PublicOffer(ctx context.Context, offerID string) (OfferCard, *domain.AppError) {

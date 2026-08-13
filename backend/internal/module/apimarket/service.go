@@ -14,6 +14,7 @@ import (
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
+	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/google/uuid"
 )
@@ -28,9 +29,11 @@ type Manager struct {
 	repo                   Repository
 	catalog                APIModelResolver
 	contact                *contact.Service
+	idempotency            *idempotency.Service
 	services               map[string]Service
 	serviceOrder           []string
 	accountPaymentSettings map[string]AccountPaymentSettings
+	serviceAuditEvents     []ServiceAuditEvent
 }
 
 func NewManager(repo Repository, catalogResolver APIModelResolver, contactService *contact.Service, now func() time.Time) *Manager {
@@ -40,14 +43,99 @@ func NewManager(repo Repository, catalogResolver APIModelResolver, contactServic
 	if contactService == nil {
 		contactService = contact.NewService(nil, now)
 	}
+	var idempotencyRepo idempotency.Repository
+	if candidate, ok := repo.(idempotency.Repository); ok {
+		idempotencyRepo = candidate
+	}
 	return &Manager{
 		now:                    now,
 		repo:                   repo,
 		catalog:                catalogResolver,
 		contact:                contactService,
+		idempotency:            idempotency.NewService(idempotencyRepo, now),
 		services:               make(map[string]Service),
 		accountPaymentSettings: make(map[string]AccountPaymentSettings),
 	}
+}
+
+func (s *Manager) beginAPIServiceIdempotency(ctx context.Context, userID, routeKey, key, requestHash string) (*idempotency.Entry, *domain.AppError) {
+	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
+	if appErr != nil {
+		return nil, appErr
+	}
+	return entry, nil
+}
+
+func (s *Manager) replayAPIServiceCompletion(ctx context.Context, entry *idempotency.Entry, user auth.User, adminView bool, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, bool, *domain.AppError) {
+	if entry == nil || entry.State != "completed" {
+		return idempotency.Completion{}, false, nil
+	}
+	if entry.ResourceType != "api_service" || strings.TrimSpace(entry.ResourceID) == "" {
+		return idempotency.CompletionFromEntry(entry), true, nil
+	}
+	var (
+		service Service
+		appErr  *domain.AppError
+	)
+	if adminView {
+		service, appErr = s.AdminService(ctx, user, entry.ResourceID)
+	} else {
+		service, appErr = s.OwnerService(ctx, user, entry.ResourceID)
+	}
+	if appErr != nil {
+		return idempotency.Completion{}, true, appErr
+	}
+	completion, appErr := buildCompletion(service)
+	return completion, true, appErr
+}
+
+func (s *Manager) finishMemoryAPIServiceCommand(ctx context.Context, entry *idempotency.Entry, service Service, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	completion, appErr := buildCompletion(service)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	body := completion.Body
+	if completion.SkipBodyCache {
+		// 内存模式也不得把联系方式或收款设置写进幂等缓存；重放时按资源 ID 重新授权读取。
+		body = nil
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
+func (s *Manager) CreateWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CreateServiceInput, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	entry, appErr := s.beginAPIServiceIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if replay, completed, replayErr := s.replayAPIServiceCompletion(ctx, entry, user, false, buildCompletion); completed {
+		return replay, replayErr
+	}
+	service, appErr := s.buildFromInput(ctx, Service{}, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.CreateAPIServiceWithIdempotency(ctx, *entry, service, input.RequestID, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+		}
+		return completion, appErr
+	}
+	created, appErr := s.Create(ctx, user, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.finishMemoryAPIServiceCommand(ctx, entry, created, buildCompletion)
 }
 
 func (s *Manager) Create(ctx context.Context, user auth.User, input CreateServiceInput) (Service, *domain.AppError) {
@@ -57,7 +145,7 @@ func (s *Manager) Create(ctx context.Context, user auth.User, input CreateServic
 		return Service{}, appErr
 	}
 	if s.repo != nil {
-		if appErr := s.repo.CreateAPIService(ctx, service); appErr != nil {
+		if appErr := s.repo.CreateAPIService(ctx, service, input.RequestID); appErr != nil {
 			return Service{}, appErr
 		}
 		return s.repo.GetAPIServiceForOwner(ctx, user.ID, service.ID)
@@ -65,18 +153,73 @@ func (s *Manager) Create(ctx context.Context, user auth.User, input CreateServic
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
-		return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或不属于当前用户。")
+	if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
+		return Service{}, appErr
 	}
 	s.services[service.ID] = service
 	s.serviceOrder = append(s.serviceOrder, service.ID)
+	s.appendServiceAuditEventLocked(service, user.ID, "user", "api_service.created", input.RequestID, nil)
 	return WithOrderability(service), nil
 }
 
 func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServiceInput) (Service, *domain.AppError) {
 	input.OwnerUserID = user.ID
+	current, service, appErr := s.prepareAPIServiceUpdate(ctx, user, input)
+	if appErr != nil {
+		return Service{}, appErr
+	}
+	if s.repo != nil {
+		return s.repo.UpdateAPIService(ctx, input, service, s.now())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if latest, ok := s.services[current.ID]; !ok || latest.Version != current.Version {
+		return Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
+		return Service{}, appErr
+	}
+	s.services[service.ID] = service
+	s.appendServiceAuditEventLocked(service, user.ID, "user", "api_service.updated", input.RequestID, []string{"service_configuration"})
+	return WithOrderability(service), nil
+}
+
+func (s *Manager) UpdateWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input UpdateServiceInput, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	entry, appErr := s.beginAPIServiceIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if replay, completed, replayErr := s.replayAPIServiceCompletion(ctx, entry, user, false, buildCompletion); completed {
+		return replay, replayErr
+	}
+	_, service, appErr := s.prepareAPIServiceUpdate(ctx, user, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateAPIServiceWithIdempotency(ctx, *entry, input, service, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+		}
+		return completion, appErr
+	}
+	updated, appErr := s.Update(ctx, user, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.finishMemoryAPIServiceCommand(ctx, entry, updated, buildCompletion)
+}
+
+func (s *Manager) prepareAPIServiceUpdate(ctx context.Context, user auth.User, input UpdateServiceInput) (Service, Service, *domain.AppError) {
+	input.OwnerUserID = user.ID
 	if strings.TrimSpace(input.ServiceID) == "" {
-		return Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
+		return Service{}, Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
 	}
 
 	var current Service
@@ -84,7 +227,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 	if s.repo != nil {
 		current, appErr = s.repo.GetAPIServiceForOwner(ctx, user.ID, input.ServiceID)
 		if appErr != nil {
-			return Service{}, appErr
+			return Service{}, Service{}, appErr
 		}
 	} else {
 		s.mu.Lock()
@@ -92,14 +235,14 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		current, ok = s.services[input.ServiceID]
 		s.mu.Unlock()
 		if !ok || current.OwnerUserID != user.ID {
-			return Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
+			return Service{}, Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
 		}
 	}
 	if input.ExpectedVersion > 0 && current.Version != input.ExpectedVersion {
-		return Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+		return Service{}, Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
 	if !canEditService(current) {
-		return Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能直接修改，请先开始修订。")
+		return Service{}, Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能直接修改，请先开始修订。")
 	}
 
 	service, appErr := s.buildFromInput(ctx, current, CreateServiceInput{
@@ -107,6 +250,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		MerchantProfileID:                input.MerchantProfileID,
 		MerchantIdentityMode:             input.MerchantIdentityMode,
 		OwnerContactMethodID:             input.OwnerContactMethodID,
+		OwnerContactMethodIDs:            append([]string(nil), input.OwnerContactMethodIDs...),
 		ProbeConnectionID:                input.ProbeConnectionID,
 		Title:                            input.Title,
 		ShortDescription:                 input.ShortDescription,
@@ -133,7 +277,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		Packages:                         input.Packages,
 	})
 	if appErr != nil {
-		return Service{}, appErr
+		return Service{}, Service{}, appErr
 	}
 
 	service.ID = current.ID
@@ -155,17 +299,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		service.Packages[i].APIServiceID = service.ID
 	}
 
-	if s.repo != nil {
-		return s.repo.UpdateAPIService(ctx, input, service, s.now())
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
-		return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或不属于当前用户。")
-	}
-	s.services[service.ID] = service
-	return WithOrderability(service), nil
+	return current, service, nil
 }
 
 func (s *Manager) UpdateProbeConnection(ctx context.Context, user auth.User, input UpdateProbeConnectionInput) (Service, *domain.AppError) {
@@ -188,6 +322,9 @@ func (s *Manager) UpdateProbeConnection(ctx context.Context, user auth.User, inp
 	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
 		return Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
+	if strings.TrimSpace(service.ProbeConnectionID) == input.ProbeConnectionID {
+		return WithOrderability(service), nil
+	}
 	service.ProbeConnectionID = input.ProbeConnectionID
 	service.ProbeReady = input.ProbeConnectionID != ""
 	service.ProbeBaseURL = ""
@@ -201,7 +338,40 @@ func (s *Manager) UpdateProbeConnection(ctx context.Context, user auth.User, inp
 	service.Version++
 	service = WithOrderability(service)
 	s.services[service.ID] = service
+	s.appendServiceAuditEventLocked(service, user.ID, "user", "api_service.probe_binding_changed", input.RequestID, []string{"probe_connection"})
 	return service, nil
+}
+
+func (s *Manager) UpdateProbeConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input UpdateProbeConnectionInput, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	input.ServiceID = strings.TrimSpace(input.ServiceID)
+	input.ProbeConnectionID = strings.TrimSpace(input.ProbeConnectionID)
+	if input.ServiceID == "" {
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
+	}
+	entry, appErr := s.beginAPIServiceIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if replay, completed, replayErr := s.replayAPIServiceCompletion(ctx, entry, user, false, buildCompletion); completed {
+		return replay, replayErr
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateAPIServiceProbeConnectionWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+		}
+		return completion, appErr
+	}
+	updated, appErr := s.UpdateProbeConnection(ctx, user, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.finishMemoryAPIServiceCommand(ctx, entry, updated, buildCompletion)
 }
 
 func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
@@ -487,13 +657,48 @@ func (s *Manager) SubmitForReview(ctx context.Context, user auth.User, input Ser
 	if appErr := requireEarlyAutoApprovalEligibility(user); appErr != nil {
 		return Service{}, appErr
 	}
-	if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
-		return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或不属于当前用户。")
+	if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
+		return Service{}, appErr
 	}
 
 	service = applyEarlyAutoApprovalPolicy(service, s.now())
 	s.services[service.ID] = service
+	s.appendServiceAuditEventLocked(service, user.ID, "user", "api_service.review_submitted", input.RequestID, nil)
 	return service, nil
+}
+
+func (s *Manager) SubmitForReviewWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input ServiceOwnerActionInput, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	if strings.TrimSpace(input.ServiceID) == "" {
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
+	}
+	entry, appErr := s.beginAPIServiceIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if replay, completed, replayErr := s.replayAPIServiceCompletion(ctx, entry, user, false, buildCompletion); completed {
+		return replay, replayErr
+	}
+	if appErr := requireEarlyAutoApprovalEligibility(user); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.SubmitAPIServiceForReviewWithIdempotency(ctx, *entry, user, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+		}
+		return completion, appErr
+	}
+	updated, appErr := s.SubmitForReview(ctx, user, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.finishMemoryAPIServiceCommand(ctx, entry, updated, buildCompletion)
 }
 
 func (s *Manager) UpdatePublication(ctx context.Context, user auth.User, input ServiceOwnerActionInput, action string) (Service, *domain.AppError) {
@@ -518,17 +723,48 @@ func (s *Manager) UpdatePublication(ctx context.Context, user auth.User, input S
 		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
 			return Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
 		}
-		if strings.TrimSpace(service.OwnerContactMethodID) == "" {
+		if len(service.OwnerContactMethodIDs) == 0 {
 			return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "上线 API 服务必须配置商户联系方式。")
 		}
-		if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
+		if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
 			return Service{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 		}
 	}
 
 	service = applyPublicationAction(service, action, s.now())
 	s.services[service.ID] = service
+	s.appendServiceAuditEventLocked(service, user.ID, "user", apiServicePublicationEventType(action), input.RequestID, nil)
 	return WithOrderability(service), nil
+}
+
+func (s *Manager) UpdatePublicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input ServiceOwnerActionInput, action string, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	if action != "publish" && action != "pause" && action != "resume" && action != "start_revision" {
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid action", "API 服务操作无效。", "action", "invalid", "API 服务操作无效。")
+	}
+	input.OwnerUserID = user.ID
+	entry, appErr := s.beginAPIServiceIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if replay, completed, replayErr := s.replayAPIServiceCompletion(ctx, entry, user, false, buildCompletion); completed {
+		return replay, replayErr
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateAPIServicePublicationWithIdempotency(ctx, *entry, input, action, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+		}
+		return completion, appErr
+	}
+	updated, appErr := s.UpdatePublication(ctx, user, input, action)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.finishMemoryAPIServiceCommand(ctx, entry, updated, buildCompletion)
 }
 
 func (s *Manager) UpdateAdminStatus(ctx context.Context, user auth.User, input ServiceAdminActionInput) (Service, *domain.AppError) {
@@ -558,7 +794,41 @@ func (s *Manager) UpdateAdminStatus(ctx context.Context, user auth.User, input S
 
 	service = applyAdminAction(service, input, s.now())
 	s.services[service.ID] = service
+	s.appendServiceAuditEventLocked(service, user.ID, "admin", apiServiceAdminEventType(input.Action), input.RequestID, nil)
 	return WithOrderability(service), nil
+}
+
+func (s *Manager) UpdateAdminStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input ServiceAdminActionInput, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return idempotency.Completion{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.AdminUserID = user.ID
+	if appErr := validateAdminActionInput(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, appErr := s.beginAPIServiceIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if replay, completed, replayErr := s.replayAPIServiceCompletion(ctx, entry, user, true, buildCompletion); completed {
+		return replay, replayErr
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateAPIServiceModerationWithIdempotency(ctx, *entry, user, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+		}
+		return completion, appErr
+	}
+	updated, appErr := s.UpdateAdminStatus(ctx, user, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.finishMemoryAPIServiceCommand(ctx, entry, updated, buildCompletion)
 }
 
 func (s *Manager) UpdateOrderSettings(ctx context.Context, user auth.User, input UpdateOrderSettingsInput) (Service, *domain.AppError) {
@@ -582,6 +852,11 @@ func (s *Manager) UpdateOrderSettings(ctx context.Context, user auth.User, input
 	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
 		return Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
+	if service.AcceptingOrders == input.AcceptingOrders &&
+		service.PaymentWindowMinutes == input.PaymentWindowMinutes &&
+		PaymentOptionsMatchInput(service.PaymentOptions, input.PaymentOptions) {
+		return WithOrderability(service), nil
+	}
 	service.PaymentWindowMinutes = input.PaymentWindowMinutes
 	service.PaymentOptions = buildPaymentOptions(service.ID, service.PaymentOptions, input.PaymentOptions, s.now())
 	service.AcceptingOrders = input.AcceptingOrders
@@ -595,12 +870,116 @@ func (s *Manager) UpdateOrderSettings(ctx context.Context, user auth.User, input
 	}
 	service = WithOrderability(service)
 	s.services[service.ID] = service
+	s.appendServiceAuditEventLocked(service, user.ID, "user", "api_service.order_settings_changed", input.RequestID, []string{"order_settings"})
 	return service, nil
+}
+
+func apiServicePublicationEventType(action string) string {
+	switch strings.TrimSpace(action) {
+	case "publish":
+		return "api_service.published"
+	case "pause":
+		return "api_service.paused"
+	case "resume":
+		return "api_service.resumed"
+	case "start_revision":
+		return "api_service.revision_started"
+	default:
+		return ""
+	}
+}
+
+func apiServiceAdminEventType(action string) string {
+	switch strings.TrimSpace(action) {
+	case "approve":
+		return "api_service.approved"
+	case "request_changes":
+		return "api_service.changes_requested"
+	case "reject":
+		return "api_service.rejected"
+	case "suspend":
+		return "api_service.suspended"
+	case "restore":
+		return "api_service.restored"
+	case "remove":
+		return "api_service.removed"
+	default:
+		return ""
+	}
+}
+
+// appendServiceAuditEventLocked 只记录允许进入操作审计的结构化事实。
+// 调用方必须持有 s.mu；空动作代表业务未发生真实迁移，因此不写事件。
+func (s *Manager) appendServiceAuditEventLocked(service Service, actorUserID, actorKind, eventType, requestID string, changedFields []string) {
+	if strings.TrimSpace(eventType) == "" {
+		return
+	}
+	s.serviceAuditEvents = append(s.serviceAuditEvents, ServiceAuditEvent{
+		EventType:        eventType,
+		ActorUserID:      strings.TrimSpace(actorUserID),
+		ActorKind:        strings.TrimSpace(actorKind),
+		RequestID:        strings.TrimSpace(requestID),
+		AggregateID:      service.ID,
+		AggregateVersion: service.Version,
+		ChangedFields:    append([]string(nil), changedFields...),
+		CreatedAt:        s.now(),
+	})
+}
+
+// ServiceAuditEvents 返回审计事实的深拷贝，避免测试或调用方修改内部状态。
+func (s *Manager) ServiceAuditEvents() []ServiceAuditEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events := make([]ServiceAuditEvent, len(s.serviceAuditEvents))
+	for i, event := range s.serviceAuditEvents {
+		events[i] = event
+		events[i].ChangedFields = append([]string(nil), event.ChangedFields...)
+	}
+	return events
+}
+
+func (s *Manager) UpdateOrderSettingsWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input UpdateOrderSettingsInput, buildCompletion ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = user.ID
+	if strings.TrimSpace(input.ServiceID) == "" {
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
+	}
+	if appErr := validateOrderSettingsInput(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, appErr := s.beginAPIServiceIdempotency(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if replay, completed, replayErr := s.replayAPIServiceCompletion(ctx, entry, user, false, buildCompletion); completed {
+		return replay, replayErr
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateAPIServiceOrderSettingsWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+		}
+		return completion, appErr
+	}
+	updated, appErr := s.UpdateOrderSettings(ctx, user, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.finishMemoryAPIServiceCommand(ctx, entry, updated, buildCompletion)
 }
 
 func (s *Manager) buildFromInput(ctx context.Context, current Service, input CreateServiceInput) (Service, *domain.AppError) {
 	now := s.now()
 	isCreating := current.ID == ""
+	ownerContactMethodIDs, appErr := normalizeOwnerContactMethodIDs(input.OwnerContactMethodID, input.OwnerContactMethodIDs)
+	if appErr != nil {
+		return Service{}, appErr
+	}
+	input.OwnerContactMethodIDs = ownerContactMethodIDs
+	input.OwnerContactMethodID = ownerContactMethodIDs[0]
 	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered && strings.TrimSpace(input.AvailableUSDAllowance) == "" {
 		// 兼容迁移期客户端：旧字段只提供单笔上限时，以该值初始化真实可售额度。
 		input.AvailableUSDAllowance = input.DeclaredMaxUSDAllowancePerIntent
@@ -652,6 +1031,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		MerchantProfileID:                strings.TrimSpace(input.MerchantProfileID),
 		MerchantIdentityMode:             strings.TrimSpace(input.MerchantIdentityMode),
 		OwnerContactMethodID:             strings.TrimSpace(input.OwnerContactMethodID),
+		OwnerContactMethodIDs:            append([]string(nil), input.OwnerContactMethodIDs...),
 		ProbeConnectionID:                probeConnectionID,
 		ProbeReady:                       probeReady,
 		ProbeBaseURL:                     probeBaseURL,
@@ -822,8 +1202,8 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 }
 
 func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppError {
-	if strings.TrimSpace(input.OwnerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须选择商户联系方式。", "ownerContactMethodId", "required", "必须选择商户联系方式。")
+	if _, appErr := normalizeOwnerContactMethodIDs(input.OwnerContactMethodID, input.OwnerContactMethodIDs); appErr != nil {
+		return appErr
 	}
 	if strings.TrimSpace(input.MerchantIdentityMode) == "" {
 		input.MerchantIdentityMode = "public_profile"
@@ -1018,6 +1398,39 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		}
 		if err := validateNonSecretText(field+".description", pack.Description); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, *domain.AppError) {
+	if len(values) == 0 && strings.TrimSpace(primary) != "" {
+		values = []string{primary}
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须选择有效的商户联系方式。", "ownerContactMethodIds", "invalid", "联系方式不能为空。")
+		}
+		if _, exists := seen[value]; exists {
+			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodIds", "duplicate", "联系方式不能重复。")
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须至少选择一种商户联系方式。", "ownerContactMethodIds", "required", "请至少选择一种联系方式。")
+	}
+	return result, nil
+}
+
+func (s *Manager) validateOwnerContacts(service Service, ownerUserID string) *domain.AppError {
+	for _, methodID := range service.OwnerContactMethodIDs {
+		method, _, ok := s.contact.VersionForOwnerAndScope(methodID, ownerUserID, contact.UsageScopeAPIMerchant)
+		if !ok || !method.Enabled {
+			return domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用、不属于当前用户或未允许商户用途。")
 		}
 	}
 	return nil
@@ -1654,6 +2067,34 @@ func buildPaymentOptions(serviceID string, current []PaymentOption, input []Paym
 
 func shouldPersistPaymentOption(input PaymentOptionInput) bool {
 	return input.Enabled || strings.TrimSpace(input.PaymentInstructions) != "" || strings.TrimSpace(input.PaymentQRCodeDataURL) != ""
+}
+
+// PaymentOptionsMatchInput compares settings without exposing the sensitive
+// instruction or QR-code values to operation audit metadata.
+func PaymentOptionsMatchInput(current []PaymentOption, input []PaymentOptionInput) bool {
+	persisted := make(map[string]PaymentOption, len(current))
+	for _, option := range current {
+		persisted[strings.TrimSpace(option.PaymentMethod)] = option
+	}
+	wanted := make(map[string]PaymentOptionInput, len(input))
+	for _, option := range input {
+		if !shouldPersistPaymentOption(option) {
+			continue
+		}
+		wanted[strings.TrimSpace(option.PaymentMethod)] = option
+	}
+	if len(persisted) != len(wanted) {
+		return false
+	}
+	for method, requested := range wanted {
+		stored, ok := persisted[method]
+		if !ok || stored.Enabled != requested.Enabled ||
+			strings.TrimSpace(stored.PaymentInstructions) != strings.TrimSpace(requested.PaymentInstructions) ||
+			strings.TrimSpace(stored.PaymentQRCodeDataURL) != strings.TrimSpace(requested.PaymentQRCodeDataURL) {
+			return false
+		}
+	}
+	return true
 }
 
 func requiresPaymentQRCode(method string) bool {

@@ -56,6 +56,35 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	if cfg.DatabaseSlowQueryAfter != time.Second {
 		t.Fatalf("unexpected slow query threshold: %s", cfg.DatabaseSlowQueryAfter)
 	}
+	if strings.Join(cfg.TurnstileHostnames, ",") != "localhost,127.0.0.1" {
+		t.Fatalf("unexpected local Turnstile hostnames: %v", cfg.TurnstileHostnames)
+	}
+}
+
+func TestLoadParsesTurnstileConfig(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TURNSTILE_SECRET", "test-turnstile-secret")
+	t.Setenv("TURNSTILE_HOSTNAMES", "C2CMarket.Shop, staging.c2cmarket.shop.,c2cmarket.shop")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load Turnstile config: %v", err)
+	}
+	if cfg.TurnstileSecret != "test-turnstile-secret" {
+		t.Fatal("expected configured Turnstile secret")
+	}
+	if strings.Join(cfg.TurnstileHostnames, ",") != "c2cmarket.shop,staging.c2cmarket.shop" {
+		t.Fatalf("unexpected Turnstile hostnames: %v", cfg.TurnstileHostnames)
+	}
+}
+
+func TestLoadRejectsInvalidTurnstileHostname(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TURNSTILE_HOSTNAMES", "https://c2cmarket.shop")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TURNSTILE_HOSTNAMES") {
+		t.Fatalf("expected invalid Turnstile hostname to fail, got %v", err)
+	}
 }
 
 func TestLoadParsesAPIHealthRuntimeConfig(t *testing.T) {
@@ -306,6 +335,8 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	t.Setenv("MAIL_FROM_ADDRESS", "noreply@example.com")
 	t.Setenv("MAIL_FROM_NAME", "C2CMarket")
 	t.Setenv("METRICS_BEARER_TOKEN", "test-only-metrics-token-at-least-32-bytes")
+	t.Setenv("TURNSTILE_SECRET", "test-only-turnstile-secret")
+	t.Setenv("TURNSTILE_HOSTNAMES", "c2cmarket.example")
 
 	cfg, err := Load()
 	if err != nil {
@@ -323,6 +354,19 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	if cfg.EmailProvider != "aliyun_directmail" || cfg.SMTP.Host != "smtpdm.aliyun.com" || cfg.SMTP.Port != 465 || cfg.SMTP.FromAddress != "noreply@example.com" {
 		t.Fatalf("unexpected SMTP config: provider=%s smtp=%+v", cfg.EmailProvider, cfg.SMTP)
 	}
+	if cfg.TurnstileSecret == "" || strings.Join(cfg.TurnstileHostnames, ",") != "c2cmarket.example" {
+		t.Fatalf("unexpected production Turnstile config: hostnames=%v", cfg.TurnstileHostnames)
+	}
+	t.Setenv("TURNSTILE_SECRET", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TURNSTILE_SECRET") {
+		t.Fatalf("expected missing production Turnstile secret to fail, got %v", err)
+	}
+	t.Setenv("TURNSTILE_SECRET", "test-only-turnstile-secret")
+	t.Setenv("TURNSTILE_HOSTNAMES", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TURNSTILE_HOSTNAMES") {
+		t.Fatalf("expected missing production Turnstile hostnames to fail, got %v", err)
+	}
+	t.Setenv("TURNSTILE_HOSTNAMES", "c2cmarket.example")
 	t.Setenv("METRICS_BEARER_TOKEN", "too-short")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "METRICS_BEARER_TOKEN") {
 		t.Fatalf("expected short production metrics token to fail, got %v", err)

@@ -9,6 +9,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apihealth"
+	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -35,6 +36,24 @@ const apiProbeSampleColumns = `
 	sample.usage_complete, COALESCE(sample.base_cost_usd::text, ''), COALESCE(sample.retry_cost_usd::text, ''),
 	sample.started_at, sample.finished_at, sample.created_at
 `
+
+type probeConnectionAuditEvent struct {
+	TargetConnectionID     string
+	OwnerUserID            string
+	Action                 string
+	ChangedFields          []string
+	RequestID              string
+	OccurredAt             time.Time
+	FromVerificationStatus string
+	ToVerificationStatus   string
+	OldMeasurementVersion  *int64
+	NewMeasurementVersion  *int64
+	OldModel               *string
+	NewModel               *string
+	OldProtocol            *string
+	NewProtocol            *string
+	Environment            *string
+}
 
 func (store *Store) ListOwnerProbeConnections(ctx context.Context, ownerUserID string) ([]apihealth.Connection, *domain.AppError) {
 	if store == nil || store.pool == nil {
@@ -134,20 +153,51 @@ func (store *Store) LookupProbeModelPrice(ctx context.Context, model string) (ap
 	return price, true, nil
 }
 
-func (store *Store) CreateOwnerProbeConnection(ctx context.Context, connection apihealth.Connection, credential string) (apihealth.Connection, *domain.AppError) {
+func (store *Store) CreateOwnerProbeConnection(ctx context.Context, connection apihealth.Connection, credential string, audit apihealth.ProbeAuditMutation) (apihealth.Connection, *domain.AppError) {
+	connection, _, appErr := store.createOwnerProbeConnection(ctx, nil, connection, credential, audit, nil)
+	return connection, appErr
+}
+
+func (store *Store) CreateOwnerProbeConnectionWithIdempotency(
+	ctx context.Context,
+	entry idempotency.Entry,
+	connection apihealth.Connection,
+	credential string,
+	audit apihealth.ProbeAuditMutation,
+	buildCompletion apihealth.MutationCompletionBuilder,
+) (apihealth.Connection, idempotency.Completion, *domain.AppError) {
+	return store.createOwnerProbeConnection(ctx, &entry, connection, credential, audit, buildCompletion)
+}
+
+func (store *Store) createOwnerProbeConnection(
+	ctx context.Context,
+	entry *idempotency.Entry,
+	connection apihealth.Connection,
+	credential string,
+	audit apihealth.ProbeAuditMutation,
+	buildCompletion apihealth.MutationCompletionBuilder,
+) (apihealth.Connection, idempotency.Completion, *domain.AppError) {
 	if store == nil || store.pool == nil || store.contactCodec == nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
 	connection.ID = uuid.NewString()
 	encoded, err := store.contactCodec.encode(strings.TrimSpace(credential), connection.ID, contactFieldProbeAPIKey)
 	if err != nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
+	var lockedEntry idempotency.Entry
+	if entry != nil {
+		var appErr *domain.AppError
+		lockedEntry, appErr = lockProcessingIdempotencyInTx(ctx, tx, *entry)
+		if appErr != nil {
+			return apihealth.Connection{}, idempotency.Completion{}, appErr
+		}
+	}
 	row := tx.QueryRow(ctx, `
 		INSERT INTO api_probe_connections AS c (
 			id, owner_user_id, name, base_url, normalized_base_url,
@@ -171,28 +221,69 @@ func (store *Store) CreateOwnerProbeConnection(ctx context.Context, connection a
 		connection.MeasurementVersion, connection.Version, connection.CreatedAt, connection.UpdatedAt)
 	if err := scanAPIProbeConnection(row, &connection); err != nil {
 		if isForeignKeyViolation(err) {
-			return apihealth.Connection{}, apiHealthConflict("当前用户不存在，无法创建探针连接。")
+			return apihealth.Connection{}, idempotency.Completion{}, apiHealthConflict("当前用户不存在，无法创建探针连接。")
 		}
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
-	if connection.ProbeModel != "" {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO api_probe_connection_model_changes (
-			  connection_id, changed_by_user_id, new_measurement_version, new_model, new_protocol, environment, changed_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`, connection.ID, connection.OwnerUserID, connection.MeasurementVersion, connection.ProbeModel, connection.ProbeProtocol, connection.ProbeEnvironment, connection.CreatedAt); err != nil {
-			return apihealth.Connection{}, internalStoreError()
+	newMeasurementVersion := connection.MeasurementVersion
+	newModel, newProtocol, environment := connection.ProbeModel, connection.ProbeProtocol, connection.ProbeEnvironment
+	if err := appendProbeConnectionAuditEvent(ctx, tx, probeConnectionAuditEvent{
+		TargetConnectionID: connection.ID, OwnerUserID: connection.OwnerUserID,
+		Action: apihealth.ProbeAuditCreated, RequestID: audit.RequestID, OccurredAt: connection.CreatedAt,
+		ChangedFields:         []string{"name", "base_url", "credential", "probe_model", "probe_protocol", "environment", "enabled"},
+		ToVerificationStatus:  connection.VerificationStatus,
+		NewMeasurementVersion: &newMeasurementVersion, NewModel: &newModel, NewProtocol: &newProtocol, Environment: &environment,
+	}); err != nil {
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
+	}
+	var completion idempotency.Completion
+	if entry != nil {
+		if buildCompletion == nil {
+			return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
+		}
+		var appErr *domain.AppError
+		completion, appErr = buildCompletion(connection)
+		if appErr != nil {
+			return apihealth.Connection{}, idempotency.Completion{}, appErr
+		}
+		if appErr := completeIdempotencyInTx(ctx, tx, lockedEntry, completion, probeAuditOccurredAt(audit)); appErr != nil {
+			return apihealth.Connection{}, idempotency.Completion{}, appErr
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
-	return connection, nil
+	return connection, completion, nil
 }
 
-func (store *Store) UpdateOwnerProbeConnection(ctx context.Context, connection apihealth.Connection, credential *string, expectedVersion int64) (apihealth.Connection, *domain.AppError) {
+func (store *Store) UpdateOwnerProbeConnection(ctx context.Context, connection apihealth.Connection, credential *string, expectedVersion int64, audit apihealth.ProbeAuditMutation) (apihealth.Connection, *domain.AppError) {
+	connection, _, appErr := store.updateOwnerProbeConnection(ctx, nil, connection, credential, expectedVersion, audit, nil)
+	return connection, appErr
+}
+
+func (store *Store) UpdateOwnerProbeConnectionWithIdempotency(
+	ctx context.Context,
+	entry idempotency.Entry,
+	connection apihealth.Connection,
+	credential *string,
+	expectedVersion int64,
+	audit apihealth.ProbeAuditMutation,
+	buildCompletion apihealth.MutationCompletionBuilder,
+) (apihealth.Connection, idempotency.Completion, *domain.AppError) {
+	return store.updateOwnerProbeConnection(ctx, &entry, connection, credential, expectedVersion, audit, buildCompletion)
+}
+
+func (store *Store) updateOwnerProbeConnection(
+	ctx context.Context,
+	entry *idempotency.Entry,
+	connection apihealth.Connection,
+	credential *string,
+	expectedVersion int64,
+	audit apihealth.ProbeAuditMutation,
+	buildCompletion apihealth.MutationCompletionBuilder,
+) (apihealth.Connection, idempotency.Completion, *domain.AppError) {
 	if store == nil || store.pool == nil || store.contactCodec == nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
 	credentialProvided := credential != nil
 	var encoded encodedContactValue
@@ -200,23 +291,41 @@ func (store *Store) UpdateOwnerProbeConnection(ctx context.Context, connection a
 		var err error
 		encoded, err = store.contactCodec.encode(strings.TrimSpace(*credential), connection.ID, contactFieldProbeAPIKey)
 		if err != nil {
-			return apihealth.Connection{}, internalStoreError()
+			return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 		}
 	}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
-	var oldModel, oldProtocol string
+	var lockedEntry idempotency.Entry
+	if entry != nil {
+		var appErr *domain.AppError
+		lockedEntry, appErr = lockProcessingIdempotencyInTx(ctx, tx, *entry)
+		if appErr != nil {
+			return apihealth.Connection{}, idempotency.Completion{}, appErr
+		}
+	}
+	var oldName, oldBaseURL, oldVerificationStatus, oldModel, oldProtocol, oldEnvironment string
+	var oldEnabled bool
 	var oldMeasurementVersion, actualVersion int64
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(probe_model, ''), COALESCE(probe_protocol, ''), measurement_version, version FROM api_probe_connections WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, connection.ID, connection.OwnerUserID).Scan(&oldModel, &oldProtocol, &oldMeasurementVersion, &actualVersion); errors.Is(err, pgx.ErrNoRows) {
-		return apihealth.Connection{}, apiHealthNotFound()
+	if err := tx.QueryRow(ctx, `
+		SELECT name, base_url, enabled, verification_status, COALESCE(probe_model, ''),
+		       COALESCE(probe_protocol, ''), probe_environment, measurement_version, version
+		FROM api_probe_connections
+		WHERE id = $1 AND owner_user_id = $2
+		FOR UPDATE
+	`, connection.ID, connection.OwnerUserID).Scan(
+		&oldName, &oldBaseURL, &oldEnabled, &oldVerificationStatus, &oldModel,
+		&oldProtocol, &oldEnvironment, &oldMeasurementVersion, &actualVersion,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return apihealth.Connection{}, idempotency.Completion{}, apiHealthNotFound()
 	} else if err != nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
 	if actualVersion != expectedVersion {
-		return apihealth.Connection{}, apiHealthVersionConflict()
+		return apihealth.Connection{}, idempotency.Completion{}, apiHealthVersionConflict()
 	}
 	row := tx.QueryRow(ctx, `
 		UPDATE api_probe_connections c
@@ -245,62 +354,138 @@ func (store *Store) UpdateOwnerProbeConnection(ctx context.Context, connection a
 		nullDecimal(connection.Price.OutputPricePerMillion), nullText(connection.Price.Currency),
 		connection.MeasurementVersion, connection.Version, connection.UpdatedAt)
 	if err := scanAPIProbeConnection(row, &connection); errors.Is(err, pgx.ErrNoRows) {
-		return apihealth.Connection{}, apiHealthVersionConflict()
+		return apihealth.Connection{}, idempotency.Completion{}, apiHealthVersionConflict()
 	} else if err != nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
-	if connection.ProbeModel != "" && (oldModel != connection.ProbeModel || oldProtocol != connection.ProbeProtocol) {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO api_probe_connection_model_changes (
-			  connection_id, changed_by_user_id, old_measurement_version, new_measurement_version,
-			  old_model, new_model, old_protocol, new_protocol, environment, changed_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		`, connection.ID, connection.OwnerUserID, oldMeasurementVersion, connection.MeasurementVersion,
-			nullText(oldModel), connection.ProbeModel, nullText(oldProtocol), connection.ProbeProtocol,
-			connection.ProbeEnvironment, connection.UpdatedAt); err != nil {
-			return apihealth.Connection{}, internalStoreError()
+	changedFields := probeConnectionChangedFields(
+		oldName, oldBaseURL, oldModel, oldProtocol, oldEnvironment, oldEnabled,
+		connection, credentialProvided,
+	)
+	modelChanged := oldModel != connection.ProbeModel || oldProtocol != connection.ProbeProtocol
+	action := probeConnectionAuditAction(audit.Action, modelChanged, oldEnabled, connection.Enabled)
+	event := probeConnectionAuditEvent{
+		TargetConnectionID: connection.ID, OwnerUserID: connection.OwnerUserID,
+		Action: action, ChangedFields: changedFields, RequestID: audit.RequestID, OccurredAt: connection.UpdatedAt,
+		FromVerificationStatus: oldVerificationStatus, ToVerificationStatus: connection.VerificationStatus,
+	}
+	if action == apihealth.ProbeAuditModelChanged {
+		newMeasurementVersion := connection.MeasurementVersion
+		newModel, newProtocol, environment := connection.ProbeModel, connection.ProbeProtocol, connection.ProbeEnvironment
+		event.OldMeasurementVersion = &oldMeasurementVersion
+		event.NewMeasurementVersion = &newMeasurementVersion
+		event.OldModel = &oldModel
+		event.NewModel = &newModel
+		event.OldProtocol = &oldProtocol
+		event.NewProtocol = &newProtocol
+		event.Environment = &environment
+	}
+	if err := appendProbeConnectionAuditEvent(ctx, tx, event); err != nil {
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
+	}
+	var completion idempotency.Completion
+	if entry != nil {
+		if buildCompletion == nil {
+			return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
+		}
+		var appErr *domain.AppError
+		completion, appErr = buildCompletion(connection)
+		if appErr != nil {
+			return apihealth.Connection{}, idempotency.Completion{}, appErr
+		}
+		if appErr := completeIdempotencyInTx(ctx, tx, lockedEntry, completion, probeAuditOccurredAt(audit)); appErr != nil {
+			return apihealth.Connection{}, idempotency.Completion{}, appErr
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return apihealth.Connection{}, internalStoreError()
+		return apihealth.Connection{}, idempotency.Completion{}, internalStoreError()
 	}
-	return connection, nil
+	return connection, completion, nil
 }
 
-func (store *Store) DeleteOwnerProbeConnection(ctx context.Context, ownerUserID, connectionID string, expectedVersion int64) *domain.AppError {
+func probeConnectionAuditAction(requested string, modelChanged, oldEnabled, newEnabled bool) string {
+	requested = strings.TrimSpace(requested)
+	if requested != "" && requested != apihealth.ProbeAuditUpdated {
+		return requested
+	}
+	switch {
+	case modelChanged:
+		return apihealth.ProbeAuditModelChanged
+	case oldEnabled != newEnabled && newEnabled:
+		return apihealth.ProbeAuditEnabled
+	case oldEnabled != newEnabled:
+		return apihealth.ProbeAuditDisabled
+	default:
+		return apihealth.ProbeAuditUpdated
+	}
+}
+
+func (store *Store) DeleteOwnerProbeConnection(ctx context.Context, ownerUserID, connectionID string, expectedVersion int64, audit apihealth.ProbeAuditMutation) *domain.AppError {
+	_, appErr := store.deleteOwnerProbeConnection(ctx, nil, ownerUserID, connectionID, expectedVersion, audit, nil)
+	return appErr
+}
+
+func (store *Store) DeleteOwnerProbeConnectionWithIdempotency(
+	ctx context.Context,
+	entry idempotency.Entry,
+	ownerUserID, connectionID string,
+	expectedVersion int64,
+	audit apihealth.ProbeAuditMutation,
+	buildCompletion apihealth.MutationCompletionBuilder,
+) (idempotency.Completion, *domain.AppError) {
+	return store.deleteOwnerProbeConnection(ctx, &entry, ownerUserID, connectionID, expectedVersion, audit, buildCompletion)
+}
+
+func (store *Store) deleteOwnerProbeConnection(
+	ctx context.Context,
+	entry *idempotency.Entry,
+	ownerUserID, connectionID string,
+	expectedVersion int64,
+	audit apihealth.ProbeAuditMutation,
+	buildCompletion apihealth.MutationCompletionBuilder,
+) (idempotency.Completion, *domain.AppError) {
 	if store == nil || store.pool == nil {
-		return internalStoreError()
+		return idempotency.Completion{}, internalStoreError()
 	}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return internalStoreError()
+		return idempotency.Completion{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
+	var lockedEntry idempotency.Entry
+	if entry != nil {
+		var appErr *domain.AppError
+		lockedEntry, appErr = lockProcessingIdempotencyInTx(ctx, tx, *entry)
+		if appErr != nil {
+			return idempotency.Completion{}, appErr
+		}
+	}
 	var version int64
-	if err := tx.QueryRow(ctx, `SELECT version FROM api_probe_connections WHERE owner_user_id = $1 AND id = $2 FOR UPDATE`, ownerUserID, connectionID).Scan(&version); errors.Is(err, pgx.ErrNoRows) {
-		return apiHealthNotFound()
+	var verificationStatus string
+	if err := tx.QueryRow(ctx, `SELECT version, verification_status FROM api_probe_connections WHERE owner_user_id = $1 AND id = $2 FOR UPDATE`, ownerUserID, connectionID).Scan(&version, &verificationStatus); errors.Is(err, pgx.ErrNoRows) {
+		return idempotency.Completion{}, apiHealthNotFound()
 	} else if err != nil {
-		return internalStoreError()
+		return idempotency.Completion{}, internalStoreError()
 	}
 	if version != expectedVersion {
-		return apiHealthVersionConflict()
+		return idempotency.Completion{}, apiHealthVersionConflict()
 	}
 	rows, err := tx.Query(ctx, `SELECT id::text, title FROM api_services WHERE probe_connection_id = $1 ORDER BY updated_at DESC, id`, connectionID)
 	if err != nil {
-		return internalStoreError()
+		return idempotency.Completion{}, internalStoreError()
 	}
 	references := make([]apihealth.ServiceReference, 0)
 	for rows.Next() {
 		var reference apihealth.ServiceReference
 		if err := rows.Scan(&reference.ID, &reference.Title); err != nil {
 			rows.Close()
-			return internalStoreError()
+			return idempotency.Completion{}, internalStoreError()
 		}
 		references = append(references, reference)
 	}
 	if rows.Err() != nil {
 		rows.Close()
-		return internalStoreError()
+		return idempotency.Completion{}, internalStoreError()
 	}
 	rows.Close()
 	if len(references) > 0 {
@@ -308,15 +493,108 @@ func (store *Store) DeleteOwnerProbeConnection(ctx context.Context, ownerUserID,
 		for _, reference := range references {
 			titles = append(titles, reference.Title+" ("+reference.ID+")")
 		}
-		return apiHealthConflict("该连接仍被以下服务使用，请先改绑或解绑：" + strings.Join(titles, "、"))
+		return idempotency.Completion{}, apiHealthConflict("该连接仍被以下服务使用，请先改绑或解绑：" + strings.Join(titles, "、"))
+	}
+	if err := appendProbeConnectionAuditEvent(ctx, tx, probeConnectionAuditEvent{
+		TargetConnectionID: connectionID, OwnerUserID: ownerUserID,
+		Action: apihealth.ProbeAuditDeleted, RequestID: audit.RequestID, OccurredAt: audit.OccurredAt,
+		FromVerificationStatus: verificationStatus,
+	}); err != nil {
+		return idempotency.Completion{}, internalStoreError()
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM api_probe_connections WHERE id = $1`, connectionID); err != nil {
-		return internalStoreError()
+		return idempotency.Completion{}, internalStoreError()
+	}
+	var completion idempotency.Completion
+	if entry != nil {
+		if buildCompletion == nil {
+			return idempotency.Completion{}, internalStoreError()
+		}
+		var appErr *domain.AppError
+		completion, appErr = buildCompletion(apihealth.Connection{ID: connectionID, OwnerUserID: ownerUserID})
+		if appErr != nil {
+			return idempotency.Completion{}, appErr
+		}
+		if appErr := completeIdempotencyInTx(ctx, tx, lockedEntry, completion, probeAuditOccurredAt(audit)); appErr != nil {
+			return idempotency.Completion{}, appErr
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return internalStoreError()
+		return idempotency.Completion{}, internalStoreError()
 	}
-	return nil
+	return completion, nil
+}
+
+func probeAuditOccurredAt(audit apihealth.ProbeAuditMutation) time.Time {
+	occurredAt := audit.OccurredAt.UTC()
+	if occurredAt.IsZero() {
+		return time.Now().UTC()
+	}
+	return occurredAt
+}
+
+func appendProbeConnectionAuditEvent(ctx context.Context, tx pgx.Tx, event probeConnectionAuditEvent) error {
+	requestID := strings.TrimSpace(event.RequestID)
+	if requestID == "" {
+		requestID = "probe-event-" + uuid.NewString()
+	}
+	occurredAt := event.OccurredAt.UTC()
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	changedFields := event.ChangedFields
+	if changedFields == nil {
+		changedFields = []string{}
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO api_probe_connection_events (
+		  target_connection_id, owner_user_id, actor_user_id, actor_kind, action,
+		  old_measurement_version, new_measurement_version, old_model, new_model,
+		  old_protocol, new_protocol, environment,
+		  from_verification_status, to_verification_status, changed_fields,
+		  request_id, occurred_at, created_at
+		) VALUES (
+		  $1, $2, $2, 'user', $3,
+		  $4, $5, $6, $7, $8, $9, $10,
+		  $11, $12, $13, $14, $15, $15
+		)
+	`, event.TargetConnectionID, event.OwnerUserID, event.Action,
+		event.OldMeasurementVersion, event.NewMeasurementVersion, event.OldModel, event.NewModel,
+		event.OldProtocol, event.NewProtocol, event.Environment,
+		nullText(event.FromVerificationStatus), nullText(event.ToVerificationStatus), changedFields,
+		requestID, occurredAt)
+	return err
+}
+
+func probeConnectionChangedFields(
+	oldName, oldBaseURL, oldModel, oldProtocol, oldEnvironment string,
+	oldEnabled bool,
+	connection apihealth.Connection,
+	credentialProvided bool,
+) []string {
+	changed := make([]string, 0, 7)
+	if oldName != connection.Name {
+		changed = append(changed, "name")
+	}
+	if oldBaseURL != connection.BaseURL {
+		changed = append(changed, "base_url")
+	}
+	if credentialProvided {
+		changed = append(changed, "credential")
+	}
+	if oldModel != connection.ProbeModel {
+		changed = append(changed, "probe_model")
+	}
+	if oldProtocol != connection.ProbeProtocol {
+		changed = append(changed, "probe_protocol")
+	}
+	if oldEnvironment != connection.ProbeEnvironment {
+		changed = append(changed, "environment")
+	}
+	if oldEnabled != connection.Enabled {
+		changed = append(changed, "enabled")
+	}
+	return changed
 }
 
 func (store *Store) LoadOwnerProbeConnectionSamples(ctx context.Context, ownerUserID string, connectionIDs []string, since time.Time) (map[string][]apihealth.Sample, *domain.AppError) {

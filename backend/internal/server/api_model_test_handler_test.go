@@ -29,8 +29,12 @@ func TestAPIModelTesterRoutesRequireSessionAndCSRFAndNeverReturnKey(t *testing.T
 			ChatCompletions: apimodeltest.ProtocolResult{HTTPStatusClass: 4, DurationMS: 7, ErrorCode: openaiapi.ErrorProtocolUnsupported},
 		},
 	}
-	handler := NewServer(app.NewServiceWithClock(func() time.Time { return now }), ServerOptions{EnableDevAuth: true, APIModelTester: modelTester})
-	session := createSession(t, handler, "api-model-tester-user", false)
+	handler := NewServer(app.NewServiceWithClock(func() time.Time { return now }), ServerOptions{
+		EnableDevAuth:     true,
+		APIModelTester:    modelTester,
+		TurnstileVerifier: &recordingTurnstileVerifier{},
+	})
+	session := createStudentSession(t, handler, "api-model-tester-student")
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/tools/api-model-tester/order-sources", nil)
 	addCookie(listRequest, session.cookie)

@@ -1164,8 +1164,8 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatalf("seed seller: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['api_merchant']::text[], true, true, $3, $3)
 	`, contactID, sellerID, now); err != nil {
 		t.Fatalf("seed contact method: %v", err)
 	}
@@ -1177,8 +1177,8 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatalf("seed buyer: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['buyer']::text[], true, true, $3, $3)
 	`, buyerContactID, buyerID, now); err != nil {
 		t.Fatalf("seed buyer contact method: %v", err)
 	}

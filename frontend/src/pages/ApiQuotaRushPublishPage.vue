@@ -20,6 +20,7 @@ import AccountPaymentSummarySection from '@/components/api-service-publish/Accou
 import ApiPaymentSettingsDialog from '@/components/contact-payment/ApiPaymentSettingsDialog.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
+import MerchantContactMethodsSection from '@/components/api-service-publish/MerchantContactMethodsSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
 import ProbeConnectionSection from '@/components/api-service-publish/ProbeConnectionSection.vue'
@@ -78,8 +79,10 @@ import {
   useApiPaymentAccountSettingsQuery,
   useApiQuotaSaleSlots,
   useCreateApiQuotaRushOfferMutation,
+	useMerchantApiOrders,
   useModelCatalog,
   useMyApiServices,
+	useMyContactMethodsQuery,
   useMyProfileQuery,
 } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
@@ -110,6 +113,8 @@ const publishSteps = [
 ]
 
 const myServicesQuery = useMyApiServices('all')
+const contactMethodsQuery = useMyContactMethodsQuery()
+const activeDisputesQuery = useMerchantApiOrders({ dispute: 'active' })
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
@@ -162,6 +167,7 @@ watch([eligibleServices, requestedServiceId, () => myServicesQuery.isSuccess.val
 
 const baseForm = reactive<ApiServicePublishForm>({
   probeConnectionId: '',
+	ownerContactMethodIds: [],
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -216,6 +222,9 @@ const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, i
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === baseForm.providerCategory))
 const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
+  contact.enabled && contact.usageScopes.includes('api_merchant')
+)))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === baseForm.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
   selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
@@ -233,6 +242,15 @@ const profileErrorMessage = computed(() =>
 
 watch(() => myProfile.value, profile => {
   baseForm.merchantDisplayName = profile?.displayName.trim() || profile?.username.trim() || ''
+}, { immediate: true })
+
+watch(availableOwnerContacts, contacts => {
+  const availableIds = new Set(contacts.map(contact => contact.id))
+  baseForm.ownerContactMethodIds = baseForm.ownerContactMethodIds.filter(id => availableIds.has(id))
+  if (baseForm.ownerContactMethodIds.length || !contacts.length) return
+  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
+  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
+  baseForm.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
 }, { immediate: true })
 
 watch(accountSettingsValue, settings => {
@@ -329,6 +347,16 @@ const slotStepSummary = computed(() => selectedSlot.value
 const selectedSlotLabel = computed(() => selectedSlot.value
   ? `${formatSlotDate(selectedSlot.value.startsAt)} ${formatSlotTime(selectedSlot.value.startsAt)}`
   : '')
+const activeDisputeCount = computed(() => activeDisputesQuery.data.value?.length ?? 0)
+const disputePublishBlocked = computed(() => (
+	activeDisputesQuery.isLoading.value || activeDisputesQuery.isError.value || activeDisputeCount.value > 0
+))
+const disputeRuleText = computed(() => {
+	if (activeDisputesQuery.isLoading.value) return '正在检查当前账号是否存在未解决的 API 订单纠纷，检查完成前不能提交发布。'
+	if (activeDisputesQuery.isError.value) return '暂时无法确认纠纷状态，为避免违规接单，当前不能提交发布。请重试。'
+	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 个未解决的 API 订单纠纷。处理完成前不能发布或恢复 API 服务与额度，也不会接收新订单。`
+	return '发布规则：账号存在未解决的 API 订单纠纷时，不能发布或恢复 API 服务与额度，也不会接收新订单。'
+})
 const primaryActionLabel = computed(() => {
   if (createBaseServiceMutation.isPending.value) return '创建中...'
   if (createRushMutation.isPending.value) return '发布中...'
@@ -341,6 +369,7 @@ const primaryActionLabel = computed(() => {
 const primaryActionDisabled = computed(() =>
   createBaseServiceMutation.isPending.value
   || createRushMutation.isPending.value
+	|| (step.value === 3 && disputePublishBlocked.value)
   || (step.value === 1 && serviceMode.value === 'create' && (profileLoading.value || profileIsError.value)),
 )
 
@@ -420,6 +449,7 @@ function validateBaseService() {
     return false
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
+	if (!baseForm.ownerContactMethodIds.length) baseErrors.ownerContactMethods = '请至少选择一种订单联系方式。'
   if (!baseForm.probeConnectionId) baseErrors.probeConnection = '请选择已验证且启用的探针连接。'
   else if (!probeConnectionReady.value) baseErrors.probeConnection = '所选探针连接当前不可用，请重新选择。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
@@ -509,7 +539,11 @@ function formatSlotTime(value: string) {
 }
 
 async function publishRushOffer() {
-  if (!selectedService.value) {
+	if (disputePublishBlocked.value) {
+		toast.warning(disputeRuleText.value)
+		return
+	}
+	if (!selectedService.value) {
     serviceError.value = '原服务已不可用，请重新选择一个已上线且可接单的 API 服务。'
     step.value = 1
     void focusStep(1)
@@ -616,6 +650,15 @@ function preview() {
       </div>
     </header>
 
+    <Alert :variant="activeDisputeCount > 0 || activeDisputesQuery.isError.value ? 'destructive' : 'default'">
+      <CalendarClock />
+      <AlertTitle>发布前纠纷规则</AlertTitle>
+      <AlertDescription>
+        {{ disputeRuleText }}
+        <Button v-if="activeDisputesQuery.isError.value" type="button" size="sm" variant="outline" class="mt-3" @click="activeDisputesQuery.refetch()">重新检查</Button>
+      </AlertDescription>
+    </Alert>
+
     <PublishWorkflowStepper :steps="publishSteps" :current-step="step" :completed-steps="completedSteps" @select="selectStep" />
 
     <div class="api-publish-layout grid min-w-0 gap-3 lg:items-start">
@@ -691,6 +734,12 @@ function preview() {
                   :settings="accountSettingsValue"
                   :loading="paymentSettingsLoading"
                   @edit="paymentSettingsDialogOpen = true"
+                />
+                <MerchantContactMethodsSection
+                  :form="baseForm"
+                  :contacts="availableOwnerContacts"
+                  :loading="contactMethodsQuery.isLoading.value"
+                  :error="baseErrors.ownerContactMethods"
                 />
                 <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" @update:model-value="setProviderCategory" />
                 <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个 API 服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>

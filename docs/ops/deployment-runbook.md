@@ -228,9 +228,9 @@ curl -fsS http://127.0.0.1:${BACKEND_PORT:-8080}/version
 ```
 
 `/readyz` must report PostgreSQL readiness and `schemaDirty=false`.
-The expected schema version in the current backend is `88`.
+The expected schema version in the current backend is `93`.
 `/version` must report the release version, full resolved Git commit, commit
-time, and `expectedMigrationVersion=88`; the first three values must match the
+time, and `expectedMigrationVersion=93`; the first three values must match the
 image labels inspected above.
 
 After a successful empty-database Bootstrap, clear both Bootstrap variables,

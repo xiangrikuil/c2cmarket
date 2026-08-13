@@ -113,7 +113,7 @@ import {
 export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -330,6 +330,8 @@ import {
   backendUpdateApiPaymentAccountSettings,
 } from '@/lib/apiPaymentSettingsBackend'
 import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
+import { requireMockIdentity } from '@/lib/mockAuth'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 export type AdminSection =
   | 'official-prices'
@@ -638,6 +640,9 @@ export type ApiOrder = {
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
+	afterSalesExpiresAt?: string
+	canOpenDispute?: boolean
+	disputeEligibilityReason?: string
   version: number
   intentSnapshot: ApiPurchaseIntent['snapshot']
   selectedDeliveryMode: ApiDeliveryMode
@@ -688,6 +693,9 @@ export type AdminApiOrderDetail = {
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
+	afterSalesExpiresAt?: string
+	canOpenDispute?: boolean
+	disputeEligibilityReason?: string
   version: number
   createdAt: string
   updatedAt: string
@@ -919,6 +927,34 @@ let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
 let myUserProfileStore = clone(myUserProfile)
 let myContactMethodStore = clone(myContactMethods)
 
+function syncMockProfileIdentity() {
+  const identity = requireMockIdentity()
+  const linuxDo = identity.linuxDoBinding
+  myUserProfileStore = {
+    ...myUserProfileStore,
+    id: identity.id,
+    username: identity.username,
+    displayName: identity.displayName,
+    email: identity.email,
+    emailVerified: Boolean(identity.email),
+    emailVerifiedAt: identity.email ? (myUserProfileStore.emailVerifiedAt ?? nowText()) : null,
+    passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    avatarMode: linuxDo.bound ? 'linuxdo' : 'custom_url',
+    avatarUrl: linuxDo.avatarUrl ?? null,
+    linuxDoBinding: {
+      bound: linuxDo.bound,
+      linuxDoUserId: linuxDo.linuxDoUserId ?? null,
+      linuxDoUsername: linuxDo.linuxDoUsername ?? null,
+      linuxDoAvatarUrl: linuxDo.avatarUrl ?? null,
+      trustLevel: linuxDo.trustLevel ?? null,
+      lastSyncedAt: linuxDo.bound ? nowText() : null,
+    },
+    permissions: identity.permissions.filter((permission): permission is 'admin' => permission === 'admin'),
+    capabilities: [...identity.capabilities],
+  }
+  return myUserProfileStore
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value)
 }
@@ -978,7 +1014,7 @@ function mockDeliveryReviewDeadline(submittedAt?: string) {
 }
 
 function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
-  return orders.map(order => ({
+	return orders.map(order => applyMockApiOrderAfterSales({
     ...order,
     orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
 		purchaseKind: order.purchaseKind ?? 'api_service',
@@ -988,6 +1024,34 @@ function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
       ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
     quotaUsagePolicySnapshot: normalizeHistoricalApiQuotaUsagePolicy(order.quotaUsagePolicySnapshot),
   }))
+}
+
+function mockApiOrderValidityExpiresAt(order: ApiOrder) {
+	return order.packageExpiresAt ?? order.quotaSnapshot?.expiresAt ?? order.intentSnapshot.serviceValidityExpiresAt ?? undefined
+}
+
+function applyMockApiOrderAfterSales(order: ApiOrder, currentTime = Date.now()) {
+	const validityExpiresAt = mockApiOrderValidityExpiresAt(order)
+	const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
+	const afterSalesTimestamp = Number.isFinite(validityTimestamp) ? validityTimestamp + 24 * 60 * 60 * 1000 : Number.NaN
+	order.afterSalesExpiresAt = Number.isFinite(afterSalesTimestamp) ? new Date(afterSalesTimestamp).toISOString() : undefined
+	if (order.status === 'cancelled') {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'order_cancelled'
+	} else if (normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none') {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'dispute_exists'
+	} else if (Number.isFinite(afterSalesTimestamp) && currentTime >= afterSalesTimestamp) {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'after_sales_expired'
+	} else if (order.status === 'completed' && !Number.isFinite(validityTimestamp)) {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'completed_validity_unknown'
+	} else {
+		order.canOpenDispute = true
+		order.disputeEligibilityReason = 'eligible'
+	}
+	return order
 }
 
 function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQuotaOffer[] {
@@ -1000,9 +1064,15 @@ function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQu
 function materializeMockApiOrderReviews(currentTime = Date.now()) {
   let changed = false
   for (const order of apiOrderStore) {
-		if (order.status !== 'delivery_submitted' || isApiOrderDisputeActive(order.disputeStatus) || !order.deliveryReviewExpiresAt) continue
+		if (order.status !== 'delivery_submitted' || isApiOrderDisputeActive(order.disputeStatus) || !order.deliveryReviewExpiresAt) {
+			applyMockApiOrderAfterSales(order, currentTime)
+			continue
+    }
     const deadline = Date.parse(order.deliveryReviewExpiresAt)
-    if (!Number.isFinite(deadline) || deadline > currentTime) continue
+		if (!Number.isFinite(deadline) || deadline > currentTime) {
+			applyMockApiOrderAfterSales(order, currentTime)
+			continue
+		}
     const completedAt = new Date(deadline).toISOString()
     order.status = 'completed'
     order.completionSource = 'auto_completed'
@@ -1010,6 +1080,7 @@ function materializeMockApiOrderReviews(currentTime = Date.now()) {
     order.updatedAt = completedAt
     order.version += 1
     changed = true
+		applyMockApiOrderAfterSales(order, currentTime)
   }
   if (changed) persistApiOrderStore()
 }
@@ -3343,7 +3414,7 @@ export async function getMyApiServiceById(id: string) {
 export async function getMyProfile() {
   if (shouldUseRealBackend()) return backendMyProfile()
   await wait()
-  return clone(myUserProfileStore)
+  return clone(syncMockProfileIdentity())
 }
 
 export async function updateMyProfile(payload: UpdateMyProfileRequest) {
@@ -4584,6 +4655,16 @@ export async function submitApiService(payload: Record<string, unknown>) {
   await wait()
   const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const isPublish = payload.status === 'reviewing'
+	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
+		? payload.ownerContactMethodIds.map(value => String(value).trim()).filter(Boolean)
+		: []
+	if (new Set(ownerContactMethodIds).size !== ownerContactMethodIds.length) {
+		throw new Error('订单联系方式不能重复选择。')
+	}
+	const ownerContacts = ownerContactMethodIds.map(id => myContactMethodStore.find(contact => contact.id === id))
+	if (!ownerContactMethodIds.length || ownerContacts.some(contact => !contact || !contact.enabled || !contact.usageScopes.includes('api_merchant'))) {
+		throw new Error('请先在个人中心添加并选择至少一种可用的 API 订单联系方式。')
+	}
   const probeConnectionId = stringValue(payload.probeConnectionId, '')
   const probeConnection = (await getOwnerAPIProbeConnections()).find(connection => connection.id === probeConnectionId)
   if (isPublish && (!probeConnection || !probeConnection.enabled || probeConnection.verificationStatus !== 'verified')) {
@@ -4685,7 +4766,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     warranty: merchantRefundCommitment
       ? '商户退款承诺：订单有效期内符合规则时退还全部实付金额；平台不垫付、不代赔'
       : '无额外退款承诺，具体问题由双方站外协商；平台不担保、不代赔',
-    refundPolicy: merchantRefundCommitment ? 'api-merchant-refund-v1' : '无额外退款承诺',
+		refundPolicy: apiOrderPlatformTradeBoundary,
     accountPoolType,
     accountPoolLabel,
     merchantRefundCommitment,
@@ -4724,7 +4805,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     })),
     recommendationResponseMedianMinutes: null,
     serviceUpdatedAt: nowText(),
-    contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: `@${currentMerchantName}` }],
+		contactChannels: ownerContacts.flatMap(contact => contact ? [{ type: contact.type, label: contact.label, value: contact.displayValue }] : []),
     acceptedPaymentMethods: normalizedPaymentOptions.filter(option => option.enabled).map(option => option.paymentMethod),
   }
   apiServicePaymentSnapshotStore[id] = normalizeApiPaymentAccountSettings({
@@ -5244,7 +5325,7 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     admin: null,
   }
 
-  if (myUserProfileStore.permissions.includes('admin')) {
+  if (hasCapability(syncMockProfileIdentity(), CAPABILITY.adminAccess)) {
     const admin = {
       officialPrices: officialPriceStore.filter(item => item.status === '待验证').length,
       carpools: carpoolStore.filter(item => item.status === '审核中' || item.status === '暂停').length,
@@ -6051,6 +6132,7 @@ function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
   updater(order)
   order.updatedAt = nowText()
   order.version += 1
+	applyMockApiOrderAfterSales(order)
   persistApiOrderStore()
   return clone(order)
 }
@@ -6235,6 +6317,8 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       accountPoolLabel: service.accountPoolLabel,
       merchantRefundCommitment: service.merchantRefundCommitment,
       merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+			warranty: service.warranty,
+			refundPolicy: service.refundPolicy,
       serviceValidityExpiresAt: offer.expiresAt,
       performanceConfirmedAt: service.performanceConfirmedAt,
       performanceUnverified: true,
@@ -6398,9 +6482,18 @@ export async function openApiOrderDispute(id: string, input: OpenApiOrderDispute
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
     if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
-		if (order.status === 'cancelled' || order.status === 'completed' || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none') {
+		applyMockApiOrderAfterSales(order)
+		if (!order.canOpenDispute) {
       throw new Error('当前订单不能再次申请平台介入。')
     }
+		if (order.status === 'completed' && !input.issueOccurredAt) throw new Error('请选择问题实际发生时间。')
+		if (input.issueOccurredAt) {
+			const occurredAt = Date.parse(input.issueOccurredAt)
+			const validityExpiresAt = mockApiOrderValidityExpiresAt(order)
+			const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
+			if (!Number.isFinite(occurredAt) || occurredAt > Date.now()) throw new Error('问题发生时间不正确。')
+			if (Number.isFinite(validityTimestamp) && occurredAt > validityTimestamp) throw new Error('问题必须发生在所购服务有效期内。')
+		}
     if (!input.reason.trim()) throw new Error('请填写订单问题说明。')
     order.disputeStatus = 'negotiating'
   })

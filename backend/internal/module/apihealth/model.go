@@ -1,6 +1,11 @@
 package apihealth
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
+)
 
 const (
 	VerificationUnverified = "unverified"
@@ -63,6 +68,17 @@ const (
 )
 
 const (
+	ProbeAuditCreated         = "created"
+	ProbeAuditUpdated         = "updated"
+	ProbeAuditModelChanged    = "model_changed"
+	ProbeAuditVerifySucceeded = "verify_succeeded"
+	ProbeAuditVerifyFailed    = "verify_failed"
+	ProbeAuditEnabled         = "enabled"
+	ProbeAuditDisabled        = "disabled"
+	ProbeAuditDeleted         = "deleted"
+)
+
+const (
 	ProbeSlotDuration         = 5 * time.Minute
 	SummaryWindow             = 24 * time.Hour
 	SummarySlotCount          = 24
@@ -121,6 +137,16 @@ type ConnectionInput struct {
 	Enabled                 bool
 	AcknowledgeInsecureHTTP bool
 }
+
+// ProbeAuditMutation 只承载安全审计上下文，不包含探针地址或凭据。
+type ProbeAuditMutation struct {
+	Action     string
+	RequestID  string
+	OccurredAt time.Time
+}
+
+// MutationCompletionBuilder 在数据库事务内根据最终连接状态生成可重放响应。
+type MutationCompletionBuilder func(Connection) (idempotency.Completion, *domain.AppError)
 
 type VerificationResult struct {
 	TotalDurationMS int

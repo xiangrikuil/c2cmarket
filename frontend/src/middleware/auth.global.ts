@@ -1,6 +1,7 @@
 import { defineNuxtRouteMiddleware, navigateTo } from '#app'
 import { authAccessFromMeta, loginRoute } from '@/lib/authNavigation'
 import { BackendProblemError, ensureBackendSession } from '@/lib/backendClient'
+import { capabilityFromRouteMeta, hasCapability } from '@/lib/capabilities'
 
 const loginRequiredCodes = new Set(['SESSION_EXPIRED', 'SESSION_REVOKED'])
 
@@ -11,9 +12,16 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (!access) return
 
   try {
-    await ensureBackendSession('orbit', access === 'admin', {
+    const session = await ensureBackendSession('orbit', false, {
       notifySessionInvalidation: false,
     })
+    const requiredCapability = capabilityFromRouteMeta(to.meta)
+    if (requiredCapability && !hasCapability(session.user, requiredCapability)) {
+      return navigateTo({
+        path: '/forbidden',
+        query: { required: requiredCapability, returnTo: to.fullPath },
+      }, { replace: true })
+    }
   } catch (error) {
     if (
       error instanceof BackendProblemError
@@ -24,11 +32,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
     if (
       error instanceof BackendProblemError
       && error.status === 403
-      && error.code === 'PERMISSION_DENIED'
+      && (error.code === 'PERMISSION_DENIED' || error.code === 'CAPABILITY_REQUIRED')
     ) {
-      return navigateTo('/', { replace: true })
+      return navigateTo({ path: '/forbidden', query: { returnTo: to.fullPath } }, { replace: true })
     }
     throw error
   }
 })
-

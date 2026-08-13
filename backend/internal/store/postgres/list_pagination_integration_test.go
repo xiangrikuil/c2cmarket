@@ -29,8 +29,8 @@ func TestPostgresBusinessListFiltersAndSortsBeforePagination(t *testing.T) {
 	}
 	contactID := uuid.NewString()
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['carpool_owner', 'api_merchant', 'buyer', 'dispute']::text[], true, true, $3, $3)
 	`, contactID, owner.ID, now); err != nil {
 		t.Fatalf("seed pagination contact: %v", err)
 	}
@@ -219,8 +219,8 @@ func assertAdminAPIOrderFiltersAndPagination(t *testing.T, store *Store, sellerI
 	}
 	buyerContactID := uuid.NewString()
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['buyer']::text[], true, true, $3, $3)
 	`, buyerContactID, buyer.ID, now); err != nil {
 		t.Fatalf("seed order pagination buyer contact: %v", err)
 	}

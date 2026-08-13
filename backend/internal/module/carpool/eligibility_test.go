@@ -16,8 +16,10 @@ func TestEvaluateApplicationEligibilityCoversAllCodes(t *testing.T) {
 			RiskNoticeCode:    "risk-1",
 			RiskAckRequired:   true,
 		},
-		Plan:          catalog.ProductPlan{PublishPolicy: "allowed"},
-		CurrentUserID: "buyer-1",
+		Plan:                   catalog.ProductPlan{PublishPolicy: "allowed"},
+		CurrentUserID:          "buyer-1",
+		ApplyCapabilityChecked: true,
+		HasApplyCapability:     true,
 	}
 
 	tests := []struct {
@@ -31,6 +33,7 @@ func TestEvaluateApplicationEligibilityCoversAllCodes(t *testing.T) {
 		{name: "paused", mutate: func(value *EligibilityContext) { value.Listing.Status = ListingStatusPaused }, code: EligibilityPaused},
 		{name: "credential risk", mutate: func(value *EligibilityContext) { value.Listing.AccessArrangement = "共享 password=secret" }, code: EligibilityCredentialRisk},
 		{name: "owner action required", mutate: func(value *EligibilityContext) { value.Listing.AccessArrangement = "" }, code: EligibilityOwnerActionRequired},
+		{name: "capability required", mutate: func(value *EligibilityContext) { value.HasApplyCapability = false }, code: EligibilityCapabilityRequired},
 		{name: "already applied", mutate: func(value *EligibilityContext) { value.HasOngoingApplication = true }, code: EligibilityAlreadyApplied},
 		{name: "already member", mutate: func(value *EligibilityContext) { value.HasActiveMembership = true }, code: EligibilityAlreadyMember},
 		{name: "self owned", mutate: func(value *EligibilityContext) { value.CurrentUserID = "owner-1" }, code: EligibilitySelfOwned},
@@ -58,10 +61,11 @@ func TestEvaluateApplicationEligibilityProductBoundaryPrecedesPersonalState(t *t
 			Status:            ListingStatusPaused,
 			AvailableSeats:    0,
 		},
-		Plan:                  catalog.ProductPlan{PublishPolicy: "allowed"},
-		CurrentUserID:         "owner-1",
-		HasOngoingApplication: true,
-		HasActiveMembership:   true,
+		Plan:                   catalog.ProductPlan{PublishPolicy: "allowed"},
+		CurrentUserID:          "owner-1",
+		HasOngoingApplication:  true,
+		HasActiveMembership:    true,
+		ApplyCapabilityChecked: true,
 	}
 	got := EvaluateApplicationEligibility(input)
 	if got.Code != EligibilityCredentialRisk {

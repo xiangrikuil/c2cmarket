@@ -6,11 +6,16 @@ const appShell = readFileSync(new URL('../AppShell.vue', import.meta.url), 'utf8
 const adminShell = readFileSync(new URL('../AdminShell.vue', import.meta.url), 'utf8')
 
 describe('development persona switcher', () => {
-  it('is development-only, real-backend-only, and exposes fixed personas', () => {
-    expect(switcher).toContain('import.meta.dev && shouldUseRealBackend()')
-    expect(switcher).toContain("createDevPersonaSession(persona)")
+  it('is development-only and exposes explicit real and mock personas', () => {
+    expect(switcher).toContain('const visible = import.meta.dev')
+    expect(switcher).toContain('const realBackend = shouldUseRealBackend()')
+    expect(switcher).toContain('createDevPersonaSession(persona as DevPersona)')
+    expect(switcher).toContain('createMockPersonaSession(persona as MockPersona)')
     for (const username of ['dev-buyer', 'dev-seller', 'dev-admin']) {
       expect(switcher).toContain(username)
+    }
+    for (const persona of ["persona: 'anonymous'", "persona: 'student'", "persona: 'linuxdo'", "persona: 'admin'"]) {
+      expect(switcher).toContain(persona)
     }
     expect(switcher).not.toContain('ensureBackendSession')
     expect(switcher).not.toContain('window.location.reload')
@@ -25,9 +30,9 @@ describe('development persona switcher', () => {
     expect(switcher).toContain('queryClient.getMutationCache().clear()')
     expect(switcher).toContain("queryClient.removeQueries({ type: 'inactive' })")
     expect(switcher).toContain("queryClient.resetQueries({ type: 'active' })")
-    expect(switcher).toContain("router.replace('/my')")
+    expect(switcher).toContain("router.replace(session ? '/my' : '/login')")
     expect(switcher.indexOf("queryClient.resetQueries({ type: 'active' })"))
-      .toBeLessThan(switcher.indexOf("router.replace('/my')"))
+      .toBeLessThan(switcher.indexOf("router.replace(session ? '/my' : '/login')"))
     expect(switcher).toContain('busyPersona')
     expect(switcher).toContain('activePersona')
   })

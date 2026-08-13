@@ -20,6 +20,7 @@ type apiServiceRequest struct {
 	MerchantProfileID                string                        `json:"merchantProfileId"`
 	MerchantIdentityMode             string                        `json:"merchantIdentityMode"`
 	OwnerContactMethodID             string                        `json:"ownerContactMethodId"`
+	OwnerContactMethodIDs            []string                      `json:"ownerContactMethodIds"`
 	ProbeConnectionID                string                        `json:"probeConnectionId"`
 	Title                            string                        `json:"title"`
 	ShortDescription                 string                        `json:"shortDescription"`
@@ -120,6 +121,7 @@ type apiServiceResponse struct {
 	MerchantProfileSlug              string                              `json:"merchantProfileSlug,omitempty"`
 	MerchantAvatarURL                string                              `json:"merchantAvatarUrl,omitempty"`
 	OwnerContactMethodID             string                              `json:"ownerContactMethodId,omitempty"`
+	OwnerContactMethodIDs            []string                            `json:"ownerContactMethodIds,omitempty"`
 	ProbeConnectionID                string                              `json:"probeConnectionId,omitempty"`
 	ProbeReady                       bool                                `json:"probeReady"`
 	Title                            string                              `json:"title"`
@@ -337,12 +339,14 @@ type apiPurchaseIntentListItemResponse struct {
 
 type createAPIPurchaseIntentResponse struct {
 	apiPurchaseIntentCoreResponse
-	MerchantContact *contactDisclosureDTO `json:"merchantContact"`
+	MerchantContact  *contactDisclosureDTO  `json:"merchantContact"`
+	MerchantContacts []contactDisclosureDTO `json:"merchantContacts"`
 }
 
 type buyerAPIPurchaseIntentDetailResponse struct {
 	apiPurchaseIntentCoreResponse
-	MerchantContact *contactDisclosureDTO `json:"merchantContact"`
+	MerchantContact  *contactDisclosureDTO  `json:"merchantContact"`
+	MerchantContacts []contactDisclosureDTO `json:"merchantContacts"`
 }
 
 type ownerAPIPurchaseIntentDetailResponse struct {
@@ -416,7 +420,10 @@ func (s *Server) handleUpdateAPIServiceOrderSettings(w http.ResponseWriter, r *h
 		writeProblem(w, r, appErr)
 		return
 	}
-	req, appErr := decodeStrictJSONOnly[apiServiceOrderSettingsRequest](r)
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
+	body, req, appErr := decodeStrictJSON[apiServiceOrderSettingsRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -434,13 +441,17 @@ func (s *Server) handleUpdateAPIServiceOrderSettings(w http.ResponseWriter, r *h
 		ExpectedVersion:      version,
 		RequestID:            requestIDFrom(r),
 	}
-	service, appErr := s.app.UpdateAPIServiceOrderSettings(r.Context(), user, input)
+	routeKey := "PATCH /api/v1/owner/api-services/{id}/order-settings:" + input.ServiceID
+	completion, appErr := s.app.UpdateAPIServiceOrderSettingsWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+		requestHash(http.MethodPatch, routeKey, body), input,
+		apiServiceCompletionBuilder(http.StatusOK),
+	)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	setETag(w, service.Version)
-	writeJSON(w, http.StatusOK, toAPIServiceResponse(service))
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleUpdateAPIServiceProbeConnection(w http.ResponseWriter, r *http.Request) {
@@ -449,7 +460,11 @@ func (s *Server) handleUpdateAPIServiceProbeConnection(w http.ResponseWriter, r 
 		writeProblem(w, r, appErr)
 		return
 	}
-	req, appErr := decodeStrictJSONOnly[apiServiceProbeConnectionRequest](r)
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) ||
+		!requireCapability(w, r, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	body, req, appErr := decodeStrictJSON[apiServiceProbeConnectionRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -463,18 +478,23 @@ func (s *Server) handleUpdateAPIServiceProbeConnection(w http.ResponseWriter, r 
 		writeProblem(w, r, appErr)
 		return
 	}
-	service, appErr := s.app.UpdateAPIServiceProbeConnection(r.Context(), user, apimarket.UpdateProbeConnectionInput{
+	input := apimarket.UpdateProbeConnectionInput{
 		ServiceID:         chi.URLParam(r, "id"),
 		ProbeConnectionID: *req.ProbeConnectionID,
 		ExpectedVersion:   version,
 		RequestID:         requestIDFrom(r),
-	})
+	}
+	routeKey := "PATCH /api/v1/owner/api-services/{id}/probe-connection:" + input.ServiceID
+	completion, appErr := s.app.UpdateAPIServiceProbeConnectionWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+		requestHash(http.MethodPatch, routeKey, body), input,
+		apiServiceCompletionBuilder(http.StatusOK),
+	)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	setETag(w, service.Version)
-	writeJSON(w, http.StatusOK, toAPIServiceResponse(service))
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handlePublicAPIService(w http.ResponseWriter, r *http.Request) {
@@ -494,6 +514,9 @@ func (s *Server) handleCreateAPIPurchaseIntent(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIOrderCreate) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[createAPIPurchaseIntentRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -503,7 +526,7 @@ func (s *Server) handleCreateAPIPurchaseIntent(w http.ResponseWriter, r *http.Re
 	routeKey := "POST /api/v1/api-services/{id}/purchase-intents"
 	completion, appErr := s.app.CreateAPIPurchaseIntentWithIdempotency(
 		r.Context(),
-		user.ID,
+		user,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey+":"+serviceID, body),
@@ -616,6 +639,9 @@ func (s *Server) handleOwnerAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -641,6 +667,9 @@ func (s *Server) handleOwnerAPIService(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	service, appErr := s.app.OwnerAPIService(r.Context(), user, chi.URLParam(r, "id"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -656,19 +685,27 @@ func (s *Server) handleCreateAPIService(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[apiServiceRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.withIdempotency(w, r, user.ID, "POST /api/v1/owner/api-services", body, func() (int, any, string, string, *domain.AppError) {
-		service, errApp := s.app.CreateAPIService(r.Context(), user, toAppCreateAPIServiceInput(req))
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, service.Version)
-		return http.StatusCreated, toAPIServiceResponse(service), "api_service", service.ID, nil
-	})
+	routeKey := "POST /api/v1/owner/api-services"
+	input := toAppCreateAPIServiceInput(req)
+	input.RequestID = requestIDFrom(r)
+	completion, appErr := s.app.CreateAPIServiceWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+		requestHash(http.MethodPost, routeKey, body), input,
+		apiServiceCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleUpdateAPIService(w http.ResponseWriter, r *http.Request) {
@@ -677,7 +714,10 @@ func (s *Server) handleUpdateAPIService(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
-	req, appErr := decodeStrictJSONOnly[apiServiceRequest](r)
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
+	body, req, appErr := decodeStrictJSON[apiServiceRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -691,49 +731,46 @@ func (s *Server) handleUpdateAPIService(w http.ResponseWriter, r *http.Request) 
 	input.ServiceID = chi.URLParam(r, "id")
 	input.ExpectedVersion = version
 	input.RequestID = requestIDFrom(r)
-	service, appErr := s.app.UpdateAPIService(r.Context(), user, input)
+	routeKey := "PATCH /api/v1/owner/api-services/{id}:" + input.ServiceID
+	completion, appErr := s.app.UpdateAPIServiceWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+		requestHash(http.MethodPatch, routeKey, body), input,
+		apiServiceCompletionBuilder(http.StatusOK),
+	)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	setETag(w, service.Version)
-	writeJSON(w, http.StatusOK, toAPIServiceResponse(service))
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleSubmitAPIServiceReview(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIServiceAction(w, r, "submit-review", func(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError) {
-		return s.app.SubmitAPIServiceForReview(ctx, user, input)
-	})
+	s.handleOwnerAPIServiceAction(w, r, "submit-review", "submit_review")
 }
 
 func (s *Server) handlePublishAPIService(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIServiceAction(w, r, "publish", func(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError) {
-		return s.app.UpdateAPIServicePublication(ctx, user, input, "publish")
-	})
+	s.handleOwnerAPIServiceAction(w, r, "publish", "publish")
 }
 
 func (s *Server) handlePauseAPIService(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIServiceAction(w, r, "pause", func(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError) {
-		return s.app.UpdateAPIServicePublication(ctx, user, input, "pause")
-	})
+	s.handleOwnerAPIServiceAction(w, r, "pause", "pause")
 }
 
 func (s *Server) handleResumeAPIService(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIServiceAction(w, r, "resume", func(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError) {
-		return s.app.UpdateAPIServicePublication(ctx, user, input, "resume")
-	})
+	s.handleOwnerAPIServiceAction(w, r, "resume", "resume")
 }
 
 func (s *Server) handleStartAPIServiceRevision(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIServiceAction(w, r, "start-revision", func(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError) {
-		return s.app.UpdateAPIServicePublication(ctx, user, input, "start_revision")
-	})
+	s.handleOwnerAPIServiceAction(w, r, "start-revision", "start_revision")
 }
 
-func (s *Server) handleOwnerAPIServiceAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError)) {
+func (s *Server) handleOwnerAPIServiceAction(w http.ResponseWriter, r *http.Request, action, transition string) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	body, _, appErr := decodeStrictJSON[emptyRequest](r)
@@ -748,24 +785,29 @@ func (s *Server) handleOwnerAPIServiceAction(w http.ResponseWriter, r *http.Requ
 	}
 	serviceID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/api-services/{id}/" + action + ":" + serviceID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		service, errApp := run(r.Context(), user, apimarket.ServiceOwnerActionInput{
-			ServiceID:       serviceID,
-			ExpectedVersion: version,
-			RequestID:       requestIDFrom(r),
-		})
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, service.Version)
-		return http.StatusOK, toAPIServiceResponse(service), "api_service", service.ID, nil
-	})
+	input := apimarket.ServiceOwnerActionInput{ServiceID: serviceID, ExpectedVersion: version, RequestID: requestIDFrom(r)}
+	key := r.Header.Get("Idempotency-Key")
+	hash := requestHash(http.MethodPost, routeKey, body)
+	var completion idempotency.Completion
+	if transition == "submit_review" {
+		completion, appErr = s.app.SubmitAPIServiceForReviewWithIdempotency(r.Context(), user, routeKey, key, hash, input, apiServiceCompletionBuilder(http.StatusOK))
+	} else {
+		completion, appErr = s.app.UpdateAPIServicePublicationWithIdempotency(r.Context(), user, routeKey, key, hash, input, transition, apiServiceCompletionBuilder(http.StatusOK))
+	}
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleOwnerAPIPurchaseIntents(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	intents, appErr := s.app.OwnerAPIPurchaseIntents(r.Context(), user)
@@ -782,6 +824,9 @@ func (s *Server) handleOwnerAPIPurchaseIntent(w http.ResponseWriter, r *http.Req
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	intent, appErr := s.app.OwnerAPIPurchaseIntent(r.Context(), user, chi.URLParam(r, "id"), requestIDFrom(r))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -794,13 +839,13 @@ func (s *Server) handleOwnerAPIPurchaseIntent(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleMarkAPIPurchaseIntentContacted(w http.ResponseWriter, r *http.Request) {
 	s.handleOwnerAPIPurchaseIntentAction(w, r, "mark-contacted", false, func(ctx context.Context, user auth.User, routeKey, idempotencyKey string, body []byte, input apiintent.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.MarkAPIPurchaseIntentContactedWithIdempotency(ctx, user.ID, routeKey, idempotencyKey, requestHash(http.MethodPost, routeKey+":"+input.IntentID, body), input, apiPurchaseIntentCompletionBuilder(toOwnerAPIPurchaseIntentListItemResponse))
+		return s.app.MarkAPIPurchaseIntentContactedWithIdempotency(ctx, user, routeKey, idempotencyKey, requestHash(http.MethodPost, routeKey+":"+input.IntentID, body), input, apiPurchaseIntentCompletionBuilder(toOwnerAPIPurchaseIntentListItemResponse))
 	})
 }
 
 func (s *Server) handleCloseAPIPurchaseIntent(w http.ResponseWriter, r *http.Request) {
 	s.handleOwnerAPIPurchaseIntentAction(w, r, "close", true, func(ctx context.Context, user auth.User, routeKey, idempotencyKey string, body []byte, input apiintent.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.CloseAPIPurchaseIntentWithIdempotency(ctx, user.ID, routeKey, idempotencyKey, requestHash(http.MethodPost, routeKey+":"+input.IntentID, body), input, apiPurchaseIntentCompletionBuilder(toOwnerAPIPurchaseIntentListItemResponse))
+		return s.app.CloseAPIPurchaseIntentWithIdempotency(ctx, user, routeKey, idempotencyKey, requestHash(http.MethodPost, routeKey+":"+input.IntentID, body), input, apiPurchaseIntentCompletionBuilder(toOwnerAPIPurchaseIntentListItemResponse))
 	})
 }
 
@@ -808,6 +853,9 @@ func (s *Server) handleOwnerAPIPurchaseIntentAction(w http.ResponseWriter, r *ht
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	var body []byte
@@ -922,20 +970,20 @@ func (s *Server) handleAdminAPIServiceAction(w http.ResponseWriter, r *http.Requ
 	}
 	serviceID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/admin/api-services/{id}/" + action + ":" + serviceID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		service, errApp := s.app.UpdateAPIServiceAdminStatus(r.Context(), user, apimarket.ServiceAdminActionInput{
-			ServiceID:       serviceID,
-			Action:          action,
-			Reason:          req.Reason,
-			ExpectedVersion: version,
-			RequestID:       requestIDFrom(r),
-		})
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, service.Version)
-		return http.StatusOK, toAPIServiceResponse(service), "api_service", service.ID, nil
-	})
+	completion, appErr := s.app.UpdateAPIServiceAdminStatusWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+		requestHash(http.MethodPost, routeKey, body),
+		apimarket.ServiceAdminActionInput{
+			ServiceID: serviceID, Action: action, Reason: req.Reason,
+			ExpectedVersion: version, RequestID: requestIDFrom(r),
+		},
+		apiServiceCompletionBuilder(http.StatusOK),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleAdminAPIPurchaseIntents(w http.ResponseWriter, r *http.Request) {
@@ -1011,6 +1059,7 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		MerchantProfileID:                req.MerchantProfileID,
 		MerchantIdentityMode:             req.MerchantIdentityMode,
 		OwnerContactMethodID:             req.OwnerContactMethodID,
+		OwnerContactMethodIDs:            append([]string(nil), req.OwnerContactMethodIDs...),
 		ProbeConnectionID:                req.ProbeConnectionID,
 		Title:                            req.Title,
 		ShortDescription:                 req.ShortDescription,
@@ -1044,6 +1093,7 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		MerchantProfileID:                base.MerchantProfileID,
 		MerchantIdentityMode:             base.MerchantIdentityMode,
 		OwnerContactMethodID:             base.OwnerContactMethodID,
+		OwnerContactMethodIDs:            append([]string(nil), base.OwnerContactMethodIDs...),
 		ProbeConnectionID:                base.ProbeConnectionID,
 		Title:                            base.Title,
 		ShortDescription:                 base.ShortDescription,
@@ -1218,6 +1268,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		MerchantProfileSlug:              service.MerchantProfileSlug,
 		MerchantAvatarURL:                service.MerchantAvatarURL,
 		OwnerContactMethodID:             service.OwnerContactMethodID,
+		OwnerContactMethodIDs:            append([]string(nil), service.OwnerContactMethodIDs...),
 		ProbeConnectionID:                service.ProbeConnectionID,
 		ProbeReady:                       service.ProbeReady,
 		Title:                            service.Title,
@@ -1477,6 +1528,7 @@ func toCreateAPIPurchaseIntentResponse(intent apiintent.Intent) createAPIPurchas
 	return createAPIPurchaseIntentResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
 		MerchantContact:               toContactDisclosureDTO(intent.MerchantContact),
+		MerchantContacts:              toContactDisclosureDTOs(intent.MerchantContacts),
 	}
 }
 
@@ -1484,6 +1536,7 @@ func toBuyerAPIPurchaseIntentDetailResponse(intent apiintent.Intent) buyerAPIPur
 	return buyerAPIPurchaseIntentDetailResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
 		MerchantContact:               toContactDisclosureDTO(intent.MerchantContact),
+		MerchantContacts:              toContactDisclosureDTOs(intent.MerchantContacts),
 	}
 }
 
@@ -1493,6 +1546,30 @@ func toOwnerAPIPurchaseIntentDetailResponse(intent apiintent.Intent) ownerAPIPur
 		BuyerUserID:                   intent.BuyerUserID,
 		BuyerContactMethodID:          intent.BuyerContactMethodID,
 		BuyerContact:                  toContactDisclosureDTO(intent.BuyerContact),
+	}
+}
+
+func apiServiceCompletionBuilder(status int) apimarket.ServiceCompletionBuilder {
+	return func(service apimarket.Service) (idempotency.Completion, *domain.AppError) {
+		body, err := json.Marshal(toAPIServiceResponse(service))
+		if err != nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "API 服务响应编码失败。")
+		}
+		completion := idempotency.Completion{
+			Status:        status,
+			ContentType:   "application/json; charset=utf-8",
+			Body:          body,
+			SkipBodyCache: true,
+			ResourceType:  "api_service",
+			ResourceID:    service.ID,
+			Headers: map[string]string{
+				"ETag": `"` + strconv.FormatInt(service.Version, 10) + `"`,
+			},
+		}
+		if status == http.StatusCreated {
+			completion.Headers["Location"] = "/api/v1/owner/api-services/" + service.ID
+		}
+		return completion, nil
 	}
 }
 
@@ -1526,4 +1603,15 @@ func toContactDisclosureDTO(item *contact.ContactItemView) *contactDisclosureDTO
 		Value:       item.Value,
 		MaskedValue: item.MaskedValue,
 	}
+}
+
+func toContactDisclosureDTOs(items []contact.ContactItemView) []contactDisclosureDTO {
+	result := make([]contactDisclosureDTO, 0, len(items))
+	for index := range items {
+		item := toContactDisclosureDTO(&items[index])
+		if item != nil {
+			result = append(result, *item)
+		}
+	}
+	return result
 }

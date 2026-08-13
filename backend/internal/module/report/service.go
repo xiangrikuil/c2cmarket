@@ -969,6 +969,7 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 		IssueCode:           strings.TrimSpace(input.IssueCode),
 		RequestedResolution: strings.TrimSpace(input.RequestedResolution),
 		RequestedAmountCNY:  strings.TrimSpace(input.RequestedAmountCNY),
+		IssueOccurredAt:     input.IssueOccurredAt,
 		PublicSummary:       "API 订单纠纷",
 		PublicResultCode:    PublicResultNoAction,
 		PublicResult:        "双方协商中",

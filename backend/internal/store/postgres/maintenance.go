@@ -507,7 +507,7 @@ func (s *Store) materializeAPIOrdersForMaintenanceInTx(ctx context.Context, tx p
 	rows, err := tx.Query(ctx, `
 		SELECT id::text
 		FROM api_orders
-		WHERE (status = 'pending_payment' AND payment_expires_at <= $1)
+		WHERE (status = 'pending_payment' AND dispute_status IN ('none', 'closed') AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
 		     AND dispute_status IN ('none', 'closed')

@@ -35,7 +35,7 @@ ApiOrder.disputeStatus:
 - `api_orders.status` continues to represent payment, delivery, completion, and cancellation only. A dispute projection update must not change that field or any payment, delivery, credential, completion, or cancellation fact.
 - Buyer, seller, and administrator order reads return the same `disputeStatus` for the same order.
 - `open` means platform review. `closed` means the dispute record has reached a final closed projection. Reserved remediation phases must not be rendered as platform review.
-- Only `dispute_status=none` permits opening the current dispute workflow. Every active dispute phase pauses buyer completion and delivery-review auto-completion.
+- Only `dispute_status=none` permits opening the current dispute workflow. Every active dispute phase pauses every ordinary transaction mutation on that order: payment submission/instruction reads, buyer cancellation, seller payment confirmation or issue reporting, delivery submission, buyer completion, payment-timeout cancellation, delivery reminder, and delivery-review auto-completion. Dispute negotiation, remedy, and closure mutations remain available.
 - Administrator resolution or closure of an API order dispute that has no pending remediation converges the linked order projection to `closed` in the same PostgreSQL transaction and increments the order version once.
 - In-memory mode performs the same projection through the report-to-apiorder callback. PostgreSQL mode updates it only inside the administrator dispute transaction.
 - `api_order.dispute_closed` is an order audit event, but its `from_status` and `to_status` remain the unchanged order transaction status. The event kind and note carry the dispute meaning.
@@ -49,7 +49,7 @@ ApiOrder.disputeStatus:
 | Linked order is missing or references another dispute | `409 INVALID_STATE_TRANSITION`; administrator mutation rolls back in PostgreSQL |
 | Order projection is `none` during close convergence | `409 INVALID_STATE_TRANSITION` |
 | Order projection is already `closed` | Idempotent success; no new version or event |
-| Active dispute exists during buyer completion or auto-completion | Action remains blocked and order fulfillment status stays unchanged |
+| Active dispute exists during an ordinary order action or timeout materialization | Action remains blocked and order transaction status, inventory, event, and notification state stay unchanged |
 | Frontend receives an unknown dispute projection | Fail explicitly instead of presenting a misleading phase |
 
 ### 5. Good / Base / Bad Cases
@@ -65,7 +65,7 @@ ApiOrder.disputeStatus:
 - API order unit test: close convergence changes only projection metadata, increments once, and keeps event transaction statuses unchanged.
 - Route regression: after administrator resolution, buyer and seller detail DTOs both return `closed` with the unchanged order status.
 - PostgreSQL store test: projection convergence occurs inside the administrator transaction and locks the linked order relationship.
-- Frontend helper tests: all six labels are exhaustive, only `none` permits opening, active phases block completion, and unknown values fail.
+- Frontend/helper tests: all six labels are exhaustive, only `none` permits opening, active phases block every ordinary action and timeout, and unknown values fail.
 - Page regression: buyer, seller, and administrator details use the shared label and description helpers.
 - Gates: full Go test/vet, focused Vitest, Nuxt typecheck, OpenAPI generated-type check, route parity, migration documentation, and `git diff --check`.
 
@@ -86,6 +86,91 @@ appendEvent(order, EventDisputeClosed, order.Status, order.Status)
 ```
 
 The event kind records the dispute transition while transaction status fields retain their original meaning.
+
+## Scenario: Completed API Orders Have A Frozen 24-Hour Reporting Grace Period
+
+### 1. Scope / Trigger
+
+- Trigger: changing API-order validity snapshots, completed-order dispute creation, dispute occurrence evidence, participant/admin order DTOs, or frontend dispute eligibility.
+- The grace period permits reporting a failure that occurred during purchased service validity. It does not extend API validity and does not promise, execute, or guarantee a refund.
+
+### 2. Signatures
+
+```text
+POST /api/v1/me/api-orders/{id}/dispute
+POST /api/v1/owner/api-orders/{id}/dispute
+  { issueCode, requestedResolution, requestedAmountCny?, reason, issueOccurredAt? }
+
+ApiOrder:
+  afterSalesExpiresAt?: RFC3339 timestamp
+  canOpenDispute: boolean
+  disputeEligibilityReason:
+    eligible | order_cancelled | dispute_exists |
+    after_sales_expired | completed_validity_unknown
+
+dispute_cases.issue_occurred_at timestamptz NULL
+
+apiorder.ValidityExpiresAt(order) *time.Time
+apiorder.WithAfterSalesProjection(order, now) Order
+apiorder.ValidateDisputeOccurrence(order, raw, now) (*time.Time, *domain.AppError)
+```
+
+### 3. Contracts
+
+- The authoritative frozen validity end is `packageExpiresAt`, then `quotaExpiresAtSnapshot`, then `pricingSnapshot.serviceValidityExpiresAt`.
+- When a validity end exists, `afterSalesExpiresAt = validityEnd + exactly 24 hours`. Eligibility is open only while `now < afterSalesExpiresAt`; the exact boundary is expired.
+- Cancelled orders and orders with any dispute projection other than `none` are always ineligible. A completed historical order without a usable frozen validity end remains ineligible instead of receiving an invented deadline.
+- A completed eligible order requires `issueOccurredAt`. It must be RFC 3339, no later than the authoritative validity end, and no later than the server's current time. Non-completed orders may omit it for compatibility.
+- Opening the completed-order dispute writes `issue_occurred_at`, creates the existing negotiation record, and updates only the dispute projection. The completed transaction status, completion source, credential, payment, delivery, and validity facts remain unchanged.
+- In-memory and PostgreSQL mutations use one authoritative `now` for timeout materialization, eligibility, occurrence validation, dispute persistence, and the response projection.
+- Buyer, seller, and administrator order DTOs return the same server-derived deadline, eligibility, and stable reason. Participant responses obtain frozen contact evidence through the authorized intent read; administrator responses contain no raw contacts or credentials.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| `now < validityEnd + 24h`, no dispute, not cancelled | `canOpenDispute=true`, reason `eligible` |
+| `now >= validityEnd + 24h` | `canOpenDispute=false`, reason `after_sales_expired`; dispute mutation returns `409 INVALID_STATE_TRANSITION` |
+| Completed order has no usable frozen validity end | `canOpenDispute=false`, reason `completed_validity_unknown` |
+| Order is cancelled | `canOpenDispute=false`, reason `order_cancelled` |
+| Any dispute projection already exists | `canOpenDispute=false`, reason `dispute_exists` |
+| Completed eligible order omits `issueOccurredAt` | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `required` |
+| Occurrence time is malformed or in the future | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `invalid` or `future` |
+| Occurrence time is later than frozen validity | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `after_validity` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: validity ends at T, the buyer reports at `T+23h`, and `issueOccurredAt=T-1m`; the dispute opens while the order remains completed.
+- Base: an incomplete, non-cancelled legacy order without a validity snapshot retains the existing dispute path and may omit occurrence time.
+- Base: a completed historical order without validity facts remains readable but has no dispute action or fabricated deadline.
+- Bad: accepting a report at exactly `T+24h`, extending credential/API usability until that time, or describing the grace period as guaranteed compensation.
+- Bad: reconstructing validity from the current mutable service, browser time, or a later merchant edit.
+
+### 6. Tests Required
+
+- Unit tests cover validity-source priority, `T+24h-epsilon`, exact `T+24h`, cancellation, existing disputes, unknown completed validity, missing/malformed/future/post-validity occurrence time, and one-clock in-memory mutation behavior.
+- Router/OpenAPI tests assert participant/admin projection parity, conditional occurrence validation, persistence in dispute detail, and no administrator contact/credential leakage.
+- PostgreSQL integration covers completed-order dispute creation before the deadline, atomic rollback after the deadline or invalid occurrence, and unchanged order completion/credential facts.
+- Frontend adapter tests assert real and Mock paths carry server-equivalent projection fields; order-detail tests assert the occurrence input and grace-period copy.
+- Gates: full Go test/vet, full Vitest, OpenAPI generated-type check, Nuxt typecheck/build, migration upgrade/rollback/re-upgrade, desktop/mobile browser checks, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const canOpenDispute = order.status !== 'completed'
+const deadline = addHours(new Date(), 24)
+```
+
+#### Correct
+
+```ts
+const canOpenDispute = order.canOpenDispute
+const deadline = order.afterSalesExpiresAt
+```
+
+The backend computes eligibility from frozen order facts; the browser renders it and never starts a new validity or grace clock.
 
 ## Scenario: Structured Participant Negotiation Requires Bilateral Confirmation
 
@@ -132,7 +217,7 @@ api_order_dispute_settlement_proposals:
 - A seller may reject a proposal or request platform review. Only an administrator may decide that the original request is invalid or close a platform-reviewed dispute without participant agreement.
 - Participant reads return `404 OBJECT_NOT_FOUND` to outsiders and for non-API disputes submitted to these negotiation mutation routes. Mutations authenticate and validate CSRF before decoding JSON.
 - Participant mutations lock the idempotency row, dispute case, linked order, and affected proposal in that order. Business writes and the completed idempotency record commit together.
-- Future enforcement that reuses `api_service_publish` must be described as limiting new orders, publishing, and restoring. Existing orders continue fulfillment, delivery, after-sales work, and disputes and must not consult that restriction.
+- Administrator-created enforcement that reuses `api_service_publish` must be described as limiting new orders, publishing, and restoring. Existing orders continue unless that specific order independently has an active dispute; an active dispute pauses its ordinary transaction flow under the separate projection contract.
 
 ### 4. Validation & Error Matrix
 
@@ -235,7 +320,7 @@ reputation.RecommendedAPIOrderSanctionDays(count int) int
 - A remedy evidence link is immutable audit ownership. Upstream deletion is restricted, and the partial unique index prevents a second sanction even after expiry or revocation.
 - Generic administrator restriction creation must reject API-order outcome sources. It must not accept or write `sourceDisputeRemedyId`; the dedicated sanction endpoint owns this evidence.
 - Active `api_service_publish|all` restrictions for seller/all roles block new normal API orders and limited-quota API orders inside their PostgreSQL transactions before contact locking, inventory reservation, intent advancement, or order insertion.
-- The same restriction continues to block API-service submission, publication, restoration, public visibility, and promotion. Existing orders do not consult this gate and continue payment, delivery, completion, after-sales, and dispute actions.
+- The same administrator-created restriction continues to block API-service submission, publication, restoration, public visibility, and promotion. Existing orders do not consult the restriction gate; only an independently active dispute pauses the affected order's ordinary transaction actions.
 - `/me/reputation.activeRestrictions` is a public-safe projection: restriction type, role, action, reason code, public reason, start, and optional end only. It must not expose IDs, internal reasons, administrator IDs, source evidence IDs, versions, or governance records.
 - Product copy must name all three limited abilities: new orders, publishing, and restoring. It must also state that existing orders continue; copy that says the restriction only stops new orders is false.
 - After `412 VERSION_CONFLICT` or a state conflict, the administrator UI refetches the recommendation and clears explicit confirmation before another apply attempt.

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 51
-- **Last Active**: 2026-08-10
+- **Total Sessions**: 53
+- **Last Active**: 2026-08-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1627 | Active |
+| `journal-1.md` | ~1682 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 53 | 2026-08-12 | API 纠纷发布限制与唯一 linux.do 联系方式 | `f65ead0` | `staging` |
+| 52 | 2026-08-10 | API order after-sales contacts and refund evidence | `3b29dc8` | `codex/api-order-after-sales-contacts` |
 | 51 | 2026-08-10 | Development personas and user switcher | `d995824` | `codex/dev-user-switcher` |
 | 50 | 2026-08-10 | 管理员 API 订单监管分页与筛选 | `51103da` | `codex/admin-api-order-supervision` |
 | 49 | 2026-08-10 | 完善审计发现的未完成功能 | `284cfd526d924c275c0ba738e5f32af3146c36a3`, `5830894022420d114ec6f04e3704d81e980cf807`, `34dbb85389bcb91f3e6a4af37085e1c73248016a` | `codex/complete-unfinished-workflows` |

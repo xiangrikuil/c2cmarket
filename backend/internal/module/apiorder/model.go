@@ -179,6 +179,9 @@ type Order struct {
 	CompletedAt                   *time.Time
 	CancelledAt                   *time.Time
 	CancelReason                  string
+	AfterSalesExpiresAt           *time.Time
+	CanOpenDispute                bool
+	DisputeEligibilityReason      string
 	CreatedAt                     time.Time
 	UpdatedAt                     time.Time
 	Version                       int64
@@ -243,6 +246,7 @@ type ActionInput struct {
 	IssueCode           string
 	RequestedResolution string
 	RequestedAmountCNY  string
+	IssueOccurredAt     string
 	ExpectedVersion     int64
 	RequestID           string
 }
@@ -275,6 +279,7 @@ type DisputeCaseInput struct {
 	IssueCode           string
 	RequestedResolution string
 	RequestedAmountCNY  string
+	IssueOccurredAt     *time.Time
 	RequestID           string
 	Now                 time.Time
 }

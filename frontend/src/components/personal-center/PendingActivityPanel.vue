@@ -14,6 +14,8 @@ defineProps<{
   hasError: boolean
   unavailable: boolean
   hasPublishedContent: boolean
+  canPublishCarpool: boolean
+  canPublishApiService: boolean
 }>()
 
 defineEmits<{ retry: [] }>()
@@ -79,13 +81,16 @@ defineEmits<{ retry: [] }>()
         <Inbox class="mx-auto h-6 w-6 text-muted-foreground" />
         <h3 class="mt-2 text-sm font-semibold">当前没有需要处理的交易</h3>
         <p class="mt-1 text-xs leading-5 text-muted-foreground">
-          {{ hasPublishedContent ? '新的申请、付款确认和订单状态会显示在这里。' : '发布车源或 API 服务后，相关申请和订单动态会显示在这里。' }}
+          {{ hasPublishedContent ? '新的申请、付款确认和订单状态会显示在这里。' : (canPublishCarpool || canPublishApiService) ? '发布内容后，相关申请和订单动态会显示在这里。' : '新的买家订单状态会显示在这里。' }}
         </p>
         <div class="mt-3 flex flex-wrap justify-center gap-2">
           <Button v-if="hasPublishedContent" as-child size="sm" variant="outline"><RouterLink to="/carpools">去市场看看</RouterLink></Button>
+          <template v-else-if="canPublishCarpool || canPublishApiService">
+            <Button v-if="canPublishCarpool" as-child size="sm"><RouterLink to="/carpools/new">发布车源</RouterLink></Button>
+            <Button v-if="canPublishApiService" as-child size="sm" variant="outline"><RouterLink to="/api-market/new">发布 API 服务</RouterLink></Button>
+          </template>
           <template v-else>
-            <Button as-child size="sm"><RouterLink to="/carpools/new">发布车源</RouterLink></Button>
-            <Button as-child size="sm" variant="outline"><RouterLink to="/api-market/new">发布 API 服务</RouterLink></Button>
+            <Button as-child size="sm" variant="outline"><RouterLink to="/api-market">浏览 API 市场</RouterLink></Button>
           </template>
         </div>
       </div>

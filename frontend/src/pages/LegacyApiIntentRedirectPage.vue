@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getMerchantApiOrders, getMyApiOrders } from '@/lib/api'
+import { getCurrentBackendSession } from '@/lib/backendClient'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 
 const route = useRoute()
 const router = useRouter()
@@ -9,9 +11,11 @@ const message = ref('正在定位对应的 API 订单…')
 
 onMounted(async () => {
   const intentId = String(route.params.id ?? '')
+  const session = await getCurrentBackendSession()
+  const canReadMerchantOrders = hasCapability(session.user, CAPABILITY.apiServicePublish)
   const [buyerResult, merchantResult] = await Promise.allSettled([
     getMyApiOrders(),
-    getMerchantApiOrders(),
+    canReadMerchantOrders ? getMerchantApiOrders() : Promise.resolve([]),
   ])
   const buyerOrder = buyerResult.status === 'fulfilled'
     ? buyerResult.value.find(item => item.apiPurchaseIntentId === intentId)

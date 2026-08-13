@@ -165,7 +165,7 @@ func TestAdminAuditLogRouteReadsGlobalSafeProjection(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("audit list status %d body %s", response.Code, response.Body.String())
 	}
-	var payload listResponse[adminAuditLogDTO]
+	var payload listResponse[adminOperationAuditEntryDTO]
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode audit list: %v", err)
 	}
@@ -173,10 +173,15 @@ func TestAdminAuditLogRouteReadsGlobalSafeProjection(t *testing.T) {
 		t.Fatalf("unexpected audit list: %+v", payload)
 	}
 	item := payload.Items[0]
-	if item.ActorUsername != "audit-route-admin" || item.TargetID != memberSession.userID || item.Reason != "审计路由核查" || item.BeforeStatus == nil || *item.BeforeStatus != "active" || item.AfterStatus == nil || *item.AfterStatus != "suspended" {
+	if item.ActorUsername == nil || *item.ActorUsername != "audit-route-admin" ||
+		item.ActorUserID == nil || *item.ActorUserID != adminSession.userID ||
+		item.SourceKind != "admin" || item.Domain != "account" || item.ActorKind != "admin" ||
+		item.TargetID != memberSession.userID || item.ActionLabel != "账号状态变更" ||
+		item.Outcome != "status_changed" || item.Summary != "管理员变更了账号状态" ||
+		item.DetailPath != nil {
 		t.Fatalf("unexpected audit projection: %+v", item)
 	}
-	for _, forbidden := range []string{"before_json", "after_json", "beforeJson", "afterJson", "password", "csrfToken"} {
+	for _, forbidden := range []string{"审计路由核查", "reason", "before_json", "after_json", "beforeJson", "afterJson", "password", "csrfToken"} {
 		if strings.Contains(response.Body.String(), forbidden) {
 			t.Fatalf("audit response leaked %s: %s", forbidden, response.Body.String())
 		}

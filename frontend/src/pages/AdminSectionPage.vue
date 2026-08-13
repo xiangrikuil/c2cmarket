@@ -275,7 +275,7 @@ const panelCopy = computed(() => {
     'trade-intents': { title: 'API 订单监管', description: '查看 API 订单状态、参与方、金额快照、取消责任与纠纷标记；管理摘要不展示联系方式或原始交付凭证。' },
     reports: { title: '举报纠纷处理', description: '只展示脱敏上下文；必要联系方式仍限制在联系快照流程内。' },
     appeals: { title: '申诉处理', description: '结合关联记录和未解决纠纷判断是否恢复能力。' },
-    logs: { title: '审计日志', description: '只读查看管理动作、前后状态和原因。' },
+    logs: { title: '审计日志', description: '只读查看经白名单投影的业务与管理操作；不展示内部原因、前后状态原文或敏感载荷。' },
   }
   return map[section.value] ?? { title: '管理处理', description: '查看当前对象上下文并执行管理动作。' }
 })

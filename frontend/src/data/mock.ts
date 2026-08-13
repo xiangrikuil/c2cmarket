@@ -1,6 +1,7 @@
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import type { ApiQuotaUsagePolicy } from '@/types/apiQuota'
+import type { Capability } from '@/lib/capabilities'
 
 export type OfficialPrice = {
   id: string
@@ -294,6 +295,7 @@ export type UserProfile = {
   badges: UserBadge[]
   accountStatus: UserAccountStatus
   permissions: Array<'admin'>
+  capabilities: Capability[]
   restrictions: string[]
   usernameChangePolicy: {
     canChange: boolean
@@ -904,6 +906,8 @@ export type PublicDisputeRecord = {
 }
 
 export type ApiServiceCommercialSnapshot = {
+	warranty?: string
+	refundPolicy?: string
   accountPoolType?: ApiService['accountPoolType']
   accountPoolLabel?: string
   declaredMaxConcurrency?: number
@@ -930,8 +934,8 @@ export type ApiPurchaseIntentSnapshot = ApiServiceCommercialSnapshot & {
   defaultMultiplier: number
   creditPerCny: number
   cnyPerUsdAllowance?: string
-  warranty: string
-  refundPolicy: string
+	warranty: string
+	refundPolicy: string
   merchantNote?: string
   pricingSnapshotIssue?: 'missing' | 'invalid'
   usageVisibilitySnapshotMissing?: boolean
@@ -1090,6 +1094,15 @@ export const myUserProfile: UserProfile = {
   ],
   accountStatus: 'normal',
   permissions: ['admin'],
+  capabilities: [
+    'admin.access',
+    'api_order.create',
+    'api_probe.manage',
+    'api_quota.publish',
+    'api_service.publish',
+    'carpool.apply',
+    'carpool.publish',
+  ],
   restrictions: [],
   usernameChangePolicy: {
     canChange: false,

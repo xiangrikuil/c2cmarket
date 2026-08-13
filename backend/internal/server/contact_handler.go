@@ -2,9 +2,13 @@ package server
 
 import (
 	"c2c-market/backend/internal/domain"
+	authmodule "c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/contact"
+	"c2c-market/backend/internal/module/idempotency"
+	"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -47,29 +51,33 @@ func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
+	if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 
-	s.withIdempotency(w, r, user.ID, "POST /api/v1/contact-methods", body, func() (int, any, string, string, *domain.AppError) {
-		value := req.Value
-		if value == "" {
-			value = req.DisplayValue
-		}
-		enabled := true
-		if req.Enabled != nil {
-			enabled = *req.Enabled
-		}
-		method, errApp := s.app.CreateContactMethod(r.Context(), contact.ContactMethodInput{
-			UserID:    user.ID,
-			Type:      req.Type,
-			Label:     req.Label,
-			Value:     value,
-			IsDefault: req.IsDefault,
-			Enabled:   enabled,
-		})
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		return http.StatusCreated, toContactMethodResponse(method), "contact_method", method.ID, nil
-	})
+	value := req.Value
+	if value == "" {
+		value = req.DisplayValue
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	routeKey := "POST /api/v1/contact-methods"
+	completion, appErr := s.app.CreateContactMethodWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		contact.ContactMethodInput{
+			UserID: user.ID, Type: req.Type, Label: req.Label, Value: value, UsageScopes: req.UsageScopes,
+			IsDefault: req.IsDefault, Enabled: enabled, RequestID: requestIDFrom(r),
+		},
+		contactMethodCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleMyContactMethods(w http.ResponseWriter, r *http.Request) {
@@ -96,8 +104,12 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	req, appErr := decodeStrictJSONOnly[createContactMethodRequest](r)
+	body, req, appErr := decodeStrictJSON[createContactMethodRequest](r)
 	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
@@ -109,20 +121,24 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	method, appErr := s.app.UpdateContactMethod(r.Context(), contact.UpdateContactMethodInput{
-		UserID:    user.ID,
-		MethodID:  chi.URLParam(r, "id"),
-		Type:      req.Type,
-		Label:     req.Label,
-		Value:     value,
-		IsDefault: req.IsDefault,
-		Enabled:   enabled,
-	})
+	methodID := chi.URLParam(r, "id")
+	routeKey := "PATCH /api/v1/contact-methods/{id}:" + methodID
+	completion, appErr := s.app.UpdateContactMethodWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPatch, routeKey, body), contact.UpdateContactMethodInput{
+		UserID:      user.ID,
+		MethodID:    methodID,
+		Type:        req.Type,
+		Label:       req.Label,
+		Value:       value,
+		UsageScopes: req.UsageScopes,
+		IsDefault:   req.IsDefault,
+		Enabled:     enabled,
+		RequestID:   requestIDFrom(r),
+	}, contactMethodCompletionBuilder(http.StatusOK))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toContactMethodResponse(method))
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleDeleteContactMethod(w http.ResponseWriter, r *http.Request) {
@@ -131,12 +147,14 @@ func (s *Server) handleDeleteContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	method, appErr := s.app.DeleteContactMethod(r.Context(), user.ID, chi.URLParam(r, "id"))
+	methodID := chi.URLParam(r, "id")
+	routeKey := "DELETE /api/v1/contact-methods/{id}:" + methodID
+	completion, appErr := s.app.DeleteContactMethodWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodDelete, routeKey, nil), methodID, requestIDFrom(r), contactMethodCompletionBuilder(http.StatusOK))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toContactMethodResponse(method))
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleSetDefaultContactMethod(w http.ResponseWriter, r *http.Request) {
@@ -145,12 +163,14 @@ func (s *Server) handleSetDefaultContactMethod(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, appErr)
 		return
 	}
-	method, appErr := s.app.SetDefaultContactMethod(r.Context(), user.ID, chi.URLParam(r, "id"))
+	methodID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/contact-methods/{id}/set-default:" + methodID
+	completion, appErr := s.app.SetDefaultContactMethodWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, nil), methodID, requestIDFrom(r), contactMethodCompletionBuilder(http.StatusOK))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toContactMethodResponse(method))
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleVerifyContactMethod(w http.ResponseWriter, r *http.Request) {
@@ -159,12 +179,28 @@ func (s *Server) handleVerifyContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	method, appErr := s.app.VerifyContactMethod(r.Context(), user.ID, chi.URLParam(r, "id"))
+	methodID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/contact-methods/{id}/verify:" + methodID
+	completion, appErr := s.app.VerifyContactMethodWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, nil), methodID, requestIDFrom(r), contactMethodCompletionBuilder(http.StatusOK))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toContactMethodResponse(method))
+	writeNoStoreIdempotencyCompletion(w, completion)
+}
+
+func contactMethodCompletionBuilder(status int) contact.MethodCompletionBuilder {
+	return func(method contact.ContactMethod) (idempotency.Completion, *domain.AppError) {
+		body, err := json.Marshal(toContactMethodResponse(method))
+		if err != nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "联系方式响应编码失败。")
+		}
+		return idempotency.Completion{
+			Status: status, ContentType: "application/json; charset=utf-8", Body: body, SkipBodyCache: true,
+			ResourceType: "contact_method", ResourceID: method.ID,
+			Headers: map[string]string{"ETag": `"` + strconv.FormatInt(method.Version, 10) + `"`},
+		}, nil
+	}
 }
 
 type createContactSessionRequest struct {
@@ -276,7 +312,7 @@ func toContactMethodResponse(method contact.ContactMethod) contactMethodResponse
 		Label:        method.Label,
 		MaskedValue:  method.MaskedValue,
 		DisplayValue: method.DisplayValue,
-		UsageScopes:  []string{"carpool_owner", "api_merchant", "buyer", "dispute"},
+		UsageScopes:  append([]string(nil), method.UsageScopes...),
 		IsDefault:    method.IsDefault,
 		Enabled:      method.Enabled,
 		Verified:     method.VerifiedAt != nil,
@@ -284,4 +320,22 @@ func toContactMethodResponse(method contact.ContactMethod) contactMethodResponse
 		UpdatedAt:    method.UpdatedAt.UTC().Format(time.RFC3339),
 		Version:      method.Version,
 	}
+}
+
+func requireContactUsageScopeCapabilities(user authmodule.User, usageScopes []string) *domain.AppError {
+	for _, scope := range usageScopes {
+		if scope == contact.UsageScopeCarpoolOwner {
+			if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+				return appErr
+			}
+		}
+	}
+	for _, scope := range usageScopes {
+		if scope == contact.UsageScopeAPIMerchant {
+			if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+				return appErr
+			}
+		}
+	}
+	return nil
 }

@@ -12,7 +12,7 @@ Author: Codex
   model tester, model-key snapshots, or 5h/daily quota rules.
 - Primary owners are `internal/module/apihealth`, `internal/apihealthrunner`,
   `internal/platform/openaiapi`, `internal/module/apiorder`, `internal/module/apimodeltest`, the
-  PostgreSQL API-market stores, migration `000082`, OpenAPI, and the matching frontend adapters.
+  PostgreSQL API-market stores, migrations `000082` and `000092`, OpenAPI, and the matching frontend adapters.
 - A seller probe, an order delivery credential, and a temporary buyer test are separate facts.
   They may reuse the stateless OpenAI-compatible adapter, but never share credentials, samples, or
   persistence lifecycles.
@@ -77,7 +77,7 @@ APIProbeLatencyCalibration:
 api_probe_connections
 api_probe_connection_samples
 api_probe_connection_attempts
-api_probe_connection_model_changes
+api_probe_connection_events
 api_probe_latency_rules
 
 api_services.probe_connection_id
@@ -130,6 +130,17 @@ when the current partial day is also present. There is no DNS TXT or HTTP owners
 - A measurement identity change means Base URL, credential, model, protocol, or probe environment
   changed. It increments `measurementVersion`. Model/protocol changes also append permanent change
   history and keep old samples isolated from current statistics.
+- Create, update, verify, enable, disable, and delete are idempotent commands. Their connection
+  mutation, one append-only `api_probe_connection_events` row, and idempotency completion commit in
+  the same PostgreSQL transaction. Update and delete require `Idempotency-Key` in addition to
+  `If-Match`; completed replay returns the stored response without another network verification.
+- Preflight and explicit verify perform external HTTP before the short mutation transaction. A
+  transaction never stays open across network I/O. Verification then atomically persists the
+  success/failure state, its safe event, and idempotency completion.
+- Probe events contain actor/request identifiers, action, versions, timestamps, and safe field-name
+  metadata only. Credentials, Base URLs, preflight tokens, provider responses, and request bodies
+  never enter the ledger. The legacy model-change view remains write-compatible while the event
+  ledger is authoritative.
 - The owner UI shows exact model IDs, such as `gpt-5.6-luna`. It shows the conservative 1.00x daily
   base-cost upper bound for 288 scheduled requests when the model catalog has a current price;
   missing pricing is explicitly unknown.
@@ -247,6 +258,8 @@ when the current partial day is also present. There is no DNS TXT or HTTP owners
 | Target is malformed, private, mixed-DNS, or redirecting | Stable target/network error; never dial the rejected address |
 | Referenced connection delete | `409 INVALID_STATE_TRANSITION` with service references |
 | Stale connection mutation or preflight version | `412 VERSION_CONFLICT`; missing `If-Match` is `428` |
+| Create/update/verify/delete omits an idempotency key | `400 IDEMPOTENCY_KEY_REQUIRED`; no connection or event write |
+| Same completed mutation key is replayed | Return the stored completion; do not dial, mutate, or append another event |
 | Runner is configured off for an enabled verified connection | `availabilityReason=runner_disabled` |
 | Runner scan and latest sample are both stale | `availabilityReason=stale` |
 | Retryable first attempt recovers | `retry_recovered`, yellow, stability still counts first attempt as failed |
@@ -285,7 +298,8 @@ when the current partial day is also present. There is no DNS TXT or HTTP owners
   first visible text, normal completion, stream interruption, usage extraction, response bounds,
   error mapping, and no redirect/proxy behavior.
 - PostgreSQL: owner isolation, same-slot claim deduplication, attempts/finalization atomicity, rule
-  snapshotting, model history, seven-complete-day calibration, five-connection readiness, empty
+  snapshotting, append-only connection-event/model history, mutation/event/idempotency fault rollback,
+  completed replay without another verify call, seven-complete-day calibration, five-connection readiness, empty
   calibration count, threshold preview, immutable publication, advisory-lock types, and 192-hour
   retention.
 - Handlers/contracts: CSRF, idempotency, `If-Match`, private/no-store preflight, no credential

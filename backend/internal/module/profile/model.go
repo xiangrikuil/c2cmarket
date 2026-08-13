@@ -30,6 +30,7 @@ type UserProfile struct {
 	PasswordConfigured   bool
 	AccountStatus        string
 	IsAdmin              bool
+	Capabilities         []string
 	RegionCode           string
 	Timezone             string
 	AvatarMode           string

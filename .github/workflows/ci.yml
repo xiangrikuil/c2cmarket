@@ -133,6 +133,7 @@ jobs:
           NUXT_PUBLIC_SITE_URL: https://c2cmarket.shop
           NUXT_PUBLIC_API_BASE_URL: https://api.c2cmarket.shop
           NUXT_API_BASE_URL: https://api.c2cmarket.shop
+          NUXT_PUBLIC_TURNSTILE_SITE_KEY: "0x4AAAAAAENOJxBZnePMzh-y"
         run: pnpm build
       - name: Audit frontend dependencies
         working-directory: frontend

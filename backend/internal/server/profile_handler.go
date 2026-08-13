@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/reputation"
 
@@ -36,6 +37,7 @@ type myProfileResponse struct {
 	AvatarMode           string                  `json:"avatarMode"`
 	AccountStatus        string                  `json:"accountStatus"`
 	Permissions          []string                `json:"permissions"`
+	Capabilities         []string                `json:"capabilities"`
 	LinuxDoBinding       linuxDoBindingDTO       `json:"linuxDoBinding"`
 	Badges               []string                `json:"badges"`
 	Restrictions         []string                `json:"restrictions"`
@@ -311,6 +313,9 @@ func (s *Server) handleMyMerchantProfile(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	merchant, appErr := s.app.MyMerchantProfile(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -323,6 +328,9 @@ func (s *Server) handleUpsertMyMerchantProfile(w http.ResponseWriter, r *http.Re
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	req, appErr := decodeStrictJSONOnly[merchantProfileRequest](r)
@@ -405,6 +413,7 @@ func toMyProfileResponse(value profile.UserProfile) myProfileResponse {
 		AvatarMode:         value.AvatarMode,
 		AccountStatus:      normalizeAccountStatus(value.AccountStatus),
 		Permissions:        permissionsFor(value.IsAdmin),
+		Capabilities:       stringList(value.Capabilities),
 		LinuxDoBinding: linuxDoBindingDTO{
 			Bound:            value.LinuxDoBound,
 			LinuxDoUserID:    stringPtrOrNil(value.LinuxDoUserID),

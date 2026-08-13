@@ -42,6 +42,7 @@ function adminSessionResponse() {
       displayName: 'Moderator',
       isAdmin: true,
       permissions: ['admin:reports'],
+      capabilities: ['admin.access'],
       linuxDoBinding: { bound: true },
     },
   })

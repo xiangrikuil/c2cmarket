@@ -1,6 +1,18 @@
 package contact
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
+)
+
+const (
+	UsageScopeCarpoolOwner = "carpool_owner"
+	UsageScopeAPIMerchant  = "api_merchant"
+	UsageScopeBuyer        = "buyer"
+	UsageScopeDispute      = "dispute"
+)
 
 type ContactMethod struct {
 	ID               string
@@ -9,6 +21,7 @@ type ContactMethod struct {
 	Label            string
 	MaskedValue      string
 	DisplayValue     string
+	UsageScopes      []string
 	Enabled          bool
 	IsDefault        bool
 	VerifiedAt       *time.Time
@@ -49,22 +62,38 @@ type ContactAccessLog struct {
 }
 
 type ContactMethodInput struct {
-	UserID    string
-	Type      string
-	Label     string
-	Value     string
-	IsDefault bool
-	Enabled   bool
+	UserID      string
+	Type        string
+	Label       string
+	Value       string
+	UsageScopes []string
+	IsDefault   bool
+	Enabled     bool
+	RequestID   string
 }
 
+type ContactMethodAuditEvent struct {
+	MethodID         string
+	EventType        string
+	ActorUserID      string
+	AggregateVersion int64
+	RequestID        string
+	ChangedFields    []string
+	CreatedAt        time.Time
+}
+
+type MethodCompletionBuilder func(ContactMethod) (idempotency.Completion, *domain.AppError)
+
 type UpdateContactMethodInput struct {
-	UserID    string
-	MethodID  string
-	Type      string
-	Label     string
-	Value     string
-	IsDefault bool
-	Enabled   bool
+	UserID      string
+	MethodID    string
+	Type        string
+	Label       string
+	Value       string
+	UsageScopes []string
+	IsDefault   bool
+	Enabled     bool
+	RequestID   string
 }
 
 type CreateContactSessionInput struct {

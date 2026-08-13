@@ -110,6 +110,7 @@ type Listing struct {
 	RiskAckRequired                       bool
 	ReservedSeats                         int
 	AvailableSeats                        int
+	RequestID                             string
 	CreatedAt                             time.Time
 	UpdatedAt                             time.Time
 	Version                               int64
@@ -152,6 +153,7 @@ type Application struct {
 	JoinedAt                 *time.Time
 	DecisionReason           string
 	DecidedAt                *time.Time
+	RequestID                string
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 	Version                  int64
@@ -211,6 +213,7 @@ type CreateListingInput struct {
 	BuyerSeatCapacity                     int
 	ActiveBuyerMembers                    int
 	RiskAcknowledgement                   *RiskAcknowledgement
+	RequestID                             string
 }
 
 type PublishListingInput = CreateListingInput
@@ -273,11 +276,26 @@ type SubmitListingReviewInput struct {
 	RequestID       string
 }
 
+// ListingAuditEvent 是内存仓储与 PostgreSQL domain_events 对齐的安全操作事实。
+type ListingAuditEvent struct {
+	ListingID        string
+	EventType        string
+	ActorUserID      string
+	ActorKind        string
+	AggregateVersion int64
+	RequestID        string
+	Status           string
+	CreatedAt        time.Time
+}
+
+type ListingCompletionBuilder func(Listing) (idempotency.Completion, *domain.AppError)
+
 type CreateApplicationInput struct {
 	ListingID            string
 	BuyerUserID          string
 	BuyerContactMethodID string
 	RiskAcknowledgement  *RiskAcknowledgement
+	RequestID            string
 }
 
 type AcceptApplicationInput struct {
@@ -320,6 +338,17 @@ type ConfirmApplicationJoinInput struct {
 }
 
 type ApplicationCompletionBuilder func(Application) (idempotency.Completion, *domain.AppError)
+
+type ApplicationAuditEvent struct {
+	ApplicationID    string
+	EventType        string
+	ActorUserID      string
+	ActorKind        string
+	AggregateVersion int64
+	RequestID        string
+	Status           string
+	CreatedAt        time.Time
+}
 
 type ConfirmMembershipCompleteInput struct {
 	MembershipID    string

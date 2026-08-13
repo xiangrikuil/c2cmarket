@@ -32,6 +32,7 @@ import { useCarpool, useCarpoolApplicationEligibility, useFavoriteStatus, useMyP
 import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { useEntitySeo } from '@/composables/useEntitySeo'
 import { toast } from 'vue-sonner'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 
 const route = useRoute()
 const router = useRouter()
@@ -97,7 +98,8 @@ const availablePercent = computed(() => getSeatPercent(availableSeats.value, tot
 const applyStatusText = computed(() => applicationEligibility.value?.reason ?? applyDisabledReason.value)
 const seatAvailabilityLabel = computed(() => applicationEligibility.value?.canApply ? '可申请' : '剩余名额')
 const carpoolVisible = computed(() => Boolean(carpool.value?.id))
-const canModerateCarpool = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
+const canApplyToCarpool = computed(() => hasCapability(myProfile.value, CAPABILITY.carpoolApply))
+const canModerateCarpool = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
 const adminActionLabel = computed(() => adminAction.value === 'take_down' ? '下架车源' : '要求复核')
 const statusToneClass = computed(() => {
   if (!carpool.value) return 'border-border bg-muted/30 text-muted-foreground'
@@ -334,11 +336,11 @@ async function shareCarpool() {
             <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ reservedSeats }}</div><div class="text-muted-foreground">预留中</div></div>
             <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ availableSeats }}</div><div class="text-muted-foreground">{{ seatAvailabilityLabel }}</div></div>
           </div>
-          <Button class="mt-5 w-full" :variant="applyDisabledReason ? 'secondary' : 'default'" :disabled="Boolean(applyDisabledReason)" @click="applyDialogOpen = true">
+          <Button v-if="canApplyToCarpool" class="mt-5 w-full" :variant="applyDisabledReason ? 'secondary' : 'default'" :disabled="Boolean(applyDisabledReason)" @click="applyDialogOpen = true">
             <MessageCircle class="h-4 w-4" />{{ applicationEligibility?.canApply ? '申请上车' : '当前不可申请' }}
           </Button>
-          <p v-if="applyDisabledReason" class="mt-2 text-sm text-muted-foreground">{{ applyDisabledReason }}</p>
-          <p class="mt-3 text-xs leading-5 text-muted-foreground">车主接受前不占用正式名额；审核中、风险未确认或需要共享凭据的车源不可申请。</p>
+          <p v-if="canApplyToCarpool && applyDisabledReason" class="mt-2 text-sm text-muted-foreground">{{ applyDisabledReason }}</p>
+          <p v-if="canApplyToCarpool" class="mt-3 text-xs leading-5 text-muted-foreground">车主接受前不占用正式名额；审核中、风险未确认或需要共享凭据的车源不可申请。</p>
           <div class="mt-4 grid grid-cols-3 gap-2 border-t border-border pt-4">
             <Button variant="outline" size="sm" :disabled="toggleFavoriteMutation.isPending.value" @click="toggleFavorite"><Heart class="h-3.5 w-3.5" :class="favorited ? 'fill-current' : ''" />收藏</Button>
             <Button variant="outline" size="sm" @click="shareCarpool"><Share2 class="h-3.5 w-3.5" />分享</Button>
@@ -457,7 +459,7 @@ async function shareCarpool() {
       </div>
     </Card>
 
-    <Dialog v-model:open="applyDialogOpen">
+    <Dialog v-if="canApplyToCarpool" v-model:open="applyDialogOpen">
       <DialogContent class="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>申请上车</DialogTitle>

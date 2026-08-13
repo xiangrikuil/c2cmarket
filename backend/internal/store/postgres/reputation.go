@@ -1442,16 +1442,31 @@ func ensureAPIServicePublishAllowedInTx(ctx context.Context, tx pgx.Tx, sellerUs
 		LIMIT 1
 		FOR SHARE
 	`, sellerUserID, now).Scan(&publicReason)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return internalStoreError()
 	}
-	if strings.TrimSpace(publicReason) == "" {
-		publicReason = "当前信誉限制不允许执行该操作。"
+	if err == nil {
+		if strings.TrimSpace(publicReason) == "" {
+			publicReason = "当前信誉限制不允许执行该操作。"
+		}
+		return domain.NewError(http.StatusForbidden, domain.CodeReputationActionRestricted, "Reputation action restricted", publicReason)
 	}
-	return domain.NewError(http.StatusForbidden, domain.CodeReputationActionRestricted, "Reputation action restricted", publicReason)
+
+	var activeDispute bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM api_orders
+			WHERE seller_user_id = $1
+			  AND dispute_status IN ('negotiating', 'open', 'awaiting_fulfillment', 'fulfillment_confirmation')
+		)
+	`, sellerUserID).Scan(&activeDispute); err != nil {
+		return internalStoreError()
+	}
+	if activeDispute {
+		return domain.NewError(http.StatusConflict, domain.CodeActiveAPIOrderDispute, "Active API order dispute", "当前存在未解决的 API 订单纠纷，暂不能发布或恢复 API 服务与额度，也不会接收新订单。请先完成纠纷处理。")
+	}
+	return nil
 }
 
 func disputeSubjectRole(ctx context.Context, tx pgx.Tx, targetType, targetID, subjectUserID string) (string, *domain.AppError) {

@@ -22,31 +22,90 @@ import (
 
 const apiServiceSupportedPaymentMethodsSQL = "'wechat', 'alipay'"
 
-func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service) *domain.AppError {
+func (s *Store) executeAPIServiceCommand(
+	ctx context.Context,
+	entry *idempotency.Entry,
+	now time.Time,
+	mutate func(pgx.Tx) (apimarket.Service, *domain.AppError),
+	buildCompletion apimarket.ServiceCompletionBuilder,
+) (apimarket.Service, idempotency.Completion, *domain.AppError) {
 	if s == nil || s.pool == nil {
-		return internalStoreError()
+		return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return internalStoreError()
+		return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
-		return appErr
+	var processing idempotency.Entry
+	hasProcessing := false
+	if entry != nil {
+		if buildCompletion == nil {
+			return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
+		}
+		var appErr *domain.AppError
+		processing, appErr = lockProcessingIdempotencyInTx(ctx, tx, *entry)
+		if appErr != nil {
+			return apimarket.Service{}, idempotency.Completion{}, appErr
+		}
+		hasProcessing = true
 	}
-	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
-		return appErr
+	service, appErr := mutate(tx)
+	if appErr != nil {
+		return apimarket.Service{}, idempotency.Completion{}, appErr
 	}
-	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
-		return appErr
-	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, service.UpdatedAt); appErr != nil {
-		return appErr
+	completion := idempotency.Completion{}
+	if hasProcessing {
+		completion, appErr = buildCompletion(service)
+		if appErr != nil {
+			return apimarket.Service{}, idempotency.Completion{}, appErr
+		}
+		if appErr := completeIdempotencyInTx(ctx, tx, processing, completion, now); appErr != nil {
+			return apimarket.Service{}, idempotency.Completion{}, appErr
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return internalStoreError()
+		return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
 	}
-	return nil
+	return service, completion, nil
+}
+
+func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service, requestID string) *domain.AppError {
+	_, _, appErr := s.executeAPIServiceCommand(ctx, nil, service.CreatedAt, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.createAPIServiceInTx(ctx, tx, service, requestID)
+	}, nil)
+	return appErr
+}
+
+func (s *Store) CreateAPIServiceWithIdempotency(ctx context.Context, entry idempotency.Entry, service apimarket.Service, requestID string, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.createAPIServiceInTx(ctx, tx, service, requestID)
+	}, buildCompletion)
+}
+
+func (s *Store) createAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Service, requestID string) (apimarket.Service, *domain.AppError) {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.created", service.OwnerUserID, apiOperationActorUser, service.Version, requestID, map[string]any{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus,
+	}, service.CreatedAt); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, service.UpdatedAt); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	loaded, err := s.getAPIService(ctx, tx, service.ID, false)
+	if err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	return loaded, nil
 }
 
 func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
@@ -398,14 +457,19 @@ func (s *Store) GetAdminAPIService(ctx context.Context, serviceID string) (apima
 }
 
 func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServiceInput, service apimarket.Service, now time.Time) (apimarket.Service, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceInTx(ctx, tx, input, service, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.UpdateServiceInput, service apimarket.Service, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceInTx(ctx, tx, input, service, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceInTx(ctx context.Context, tx pgx.Tx, input apimarket.UpdateServiceInput, service apimarket.Service, now time.Time) (apimarket.Service, *domain.AppError) {
 	current, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || current.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -419,7 +483,7 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if !canEditAPIService(current) {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能直接修改，请先开始修订。")
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
@@ -433,15 +497,17 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.updated", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"changedFields": []string{"service_configuration"},
+	}, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	service, err = s.getAPIService(ctx, tx, service.ID, false)
 	if err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
 	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
 	}
 	return service, nil
 }
@@ -476,14 +542,19 @@ func validateReadyAPIProbeConnectionInTx(ctx context.Context, tx pgx.Tx, ownerUs
 }
 
 func (s *Store) UpdateAPIServiceProbeConnection(ctx context.Context, input apimarket.UpdateProbeConnectionInput, now time.Time) (apimarket.Service, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceProbeConnectionInTx(ctx, tx, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceProbeConnectionWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.UpdateProbeConnectionInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceProbeConnectionInTx(ctx, tx, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceProbeConnectionInTx(ctx context.Context, tx pgx.Tx, input apimarket.UpdateProbeConnectionInput, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -495,6 +566,9 @@ func (s *Store) UpdateAPIServiceProbeConnection(ctx context.Context, input apima
 		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
 	connectionID := strings.TrimSpace(input.ProbeConnectionID)
+	if strings.TrimSpace(service.ProbeConnectionID) == connectionID {
+		return service, nil
+	}
 	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, input.OwnerUserID, connectionID); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
@@ -511,21 +585,28 @@ func (s *Store) UpdateAPIServiceProbeConnection(ctx context.Context, input apima
 	if err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.probe_binding_changed", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"changedFields": []string{"probe_connection"},
+	}, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
 
 func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimarket.UpdateOrderSettingsInput, now time.Time) (apimarket.Service, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceOrderSettingsInTx(ctx, tx, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceOrderSettingsWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.UpdateOrderSettingsInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceOrderSettingsInTx(ctx, tx, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceOrderSettingsInTx(ctx context.Context, tx pgx.Tx, input apimarket.UpdateOrderSettingsInput, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -539,6 +620,11 @@ func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimark
 	if appErr := storeValidateAPIServiceOrderSettings(input); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if service.AcceptingOrders == input.AcceptingOrders &&
+		service.PaymentWindowMinutes == input.PaymentWindowMinutes &&
+		apimarket.PaymentOptionsMatchInput(service.PaymentOptions, input.PaymentOptions) {
+		return apimarket.WithOrderability(service), nil
+	}
 	service.PaymentWindowMinutes = input.PaymentWindowMinutes
 	service.PaymentOptions = storeBuildPaymentOptions(service.ID, service.PaymentOptions, input.PaymentOptions, now)
 	service.AcceptingOrders = input.AcceptingOrders
@@ -551,21 +637,31 @@ func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimark
 	if appErr := updateAPIServiceOrderSettingsInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.order_settings_changed", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"changedFields": []string{"accepting_orders", "payment_window", "payment_options"},
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
 
 func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput, now time.Time) (apimarket.Service, *domain.AppError) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.submitAPIServiceForReviewInTx(ctx, tx, user, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) SubmitAPIServiceForReviewWithIdempotency(ctx context.Context, entry idempotency.Entry, user auth.User, input apimarket.ServiceOwnerActionInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.submitAPIServiceForReviewInTx(ctx, tx, user, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) submitAPIServiceForReviewInTx(ctx context.Context, tx pgx.Tx, user auth.User, input apimarket.ServiceOwnerActionInput, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -576,13 +672,16 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
 		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if service.ReviewStatus != apimarket.ServiceReviewStatusDraft && service.ReviewStatus != apimarket.ServiceReviewStatusChangesRequested {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能提交审核。")
 	}
 	if user.LinuxDoBinding == nil || !user.LinuxDoBinding.Bound {
 		return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "linux.do binding required", "提交 API 服务前需要完成 linux.do 身份绑定。", "linuxDoBinding", "required", "需要先完成 linux.do 身份绑定。")
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	service.ReviewStatus = apimarket.ServiceReviewStatusApproved
@@ -595,21 +694,31 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.review_submitted", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus,
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
 
 func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket.ServiceOwnerActionInput, action string, now time.Time) (apimarket.Service, *domain.AppError) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServicePublicationInTx(ctx, tx, input, action, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServicePublicationWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.ServiceOwnerActionInput, action string, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServicePublicationInTx(ctx, tx, input, action, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServicePublicationInTx(ctx context.Context, tx pgx.Tx, input apimarket.ServiceOwnerActionInput, action string, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -624,13 +733,16 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该操作。")
 	}
 	if action == "publish" || action == "resume" {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+			return apimarket.Service{}, appErr
+		}
 		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
 			return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
 		}
-		if strings.TrimSpace(service.OwnerContactMethodID) == "" {
+		if len(service.OwnerContactMethodIDs) == 0 {
 			return apimarket.Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "上线 API 服务必须配置商户联系方式。")
 		}
-		if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式当前不可用。"); appErr != nil {
+		if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式当前不可用。"); appErr != nil {
 			return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 		}
 	}
@@ -638,11 +750,16 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	eventType := map[string]string{
+		"publish": "api_service.published", "pause": "api_service.paused", "resume": "api_service.resumed", "start_revision": "api_service.revision_started",
+	}[action]
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, eventType, service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus,
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
@@ -651,11 +768,22 @@ func (s *Store) UpdateAPIServiceModeration(ctx context.Context, user auth.User, 
 	if !user.IsAdmin {
 		return apimarket.Service{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceModerationInTx(ctx, tx, user, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceModerationWithIdempotency(ctx context.Context, entry idempotency.Entry, user auth.User, input apimarket.ServiceAdminActionInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return apimarket.Service{}, idempotency.Completion{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
-	defer rollback(ctx, tx)
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceModerationInTx(ctx, tx, user, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceModerationInTx(ctx context.Context, tx pgx.Tx, user auth.User, input apimarket.ServiceAdminActionInput, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -669,15 +797,26 @@ func (s *Store) UpdateAPIServiceModeration(ctx context.Context, user auth.User, 
 	if !canUpdateAPIServiceAdminStatus(service, input.Action) {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该管理动作。")
 	}
+	before := map[string]string{"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus}
 	service = applyAPIServiceAdminAction(service, input, now)
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	auditAction := map[string]string{
+		"approve":         "api_service.approved",
+		"request_changes": "api_service.changes_requested",
+		"reject":          "api_service.rejected",
+		"suspend":         "api_service.suspended",
+		"restore":         "api_service.restored",
+		"remove":          "api_service.removed",
+	}[input.Action]
+	if appErr := insertAPIServiceAdminAudit(ctx, tx, user.ID, service.ID, auditAction, input.RequestID, before, map[string]string{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus,
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
@@ -1122,6 +1261,31 @@ func (s *Store) getPublicAPIService(ctx context.Context, q queryer, serviceID st
 }
 
 func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *apimarket.Service) *domain.AppError {
+	contactRows, err := queryRows(ctx, q, `
+		SELECT contact_method_id::text
+		FROM api_service_contact_methods
+		WHERE api_service_id = $1
+		ORDER BY sort_order ASC
+	`, service.ID)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer contactRows.Close()
+	service.OwnerContactMethodIDs = nil
+	for contactRows.Next() {
+		var contactMethodID string
+		if err := contactRows.Scan(&contactMethodID); err != nil {
+			return internalStoreError()
+		}
+		service.OwnerContactMethodIDs = append(service.OwnerContactMethodIDs, contactMethodID)
+	}
+	if err := contactRows.Err(); err != nil {
+		return internalStoreError()
+	}
+	if len(service.OwnerContactMethodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
+		service.OwnerContactMethodIDs = []string{service.OwnerContactMethodID}
+	}
+
 	accessRows, err := queryRows(ctx, q, `
 		SELECT api_service_id::text, access_mode, COALESCE(public_note, '')
 		FROM api_service_access_modes
@@ -1350,17 +1514,20 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if validateErr := validateCreateAPIPurchaseIntentForStore(input, service); validateErr != nil {
 		return apiintent.Intent{}, validateErr
 	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apiintent.Intent{}, appErr
+	}
 
-	buyerMethod, buyerVersion, appErr := lockContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "买家联系方式不可用或不属于当前用户。")
+	buyerMethod, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	ownerMethod, ownerVersion, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或归属不正确。")
+	ownerSnapshots, appErr := lockAPIServiceOwnerContactSnapshots(ctx, tx, service.ID, service.OwnerUserID, service.OwnerContactMethodID, service.OwnerContactMethodIDs, "商户联系方式不可用或归属不正确。")
 	if appErr != nil {
 		return apiintent.Intent{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 	}
 
-	intent, appErr := apiintent.NewIntent(input, service, buyerMethod, buyerVersion, ownerMethod, ownerVersion, now)
+	intent, appErr := apiintent.NewIntentWithOwnerContacts(input, service, buyerMethod, buyerVersion, ownerSnapshots, now)
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1529,6 +1696,18 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 	if err != nil {
 		return internalStoreError()
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM api_service_contact_methods WHERE api_service_id = $1`, service.ID); err != nil {
+		return internalStoreError()
+	}
+	for index, contactMethodID := range service.OwnerContactMethodIDs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_service_contact_methods (
+				api_service_id, owner_user_id, contact_method_id, sort_order, created_at
+			) VALUES ($1, $2, $3, $4, $5)
+		`, service.ID, service.OwnerUserID, contactMethodID, index, service.UpdatedAt); err != nil {
+			return internalStoreError()
+		}
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM api_service_access_modes WHERE api_service_id = $1`, service.ID); err != nil {
 		return internalStoreError()
 	}
@@ -1649,6 +1828,67 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		}
 	}
 	return nil
+}
+
+func lockAPIServiceContacts(ctx context.Context, tx pgx.Tx, service apimarket.Service, detail string) *domain.AppError {
+	methodIDs := service.OwnerContactMethodIDs
+	if len(methodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
+		methodIDs = []string{service.OwnerContactMethodID}
+	}
+	if len(methodIDs) == 0 {
+		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "至少需要一种商户联系方式。")
+	}
+	for _, methodID := range methodIDs {
+		if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant, detail); appErr != nil {
+			return appErr
+		}
+	}
+	return nil
+}
+
+func lockAPIServiceOwnerContactSnapshots(ctx context.Context, tx pgx.Tx, serviceID, ownerUserID, fallbackMethodID string, methodIDs []string, detail string) ([]apiintent.OwnerContactSnapshot, *domain.AppError) {
+	if len(methodIDs) == 0 {
+		rows, err := tx.Query(ctx, `
+			SELECT contact_method_id::text
+			FROM api_service_contact_methods
+			WHERE api_service_id = $1 AND owner_user_id = $2
+			ORDER BY sort_order ASC
+		`, serviceID, ownerUserID)
+		if err != nil {
+			return nil, internalStoreError()
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var methodID string
+			if err := rows.Scan(&methodID); err != nil {
+				return nil, internalStoreError()
+			}
+			methodIDs = append(methodIDs, methodID)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, internalStoreError()
+		}
+	}
+	if len(methodIDs) == 0 && strings.TrimSpace(fallbackMethodID) != "" {
+		methodIDs = []string{fallbackMethodID}
+	}
+	if len(methodIDs) == 0 {
+		return nil, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", detail)
+	}
+	snapshots := make([]apiintent.OwnerContactSnapshot, 0, len(methodIDs))
+	for _, methodID := range methodIDs {
+		method, version, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, ownerUserID, contact.UsageScopeAPIMerchant, detail)
+		if appErr != nil {
+			return nil, appErr
+		}
+		snapshots = append(snapshots, apiintent.OwnerContactSnapshot{
+			ContactMethodID:        method.ID,
+			ContactMethodVersionID: version.ID,
+			Type:                   method.Type,
+			Label:                  method.Label,
+		})
+	}
+	return snapshots, nil
 }
 
 func loadAPIServiceRecommendationStats(ctx context.Context, q queryer, service *apimarket.Service) *domain.AppError {
@@ -1805,6 +2045,34 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 		}
 		return internalStoreError()
 	}
+	if appErr := insertAPIPurchaseIntentOwnerContactSnapshotsInTx(ctx, tx, intent); appErr != nil {
+		return appErr
+	}
+	return nil
+}
+
+func insertAPIPurchaseIntentOwnerContactSnapshotsInTx(ctx context.Context, tx pgx.Tx, intent apiintent.Intent) *domain.AppError {
+	snapshots := intent.OwnerContactSnapshots
+	if len(snapshots) == 0 && strings.TrimSpace(intent.OwnerContactMethodID) != "" {
+		snapshots = []apiintent.OwnerContactSnapshot{{
+			ContactMethodID:        intent.OwnerContactMethodID,
+			ContactMethodVersionID: intent.OwnerContactMethodVersionID,
+			Type:                   intent.OwnerContactTypeSnapshot,
+			Label:                  intent.OwnerContactLabelSnapshot,
+		}}
+	}
+	for index, snapshot := range snapshots {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_purchase_intent_owner_contact_snapshots (
+				api_purchase_intent_id, owner_user_id, contact_method_id,
+				contact_method_version_id, contact_type_snapshot,
+				contact_label_snapshot, sort_order, created_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, intent.ID, intent.OwnerUserID, snapshot.ContactMethodID,
+			snapshot.ContactMethodVersionID, snapshot.Type, snapshot.Label, index, intent.CreatedAt); err != nil {
+			return internalStoreError()
+		}
+	}
 	return nil
 }
 
@@ -1872,11 +2140,48 @@ func insertAPIPurchaseIntentContactAccessLogInTx(ctx context.Context, tx pgx.Tx,
 }
 
 func (s *Store) withAPIPurchaseIntentMerchantContact(ctx context.Context, q queryer, intent apiintent.Intent) (apiintent.Intent, *domain.AppError) {
-	item, appErr := s.readFrozenContactVersion(ctx, q, intent.OwnerContactMethodVersionID, intent.OwnerContactMethodID, intent.OwnerUserID, "merchant", intent.OwnerContactTypeSnapshot, intent.OwnerContactLabelSnapshot)
-	if appErr != nil {
-		return apiintent.Intent{}, appErr
+	rows, err := queryRows(ctx, q, `
+		SELECT contact_method_id::text, contact_method_version_id::text,
+		       contact_type_snapshot, contact_label_snapshot
+		FROM api_purchase_intent_owner_contact_snapshots
+		WHERE api_purchase_intent_id = $1 AND owner_user_id = $2
+		ORDER BY sort_order ASC
+	`, intent.ID, intent.OwnerUserID)
+	if err != nil {
+		return apiintent.Intent{}, internalStoreError()
 	}
-	intent.MerchantContact = &item
+	defer rows.Close()
+	intent.OwnerContactSnapshots = nil
+	for rows.Next() {
+		var snapshot apiintent.OwnerContactSnapshot
+		if err := rows.Scan(&snapshot.ContactMethodID, &snapshot.ContactMethodVersionID, &snapshot.Type, &snapshot.Label); err != nil {
+			return apiintent.Intent{}, internalStoreError()
+		}
+		intent.OwnerContactSnapshots = append(intent.OwnerContactSnapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return apiintent.Intent{}, internalStoreError()
+	}
+	if len(intent.OwnerContactSnapshots) == 0 {
+		intent.OwnerContactSnapshots = []apiintent.OwnerContactSnapshot{{
+			ContactMethodID:        intent.OwnerContactMethodID,
+			ContactMethodVersionID: intent.OwnerContactMethodVersionID,
+			Type:                   intent.OwnerContactTypeSnapshot,
+			Label:                  intent.OwnerContactLabelSnapshot,
+		}}
+	}
+	intent.MerchantContacts = nil
+	for _, snapshot := range intent.OwnerContactSnapshots {
+		item, appErr := s.readFrozenContactVersion(ctx, q, snapshot.ContactMethodVersionID, snapshot.ContactMethodID, intent.OwnerUserID, "merchant", snapshot.Type, snapshot.Label)
+		if appErr != nil {
+			return apiintent.Intent{}, appErr
+		}
+		intent.MerchantContacts = append(intent.MerchantContacts, item)
+	}
+	if len(intent.MerchantContacts) > 0 {
+		primary := intent.MerchantContacts[0]
+		intent.MerchantContact = &primary
+	}
 	return intent, nil
 }
 

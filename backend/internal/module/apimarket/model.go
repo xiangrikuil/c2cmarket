@@ -3,6 +3,8 @@ package apimarket
 import (
 	"time"
 
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 )
 
@@ -72,6 +74,7 @@ type Service struct {
 	MerchantProfileSlug              string
 	MerchantAvatarURL                string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
 	ProbeConnectionID                string
 	ProbeReady                       bool
 	ProbeBaseURL                     string
@@ -192,6 +195,7 @@ type CreateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
 	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string
@@ -216,6 +220,7 @@ type CreateServiceInput struct {
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
+	RequestID                        string
 }
 
 type UpdateServiceInput struct {
@@ -224,6 +229,7 @@ type UpdateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
 	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string
@@ -364,4 +370,19 @@ type UpdateAccountPaymentSettingsInput struct {
 	UserID               string
 	PaymentWindowMinutes int
 	PaymentOptions       []PaymentOptionInput
+}
+
+type ServiceCompletionBuilder func(Service) (idempotency.Completion, *domain.AppError)
+
+// ServiceAuditEvent 在内存模式下镜像 PostgreSQL 中的安全操作事实。
+// 这里只保存动作、资源版本和字段名，绝不保存联系方式、收款信息或探针密钥。
+type ServiceAuditEvent struct {
+	EventType        string
+	ActorUserID      string
+	ActorKind        string
+	RequestID        string
+	AggregateID      string
+	AggregateVersion int64
+	ChangedFields    []string
+	CreatedAt        time.Time
 }

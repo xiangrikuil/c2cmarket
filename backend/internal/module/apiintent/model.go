@@ -64,8 +64,17 @@ type Intent struct {
 	CreatedAt                                time.Time
 	UpdatedAt                                time.Time
 	Version                                  int64
+	OwnerContactSnapshots                    []OwnerContactSnapshot
 	MerchantContact                          *contact.ContactItemView
+	MerchantContacts                         []contact.ContactItemView
 	BuyerContact                             *contact.ContactItemView
+}
+
+type OwnerContactSnapshot struct {
+	ContactMethodID        string
+	ContactMethodVersionID string
+	Type                   string
+	Label                  string
 }
 
 type ContactAccessLog struct {

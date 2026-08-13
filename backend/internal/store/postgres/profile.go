@@ -65,10 +65,10 @@ func (s *Store) UpdateUserProfile(ctx context.Context, input profile.UpdateUserP
 		    updated_at = $10,
 		    version = version + 1
 		WHERE id = $1
-	`, input.UserID, strings.TrimSpace(strings.ToLower(input.Username)), strings.TrimSpace(input.DisplayName), nullText(input.Bio),
+	`, input.UserID, input.Username, strings.TrimSpace(input.DisplayName), nullText(input.Bio),
 		nullText(input.RegionCode), nullText(input.Timezone), input.AvatarMode, nullText(input.AvatarURL), string(privacyJSON), now)
 	if isUniqueViolation(err) {
-		return profile.UserProfile{}, domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Username unavailable", "站内用户名已被占用。", "username", "unavailable", "站内用户名已被占用。")
+		return profile.UserProfile{}, domain.NewFieldError(http.StatusConflict, domain.CodeUsernameUnavailable, "Username unavailable", "站内用户名已被占用。", "username", "unavailable", "站内用户名已被占用。")
 	}
 	if err != nil {
 		return profile.UserProfile{}, internalStoreError()

@@ -7,6 +7,7 @@ import { toast } from 'vue-sonner'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import ApiOrderDisputePanel from '@/components/api-order/ApiOrderDisputePanel.vue'
+import ApiRefundPolicyEvidence from '@/components/api-order/ApiRefundPolicyEvidence.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -29,7 +30,6 @@ import StatusBadge from '@/components/market/StatusBadge.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
-	canOpenApiOrderDispute,
   getApiOrderDeliveryKindLabel,
 	getApiOrderDisputeStatusDescription,
 	getApiOrderDisputeStatusLabel,
@@ -84,10 +84,11 @@ const id = computed(() => String(route.params.id ?? ''))
 const perspective = computed<'buyer' | 'merchant'>(() => route.name === 'merchant-api-order-detail' ? 'merchant' : 'buyer')
 const isMerchantView = computed(() => perspective.value === 'merchant')
 const { data: order, isLoading, error: orderError, refetch: refetchOrder } = useApiOrder(id, perspective)
+const ordinaryActionsPaused = computed(() => Boolean(order.value && isApiOrderDisputeActive(order.value.disputeStatus)))
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
-  enabled: computed(() => Boolean(order.value && !isMerchantView.value && order.value.status === 'pending_payment')),
+	enabled: computed(() => Boolean(order.value && !isMerchantView.value && order.value.status === 'pending_payment' && !ordinaryActionsPaused.value)),
   retry: false,
 })
 
@@ -109,6 +110,7 @@ const disputeDialogOpen = ref(false)
 const disputeIssueCode = ref<ApiOrderDisputeIssueCode>('service_unavailable')
 const disputeRequestedResolution = ref<ApiOrderDisputeResolution>('full_refund')
 const disputeRequestedAmount = ref('')
+const disputeIssueOccurredAt = ref('')
 const disputeReason = ref('')
 const completionConfirmOpen = ref(false)
 const credentialProblemOpen = ref(false)
@@ -135,18 +137,16 @@ const submitDeliveryMutation = useSubmitApiOrderDeliveryCredentialMutation()
 
 const backPath = computed(() => isMerchantView.value ? '/merchant/api-orders' : '/my/api-orders')
 const backLabel = computed(() => isMerchantView.value ? '返回 API 销售订单' : '返回 API 购买订单')
-const canSubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
-const canResubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'payment_issue')
-const canConfirmPayment = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
-const canReportPaymentIssue = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
-const canSubmitDelivery = computed(() => isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
-const canConfirmComplete = computed(() => !isMerchantView.value && order.value?.status === 'delivery_submitted' && !isApiOrderDisputeActive(order.value.disputeStatus))
+const canSubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'pending_payment')
+const canResubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'payment_issue')
+const canConfirmPayment = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
+const canReportPaymentIssue = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
+const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
+const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
-  && order.value.status !== 'cancelled'
-  && order.value.status !== 'completed'
-  && canOpenApiOrderDispute(order.value.disputeStatus),
+	&& (order.value.canOpenDispute ?? (order.value.status !== 'cancelled' && order.value.status !== 'completed' && (order.value.disputeStatus ?? 'none') === 'none')),
 ))
 const showDisputeStatus = computed(() => Boolean(order.value && (order.value.disputeStatus ?? 'none') !== 'none'))
 const disputeViewerUserId = computed(() => {
@@ -155,7 +155,8 @@ const disputeViewerUserId = computed(() => {
 })
 const canSubmitDispute = computed(() => Boolean(
   disputeReason.value.trim()
-  && (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim()),
+	&& (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim())
+	&& (order.value?.status !== 'completed' || disputeIssueOccurredAt.value),
 ))
 const canOpenReviewCenter = computed(() => order.value?.status === 'completed')
 const counterpartyReputation = computed(() => {
@@ -210,10 +211,6 @@ function refundCommitmentSnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
   return commercialSnapshotFallback(snapshot)
 }
 
-function refundPolicyVersionSnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
-  return snapshot.merchantRefundPolicyVersion || commercialSnapshotFallback(snapshot)
-}
-
 function serviceValiditySnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
   if (snapshot.serviceValidityExpiresAt) return formatOrderDateTime(snapshot.serviceValidityExpiresAt)
   if (snapshot.serviceValidityExpiresAt === null && !snapshot.commercialFactsSnapshotIssue) return '未设置固定失效时间'
@@ -234,6 +231,19 @@ const orderQuotaExpiryLabel = computed(() => {
   return serviceValiditySnapshotLabel(order.value.intentSnapshot)
 })
 const paymentInstructions = computed(() => paymentInstructionsQuery.data.value ?? null)
+const disputeValidityExpiresAt = computed(() => {
+	const raw = order.value?.packageExpiresAt
+		?? order.value?.quotaSnapshot?.expiresAt
+		?? order.value?.intentSnapshot.serviceValidityExpiresAt
+	if (!raw) return null
+	const timestamp = new Date(raw).getTime()
+	return Number.isFinite(timestamp) ? timestamp : null
+})
+const disputeOccurrenceMax = computed(() => {
+	const value = new Date(Math.min(now.value, disputeValidityExpiresAt.value ?? now.value))
+	value.setMinutes(value.getMinutes() - value.getTimezoneOffset())
+	return value.toISOString().slice(0, 16)
+})
 const paymentActionLabel = computed(() => {
   const method = order.value?.selectedPaymentMethod
   return method && apiPaymentMethodRequiresQrCode(method) ? '查看收款码' : '查看付款信息'
@@ -297,7 +307,7 @@ const countdownTitle = computed(() => {
 })
 const pageTitle = computed(() => isMerchantView.value ? 'API 销售订单' : 'API 购买订单')
 const selectedCancelOption = computed(() => API_ORDER_CANCEL_OPTIONS.find(item => item.value === cancelReason.value))
-const canCancelOrder = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
+const canCancelOrder = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'pending_payment')
 const cancelSubmitDisabled = computed(() => {
   if (!selectedCancelOption.value || !cancelUnpaidConfirmed.value) return true
   return Boolean(selectedCancelOption.value.requiresNote && !cancelNote.value.trim())
@@ -309,6 +319,7 @@ const showMerchantTimeout = computed(() => Boolean(
 const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
+	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请在下方纠纷区继续协商或等待处理。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
@@ -416,6 +427,7 @@ async function submitOrderDispute() {
         issueCode: disputeIssueCode.value,
         requestedResolution: disputeRequestedResolution.value,
         requestedAmountCny: disputeRequestedResolution.value === 'partial_refund' ? disputeRequestedAmount.value.trim() : null,
+				issueOccurredAt: disputeIssueOccurredAt.value ? new Date(disputeIssueOccurredAt.value).toISOString() : null,
         reason: disputeReason.value.trim(),
       },
       version: order.value.version,
@@ -423,6 +435,7 @@ async function submitOrderDispute() {
     })
     disputeDialogOpen.value = false
     disputeRequestedAmount.value = ''
+		disputeIssueOccurredAt.value = ''
     disputeReason.value = ''
     await refresh(order.value.id)
     toast.success('订单纠纷已发起，双方可先协商处理。')
@@ -749,6 +762,15 @@ onBeforeUnmount(() => {
       </AlertDescription>
     </Alert>
 
+		<Alert v-if="order.status === 'completed' && canOpenDispute" class="border-warning/30 bg-warning/5">
+			<Clock3 class="text-warning" />
+			<AlertTitle>仍在 24 小时补报期内</AlertTitle>
+			<AlertDescription>
+				仅可补报服务有效期内已经发生的问题；补报期不会延长 API 有效期，也不代表平台保证退款。
+				<span v-if="order.afterSalesExpiresAt" class="mt-1 block">补报截止：{{ formatOrderDateTime(order.afterSalesExpiresAt) }}</span>
+			</AlertDescription>
+		</Alert>
+
     <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.1fr)_minmax(280px,0.8fr)]">
       <Collapsible v-model:open="orderDetailsOpen" as-child>
         <Card class="h-fit p-5">
@@ -778,7 +800,7 @@ onBeforeUnmount(() => {
               <div><span class="text-muted-foreground">号池</span><div>{{ accountPoolSnapshotLabel(order.quotaSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户声明最大并发</span><div>{{ concurrencySnapshotLabel(order.quotaSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户退款承诺</span><div>{{ refundCommitmentSnapshotLabel(order.quotaSnapshot) }}</div></div>
-              <div><span class="text-muted-foreground">退款规则版本</span><div>{{ refundPolicyVersionSnapshotLabel(order.quotaSnapshot) }}</div></div>
+							<div><span class="text-muted-foreground">退款规则版本</span><ApiRefundPolicyEvidence class="mt-1" :snapshot="order.quotaSnapshot" /></div>
               <div><span class="text-muted-foreground">承诺适用截止</span><div>{{ serviceValiditySnapshotLabel(order.quotaSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">预计交付</span><div>{{ getApiQuotaDeliveryModeLabel(order.quotaSnapshot.deliveryMode) }} · ≤ {{ order.quotaSnapshot.deliveryEtaMinutes }} 分钟</div></div>
               <div v-if="order.quotaSnapshot.performanceConfirmedAt"><span class="text-muted-foreground">体验确认时间</span><div>{{ formatOrderDateTime(order.quotaSnapshot.performanceConfirmedAt) }}</div></div>
@@ -792,7 +814,7 @@ onBeforeUnmount(() => {
               <div><span class="text-muted-foreground">号池</span><div>{{ accountPoolSnapshotLabel(order.intentSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户声明最大并发</span><div>{{ concurrencySnapshotLabel(order.intentSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户退款承诺</span><div>{{ refundCommitmentSnapshotLabel(order.intentSnapshot) }}</div></div>
-              <div><span class="text-muted-foreground">退款规则版本</span><div>{{ refundPolicyVersionSnapshotLabel(order.intentSnapshot) }}</div></div>
+							<div><span class="text-muted-foreground">退款规则版本</span><ApiRefundPolicyEvidence class="mt-1" :snapshot="order.intentSnapshot" /></div>
               <div><span class="text-muted-foreground">服务有效期</span><div>{{ orderServiceValidityLabel }}</div></div>
               <div><span class="text-muted-foreground">用量核对</span><div>{{ orderUsageVisibilityLabel }}</div></div>
               <div><span class="text-muted-foreground">付款截止</span><div>{{ formatOrderDateTime(order.paymentExpiresAt) }}</div></div>
@@ -1050,6 +1072,11 @@ onBeforeUnmount(() => {
           <span class="text-sm font-medium">部分退款金额</span>
           <Input v-model="disputeRequestedAmount" inputmode="decimal" placeholder="不超过订单金额" />
         </label>
+				<label v-if="order.status === 'completed'" class="block space-y-2">
+					<span class="text-sm font-medium">问题实际发生时间</span>
+					<Input v-model="disputeIssueOccurredAt" type="datetime-local" :max="disputeOccurrenceMax" />
+					<span class="block text-xs leading-5 text-muted-foreground">必须发生在所购服务有效期内。24 小时补报期只延长提交入口，不延长服务有效期。</span>
+				</label>
         <label class="block space-y-2">
           <span class="text-sm font-medium">问题说明</span>
           <Textarea v-model="disputeReason" class="min-h-32" maxlength="500" placeholder="请描述发生时间、当前状态和希望协助处理的事项。不要填写密码、API Key、验证码等敏感信息。" />

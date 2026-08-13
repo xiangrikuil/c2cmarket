@@ -1636,3 +1636,47 @@ Added fixed buyer, seller, and admin development personas, protected session boo
 ### Status
 
 [OK] **Completed**
+
+
+## Session 52: API order after-sales contacts and refund evidence
+
+**Date**: 2026-08-10
+**Task**: API order after-sales contacts and refund evidence
+**Package**: frontend
+**Branch**: `codex/api-order-after-sales-contacts`
+
+### Summary
+
+Added multi-contact merchant snapshots, completed-order 24-hour dispute reporting grace period, frozen refund policy evidence, migration 89, and frontend/backend coverage.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3b29dc8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 53: API 纠纷发布限制与唯一 linux.do 联系方式
+
+**Date**: 2026-08-12
+**Task**: API 纠纷发布限制与唯一 linux.do 联系方式
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+活动纠纷暂停对应 API 订单，阻止卖家发布、恢复与新接单；linux.do 只投影账号唯一绑定。完成 Migration 90、全量测试和本地运行验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f65ead0` | (see git log) |
+
+### Status
+
+[OK] **Completed**

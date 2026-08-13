@@ -95,6 +95,8 @@ versions:
 | `000086_announcement_content_updated_at` | separates user-visible announcement content updates from general record mutation time |
 | `000087_api_order_dispute_remedies` | adds auditable post-ruling remedy requirements, claims, beneficiary responses, neutral timeouts, and administrator-confirmed overdue facts |
 | `000088_api_order_dispute_sanctions` | links seller restrictions to overdue remedies and indexes the 180-day confirmed-breach window |
+| `000089_api_order_after_sales_contacts` | freezes ordered API-service contact selections and records after-sales issue occurrence time |
+| `000090_linuxdo_contact_single_mapping` | consolidates enabled linux.do contacts to the identity-bound account mapping while preserving historical transaction snapshots |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -432,6 +434,40 @@ Version 88 (`000088_api_order_dispute_sanctions`) links an administrator-applied
 API-order seller restriction directly to its overdue remedy, prevents a second
 restriction from consuming the same overdue fact, and indexes confirmed seller
 breaches for the rolling 180-day recommendation window.
+
+Version 89 (`000089_api_order_after_sales_contacts`) adds ordered API-service
+contact associations, immutable purchase-intent contact-version snapshots, and
+an optional API-order dispute issue occurrence time. Existing services and
+intents are backfilled from their legacy single-contact fields without exposing
+plaintext contact values.
+
+Version 90 (`000090_linuxdo_contact_single_mapping`) makes the account's
+linux.do binding the single enabled linux.do transaction-contact mapping. It
+repoints mutable API-service and carpool references, disables deterministic
+duplicates, and adds a per-user partial unique index while preserving frozen
+purchase-intent contact versions and historical snapshots.
+
+Version 91 (`000091_student_identity_and_auth_link`) adds the default-off
+student-registration singleton, immutable exact institution domains,
+append-only lifetime student-email claims, purpose-isolated registration
+challenge constraints, recent password reauthentication, and one-time
+session-bound linux.do link state. Its down migration refuses to remove a
+durable student identity after any claim exists.
+
+Version 92 (`000092_operation_audit_projection`) evolves the existing probe
+model-change history into one append-only probe operation ledger while
+preserving legacy model facts and compatibility writes. It also adds cursor
+indexes for the eight allowlisted authorities consumed by the administrator-only
+unified operation-history projection. The projection never copies source rows
+into a second universal audit table and does not expose raw metadata, reasons,
+credentials, contact values, or request bodies.
+
+Version 93 (`000093_contact_usage_scopes`) persists canonical contact-method
+usage scopes. Existing methods retain all four historical scopes
+(`carpool_owner`, `api_merchant`, `buyer`, and `dispute`), while newly inserted
+rows default to the buyer/dispute pair. A database check enforces a non-empty,
+deduplicated, allowlisted, canonically ordered scope array. The guarded down
+migration refuses to erase policy once a row carries a post-migration scope set.
 
 ## Contact Retention And Destruction
 

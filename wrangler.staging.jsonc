@@ -11,6 +11,7 @@
     "NUXT_PUBLIC_SITE_URL": "https://staging.c2cmarket.shop",
     "NUXT_PUBLIC_API_BASE_URL": "https://api-staging.c2cmarket.shop",
     "NUXT_PUBLIC_API_MODE": "real",
+    "NUXT_PUBLIC_TURNSTILE_SITE_KEY": "0x4AAAAAAENOJxBZnePMzh-y",
     "NUXT_API_BASE_URL": "https://api-staging.c2cmarket.shop"
   }
 }

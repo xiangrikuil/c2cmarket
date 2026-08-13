@@ -43,6 +43,7 @@ type apiOrderDisputeRequest struct {
 	IssueCode           string `json:"issueCode"`
 	RequestedResolution string `json:"requestedResolution"`
 	RequestedAmountCNY  string `json:"requestedAmountCny"`
+	IssueOccurredAt     string `json:"issueOccurredAt"`
 	Reason              string `json:"reason"`
 }
 
@@ -118,6 +119,9 @@ type apiOrderResponse struct {
 	CompletedAt                   *string                             `json:"completedAt,omitempty"`
 	CancelledAt                   *string                             `json:"cancelledAt,omitempty"`
 	CancelReason                  string                              `json:"cancelReason,omitempty"`
+	AfterSalesExpiresAt           *string                             `json:"afterSalesExpiresAt,omitempty"`
+	CanOpenDispute                bool                                `json:"canOpenDispute"`
+	DisputeEligibilityReason      string                              `json:"disputeEligibilityReason"`
 	Version                       int64                               `json:"version"`
 	CreatedAt                     string                              `json:"createdAt"`
 	UpdatedAt                     string                              `json:"updatedAt"`
@@ -150,6 +154,9 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIOrderCreate) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[createAPIOrderRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -159,7 +166,7 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 	routeKey := "POST /api/v1/me/api-purchase-intents/{id}/orders"
 	completion, appErr := s.app.CreateAPIOrderWithIdempotency(
 		r.Context(),
-		user.ID,
+		user,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey+":"+intentID, body),
@@ -394,6 +401,9 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	orders, appErr := s.app.OwnerAPIOrders(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -408,6 +418,9 @@ func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	order, appErr := s.app.OwnerAPIOrder(r.Context(), user, chi.URLParam(r, "id"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -420,25 +433,25 @@ func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfirmAPIOrderPayment(w http.ResponseWriter, r *http.Request) {
 	s.handleOwnerAPIOrderAction(w, r, "confirm-payment", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.ConfirmAPIOrderPaymentWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+		return s.app.ConfirmAPIOrderPaymentWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
 func (s *Server) handleReportAPIOrderPaymentIssue(w http.ResponseWriter, r *http.Request) {
 	s.handleOwnerAPIOrderAction(w, r, "report-payment-issue", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.ReportAPIOrderPaymentIssueWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+		return s.app.ReportAPIOrderPaymentIssueWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
 func (s *Server) handleSubmitAPIOrderDelivery(w http.ResponseWriter, r *http.Request) {
 	s.handleOwnerAPIOrderAction(w, r, "submit-delivery", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.SubmitAPIOrderDeliveryWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+		return s.app.SubmitAPIOrderDeliveryWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
 func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
 	s.handleOwnerAPIOrderAction(w, r, "dispute", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.OpenAPIOrderDisputeWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+		return s.app.OpenOwnerAPIOrderDisputeWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
@@ -446,6 +459,9 @@ func (s *Server) handleOwnerAPIOrderAction(w http.ResponseWriter, r *http.Reques
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	body, input, appErr := s.decodeAPIOrderAction(r, action)
@@ -498,6 +514,7 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 			IssueCode:           req.IssueCode,
 			RequestedResolution: req.RequestedResolution,
 			RequestedAmountCNY:  req.RequestedAmountCNY,
+			IssueOccurredAt:     req.IssueOccurredAt,
 			Reason:              req.Reason,
 		}, appErr
 	default:
@@ -595,6 +612,9 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		CompletedAt:                   formatOptionalTime(order.CompletedAt),
 		CancelledAt:                   formatOptionalTime(order.CancelledAt),
 		CancelReason:                  order.CancelReason,
+		AfterSalesExpiresAt:           formatOptionalTime(order.AfterSalesExpiresAt),
+		CanOpenDispute:                order.CanOpenDispute,
+		DisputeEligibilityReason:      order.DisputeEligibilityReason,
 		Version:                       order.Version,
 		CreatedAt:                     order.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                     order.UpdatedAt.UTC().Format(time.RFC3339),

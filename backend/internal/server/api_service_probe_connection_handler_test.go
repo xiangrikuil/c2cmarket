@@ -19,7 +19,7 @@ func TestOwnerAPIServiceProbeConnectionRouteSupportsRebindAndUnbind(t *testing.T
 	created := createAPIService(t, handler, owner, contact.ID, "create-probe-binding-service")
 
 	rebind := newJSONRequest(http.MethodPatch, "/api/v1/owner/api-services/"+created.ID+"/probe-connection", `{"probeConnectionId":"00000000-0000-0000-0000-000000000822"}`)
-	addAuth(rebind, owner, "unused")
+	addAuth(rebind, owner, "probe-rebind")
 	rebind.Header.Set("If-Match", `"`+strconv.FormatInt(created.Version, 10)+`"`)
 	rebindResponse := httptest.NewRecorder()
 	handler.ServeHTTP(rebindResponse, rebind)
@@ -38,7 +38,7 @@ func TestOwnerAPIServiceProbeConnectionRouteSupportsRebindAndUnbind(t *testing.T
 	}
 
 	unbind := newJSONRequest(http.MethodPatch, "/api/v1/owner/api-services/"+created.ID+"/probe-connection", `{"probeConnectionId":""}`)
-	addAuth(unbind, owner, "unused")
+	addAuth(unbind, owner, "probe-unbind")
 	unbind.Header.Set("If-Match", `"`+strconv.FormatInt(rebound.Version, 10)+`"`)
 	unbindResponse := httptest.NewRecorder()
 	handler.ServeHTTP(unbindResponse, unbind)

@@ -221,12 +221,12 @@ If-Match: "<version>"                            # required for versioned admin 
 - Problem responses use `application/problem+json` and include `code` plus `requestId`.
 - Session auth is same-origin cookie auth. Production code must not accept request headers as user impersonation.
 - `POST /api/v1/auth/dev-session` is a development entry only. It must be disabled outside development/test by `APP_ENV` / `ENABLE_DEV_AUTH` startup configuration.
-- First-release public registration/login is linux.do OAuth only. Native username/password is a backup login path for accounts with `linuxDoBinding.bound=true`, plus the explicit first-admin bootstrap account. `POST /api/v1/auth/password` and `POST /api/v1/auth/password/login` must reject unbound non-admin users with `403 LINUX_DO_BINDING_REQUIRED` before creating or changing credentials. Password credentials must be stored only as salted hashes; plaintext passwords must never be stored in PostgreSQL, logs, OpenAPI examples, or frontend state.
-- `POST /api/v1/auth/email-registration/start` and `POST /api/v1/auth/email-registration/confirm` are retained only as stable disabled compatibility endpoints. Both return `403 EMAIL_REGISTRATION_DISABLED` and must not send registration email, create challenges, create users, create sessions, or set session cookies. Login-bound `/me/email-verification/*` remains a profile/contact verification feature.
+- Public registration supports linux.do OAuth plus administrator-controlled student-email registration. The persistent registration switch is seeded disabled, and both `POST /api/v1/auth/email-registration/start` and `POST /api/v1/auth/email-registration/confirm` recheck the switch and the exact enabled institution domain; a disabled switch returns `403 EMAIL_REGISTRATION_DISABLED` without creating a user or session. Login-bound `/me/email-verification/*` remains a separate profile/contact verification feature.
+- Native username/password login is available to accounts with a durable student-email claim, accounts with `linuxDoBinding.bound=true`, and the explicit first-admin bootstrap account. Students may log in with their strict lowercase username or immutable claimed institution email; mutable profile email is not a login identity. `POST /api/v1/auth/password` and `POST /api/v1/auth/password/login` reject users with none of those durable identity facts. Password credentials are stored only as salted Argon2id hashes; plaintext passwords must never be stored in PostgreSQL, logs, OpenAPI examples, or frontend state.
 - OAuth login is another real session entry. `GET /api/v1/auth/oauth/start?returnTo=/path` sets an HttpOnly OAuth state cookie and returns `{authorizationUrl}`. `GET /api/v1/auth/oauth/callback?code=...&state=...` must compare query state with the state cookie, exchange the code for a provider profile, upsert `users`, `auth_identities`, `linux_do_bindings`, create an `auth_sessions` row, set `c2c_session`, clear the state cookie, and redirect to the normalized `FRONTEND_ORIGIN` plus the sanitized relative `returnTo`. Production `FRONTEND_ORIGIN` must be an absolute HTTPS origin without credentials, path, query, or fragment.
 - OAuth provider mode can be `fake` only in development/test for smoke automation. Production must use `OAUTH_PROVIDER_MODE=oauth2` with `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_AUTHORIZE_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, and `OAUTH_REDIRECT_URL`.
 - OAuth token responses are request-time credentials only. Do not persist provider access tokens, refresh tokens, userinfo raw payloads, session cookies, or OAuth codes in database rows, logs, OpenAPI examples, or frontend state.
-- `GET /api/v1/auth/session` returns `user.permissions` and `user.linuxDoBinding`. Admin UI and backend admin routes must derive admin authority from the returned backend session/user permission source, not frontend-selected mock roles.
+- `GET /api/v1/auth/session` returns `user.permissions`, `user.capabilities`, `user.studentClaim`, and `user.linuxDoBinding`. Business and administrator UI decisions use the typed capability projection, while backend authorization reprojects from current durable identity/permission facts instead of trusting a session/DTO capability snapshot or frontend-selected mock role.
 - `linuxDoBinding` means the account has a bound linux.do identity summary. It must not be worded as linux.do official certification, endorsement, or guarantee.
 - `GET /readyz` is an unversioned operational endpoint. It returns process/database readiness, `schema_migrations` state, and the expected migration version when PostgreSQL is configured; business APIs must not depend on it for authorization or user-visible status.
 - State-changing endpoints must call session and CSRF validation before decoding business actions.
@@ -1385,12 +1385,12 @@ rating: row.rating ?? 0
 rating: row.rating ?? null
 ```
 
-## Scenario: Real Native/OAuth Login And Session Permissions
+## Scenario: Student Registration, Native/OAuth Login, And Session Capabilities
 
 ### 1. Scope / Trigger
 
-- Trigger: backend work that changes auth routes, session DTOs, native password login, OAuth provider config, linux.do binding display, production startup validation, or admin permission checks.
-- Owner: `backend/internal/config`, `backend/internal/server/auth_handler.go`, `backend/internal/module/auth`, `backend/internal/store/postgres/auth.go`, and `backend/migrations/*native*login*.sql`.
+- Trigger: backend work that changes student registration, auth routes, session DTOs, native password login, authenticated linux.do linking, OAuth provider config, production startup validation, or capability/admin checks.
+- Owner: `backend/internal/config`, `backend/internal/server/auth_handler.go`, `backend/internal/server/auth_student_admin_handler.go`, `backend/internal/module/auth`, `backend/internal/store/postgres/auth*.go`, and migrations `000091+`.
 
 ### 2. Signatures
 
@@ -1398,6 +1398,10 @@ rating: row.rating ?? null
 POST /api/v1/auth/password/login
 POST /api/v1/auth/email-registration/start
 POST /api/v1/auth/email-registration/confirm
+GET /api/v1/auth/student-registration/config
+POST /api/v1/auth/reauthenticate-password
+GET /api/v1/auth/link/linuxdo/start
+GET /api/v1/auth/link/linuxdo/callback
 GET /api/v1/auth/oauth/start?returnTo=/my
 GET /api/v1/auth/oauth/callback?code=<provider-code>&state=<state>
 GET /api/v1/auth/session
@@ -1425,6 +1429,8 @@ Session user response includes:
 {
   "user": {
     "permissions": ["admin"],
+    "capabilities": ["api_order.create", "admin.access"],
+    "studentClaim": null,
     "linuxDoBinding": {
       "bound": true,
       "linuxDoUserId": "123",
@@ -1442,10 +1448,14 @@ Session user response includes:
 
 - `password/login` must validate native credentials through salted hashes in `user_password_credentials`, create the same cookie-backed session contract as OAuth, and return `401 INVALID_CREDENTIALS` for missing users or bad passwords without revealing which field failed.
 - New or changed native passwords must write `password_algorithm='argon2id_v1'`. `sha256_salted_v1` is legacy verification-only; a successful legacy login must rehash the credential to `argon2id_v1` before session creation completes.
-- Native password login and set-password must require `linuxDoBinding.bound=true` for non-admin users. Admin users may use native password login without linux.do binding only to support the explicit first-admin bootstrap path.
+- Native password login and set-password require at least one durable native-password identity fact: a student-email claim, `linuxDoBinding.bound=true`, or the explicit administrator bootstrap identity. Student login resolves the canonical username or immutable claimed institution email and never the mutable profile email.
 - First-admin bootstrap is environment-driven at process startup. If `C2C_BOOTSTRAP_ADMIN_PASSWORD` is empty, bootstrap is skipped. If password is present and username is empty, username defaults to `admin`. If username is present without password, config loading must fail.
 - Bootstrap is create-only and records `admin_bootstrap_runs.bootstrap_key='initial-admin-v1'`. With no marker, any existing administrator or occupied target username returns `ADMIN_BOOTSTRAP_CONFLICT` without mutation. A matching marker rerun verifies the active user, admin permission, and password credential without updating any field; damaged marked state returns `ADMIN_BOOTSTRAP_INCONSISTENT`.
-- `email-registration/start` and `email-registration/confirm` are disabled first-release compatibility endpoints. They return `403 EMAIL_REGISTRATION_DISABLED` and must not create accounts or sessions.
+- Student registration is persistent-config controlled and seeded disabled. Start and confirm both recheck the global switch and exact enabled institution domain. Start uses a six-digit, 15-minute, purpose-bound HMAC challenge with resend invalidation and at most five failed attempts. Confirm atomically creates the user, permanent claim, Argon2id credential, attribution, safe identity event, and session; a username/claim race rolls back challenge consumption and all partial rows.
+- Student claims are append-only and globally unique by normalized institution email. Changing the profile email, linking linux.do, changing account status, or administrative domain changes cannot release or reassign a claim.
+- A student session may start linux.do linking only after a successful current-password reauthentication no older than 10 minutes. The OAuth state is purpose/session bound and single use. A successful link keeps the same user/history/password, rejects identities owned by another user, revokes the old current session, and returns a fresh session/CSRF. There is no unlink or automatic account merge.
+- Session/profile capability arrays contain exactly the canonical seven-value vocabulary and are display projections only. Authorization derives from current student claim, linux.do binding, and existing admin permission facts on every request.
+- Session `user.studentClaim` is always present and nullable. Its non-null safe projection contains only `institutionDomain`, `institutionName`, and RFC3339 `claimedAt`; it never exposes the canonical student email, claim/user/domain IDs, challenge material, or another internal identity field.
 - `start` must store only state plus same-origin `returnTo` in the state cookie. External URLs, protocol-relative URLs, and empty values normalize to `/`.
 - `callback` must clear the state cookie after successful login.
 - The PostgreSQL auth repository must query `(provider, provider_subject)` first. Existing identities retain their original `user_id` and local username. First login creates a new user, identity, and provider binding in one transaction; username collisions select a deterministic alternative instead of reusing the conflicting row.
@@ -1460,13 +1470,19 @@ Session user response includes:
 | Condition | HTTP | Code |
 | --- | ---: | --- |
 | Bad native username/password | 401 | `INVALID_CREDENTIALS` |
-| Native password set/login for non-admin user without linux.do binding | 403 | `LINUX_DO_BINDING_REQUIRED` |
+| Native password set/login without student claim, linux.do binding, or admin fact | 403 | `LINUX_DO_BINDING_REQUIRED` |
 | Legacy `sha256_salted_v1` password login succeeds | 200 plus credential rehash | n/a |
 | Bootstrap username set without bootstrap password | startup failure | n/a |
 | Bootstrap target occupied or unproven admin exists | 409 | `ADMIN_BOOTSTRAP_CONFLICT` |
 | Bootstrap marker exists but linked state is damaged | 500 | `ADMIN_BOOTSTRAP_INCONSISTENT` |
 | Proven Bootstrap rerun | no-op, no overwrite | n/a |
-| Email registration start/confirm | 403 | `EMAIL_REGISTRATION_DISABLED` |
+| Student registration switch disabled at start/confirm | 403 | `EMAIL_REGISTRATION_DISABLED` |
+| Institution domain not enabled | 422 | `STUDENT_EMAIL_NOT_ELIGIBLE` |
+| Institution email already claimed | 409 | `STUDENT_EMAIL_CLAIMED` |
+| Invalid/expired/exhausted registration code | 422 | `VERIFICATION_CODE_INVALID` |
+| Invalid or occupied strict username | 422/409 | `USERNAME_INVALID` / `USERNAME_UNAVAILABLE` |
+| linux.do link without recent password reauthentication | 403 | `RECENT_REAUTHENTICATION_REQUIRED` |
+| linux.do identity belongs to another user | 409 | `OAUTH_IDENTITY_CONFLICT` |
 | Missing state cookie or state query | 403 | `CSRF_TOKEN_INVALID` |
 | State mismatch | 403 | `CSRF_TOKEN_INVALID` |
 | Missing callback code | 422 | `VALIDATION_FAILED` |
@@ -1480,15 +1496,16 @@ Session user response includes:
 - Good: linux.do-bound native user login returns the normal session response, while an incorrect password returns `401 INVALID_CREDENTIALS` and creates no session.
 - Good: a legacy `sha256_salted_v1` credential logs in once and is persisted back as `argon2id_v1`; the same wrong password does not create a session or rehash.
 - Good: first empty-database startup with `C2C_BOOTSTRAP_ADMIN_USERNAME=admin` and `C2C_BOOTSTRAP_ADMIN_PASSWORD=<secret>` creates a new admin, Argon2id credential, and `initial-admin-v1` marker; a proven rerun leaves the credential unchanged.
-- Good: email registration start/confirm return `EMAIL_REGISTRATION_DISABLED` and do not set `c2c_session`.
+- Good: registration remains disabled after migration until an administrator enables one exact institution domain and the global switch; a valid student registration creates one permanent claim and only `api_order.create`.
+- Good: after recent password reauthentication, a student links an unused linux.do identity in place, keeps historical orders and password login, receives the six non-admin business capabilities, and rotates the current session/CSRF.
 - Good: fake provider smoke logs in both `fake-auth-user-*` and `fake-auth-admin-*`; both remain non-admin and receive `403` from admin routes. A separate development-only dev session verifies the admin route.
 - Base: existing smoke scripts may call `/auth/dev-session` only when `APP_ENV=development|test` and `ENABLE_DEV_AUTH=true`.
-- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, OAuth profile data grants admin, Bootstrap promotes an existing user or overwrites a password, email registration becomes a public sign-up path, an unbound non-admin user uses backup password, new writes use `sha256_salted_v1`, or backend stores OAuth access tokens in `auth_identities`.
+- Bad: real frontend mode silently calls `/auth/dev-session` to switch identities, trusts stale capability arrays, enables every `.edu` suffix, releases a claim after profile-email changes, merges users by matching email, links linux.do without recent reauthentication, OAuth profile data grants admin, Bootstrap promotes an existing user or overwrites a password, new writes use `sha256_salted_v1`, or backend stores OAuth access tokens in `auth_identities`.
 
 ### 6. Tests Required
 
 - `cd backend && /opt/homebrew/bin/go test ./...` for config, route parity, and auth behavior.
-- Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, identity ownership/collision isolation, first-admin Bootstrap creation, conflict handling, provenance validation, and no-overwrite reruns.
+- Auth tests must assert default-off/exact-domain registration, immutable claim uniqueness, challenge expiry/attempt/resend/single-use semantics, username/claim race rollback, Argon2id login and legacy rehash, strict username or claim-email login, mutable-email rejection, capability projection/current-session refresh, link recent-auth/state/conflict/session rotation, identity ownership isolation, and first-admin Bootstrap behavior.
 - OAuth profile tests must cover linux.do userinfo with integer `id` and the existing string identifier form, and must assert both normalize to the stable string subject used by `auth_identities` and `linux_do_bindings`.
 - OpenAPI YAML parse to verify auth path/schema contract.
 - `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` and development auth enabled for OAuth start/callback/session, fake admin-like denial, dev-admin route access, and logout.
@@ -2603,7 +2620,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 88 (current repository target)
+  ExpectedMigrationVersion = 93 (current repository target)
 ```
 
 ### 3. Contracts

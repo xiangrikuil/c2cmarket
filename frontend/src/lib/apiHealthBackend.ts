@@ -101,7 +101,7 @@ export async function backendUpdateOwnerAPIProbeConnection(input: SaveOwnerAPIPr
   const dto = await backendMutation<OwnerAPIProbeConnectionDTO>(
     `/api/v1/owner/api-probe-connections/${encodeURIComponent(input.id)}`,
     connectionBody(input),
-    { method: 'PUT', ifMatch: input.version },
+    { method: 'PUT', ifMatch: input.version, idempotencyPrefix: 'api-probe-connection-update' },
   )
   return mapConnection(dto)
 }
@@ -111,7 +111,7 @@ export async function backendDeleteOwnerAPIProbeConnection(input: { id: string, 
   await backendMutation<void>(
     `/api/v1/owner/api-probe-connections/${encodeURIComponent(input.id)}`,
     {},
-    { method: 'DELETE', ifMatch: input.version },
+    { method: 'DELETE', ifMatch: input.version, idempotencyPrefix: 'api-probe-connection-delete' },
   )
 }
 

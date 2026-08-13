@@ -130,6 +130,7 @@ type disputeResponse struct {
 	IssueCode            string                       `json:"issueCode,omitempty"`
 	RequestedResolution  string                       `json:"requestedResolution,omitempty"`
 	RequestedAmountCNY   string                       `json:"requestedAmountCny,omitempty"`
+	IssueOccurredAt      *string                      `json:"issueOccurredAt,omitempty"`
 	PublicSummary        string                       `json:"publicSummary"`
 	PublicResultCode     string                       `json:"publicResultCode"`
 	PublicResult         string                       `json:"publicResult"`
@@ -1031,6 +1032,7 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		IssueCode:            item.IssueCode,
 		RequestedResolution:  item.RequestedResolution,
 		RequestedAmountCNY:   item.RequestedAmountCNY,
+		IssueOccurredAt:      formatOptionalTime(item.IssueOccurredAt),
 		PublicSummary:        item.PublicSummary,
 		PublicResultCode:     item.PublicResultCode,
 		PublicResult:         item.PublicResult,

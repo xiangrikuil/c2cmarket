@@ -15,9 +15,11 @@ import {
 import {
   backendErrorMessage,
   createDevPersonaSession,
+  createMockPersonaSession,
   shouldUseRealBackend,
   type DevPersona,
 } from '@/lib/backendClient'
+import { getMockPersona, type MockPersona } from '@/lib/mockAuth'
 
 const props = defineProps<{
   currentUsername?: string
@@ -25,18 +27,30 @@ const props = defineProps<{
 
 const router = useRouter()
 const queryClient = useQueryClient()
-const busyPersona = ref<DevPersona | null>(null)
+type SwitchPersona = DevPersona | MockPersona
+
+const realBackend = shouldUseRealBackend()
+const busyPersona = ref<SwitchPersona | null>(null)
 const popoverOpen = ref(false)
-const visible = import.meta.dev && shouldUseRealBackend()
-const personaItems = [
+const visible = import.meta.dev
+const currentMockPersona = ref<MockPersona>(getMockPersona())
+const realPersonaItems = [
   { persona: 'buyer' as const, username: 'dev-buyer', label: '买家' },
   { persona: 'seller' as const, username: 'dev-seller', label: '卖家' },
   { persona: 'admin' as const, username: 'dev-admin', label: '管理员' },
 ]
+const mockPersonaItems = [
+  { persona: 'anonymous' as const, username: '—', label: '匿名' },
+  { persona: 'student' as const, username: 'student-buyer', label: '学生买家' },
+  { persona: 'linuxdo' as const, username: 'orbit', label: 'Linux.do' },
+  { persona: 'admin' as const, username: 'orbit', label: '管理员' },
+]
+const personaItems = computed(() => realBackend ? realPersonaItems : mockPersonaItems)
 const collisionSuffixPattern = /^[a-f0-9]{8}(?:-\d+)?$/
 const activePersona = computed(() => {
+  if (!realBackend) return currentMockPersona.value
   const currentUsername = props.currentUsername?.trim() ?? ''
-  const item = personaItems.find(({ username }) => {
+  const item = personaItems.value.find(({ username }) => {
     if (currentUsername === username) return true
     return currentUsername.startsWith(`${username}-`)
       && collisionSuffixPattern.test(currentUsername.slice(username.length + 1))
@@ -44,22 +58,25 @@ const activePersona = computed(() => {
   return item?.persona ?? null
 })
 
-function choosePersona(persona: DevPersona) {
+function choosePersona(persona: SwitchPersona) {
   popoverOpen.value = false
   void switchPersona(persona)
 }
 
-async function switchPersona(persona: DevPersona) {
+async function switchPersona(persona: SwitchPersona) {
   if (busyPersona.value || activePersona.value === persona) return
   busyPersona.value = persona
   try {
-    const session = await createDevPersonaSession(persona)
+    const session = realBackend
+      ? await createDevPersonaSession(persona as DevPersona)
+      : await createMockPersonaSession(persona as MockPersona)
+    if (!realBackend) currentMockPersona.value = persona as MockPersona
     await queryClient.cancelQueries()
     queryClient.getMutationCache().clear()
     queryClient.removeQueries({ type: 'inactive' })
     await queryClient.resetQueries({ type: 'active' })
-    await router.replace('/my')
-    toast.success(`已切换为${session.user.displayName || session.user.username}。`)
+    await router.replace(session ? '/my' : '/login')
+    toast.success(session ? `已切换为${session.user.displayName || session.user.username}。` : '已切换为匿名状态。')
   } catch (error) {
     toast.error(backendErrorMessage(error, '切换开发账号失败'))
   } finally {

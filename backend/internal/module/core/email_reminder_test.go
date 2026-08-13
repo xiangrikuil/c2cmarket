@@ -8,6 +8,8 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apimarket"
+	authmodule "c2c-market/backend/internal/module/auth"
+	contactmodule "c2c-market/backend/internal/module/contact"
 )
 
 type emailReminderFakeSender struct {
@@ -99,15 +101,15 @@ func (f *emailReminderFakeSender) ExposeDevCode() bool {
 func TestCarpoolAcceptanceEmailSentToVerifiedBuyerOnce(t *testing.T) {
 	ctx := context.Background()
 	service, sender := newEmailReminderTestService()
-	owner := testBoundUser("owner-carpool-email", "owner-carpool-email")
-	buyer := testUser("buyer-carpool-email", "buyer-carpool-email")
+	owner := createTestBoundUser(t, service, "owner-carpool-email")
+	buyer := testBoundUser("buyer-carpool-email", "buyer-carpool-email")
 	verifyProfileEmail(t, service, buyer, "buyer-carpool@example.com")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_carpool_email")
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_carpool_email")
+	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_carpool_email", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_carpool_email", contactmodule.DefaultUsageScopes())
 	application := createTestCarpoolApplication(t, service, owner, buyer, ownerContact.ID, buyerContact.ID)
 
-	_, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner.ID, "accept-carpool-email", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
+	_, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner, "accept-carpool-email", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
 		ApplicationID:   application.ID,
 		ExpectedVersion: application.Version,
 		RequestID:       "accept-request",
@@ -123,7 +125,7 @@ func TestCarpoolAcceptanceEmailSentToVerifiedBuyerOnce(t *testing.T) {
 		t.Fatalf("unexpected buyer acceptance email: %+v", sent)
 	}
 
-	_, appErr = service.AcceptCarpoolApplicationWithIdempotency(ctx, owner.ID, "accept-carpool-email", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
+	_, appErr = service.AcceptCarpoolApplicationWithIdempotency(ctx, owner, "accept-carpool-email", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
 		ApplicationID:   application.ID,
 		ExpectedVersion: application.Version,
 		RequestID:       "accept-request",
@@ -139,14 +141,14 @@ func TestCarpoolAcceptanceEmailSentToVerifiedBuyerOnce(t *testing.T) {
 func TestCarpoolAcceptanceEmailSkipsUnverifiedBuyer(t *testing.T) {
 	ctx := context.Background()
 	service, sender := newEmailReminderTestService()
-	owner := testBoundUser("owner-carpool-unverified", "owner-carpool-unverified")
-	buyer := testUser("buyer-carpool-unverified", "buyer-carpool-unverified")
+	owner := createTestBoundUser(t, service, "owner-carpool-unverified")
+	buyer := testBoundUser("buyer-carpool-unverified", "buyer-carpool-unverified")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_carpool_unverified")
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_carpool_unverified")
+	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_carpool_unverified", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_carpool_unverified", contactmodule.DefaultUsageScopes())
 	application := createTestCarpoolApplication(t, service, owner, buyer, ownerContact.ID, buyerContact.ID)
 
-	_, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner.ID, "accept-carpool-unverified", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
+	_, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner, "accept-carpool-unverified", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
 		ApplicationID:   application.ID,
 		ExpectedVersion: application.Version,
 		RequestID:       "accept-request",
@@ -162,15 +164,15 @@ func TestCarpoolAcceptanceEmailSkipsUnverifiedBuyer(t *testing.T) {
 func TestAPIOrderEmailSentToVerifiedMerchantOnce(t *testing.T) {
 	ctx := context.Background()
 	service, sender := newEmailReminderTestService()
-	owner := testBoundUser("owner-api-email", "owner-api-email")
-	buyer := testUser("buyer-api-email", "buyer-api-email")
+	owner := createTestBoundUser(t, service, "owner-api-email")
+	buyer := testStudentUser("buyer-api-email", "buyer-api-email")
 	verifyProfileEmail(t, service, owner, "merchant-api@example.com")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_api_email")
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_email")
+	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_api_email", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_email", contactmodule.DefaultUsageScopes())
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
 
-	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-email", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
+	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer, "api-intent-email", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
 		APIServiceID:          apiService.ID,
 		BuyerContactMethodID:  buyerContact.ID,
 		RequestedCNYAmount:    "16.00",
@@ -186,7 +188,7 @@ func TestAPIOrderEmailSentToVerifiedMerchantOnce(t *testing.T) {
 		t.Fatalf("purchase intent must not send an order email, got %+v", sender.apiOrderCreated)
 	}
 
-	orderCompletion, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-email", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+	orderCompletion, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer, "api-order-email", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
 		IntentID:      string(intentCompletion.Body),
 		PaymentMethod: apimarket.PaymentMethodWechat,
 		RequestID:     "order-request",
@@ -202,7 +204,7 @@ func TestAPIOrderEmailSentToVerifiedMerchantOnce(t *testing.T) {
 		t.Fatalf("unexpected merchant API order email: %+v", sent)
 	}
 
-	_, appErr = service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-email", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+	_, appErr = service.CreateAPIOrderWithIdempotency(ctx, buyer, "api-order-email", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
 		IntentID:      string(intentCompletion.Body),
 		PaymentMethod: apimarket.PaymentMethodWechat,
 		RequestID:     "order-request",
@@ -218,14 +220,14 @@ func TestAPIOrderEmailSentToVerifiedMerchantOnce(t *testing.T) {
 func TestAPIOrderEmailSkipsUnverifiedMerchant(t *testing.T) {
 	ctx := context.Background()
 	service, sender := newEmailReminderTestService()
-	owner := testBoundUser("owner-api-unverified", "owner-api-unverified")
-	buyer := testUser("buyer-api-unverified", "buyer-api-unverified")
+	owner := createTestBoundUser(t, service, "owner-api-unverified")
+	buyer := testStudentUser("buyer-api-unverified", "buyer-api-unverified")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_api_unverified")
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_unverified")
+	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_api_unverified", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_unverified", contactmodule.DefaultUsageScopes())
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
 
-	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-unverified", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
+	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer, "api-intent-unverified", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
 		APIServiceID:          apiService.ID,
 		BuyerContactMethodID:  buyerContact.ID,
 		RequestedCNYAmount:    "16.00",
@@ -237,7 +239,7 @@ func TestAPIOrderEmailSkipsUnverifiedMerchant(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create API purchase intent: %v", appErr)
 	}
-	if _, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-unverified", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+	if _, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer, "api-order-unverified", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
 		IntentID:      string(intentCompletion.Body),
 		PaymentMethod: apimarket.PaymentMethodWechat,
 		RequestID:     "order-request",
@@ -255,15 +257,15 @@ func TestEmailReminderFailuresDoNotBlockBusinessOperations(t *testing.T) {
 	sender.failCarpoolAccept = true
 	sender.failAPIOrder = true
 
-	owner := testBoundUser("owner-email-failure", "owner-email-failure")
-	buyer := testUser("buyer-email-failure", "buyer-email-failure")
+	owner := createTestBoundUser(t, service, "owner-email-failure")
+	buyer := testBoundUser("buyer-email-failure", "buyer-email-failure")
 	verifyProfileEmail(t, service, buyer, "buyer-failure@example.com")
 	verifyProfileEmail(t, service, owner, "merchant-failure@example.com")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_email_failure")
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_email_failure")
+	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_email_failure", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_email_failure", contactmodule.DefaultUsageScopes())
 	application := createTestCarpoolApplication(t, service, owner, buyer, ownerContact.ID, buyerContact.ID)
-	if _, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner.ID, "accept-email-failure", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
+	if _, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner, "accept-email-failure", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
 		ApplicationID:   application.ID,
 		ExpectedVersion: application.Version,
 		RequestID:       "accept-request",
@@ -272,7 +274,7 @@ func TestEmailReminderFailuresDoNotBlockBusinessOperations(t *testing.T) {
 	}
 
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
-	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-email-failure", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
+	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer, "api-intent-email-failure", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
 		APIServiceID:          apiService.ID,
 		BuyerContactMethodID:  buyerContact.ID,
 		RequestedCNYAmount:    "16.00",
@@ -284,7 +286,7 @@ func TestEmailReminderFailuresDoNotBlockBusinessOperations(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("email failure must not block API purchase intent: %v", appErr)
 	}
-	if _, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-email-failure", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+	if _, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer, "api-order-email-failure", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
 		IntentID:      string(intentCompletion.Body),
 		PaymentMethod: apimarket.PaymentMethodWechat,
 		RequestID:     "order-request",
@@ -306,6 +308,19 @@ func testUser(id, username string) User {
 	return User{ID: id, Username: username, DisplayName: username, Status: "active"}
 }
 
+func testStudentUser(id, username string) User {
+	user := testUser(id, username)
+	user.StudentClaim = &authmodule.StudentEmailClaim{
+		ID:                "student-claim-" + id,
+		UserID:            id,
+		NormalizedEmail:   username + "@students.example.edu",
+		InstitutionDomain: "students.example.edu",
+		InstitutionName:   "Example Students",
+		ClaimedAt:         time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC),
+	}
+	return user
+}
+
 func testBoundUser(id, username string) User {
 	user := testUser(id, username)
 	user.LinuxDoBinding = &LinuxDoBinding{
@@ -315,6 +330,18 @@ func testBoundUser(id, username string) User {
 		TrustLevel:      3,
 		BoundAt:         time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC),
 		LastSyncedAt:    time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC),
+	}
+	return user
+}
+
+func createTestBoundUser(t *testing.T, service *Service, username string) User {
+	t.Helper()
+	user, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: "linux_do", Subject: username, Username: username,
+		LinuxDoUserID: username, LinuxDoUsername: username, TrustLevel: 3,
+	})
+	if appErr != nil {
+		t.Fatalf("create bound user: %v", appErr)
 	}
 	return user
 }
@@ -333,15 +360,16 @@ func verifyProfileEmail(t *testing.T, service *Service, user User, email string)
 	}
 }
 
-func createTestContactMethod(t *testing.T, service *Service, userID, methodType, label, value string) ContactMethod {
+func createTestContactMethod(t *testing.T, service *Service, userID, methodType, label, value string, usageScopes []string) ContactMethod {
 	t.Helper()
 	method, appErr := service.CreateContactMethod(context.Background(), ContactMethodInput{
-		UserID:    userID,
-		Type:      methodType,
-		Label:     label,
-		Value:     value,
-		IsDefault: true,
-		Enabled:   true,
+		UserID:      userID,
+		Type:        methodType,
+		Label:       label,
+		Value:       value,
+		UsageScopes: usageScopes,
+		IsDefault:   true,
+		Enabled:     true,
 	})
 	if appErr != nil {
 		t.Fatalf("create contact method: %v", appErr)

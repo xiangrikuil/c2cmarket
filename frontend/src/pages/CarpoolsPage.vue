@@ -31,6 +31,7 @@ import {
 } from '@/lib/productCategories'
 import { adminAccountLabel, distributionMethodLabel, openingChannelLabels, paymentMethodLabels } from '@/components/carpool-publish/utils'
 import type { Carpool } from '@/lib/api'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 
 const filters = [
   { label: '开通区', items: ['全部', '菲律宾区', '日本区', '土耳其区', '香港区'], active: '全部' },
@@ -48,7 +49,7 @@ const productCategoriesQuery = useProductCategories()
 const productCatalogQuery = useCarpoolProductCatalog()
 const { data: myProfile } = useMyProfileQuery(import.meta.client)
 const { data: catalogCategories } = productCategoriesQuery
-const canModerateCarpools = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
+const canModerateCarpools = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const selectedCategory = ref<ProductCategoryKey>(normalizeProductCategory(route.query.category))
 const selectedPlan = ref(normalizeProductPlan(selectedCategory.value, route.query.plan))

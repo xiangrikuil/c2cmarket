@@ -31,6 +31,7 @@ import (
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
+	"c2c-market/backend/internal/module/operationaudit"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
@@ -38,6 +39,7 @@ import (
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
 	"c2c-market/backend/internal/observability"
+	"c2c-market/backend/internal/platform/turnstile"
 	"c2c-market/backend/internal/realtime"
 	"github.com/go-chi/chi/v5"
 	"net/http"
@@ -66,6 +68,7 @@ type ServerOptions struct {
 	RateLimiter        *middleware.RateLimiter
 	Metrics            *observability.Metrics
 	MetricsBearerToken string
+	TurnstileVerifier  turnstile.Verifier
 }
 
 type OAuthOptions struct {
@@ -97,10 +100,10 @@ type APIHealthService interface {
 	OwnerConnection(ctx context.Context, user auth.User, connectionID string) (apihealth.Connection, bool, *domain.AppError)
 	PreflightOwnerConnection(ctx context.Context, user auth.User, input apihealth.ConnectionInput) (apihealth.PreflightResult, *domain.AppError)
 	PreflightExistingOwnerConnection(ctx context.Context, user auth.User, connectionID string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.PreflightResult, *domain.AppError)
-	CreateOwnerConnection(ctx context.Context, user auth.User, input apihealth.ConnectionInput) (apihealth.Connection, *domain.AppError)
-	UpdateOwnerConnection(ctx context.Context, user auth.User, connectionID string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.Connection, *domain.AppError)
-	VerifyOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) (apihealth.Connection, *domain.AppError)
-	DeleteOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) *domain.AppError
+	CreateOwnerConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apihealth.ConnectionInput, requestID string, buildCompletion apihealth.MutationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateOwnerConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, connectionID string, input apihealth.ConnectionInput, expectedVersion int64, requestID string, buildCompletion apihealth.MutationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	VerifyOwnerConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, connectionID string, expectedVersion int64, requestID string, buildCompletion apihealth.MutationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	DeleteOwnerConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, connectionID string, expectedVersion int64, requestID string, buildCompletion apihealth.MutationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	Summaries(ctx context.Context, serviceIDs []string) (map[string]apihealth.Summary, *domain.AppError)
 }
 
@@ -123,6 +126,10 @@ type AdminUserService interface {
 	AdminUser(ctx context.Context, user auth.User, userID string) (auth.AdminUserDetail, *domain.AppError)
 	UpdateAdminUserStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserStatusInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type OperationAuditService interface {
+	AdminOperationAuditLogs(ctx context.Context, user auth.User, filter operationaudit.Filter) (domain.Page[operationaudit.Entry], *domain.AppError)
 }
 
 type APIPromotionService interface {
@@ -165,8 +172,17 @@ type Service interface {
 	GetAccountAppealSession(ctx context.Context, sessionID string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
+	StudentRegistrationConfig(ctx context.Context) (auth.StudentRegistrationConfig, *domain.AppError)
+	AdminStudentRegistration(ctx context.Context, user auth.User) (auth.StudentRegistrationConfig, *domain.AppError)
+	UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentRegistrationSettingUpdate, build auth.StudentRegistrationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminStudentInstitutionDomains(ctx context.Context, user auth.User) ([]auth.StudentInstitutionDomain, *domain.AppError)
+	CreateStudentInstitutionDomainWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentInstitutionDomainCreateInput, build auth.StudentInstitutionDomainCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateStudentInstitutionDomainWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentInstitutionDomainUpdateInput, build auth.StudentInstitutionDomainCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
+	ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError
+	StartLinuxDoLink(ctx context.Context, sessionID string) (string, *domain.AppError)
+	CompleteLinuxDoLink(ctx context.Context, sessionID, state string, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
 	GetSession(ctx context.Context, sessionID string) (auth.User, auth.Session, *domain.AppError)
 	GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.Session, *domain.AppError)
@@ -277,8 +293,11 @@ type Service interface {
 	PublicUserDisputes(ctx context.Context, username string) ([]report.PublicDispute, *domain.AppError)
 
 	CreateAPIService(ctx context.Context, user auth.User, input apimarket.CreateServiceInput) (apimarket.Service, *domain.AppError)
+	CreateAPIServiceWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.CreateServiceInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAPIService(ctx context.Context, user auth.User, input apimarket.UpdateServiceInput) (apimarket.Service, *domain.AppError)
+	UpdateAPIServiceWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.UpdateServiceInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAPIServiceProbeConnection(ctx context.Context, user auth.User, input apimarket.UpdateProbeConnectionInput) (apimarket.Service, *domain.AppError)
+	UpdateAPIServiceProbeConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.UpdateProbeConnectionInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
 	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
@@ -286,22 +305,26 @@ type Service interface {
 	AdminAPIServices(ctx context.Context, user auth.User, filter apimarket.AdminServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	AdminAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
 	SubmitAPIServiceForReview(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError)
+	SubmitAPIServiceForReviewWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.ServiceOwnerActionInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAPIServicePublication(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput, action string) (apimarket.Service, *domain.AppError)
+	UpdateAPIServicePublicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.ServiceOwnerActionInput, action string, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAPIServiceAdminStatus(ctx context.Context, user auth.User, input apimarket.ServiceAdminActionInput) (apimarket.Service, *domain.AppError)
+	UpdateAPIServiceAdminStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.ServiceAdminActionInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAPIServiceOrderSettings(ctx context.Context, user auth.User, input apimarket.UpdateOrderSettingsInput) (apimarket.Service, *domain.AppError)
+	UpdateAPIServiceOrderSettingsWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.UpdateOrderSettingsInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 
-	CreateAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiintent.CreateIntentInput, buildCompletion apiintent.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CreateAPIPurchaseIntentWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiintent.CreateIntentInput, buildCompletion apiintent.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyAPIPurchaseIntents(ctx context.Context, user auth.User) ([]apiintent.Intent, *domain.AppError)
 	MyAPIPurchaseIntent(ctx context.Context, user auth.User, intentID, requestID string) (apiintent.Intent, *domain.AppError)
 	CancelAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiintent.ActionInput, buildCompletion apiintent.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIPurchaseIntents(ctx context.Context, user auth.User) ([]apiintent.Intent, *domain.AppError)
 	OwnerAPIPurchaseIntent(ctx context.Context, user auth.User, intentID, requestID string) (apiintent.Intent, *domain.AppError)
-	MarkAPIPurchaseIntentContactedWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiintent.ActionInput, buildCompletion apiintent.CompletionBuilder) (idempotency.Completion, *domain.AppError)
-	CloseAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiintent.ActionInput, buildCompletion apiintent.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	MarkAPIPurchaseIntentContactedWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiintent.ActionInput, buildCompletion apiintent.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CloseAPIPurchaseIntentWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiintent.ActionInput, buildCompletion apiintent.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	AdminAPIPurchaseIntents(ctx context.Context, user auth.User) ([]apiintent.Intent, *domain.AppError)
 	AdminAPIPurchaseIntent(ctx context.Context, user auth.User, intentID string) (apiintent.Intent, *domain.AppError)
 
-	CreateAPIOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, createInput apiorder.CreateInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CreateAPIOrderWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, createInput apiorder.CreateInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
 	MyAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	ReadAPIOrderPaymentInstructions(ctx context.Context, user auth.User, orderID, requestID string) (apiorder.PaymentInstructionsView, *domain.AppError)
@@ -309,20 +332,26 @@ type Service interface {
 	CancelAPIOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	ConfirmAPIOrderCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	OpenOwnerAPIOrderDisputeWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
 	AdminAPIOrders(ctx context.Context, user auth.User, filter apiorder.AdminOrderFilter, page domain.PageRequest) (domain.Page[apiorder.Order], *domain.AppError)
 	AdminAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	OwnerAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
-	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
-	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
-	SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 
 	CreateContactMethod(ctx context.Context, input contact.ContactMethodInput) (contact.ContactMethod, *domain.AppError)
+	CreateContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input contact.ContactMethodInput, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	ListContactMethods(ctx context.Context, userID string) ([]contact.ContactMethod, *domain.AppError)
 	UpdateContactMethod(ctx context.Context, input contact.UpdateContactMethodInput) (contact.ContactMethod, *domain.AppError)
+	UpdateContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input contact.UpdateContactMethodInput, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	DeleteContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError)
+	DeleteContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SetDefaultContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError)
+	SetDefaultContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	VerifyContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError)
+	VerifyContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateContactSession(ctx context.Context, input contact.CreateContactSessionInput) (contact.ContactSession, *domain.AppError)
 	ReadContactSession(ctx context.Context, sessionID, viewerUserID, requestID string) (contact.ContactSessionView, *domain.AppError)
 
@@ -361,9 +390,13 @@ type Service interface {
 // CarpoolService is the server transport boundary for carpool handlers.
 type CarpoolService interface {
 	CreateCarpoolListing(ctx context.Context, user auth.User, input carpool.CreateListingInput) (carpool.Listing, *domain.AppError)
+	CreateCarpoolListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.CreateListingInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublishCarpoolListing(ctx context.Context, user auth.User, input carpool.PublishListingInput) (carpool.Listing, *domain.AppError)
+	PublishCarpoolListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.PublishListingInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateCarpoolListing(ctx context.Context, user auth.User, input carpool.UpdateListingInput) (carpool.Listing, *domain.AppError)
+	UpdateCarpoolListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.UpdateListingInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input carpool.SubmitListingReviewInput) (carpool.Listing, *domain.AppError)
+	SubmitCarpoolListingForReviewWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.SubmitListingReviewInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	PublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError)
 	CarpoolApplicationEligibility(ctx context.Context, user auth.User, listingID string) (carpool.ApplicationEligibility, *domain.AppError)
@@ -372,20 +405,23 @@ type CarpoolService interface {
 	AdminCarpoolListings(ctx context.Context, user auth.User, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	AdminCarpoolListing(ctx context.Context, user auth.User, listingID string) (carpool.Listing, *domain.AppError)
 	UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.User, input carpool.ReviewInput) (carpool.Listing, *domain.AppError)
+	UpdateCarpoolListingReviewStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.ReviewInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateCarpoolApplication(ctx context.Context, user auth.User, input carpool.CreateApplicationInput) (carpool.Application, *domain.AppError)
+	CreateCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.CreateApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
 	MyCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
 	OwnerCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
 	OwnerCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
-	AcceptCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.AcceptApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	RejectCarpoolApplication(ctx context.Context, input carpool.RejectApplicationInput) (carpool.Application, *domain.AppError)
+	AcceptCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.AcceptApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	RejectCarpoolApplication(ctx context.Context, user auth.User, input carpool.RejectApplicationInput) (carpool.Application, *domain.AppError)
+	RejectCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.RejectApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CancelCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.CancelApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.WithdrawAcceptanceInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.ConfirmApplicationJoinInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.WithdrawAcceptanceInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.ConfirmApplicationJoinInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
 	OwnerCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
-	ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	EndCarpoolMembershipWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	EndCarpoolMembershipWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
 type APIQuotaService interface {
@@ -394,14 +430,20 @@ type APIQuotaService interface {
 	PublicAPIQuotaOffer(ctx context.Context, offerID string) (apiquota.OfferCard, *domain.AppError)
 	OwnerAPIQuotaBatches(ctx context.Context, user auth.User, apiServiceID string, page domain.PageRequest) (domain.Page[apiquota.Batch], *domain.AppError)
 	CreateAPIQuotaBatch(ctx context.Context, user auth.User, input apiquota.CreateBatchInput) (apiquota.Batch, *domain.AppError)
+	CreateAPIQuotaBatchWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateBatchInput, buildCompletion apiquota.BatchCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIQuotaOffers(ctx context.Context, user auth.User, batchID string) ([]apiquota.Offer, *domain.AppError)
 	CreateAPIQuotaOffer(ctx context.Context, user auth.User, input apiquota.CreateOfferInput) (apiquota.Offer, *domain.AppError)
+	CreateAPIQuotaOfferWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateOfferInput, buildCompletion apiquota.OfferCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIQuotaRounds(ctx context.Context, user auth.User, batchID string) ([]apiquota.SaleRound, *domain.AppError)
 	CreateAPIQuotaRound(ctx context.Context, user auth.User, input apiquota.CreateRoundInput) (apiquota.SaleRound, *domain.AppError)
+	CreateAPIQuotaRoundWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateRoundInput, buildCompletion apiquota.SaleRoundCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublishAPIQuotaBatch(ctx context.Context, user auth.User, input apiquota.BatchActionInput) (apiquota.Batch, *domain.AppError)
+	PublishAPIQuotaBatchWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.BatchActionInput, buildCompletion apiquota.BatchCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAPIQuotaBatchStatus(ctx context.Context, user auth.User, input apiquota.BatchActionInput, action string) (apiquota.Batch, *domain.AppError)
-	CreateAPIQuotaOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiquota.CreateOrderInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateAPIQuotaBatchStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.BatchActionInput, action string, buildCompletion apiquota.BatchCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CreateAPIQuotaOrderWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateOrderInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	ImportAPIQuotaCredentials(ctx context.Context, user auth.User, input apiquota.CredentialImportInput) (apiquota.CredentialImportResult, *domain.AppError)
+	ImportAPIQuotaCredentialsWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CredentialImportInput, buildCompletion apiquota.CredentialImportCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	APIQuotaCredentialSummary(ctx context.Context, user auth.User, offerID string) (apiquota.CredentialSummary, *domain.AppError)
 	CreateAPIQuotaRushOfferWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateRushOfferInput, buildCompletion apiquota.RushOfferCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
@@ -434,6 +476,7 @@ type ApplicationService interface {
 	APIQuotaService
 	APIPaymentSettingsService
 	AdminUserService
+	OperationAuditService
 	APIPromotionService
 	GrowthService
 	PromotionRewardService
@@ -450,6 +493,7 @@ type Server struct {
 	adminAPIHealth   AdminAPIHealthService
 	apiModelTester   APIModelTesterService
 	adminUsers       AdminUserService
+	operationAudit   OperationAuditService
 	apiPromotions    APIPromotionService
 	growth           GrowthService
 	promotionRewards PromotionRewardService
@@ -471,6 +515,7 @@ type Server struct {
 	metrics          *observability.Metrics
 	metricsToken     string
 	metricsAuth      bool
+	turnstile        turnstile.Verifier
 }
 
 func NewServer(service ApplicationService, options ...ServerOptions) http.Handler {
@@ -510,6 +555,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		adminAPIHealth:   option.AdminAPIHealth,
 		apiModelTester:   apiModelTester,
 		adminUsers:       service,
+		operationAudit:   service,
 		apiPromotions:    service,
 		growth:           service,
 		promotionRewards: service,
@@ -531,6 +577,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		metrics:          metrics,
 		metricsToken:     strings.TrimSpace(option.MetricsBearerToken),
 		metricsAuth:      option.AppEnv == config.EnvProduction || strings.TrimSpace(option.MetricsBearerToken) != "",
+		turnstile:        option.TurnstileVerifier,
 	}
 	server.routes()
 	return middleware.WithRequestID(

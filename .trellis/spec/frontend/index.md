@@ -22,6 +22,9 @@ This directory contains the current project conventions for the Nuxt 4 + Vue 3 f
 | [Limited API Quota Offers](./api-quota-offers.md) | Quota market, purchase, owner management, adapters, and responsive behavior | Active |
 | [API Health And Quota Policy](../backend/api-health-quota-policy.md) | Probe administration, public health presentation, SKU quota rules, and order snapshots | Active |
 | [API Probe Connections And Model Tester State](./type-safety.md#scenario-api-probe-connections-and-model-tester-state) | Reusable seller connections, service binding, HTTP acknowledgement, order import, temporary credentials, and batch model tests | Active |
+| [Capability-Driven Navigation](./type-safety.md#scenario-capability-driven-student-seller-and-administrator-navigation) | Student, linux.do, probe, seller, and administrator menu/route/query boundaries | Active |
+| [Contact Usage Scopes](../backend/contact-usage-scopes.md) | Buyer/dispute/seller contact form options, selection, persistence, and audit boundaries | Active |
+| [Unified Operation Audit](../backend/operation-audit.md) | Administrator filters, stable cursor pages, safe DTO projection, and no real-to-mock fallback | Active |
 | [Public API Order Numbers](../backend/api-order-public-numbers.md) | Full public references, UUID route separation, normalized search, Mock migration, and responsive display | Active |
 | [API Order Dispute Lifecycle](../backend/api-order-disputes.md) | Shared dispute projection labels, participant/admin consistency, remediation actions, and governance copy | Active |
 | [API Service Promotions](./api-service-promotions.md) | Category-grid promotion injection, shared-card disclosure, administrator preflight, analytics, and DTO boundaries | Active |
@@ -53,24 +56,27 @@ Before editing frontend code, read:
 6. [Limited API Quota Offers](./api-quota-offers.md) when touching quota market, purchase, owner management, adapters, or mock flows
 7. [API Health And Quota Policy](../backend/api-health-quota-policy.md) when touching probe administration, public health facts, quota rules, or order snapshots
 8. [API Probe Connections And Model Tester State](./type-safety.md#scenario-api-probe-connections-and-model-tester-state) when touching seller connections, service binding, HTTP acknowledgement, order imports, or temporary model tests
-9. [Public API Order Numbers](../backend/api-order-public-numbers.md) when touching API order identifiers, adapters, lists, details, search, notifications, or Mock migration
-10. [API Order Dispute Lifecycle](../backend/api-order-disputes.md) when touching API order dispute labels, actions, messages, remediation, or governance copy
-11. [API Service Promotions](./api-service-promotions.md) when touching category-grid promotion injection, administrator scheduling, promotion analytics, or promotion DTO adapters
-12. [Referral Rewards And Promotion Benefits](./promotion-rewards.md) when touching invite capture, benefits/wallet UI, growth-promotion administration, poster generation, reward placement, or benefit analytics
-13. [Registered-User Growth And Umami Analytics](../backend/growth-analytics.md) when touching `/admin/growth`, growth queries/DTOs, registration attribution, auth funnel events, normalized page events, or Umami identity
-14. [Owner API Service Sales Lifecycle](../backend/api-quota-offers.md#scenario-owner-api-service-sales-lifecycle-projection) when touching the owner service list, `salesSummary`, sales filters, or limited-package republishing
-15. [Reputation Presentation](./reputation.md) when touching trust, completion, review, cancellation, or dispute facts
-16. [Hook Guidelines](./hook-guidelines.md)
-17. [State Management](./state-management.md)
-18. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
-19. [Quality Guidelines](./quality-guidelines.md)
-20. [Type Safety](./type-safety.md)
-21. [API Model Catalog Pricing Sync And Activation](../backend/api-model-catalog-sync.md) when touching `/admin/api-models`, models.dev preview/apply, bulk activation, or public model catalog invalidation
-22. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
-23. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
-24. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
-25. [C2CMarket Product Context](../guides/product-context.md)
-26. [Maintainability Contract](../guides/maintainability-contract.md)
+9. [Capability-Driven Navigation](./type-safety.md#scenario-capability-driven-student-seller-and-administrator-navigation) when touching authenticated menus, routes, owner queries, student/linux.do mocks, probes, or administrator access
+10. [Contact Usage Scopes](../backend/contact-usage-scopes.md) when touching contact settings, merchant/carpool contact selection, or contact audit display
+11. [Unified Operation Audit](../backend/operation-audit.md) when touching `/admin/logs`, operation-audit filters/cursors, recent-operation cards, safe DTOs, or real/mock behavior
+12. [Public API Order Numbers](../backend/api-order-public-numbers.md) when touching API order identifiers, adapters, lists, details, search, notifications, or Mock migration
+13. [API Order Dispute Lifecycle](../backend/api-order-disputes.md) when touching API order dispute labels, actions, messages, remediation, or governance copy
+14. [API Service Promotions](./api-service-promotions.md) when touching category-grid promotion injection, administrator scheduling, promotion analytics, or promotion DTO adapters
+15. [Referral Rewards And Promotion Benefits](./promotion-rewards.md) when touching invite capture, benefits/wallet UI, growth-promotion administration, poster generation, reward placement, or benefit analytics
+16. [Registered-User Growth And Umami Analytics](../backend/growth-analytics.md) when touching `/admin/growth`, growth queries/DTOs, registration attribution, auth funnel events, normalized page events, or Umami identity
+17. [Owner API Service Sales Lifecycle](../backend/api-quota-offers.md#scenario-owner-api-service-sales-lifecycle-projection) when touching the owner service list, `salesSummary`, sales filters, or limited-package republishing
+18. [Reputation Presentation](./reputation.md) when touching trust, completion, review, cancellation, or dispute facts
+19. [Hook Guidelines](./hook-guidelines.md)
+20. [State Management](./state-management.md)
+21. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
+22. [Quality Guidelines](./quality-guidelines.md)
+23. [Type Safety](./type-safety.md)
+24. [API Model Catalog Pricing Sync And Activation](../backend/api-model-catalog-sync.md) when touching `/admin/api-models`, models.dev preview/apply, bulk activation, or public model catalog invalidation
+25. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
+26. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
+27. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
+28. [C2CMarket Product Context](../guides/product-context.md)
+29. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

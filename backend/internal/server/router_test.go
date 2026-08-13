@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -274,7 +275,7 @@ func TestAdminUsersListsAllAccountsWithoutReportData(t *testing.T) {
 			break
 		}
 	}
-	if member == nil || member.AccountStatus != "active" || member.LinuxDoBound || member.CreatedAt == "" {
+	if member == nil || member.AccountStatus != "active" || !member.LinuxDoBound || member.CreatedAt == "" {
 		t.Fatalf("unexpected directory user: %#v", member)
 	}
 	if strings.Contains(response.Body.String(), "password") || strings.Contains(response.Body.String(), "reporter") {
@@ -1827,46 +1828,44 @@ func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
 
 func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testing.T) {
 	server := newTestServer(time.Now())
-	ownerSession := createSession(t, server, "direct-publish-unbound-owner", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Unbound Direct Publish TG", "@direct_unbound_owner")
+	ownerSession := createStudentSession(t, server, "direct-publish-student")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Direct Publish TG", "@direct_student_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", carpoolPayloadWithRiskAck(ownerContact.ID))
-	addAuth(request, ownerSession, "carpool-direct-publish-unbound")
+	addAuth(request, ownerSession, "carpool-direct-publish-student")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected unbound direct publish failure, got %d body %s", response.Code, response.Body.String())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected student direct publish failure, got %d body %s", response.Code, response.Body.String())
 	}
-	assertProblemCode(t, response, "VALIDATION_FAILED")
+	assertProblemCode(t, response, domain.CodeCapabilityRequired)
 
-	mine := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools", nil)
-	addCookie(mine, ownerSession.cookie)
-	mineResponse := httptest.NewRecorder()
-	server.ServeHTTP(mineResponse, mine)
-	if mineResponse.Code != http.StatusOK {
-		t.Fatalf("list my carpools status %d body %s", mineResponse.Code, mineResponse.Body.String())
+	adminSession := createSession(t, server, "direct-publish-audit-admin", true)
+	all := httptest.NewRequest(http.MethodGet, "/api/v1/admin/carpools", nil)
+	addCookie(all, adminSession.cookie)
+	allResponse := httptest.NewRecorder()
+	server.ServeHTTP(allResponse, all)
+	if allResponse.Code != http.StatusOK {
+		t.Fatalf("list admin carpools status %d body %s", allResponse.Code, allResponse.Body.String())
 	}
-	if strings.Contains(mineResponse.Body.String(), "ChatGPT Pro 20x Web 费用分摊") {
-		t.Fatalf("failed direct publish must not leave draft residue, got %s", mineResponse.Body.String())
+	if strings.Contains(allResponse.Body.String(), "ChatGPT Pro 20x Web 费用分摊") {
+		t.Fatalf("failed student direct publish must not leave draft residue, got %s", allResponse.Body.String())
 	}
 }
 
 func TestCarpoolPublishRequiresLinuxDoBinding(t *testing.T) {
 	server := newTestServer(time.Now())
-	ownerSession := createSession(t, server, "carpool-unbound-owner", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Unbound Owner TG", "@unbound_owner")
-	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "carpool-unbound-create")
+	ownerSession := createStudentSession(t, server, "carpool-student-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Owner TG", "@student_owner")
 
-	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+listing.ID+"/submit-review", `{}`)
-	addAuth(request, ownerSession, "carpool-unbound-publish")
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(listing.Version, 10)+`"`)
+	request := newJSONRequest(http.MethodPost, "/api/v1/carpools", carpoolPayloadWithRiskAck(ownerContact.ID))
+	addAuth(request, ownerSession, "carpool-student-create")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected unbound linux.do publish failure, got %d body %s", response.Code, response.Body.String())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected student carpool create failure, got %d body %s", response.Code, response.Body.String())
 	}
-	assertProblemCode(t, response, "VALIDATION_FAILED")
-	assertPublicCarpoolVisible(t, server, listing.ID, false)
+	assertProblemCode(t, response, domain.CodeCapabilityRequired)
 }
 
 func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
@@ -1938,22 +1937,16 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 		t.Fatalf("draft API service must not be public, got %d body %s", publicBeforeResponse.Code, publicBeforeResponse.Body.String())
 	}
 
-	unboundSession := createSession(t, server, "api-unbound-owner", false)
-	unboundContact := createContactMethod(t, server, unboundSession, "telegram", "API Unbound Owner TG", "@api_unbound_owner")
-	unboundService := createAPIService(t, server, unboundSession, unboundContact.ID, "api-service-unbound-create")
-	unboundSubmit := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services/"+unboundService.ID+"/submit-review", `{}`)
-	addAuth(unboundSubmit, unboundSession, "api-service-unbound-submit")
-	unboundSubmit.Header.Set("If-Match", `"`+strconv.FormatInt(unboundService.Version, 10)+`"`)
-	unboundResponse := httptest.NewRecorder()
-	server.ServeHTTP(unboundResponse, unboundSubmit)
-	if unboundResponse.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected unbound linux.do submit failure, got %d body %s", unboundResponse.Code, unboundResponse.Body.String())
+	studentSession := createStudentSession(t, server, "api-student-owner")
+	studentContact := createContactMethod(t, server, studentSession, "telegram", "API Student Owner TG", "@api_student_owner")
+	studentCreate := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", apiServicePayload(studentContact.ID, "1.0000"))
+	addAuth(studentCreate, studentSession, "api-service-student-create")
+	studentResponse := httptest.NewRecorder()
+	server.ServeHTTP(studentResponse, studentCreate)
+	if studentResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected student API service create failure, got %d body %s", studentResponse.Code, studentResponse.Body.String())
 	}
-	assertProblemCode(t, unboundResponse, "VALIDATION_FAILED")
-	unboundCurrent := getOwnerAPIService(t, server, unboundSession, unboundService.ID)
-	if unboundCurrent.ReviewStatus != app.APIServiceReviewStatusDraft || unboundCurrent.Version != unboundService.Version {
-		t.Fatalf("unbound submit must keep draft state, got %+v", unboundCurrent)
-	}
+	assertProblemCode(t, studentResponse, domain.CodeCapabilityRequired)
 
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-service-submit")
 	if submitted.ReviewStatus != app.APIServiceReviewStatusApproved ||
@@ -2198,7 +2191,7 @@ func TestAPIPurchaseIntentCreateContactAndLifecycleFlow(t *testing.T) {
 func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-order-owner")
-	buyerSession := createSession(t, server, "api-order-buyer", false)
+	buyerSession := createStudentSession(t, server, "api-order-buyer")
 	adminSession := createSession(t, server, "api-order-admin", true)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Order Owner TG", "@api_order_owner")
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Order Buyer TG", "@api_order_buyer")
@@ -2421,25 +2414,40 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	assertProblemCode(t, outsiderAppealResponse, domain.CodeObjectNotFound)
 
-	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
+	blockedIntentRequest := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+orderable.ID+"/purchase-intents", apiPurchaseIntentPayload(buyerContact.ID))
+	addAuth(blockedIntentRequest, buyerSession, "api-order-active-dispute-blocks-new-intent")
+	blockedIntentResponse := httptest.NewRecorder()
+	server.ServeHTTP(blockedIntentResponse, blockedIntentRequest)
+	if blockedIntentResponse.Code != http.StatusConflict {
+		t.Fatalf("expected active seller dispute to block new purchase intent, got %d body %s", blockedIntentResponse.Code, blockedIntentResponse.Body.String())
+	}
+	assertProblemCode(t, blockedIntentResponse, domain.CodeActiveAPIOrderDispute)
+
+	merchantOwnerSession := createLinuxDoSession(t, server, "api-order-merchant-dispute-owner")
+	merchantOwnerContact := createContactMethod(t, server, merchantOwnerSession, "telegram", "Merchant Dispute Owner TG", "@merchant_dispute_owner")
+	merchantService := createAPIService(t, server, merchantOwnerSession, merchantOwnerContact.ID, "api-order-merchant-dispute-service-create")
+	merchantSubmitted := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantService.ID, "submit-review", merchantService.Version, "api-order-merchant-dispute-service-submit")
+	merchantPublished := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantSubmitted.ID, "publish", merchantSubmitted.Version, "api-order-merchant-dispute-service-publish")
+	merchantOrderable := updateAPIServiceOrderSettings(t, server, merchantOwnerSession, merchantPublished.ID, merchantPublished.Version, true, "api-order-merchant-dispute-service-settings")
+	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, merchantOrderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
 	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
 	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
 	merchantDisputeBody := `{"issueCode":"payment_dispute","requestedResolution":"other","requestedAmountCny":"","reason":"收款记录与买家提交的信息不一致，需要双方协商核对。"}`
-	merchantDisputed := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
+	merchantDisputed := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
 	if merchantDisputed.DisputeStatus != "negotiating" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
 		t.Fatalf("unexpected merchant-opened API order dispute: %+v", merchantDisputed)
 	}
-	merchantDisputeReplay := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
+	merchantDisputeReplay := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
 	if merchantDisputeReplay.DisputeCaseID != merchantDisputed.DisputeCaseID || merchantDisputeReplay.Version != merchantDisputed.Version {
 		t.Fatalf("expected idempotent merchant dispute replay, got %+v and %+v", merchantDisputed, merchantDisputeReplay)
 	}
-	merchantProposal := disputeParticipantAction(t, server, ownerSession, merchantDisputed.DisputeCaseID, "settlement-proposals", "api-order-merchant-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"商户将在约定时间内继续完成交付。"}`)
-	if len(merchantProposal.SettlementProposals) != 1 || merchantProposal.SettlementProposals[0].ProposedByUserID != ownerSession.userID {
+	merchantProposal := disputeParticipantAction(t, server, merchantOwnerSession, merchantDisputed.DisputeCaseID, "settlement-proposals", "api-order-merchant-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"商户将在约定时间内继续完成交付。"}`)
+	if len(merchantProposal.SettlementProposals) != 1 || merchantProposal.SettlementProposals[0].ProposedByUserID != merchantOwnerSession.userID {
 		t.Fatalf("expected seller proposal, got %+v", merchantProposal.SettlementProposals)
 	}
 	merchantProposalID := merchantProposal.SettlementProposals[0].ID
 	selfConfirm := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+merchantDisputed.DisputeCaseID+"/settlement-proposals/"+merchantProposalID+"/confirm", `{}`)
-	addAuth(selfConfirm, ownerSession, "api-order-merchant-self-confirm")
+	addAuth(selfConfirm, merchantOwnerSession, "api-order-merchant-self-confirm")
 	selfConfirmResponse := httptest.NewRecorder()
 	server.ServeHTTP(selfConfirmResponse, selfConfirm)
 	if selfConfirmResponse.Code != http.StatusConflict {
@@ -2450,7 +2458,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if merchantAgreement.Status != "closed" || len(merchantAgreement.SettlementProposals) != 1 || merchantAgreement.SettlementProposals[0].Status != "accepted" {
 		t.Fatalf("counterparty confirmation must close the agreed dispute, got %+v", merchantAgreement)
 	}
-	merchantAgreedOrder := getAPIOrder(t, server, ownerSession, "owner", merchantDisputed.ID)
+	merchantAgreedOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", merchantDisputed.ID)
 	if merchantAgreedOrder.DisputeStatus != "closed" || merchantAgreedOrder.Status != merchantDisputed.Status || merchantAgreedOrder.Version != merchantDisputed.Version+1 {
 		t.Fatalf("agreement must only close the dispute projection: before=%+v after=%+v", merchantDisputed, merchantAgreedOrder)
 	}
@@ -2729,6 +2737,20 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		t.Fatalf("expected duplicate order conflict, got %d body %s", duplicateResponse.Code, duplicateResponse.Body.String())
 	}
 	assertProblemCode(t, duplicateResponse, "API_PURCHASE_INTENT_HAS_ORDER")
+}
+
+func TestCarpoolEligibilityReturnsCapabilityReasonForStudent(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "eligibility-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Eligibility Owner TG", "@eligibility_owner")
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "eligibility-listing-create")
+	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "eligibility-listing-publish")
+	studentSession := createStudentSession(t, server, "eligibility-student")
+
+	eligibility := getCarpoolEligibility(t, server, studentSession, published.ID)
+	if eligibility.Code != "capability_required" || eligibility.CanApply || eligibility.ResolutionAction != "link_linuxdo" || eligibility.Reason == "" {
+		t.Fatalf("expected stable student capability eligibility, got %+v", eligibility)
+	}
 }
 
 func TestDisputeParticipantMutationsAuthenticateBeforeJSONDecoding(t *testing.T) {
@@ -3069,7 +3091,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		"isDefault":true,
 		"enabled":true
 	}`)
-	addAuth(updateContact, session, "")
+	addAuth(updateContact, session, "update-profile-contact")
 	updateContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(updateContactResponse, updateContact)
 	if updateContactResponse.Code != http.StatusOK {
@@ -3080,7 +3102,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 
 	verifyContact := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/verify", `{}`)
-	addAuth(verifyContact, session, "")
+	addAuth(verifyContact, session, "verify-profile-contact")
 	verifyContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(verifyContactResponse, verifyContact)
 	if verifyContactResponse.Code != http.StatusOK || !strings.Contains(verifyContactResponse.Body.String(), `"verified":true`) {
@@ -3088,7 +3110,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 
 	deleteContact := newJSONRequest(http.MethodDelete, "/api/v1/contact-methods/"+first.ID, `{}`)
-	addAuth(deleteContact, session, "")
+	addAuth(deleteContact, session, "delete-profile-contact")
 	deleteContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(deleteContactResponse, deleteContact)
 	if deleteContactResponse.Code != http.StatusOK || !strings.Contains(deleteContactResponse.Body.String(), `"enabled":false`) {
@@ -3224,6 +3246,85 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 }
 
+func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotency(t *testing.T) {
+	server := newTestServer(time.Now())
+	student := createStudentSession(t, server, "contact-scope-student")
+
+	sellerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["api_merchant"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(sellerScope, student, "student-contact-scope")
+	sellerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(sellerScopeResponse, sellerScope)
+	if sellerScopeResponse.Code != http.StatusForbidden {
+		t.Fatalf("student seller contact scope status %d body %s", sellerScopeResponse.Code, sellerScopeResponse.Body.String())
+	}
+	assertProblemCode(t, sellerScopeResponse, domain.CodeCapabilityRequired)
+
+	buyerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["dispute","buyer","dispute"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	// 复用被拒绝请求的 key，证明 capability 拒绝发生在幂等 Begin 之前。
+	addAuth(buyerScope, student, "student-contact-scope")
+	buyerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(buyerScopeResponse, buyerScope)
+	if buyerScopeResponse.Code != http.StatusCreated {
+		t.Fatalf("student buyer contact scope status %d body %s", buyerScopeResponse.Code, buyerScopeResponse.Body.String())
+	}
+	var created struct {
+		ID          string   `json:"id"`
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(buyerScopeResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode student contact: %v", err)
+	}
+	if created.ID == "" || len(created.UsageScopes) != 2 || created.UsageScopes[0] != "buyer" || created.UsageScopes[1] != "dispute" {
+		t.Fatalf("unexpected canonical student contact scopes: %+v", created)
+	}
+
+	updateSellerScope := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["carpool_owner","buyer"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(updateSellerScope, student, "")
+	updateSellerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateSellerScopeResponse, updateSellerScope)
+	if updateSellerScopeResponse.Code != http.StatusForbidden {
+		t.Fatalf("student update seller scope status %d body %s", updateSellerScopeResponse.Code, updateSellerScopeResponse.Body.String())
+	}
+	assertProblemCode(t, updateSellerScopeResponse, domain.CodeCapabilityRequired)
+
+	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"未知范围",
+		"value":"unknown-scope",
+		"usageScopes":["unknown_scope"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(unknownScope, student, "student-contact-unknown-scope")
+	unknownScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(unknownScopeResponse, unknownScope)
+	if unknownScopeResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown contact scope status %d body %s", unknownScopeResponse.Code, unknownScopeResponse.Body.String())
+	}
+	assertProblemCode(t, unknownScopeResponse, domain.CodeValidationFailed)
+}
+
 func TestAccountIdentityProfilePasswordEmailAndAvatarFlow(t *testing.T) {
 	server := newTestServer(time.Now())
 	session := createLinuxDoSession(t, server, "identity-owner")
@@ -3343,9 +3444,10 @@ func TestAccountIdentityProfilePasswordEmailAndAvatarFlow(t *testing.T) {
 }
 
 type testSession struct {
-	cookie string
-	csrf   string
-	userID string
+	cookie  string
+	csrf    string
+	userID  string
+	student bool
 }
 
 type staticModelsDevSource struct {
@@ -3375,7 +3477,8 @@ type approveResponse struct {
 }
 
 type createdContact struct {
-	ID string `json:"id"`
+	ID          string   `json:"id"`
+	UsageScopes []string `json:"usageScopes"`
 }
 
 type createdMerchantProfile struct {
@@ -3439,6 +3542,7 @@ type createdCarpoolMembership struct {
 
 type createdAPIService struct {
 	ID                     string                          `json:"id"`
+	OwnerContactMethodIDs  []string                        `json:"ownerContactMethodIds"`
 	ProbeConnectionID      string                          `json:"probeConnectionId"`
 	SourceURL              string                          `json:"sourceUrl"`
 	ReviewStatus           string                          `json:"reviewStatus"`
@@ -3472,34 +3576,35 @@ type createdAPIService struct {
 }
 
 type createdAPIPurchaseIntent struct {
-	ID                                       string           `json:"id"`
-	APIServiceID                             string           `json:"apiServiceId"`
-	BuyerUserID                              string           `json:"buyerUserId"`
-	OwnerUserID                              string           `json:"ownerUserId"`
-	BuyerContactMethodID                     string           `json:"buyerContactMethodId"`
-	OwnerContactMethodID                     string           `json:"ownerContactMethodId"`
-	Status                                   string           `json:"status"`
-	RequestedCNYAmount                       string           `json:"requestedCnyAmount"`
-	RequestedUSDAllowance                    string           `json:"requestedUsdAllowance"`
-	SelectedAccessMode                       string           `json:"selectedAccessMode"`
-	ServiceVersionSnapshot                   int64            `json:"serviceVersionSnapshot"`
-	ServiceTitleSnapshot                     string           `json:"serviceTitleSnapshot"`
-	DistributionSystemSnapshot               string           `json:"distributionSystemSnapshot"`
-	BillingModeSnapshot                      string           `json:"billingModeSnapshot"`
-	DeclaredCNYPerUSDAllowanceSnapshot       string           `json:"declaredCnyPerUsdAllowanceSnapshot"`
-	DeclaredMaxUSDAllowancePerIntentSnapshot string           `json:"declaredMaxUsdAllowancePerIntentSnapshot"`
-	MinimumIntentCNYSnapshot                 string           `json:"minimumIntentCnySnapshot"`
-	MaximumIntentCNYSnapshot                 string           `json:"maximumIntentCnySnapshot"`
-	PricingSnapshot                          string           `json:"pricingSnapshot"`
-	BuyerNote                                string           `json:"buyerNote"`
-	ContactedAt                              *string          `json:"contactedAt"`
-	BuyerCancelledAt                         *string          `json:"buyerCancelledAt"`
-	BuyerCancelReason                        string           `json:"buyerCancelReason"`
-	OwnerClosedAt                            *string          `json:"ownerClosedAt"`
-	OwnerCloseReason                         string           `json:"ownerCloseReason"`
-	Version                                  int64            `json:"version"`
-	MerchantContact                          *testContactItem `json:"merchantContact"`
-	BuyerContact                             *testContactItem `json:"buyerContact"`
+	ID                                       string            `json:"id"`
+	APIServiceID                             string            `json:"apiServiceId"`
+	BuyerUserID                              string            `json:"buyerUserId"`
+	OwnerUserID                              string            `json:"ownerUserId"`
+	BuyerContactMethodID                     string            `json:"buyerContactMethodId"`
+	OwnerContactMethodID                     string            `json:"ownerContactMethodId"`
+	Status                                   string            `json:"status"`
+	RequestedCNYAmount                       string            `json:"requestedCnyAmount"`
+	RequestedUSDAllowance                    string            `json:"requestedUsdAllowance"`
+	SelectedAccessMode                       string            `json:"selectedAccessMode"`
+	ServiceVersionSnapshot                   int64             `json:"serviceVersionSnapshot"`
+	ServiceTitleSnapshot                     string            `json:"serviceTitleSnapshot"`
+	DistributionSystemSnapshot               string            `json:"distributionSystemSnapshot"`
+	BillingModeSnapshot                      string            `json:"billingModeSnapshot"`
+	DeclaredCNYPerUSDAllowanceSnapshot       string            `json:"declaredCnyPerUsdAllowanceSnapshot"`
+	DeclaredMaxUSDAllowancePerIntentSnapshot string            `json:"declaredMaxUsdAllowancePerIntentSnapshot"`
+	MinimumIntentCNYSnapshot                 string            `json:"minimumIntentCnySnapshot"`
+	MaximumIntentCNYSnapshot                 string            `json:"maximumIntentCnySnapshot"`
+	PricingSnapshot                          string            `json:"pricingSnapshot"`
+	BuyerNote                                string            `json:"buyerNote"`
+	ContactedAt                              *string           `json:"contactedAt"`
+	BuyerCancelledAt                         *string           `json:"buyerCancelledAt"`
+	BuyerCancelReason                        string            `json:"buyerCancelReason"`
+	OwnerClosedAt                            *string           `json:"ownerClosedAt"`
+	OwnerCloseReason                         string            `json:"ownerCloseReason"`
+	Version                                  int64             `json:"version"`
+	MerchantContact                          *testContactItem  `json:"merchantContact"`
+	MerchantContacts                         []testContactItem `json:"merchantContacts"`
+	BuyerContact                             *testContactItem  `json:"buyerContact"`
 }
 
 type createdAPIOrder struct {
@@ -3616,7 +3721,10 @@ type testContactItem struct {
 }
 
 func newTestServer(now time.Time) http.Handler {
-	return NewServer(app.NewServiceWithClock(func() time.Time { return now }))
+	return NewServer(
+		app.NewServiceWithClock(func() time.Time { return now }),
+		ServerOptions{EnableDevAuth: true, TurnstileVerifier: &recordingTurnstileVerifier{}},
+	)
 }
 
 func createSession(t *testing.T, server http.Handler, username string, admin bool) testSession {
@@ -3634,6 +3742,81 @@ func createSession(t *testing.T, server http.Handler, username string, admin boo
 	}
 	cookie := response.Result().Cookies()[0]
 	return testSession{cookie: cookie.Value, csrf: payload.CSRFToken, userID: payload.User.ID}
+}
+
+func createStudentSession(t *testing.T, server http.Handler, username string) testSession {
+	t.Helper()
+	admin := createSession(t, server, "student-bootstrap-"+username, true)
+	domainValue := "students.example.edu"
+	createDomain := newJSONRequest(http.MethodPost, "/api/v1/admin/student-institution-domains", `{"domain":"`+domainValue+`","institutionName":"Example Students","enabled":true,"reason":"配置学生测试域名"}`)
+	addAuth(createDomain, admin, "student-domain-"+username)
+	createDomain.Header.Set("If-Match", `"0"`)
+	createDomainResponse := httptest.NewRecorder()
+	server.ServeHTTP(createDomainResponse, createDomain)
+	if createDomainResponse.Code != http.StatusCreated {
+		t.Fatalf("create student domain status %d body %s", createDomainResponse.Code, createDomainResponse.Body.String())
+	}
+
+	readConfig := httptest.NewRequest(http.MethodGet, "/api/v1/admin/student-registration", nil)
+	addAuth(readConfig, admin, "")
+	readConfigResponse := httptest.NewRecorder()
+	server.ServeHTTP(readConfigResponse, readConfig)
+	if readConfigResponse.Code != http.StatusOK {
+		t.Fatalf("read student registration status %d body %s", readConfigResponse.Code, readConfigResponse.Body.String())
+	}
+	var registrationConfig adminStudentRegistrationResponse
+	if err := json.NewDecoder(readConfigResponse.Body).Decode(&registrationConfig); err != nil {
+		t.Fatalf("decode student registration config: %v", err)
+	}
+	if !registrationConfig.Enabled {
+		enable := newJSONRequest(http.MethodPatch, "/api/v1/admin/student-registration", fmt.Sprintf(
+			`{"enabled":true,"expectedVersion":%d,"reason":"开启学生测试注册"}`,
+			registrationConfig.Version,
+		))
+		addAuth(enable, admin, "student-registration-enable-"+username)
+		enable.Header.Set("If-Match", fmt.Sprintf(`"%d"`, registrationConfig.Version))
+		enableResponse := httptest.NewRecorder()
+		server.ServeHTTP(enableResponse, enable)
+		if enableResponse.Code != http.StatusOK {
+			t.Fatalf("enable student registration status %d body %s", enableResponse.Code, enableResponse.Body.String())
+		}
+	}
+
+	email := username + "@" + domainValue
+	start := newJSONRequest(http.MethodPost, "/api/v1/auth/email-registration/start", `{"email":"`+email+`","turnstileToken":"test-token"}`)
+	startResponse := httptest.NewRecorder()
+	server.ServeHTTP(startResponse, start)
+	if startResponse.Code != http.StatusOK {
+		t.Fatalf("start student registration status %d body %s", startResponse.Code, startResponse.Body.String())
+	}
+	var challenge emailRegistrationStartResponse
+	if err := json.NewDecoder(startResponse.Body).Decode(&challenge); err != nil || challenge.DevCode == "" {
+		t.Fatalf("decode student challenge: %+v error=%v", challenge, err)
+	}
+	confirm := newJSONRequest(http.MethodPost, "/api/v1/auth/email-registration/confirm", `{"email":"`+email+`","code":"`+challenge.DevCode+`","username":"`+username+`","password":"StudentPassword1!","attribution":{}}`)
+	confirmResponse := httptest.NewRecorder()
+	server.ServeHTTP(confirmResponse, confirm)
+	if confirmResponse.Code != http.StatusOK {
+		t.Fatalf("confirm student registration status %d body %s", confirmResponse.Code, confirmResponse.Body.String())
+	}
+	var payload sessionResponse
+	if err := json.NewDecoder(confirmResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode student session: %v", err)
+	}
+	if payload.User.StudentClaim == nil || payload.User.StudentClaim.InstitutionDomain != domainValue || payload.User.LinuxDo.Bound || len(payload.User.Capabilities) != 1 || payload.User.Capabilities[0] != "api_order.create" {
+		t.Fatalf("unexpected student identity projection: %+v", payload.User)
+	}
+	var cookie string
+	for _, item := range confirmResponse.Result().Cookies() {
+		if item.Name == sessionCookieName {
+			cookie = item.Value
+			break
+		}
+	}
+	if cookie == "" {
+		t.Fatal("student registration did not set session cookie")
+	}
+	return testSession{cookie: cookie, csrf: payload.CSRFToken, userID: payload.User.ID, student: true}
 }
 
 func createLinuxDoSession(t *testing.T, server http.Handler, username string) testSession {
@@ -3814,7 +3997,11 @@ func approveLead(t *testing.T, server http.Handler, session testSession, leadID,
 
 func createContactMethod(t *testing.T, server http.Handler, session testSession, typ, label, value string) createdContact {
 	t.Helper()
-	request := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{"type":"`+typ+`","label":"`+label+`","value":"`+value+`"}`)
+	usageScopes := `["carpool_owner","api_merchant","buyer","dispute"]`
+	if session.student {
+		usageScopes = `["buyer","dispute"]`
+	}
+	request := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{"type":"`+typ+`","label":"`+label+`","value":"`+value+`","usageScopes":`+usageScopes+`}`)
 	addAuth(request, session, "contact-"+label)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)

@@ -52,6 +52,8 @@ type Config struct {
 	Maintenance             MaintenanceConfig
 	APIHealth               APIHealthConfig
 	MetricsBearerToken      string
+	TurnstileSecret         string
+	TurnstileHostnames      []string
 }
 
 type SMTPConfig struct {
@@ -111,6 +113,8 @@ func Load() (Config, error) {
 		AppEnv:                  strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
 		DatabaseURL:             strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		MetricsBearerToken:      strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")),
+		TurnstileSecret:         strings.TrimSpace(os.Getenv("TURNSTILE_SECRET")),
+		TurnstileHostnames:      parseTurnstileHostnames(os.Getenv("TURNSTILE_HOSTNAMES")),
 		FrontendOrigin:          strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")),
 		AllowedOrigins:          parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS")),
 		OAuthProviderMode:       strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
@@ -248,6 +252,9 @@ func Load() (Config, error) {
 	if cfg.AppEnv == "" {
 		cfg.AppEnv = EnvDevelopment
 	}
+	if len(cfg.TurnstileHostnames) == 0 && cfg.AppEnv != EnvProduction {
+		cfg.TurnstileHostnames = []string{"localhost", "127.0.0.1"}
+	}
 	if cfg.FrontendOrigin == "" && cfg.AppEnv != EnvProduction {
 		cfg.FrontendOrigin = "http://127.0.0.1:5173"
 	}
@@ -320,6 +327,9 @@ func Load() (Config, error) {
 	if cfg.TrustXForwardedFor && len(cfg.TrustedProxies) == 0 {
 		return Config{}, fmt.Errorf("TRUSTED_PROXIES is required when TRUST_X_FORWARDED_FOR=true")
 	}
+	if err := validateTurnstileHostnames(cfg.TurnstileHostnames); err != nil {
+		return Config{}, err
+	}
 
 	devAuthRaw := strings.TrimSpace(os.Getenv("ENABLE_DEV_AUTH"))
 	switch strings.ToLower(devAuthRaw) {
@@ -366,6 +376,12 @@ func Load() (Config, error) {
 		}
 		if len([]byte(cfg.MetricsBearerToken)) < 32 {
 			return Config{}, fmt.Errorf("METRICS_BEARER_TOKEN must be at least 32 bytes in production")
+		}
+		if cfg.TurnstileSecret == "" {
+			return Config{}, fmt.Errorf("TURNSTILE_SECRET is required in production")
+		}
+		if len(cfg.TurnstileHostnames) == 0 {
+			return Config{}, fmt.Errorf("TURNSTILE_HOSTNAMES is required in production")
 		}
 		if cfg.EmailProvider != "aliyun_directmail" {
 			return Config{}, fmt.Errorf("EMAIL_PROVIDER=aliyun_directmail is required in production")
@@ -630,6 +646,46 @@ func parseCommaSeparated(values ...string) []string {
 		}
 	}
 	return result
+}
+
+func parseTurnstileHostnames(values ...string) []string {
+	parsed := parseCommaSeparated(values...)
+	result := make([]string, 0, len(parsed))
+	seen := map[string]struct{}{}
+	for _, value := range parsed {
+		value = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func validateTurnstileHostnames(values []string) error {
+	for _, value := range values {
+		if _, err := netip.ParseAddr(value); err == nil {
+			continue
+		}
+		if len(value) > 253 || strings.ContainsAny(value, "/:?#[]@") || strings.HasPrefix(value, ".") {
+			return fmt.Errorf("TURNSTILE_HOSTNAMES contains invalid hostname %q", value)
+		}
+		for _, label := range strings.Split(value, ".") {
+			if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+				return fmt.Errorf("TURNSTILE_HOSTNAMES contains invalid hostname %q", value)
+			}
+			for _, char := range label {
+				if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+					return fmt.Errorf("TURNSTILE_HOSTNAMES contains invalid hostname %q", value)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func validateTrustedProxies(values []string) error {

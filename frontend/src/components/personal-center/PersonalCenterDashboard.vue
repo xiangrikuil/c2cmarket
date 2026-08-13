@@ -46,6 +46,8 @@ const props = defineProps<{
   contactsError: boolean
   buyerRideCount: number | null
   relatedApiOrderCount: number | null
+  canPublishCarpool: boolean
+  canPublishApiService: boolean
 }>()
 
 defineEmits<{
@@ -89,20 +91,22 @@ function contactsSummary() {
           :has-error="tasksError"
           :unavailable="tasksUnavailable"
           :has-published-content="publishedItems.length > 0"
+          :can-publish-carpool="canPublishCarpool"
+          :can-publish-api-service="canPublishApiService"
           @retry="$emit('retryTasks')"
         />
 
         <section class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div class="min-w-0">
+          <div v-if="canPublishCarpool || canPublishApiService" class="min-w-0">
             <div class="mb-3">
               <h2 class="font-semibold">快速发布</h2>
               <p class="mt-1 text-xs text-muted-foreground">创建新的交易内容</p>
             </div>
             <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-              <Button as-child size="lg" class="h-auto min-h-12 justify-start px-4">
+              <Button v-if="canPublishCarpool" as-child size="lg" class="h-auto min-h-12 justify-start px-4">
                 <RouterLink to="/carpools/new"><CarFront class="h-4 w-4" />发布车源</RouterLink>
               </Button>
-              <Button as-child size="lg" variant="outline" class="h-auto min-h-12 justify-start px-4">
+              <Button v-if="canPublishApiService" as-child size="lg" variant="outline" class="h-auto min-h-12 justify-start px-4">
                 <RouterLink to="/api-market/new"><Code2 class="h-4 w-4" />发布 API 服务</RouterLink>
               </Button>
             </div>
@@ -139,6 +143,7 @@ function contactsSummary() {
         </section>
 
         <PublishedContentSection
+          v-if="canPublishCarpool || canPublishApiService"
           :items="publishedItems"
           :loading="publishedLoading"
           :has-error="publishedError"

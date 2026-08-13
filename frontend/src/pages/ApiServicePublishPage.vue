@@ -18,6 +18,7 @@ import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSo
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
 import FixedPackageSection from '@/components/api-service-publish/FixedPackageSection.vue'
 import MerchantIdentitySection from '@/components/api-service-publish/MerchantIdentitySection.vue'
+import MerchantContactMethodsSection from '@/components/api-service-publish/MerchantContactMethodsSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import PriceInventorySection from '@/components/api-service-publish/PriceInventorySection.vue'
@@ -50,6 +51,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { backendErrorMessage } from '@/lib/backendClient'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
@@ -57,13 +59,14 @@ import { trackAnalytics } from '@/lib/analytics'
 import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
-import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useApiPaymentAccountSettingsQuery, useMerchantApiOrders, useModelCatalog, useMyContactMethodsQuery, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
   | 'merchantIdentity'
   | 'merchantDisplayName'
+	| 'ownerContactMethods'
   | 'distributionSystem'
   | 'probeConnection'
   | 'defaultMultiplier'
@@ -87,6 +90,8 @@ type ApiServicePublishStep = 1 | 2 | 3
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const { data: myProfile, isLoading: profileLoading } = useMyProfileQuery()
+const contactMethodsQuery = useMyContactMethodsQuery()
+const activeDisputesQuery = useMerchantApiOrders({ dispute: 'active' })
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const queryClient = useQueryClient()
 const route = useRoute()
@@ -121,7 +126,8 @@ const formDirty = ref(false)
 useUnsavedChangesGuard(formDirty, 'API 服务配置尚未发布，确认离开当前页面？')
 
 const form = reactive<ApiServicePublishForm>({
-  probeConnectionId: '',
+	probeConnectionId: '',
+	ownerContactMethodIds: [],
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -174,6 +180,9 @@ const filteredCatalog = computed(() => catalog.value.filter(item => modelProvide
 const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, item])))
 const selectedModels = computed(() => selectedCatalogItems(form, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
+  contact.enabled && contact.usageScopes.includes('api_merchant')
+)))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === form.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
   selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
@@ -223,6 +232,15 @@ function syncHiddenPublishFields() {
 syncHiddenPublishFields()
 
 watch(profileMerchantDisplayName, () => syncMerchantDisplayNameSnapshot(), { immediate: true })
+
+watch(availableOwnerContacts, contacts => {
+  const availableIds = new Set(contacts.map(contact => contact.id))
+  form.ownerContactMethodIds = form.ownerContactMethodIds.filter(id => availableIds.has(id))
+  if (form.ownerContactMethodIds.length || !contacts.length) return
+  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
+  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
+  form.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
+}, { immediate: true })
 
 watch([catalog, () => form.providerCategory], () => {
   if (!catalog.value.length) return
@@ -303,6 +321,7 @@ function displayNameLength(value: string) {
 const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 3,
   merchantDisplayName: 3,
+	ownerContactMethods: 3,
   distributionSystem: 2,
   probeConnection: 2,
   defaultMultiplier: 2,
@@ -325,6 +344,7 @@ const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
 const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 2,
   merchantDisplayName: 2,
+	ownerContactMethods: 2,
   distributionSystem: 2,
   probeConnection: 2,
   defaultMultiplier: 2,
@@ -353,6 +373,7 @@ function collectValidationErrors() {
   const next: FieldErrors<Field> = {}
   const merchantDisplayName = form.merchantDisplayName.trim()
   if (!['public_profile', 'store_alias'].includes(form.merchantIdentityMode)) next.merchantIdentity = '请选择对外展示身份。'
+	if (!form.ownerContactMethodIds.length) next.ownerContactMethods = '请至少选择一种订单联系方式。'
   if (form.merchantIdentityMode === 'store_alias') {
     if (!merchantDisplayName) next.merchantDisplayName = profileLoading.value ? '正在读取个人资料显示名称。' : '请先到个人中心设置显示名称。'
     else if (displayNameLength(merchantDisplayName) > 32) next.merchantDisplayName = '商家展示名最多 32 个字符，请到个人中心调整。'
@@ -455,6 +476,7 @@ const completeness = computed(() => {
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.distributionSystem ? done('接入类型') : pending('接入类型'),
     probeConnectionReady.value ? done('探针连接') : pending('探针连接'),
+		form.ownerContactMethodIds.length ? done('订单联系方式') : pending('订单联系方式'),
     form.distributionSystem === 'sub2api' || (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) ? done('服务倍率') : pending('服务倍率'),
   ]
   if (!isLimitedQuotaMode.value) {
@@ -483,6 +505,16 @@ const completeness = computed(() => {
   return items
 })
 const publishAssistant = computed(() => apiPublishAssistantSummary(completeness.value))
+const activeDisputeCount = computed(() => activeDisputesQuery.data.value?.length ?? 0)
+const disputePublishBlocked = computed(() => (
+	activeDisputesQuery.isLoading.value || activeDisputesQuery.isError.value || activeDisputeCount.value > 0
+))
+const disputeRuleText = computed(() => {
+	if (activeDisputesQuery.isLoading.value) return '正在检查当前账号是否存在未解决的 API 订单纠纷，检查完成前不能提交发布。'
+	if (activeDisputesQuery.isError.value) return '暂时无法确认纠纷状态，为避免违规接单，当前不能提交发布。请重试。'
+	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 个未解决的 API 订单纠纷。处理完成前不能发布或恢复 API 服务与额度，也不会接收新订单。`
+	return '发布规则：账号存在未解决的 API 订单纠纷时，不能发布或恢复 API 服务与额度，也不会接收新订单。'
+})
 
 const risks = computed(() => {
   const rows: string[] = []
@@ -495,7 +527,8 @@ const risks = computed(() => {
 
 const canSubmit = computed(() => completeness.value.every(item => item.status === 'done'))
 const publishBlockReason = computed(() => {
-  if (canSubmit.value) return ''
+	if (disputePublishBlocked.value) return disputeRuleText.value
+	if (canSubmit.value) return ''
   const pendingItem = completeness.value.find(item => item.status !== 'done')
   if (pendingItem?.label === '收款方式') {
     if (!paymentWindowValid.value) return '买家确认付款窗口固定为 10 分钟。'
@@ -547,6 +580,10 @@ const actionBlockReason = computed(() => {
   if (!isLimitedQuotaMode.value && currentStep.value === 3) return publishBlockReason.value
   return ''
 })
+const currentActionPublishes = computed(() => (
+	(isLimitedQuotaMode.value && currentStep.value === 2)
+	|| (!isLimitedQuotaMode.value && currentStep.value === 3)
+))
 
 const publishMutation = useMutation({
   mutationFn: () => {
@@ -686,7 +723,11 @@ function runPrimaryAction() {
 }
 
 function publishService() {
-  syncHiddenPublishFields()
+	if (disputePublishBlocked.value) {
+		toast.warning(disputeRuleText.value)
+		return
+	}
+	syncHiddenPublishFields()
   if (!validateAll()) {
     const errorStep = firstErrorStep(errors, currentFieldSteps()) as ApiServicePublishStep | undefined
     if (errorStep) {
@@ -746,7 +787,7 @@ function confirmProviderCategoryChange() {
       <div class="py-3 sm:py-6">
         <div class="mb-6">
           <h1 class="text-xl font-semibold">发布 API 额度</h1>
-          <p class="mt-1 text-sm text-muted-foreground">先选择销售模式，再配置对应的价格、额度和交付方式。</p>
+          <p class="mt-1 text-sm text-muted-foreground">先选择销售模式，再配置对应的价格、额度和交付方式；存在未解决纠纷时不能发布或恢复额度。</p>
         </div>
         <SellingModeSelector @select="chooseSellingMode" />
       </div>
@@ -769,6 +810,15 @@ function confirmProviderCategoryChange() {
           <Button variant="outline" class="hidden min-[1241px]:inline-flex" @click="preview"><Eye class="h-4 w-4" />预览</Button>
         </div>
       </div>
+
+      <Alert :variant="activeDisputeCount > 0 || activeDisputesQuery.isError.value ? 'destructive' : 'default'">
+        <Info />
+        <AlertTitle>发布前纠纷规则</AlertTitle>
+        <AlertDescription>
+          {{ disputeRuleText }}
+          <Button v-if="activeDisputesQuery.isError.value" type="button" size="sm" variant="outline" class="mt-3" @click="activeDisputesQuery.refetch()">重新检查</Button>
+        </AlertDescription>
+      </Alert>
 
       <PublishWorkflowStepper
         :steps="publishSteps"
@@ -855,6 +905,12 @@ function confirmProviderCategoryChange() {
               </div>
             </Card>
             <template v-if="isLimitedQuotaMode">
+              <MerchantContactMethodsSection
+                :form="form"
+                :contacts="availableOwnerContacts"
+                :loading="contactMethodsQuery.isLoading.value"
+                :error="errors.ownerContactMethods"
+              />
               <MerchantNoteSection :form="form" :errors="errors" />
               <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
             </template>
@@ -877,6 +933,12 @@ function confirmProviderCategoryChange() {
               :loading="paymentSettingsLoading"
               @edit="paymentSettingsDialogOpen = true"
             />
+            <MerchantContactMethodsSection
+              :form="form"
+              :contacts="availableOwnerContacts"
+              :loading="contactMethodsQuery.isLoading.value"
+              :error="errors.ownerContactMethods"
+            />
             <MerchantNoteSection :form="form" :errors="errors" />
             <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
           </div>
@@ -895,7 +957,7 @@ function confirmProviderCategoryChange() {
           <div class="grid grid-cols-2 gap-1.5 md:flex md:shrink-0 md:items-center md:gap-3">
             <Button v-if="currentStep > 1" variant="outline" :disabled="publishMutation.isPending.value" @click="goBack"><ArrowLeft class="h-4 w-4" />上一步</Button>
             <Button v-if="!isLimitedQuotaMode && currentStep === 3" type="button" variant="outline" class="min-[1241px]:hidden" @click="preview"><Eye class="h-4 w-4" />预览</Button>
-            <Button class="col-span-2 md:col-span-1" :disabled="publishMutation.isPending.value" @click="runPrimaryAction">
+            <Button class="col-span-2 md:col-span-1" :disabled="publishMutation.isPending.value || (currentActionPublishes && disputePublishBlocked)" @click="runPrimaryAction">
               <Send v-if="!isLimitedQuotaMode && currentStep === 3" class="h-4 w-4" />
               <ArrowRight v-else class="h-4 w-4" />
               {{ primaryActionLabel }}
