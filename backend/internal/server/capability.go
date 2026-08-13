@@ -14,3 +14,12 @@ func requireCapability(w http.ResponseWriter, r *http.Request, user auth.User, c
 	writeProblem(w, r, appErr)
 	return false
 }
+
+func requireActorCapability(w http.ResponseWriter, r *http.Request, actor auth.BusinessActor, capability string) bool {
+	appErr := auth.RequireProjectedCapability(actor.Capabilities, capability)
+	if appErr == nil {
+		return true
+	}
+	writeProblem(w, r, appErr)
+	return false
+}

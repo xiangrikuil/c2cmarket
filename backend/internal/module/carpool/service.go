@@ -1087,6 +1087,36 @@ func (s *Service) MyApplication(ctx context.Context, user auth.User, application
 	return application, nil
 }
 
+func (s *Service) ApplicationsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]Application, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == JoinActorOwner {
+			return s.OwnerApplications(ctx, auth.User{ID: actor.UserID})
+		}
+		return s.MyApplications(ctx, auth.User{ID: actor.UserID})
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return nil, carpoolRelationshipNotFound()
+	}
+	return s.repo.ListCarpoolApplicationsForActor(ctx, actor, participantRole)
+}
+
+func carpoolRelationshipNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool relationship not found", "拼车关系不存在。")
+}
+
+func (s *Service) ApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (Application, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == JoinActorOwner {
+			return s.OwnerApplication(ctx, auth.User{ID: actor.UserID}, applicationID)
+		}
+		return s.MyApplication(ctx, auth.User{ID: actor.UserID}, applicationID)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return Application{}, carpoolRelationshipNotFound()
+	}
+	return s.repo.GetCarpoolApplicationForActor(ctx, actor, applicationID, participantRole)
+}
+
 func (s *Service) OwnerApplications(ctx context.Context, user auth.User) ([]Application, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.ListCarpoolApplicationsByOwner(ctx, user.ID)
@@ -1444,6 +1474,45 @@ func (s *Service) OwnerMemberships(ctx context.Context, user auth.User) ([]Membe
 	return memberships, nil
 }
 
+func (s *Service) MembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]Membership, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == JoinActorOwner {
+			return s.OwnerMemberships(ctx, auth.User{ID: actor.UserID})
+		}
+		return s.MyMemberships(ctx, auth.User{ID: actor.UserID})
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return nil, carpoolRelationshipNotFound()
+	}
+	return s.repo.ListCarpoolMembershipsForActor(ctx, actor, participantRole)
+}
+
+func withCarpoolBusinessActor(input ConfirmMembershipCompleteInput, actor auth.BusinessActor) ConfirmMembershipCompleteInput {
+	input.ActorUserID = actor.UserID
+	input.ActorAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return input
+}
+
+func withEndCarpoolBusinessActor(input EndMembershipInput, actor auth.BusinessActor) EndMembershipInput {
+	input.ActorUserID = actor.UserID
+	input.ActorAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return input
+}
+
+func (s *Service) ConfirmMembershipCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ConfirmMembershipCompleteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	return s.ConfirmMembershipCompleteWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, withCarpoolBusinessActor(input, actor), buildCompletion)
+}
+
+func (s *Service) EndMembershipForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input EndMembershipInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	return s.EndMembershipWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, withEndCarpoolBusinessActor(input, actor), buildCompletion)
+}
+
 func (s *Service) ConfirmMembershipCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ConfirmMembershipCompleteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	key = strings.TrimSpace(key)
 	if err := idempotency.ValidateKey(key); err != nil {
@@ -1462,6 +1531,12 @@ func (s *Service) ConfirmMembershipCompleteWithIdempotency(ctx context.Context, 
 		return idempotency.Completion{}, appErr
 	}
 	if entry.State == "completed" {
+		if input.ActorAudience == auth.SessionAudienceRestrictedBusiness && s.repo != nil {
+			actor := auth.BusinessActor{UserID: userID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+			if _, appErr := s.repo.GetCarpoolMembershipForActor(ctx, actor, input.MembershipID, input.ActorRole); appErr != nil {
+				return idempotency.Completion{}, appErr
+			}
+		}
 		return idempotency.CompletionFromEntry(entry), nil
 	}
 
@@ -1509,6 +1584,12 @@ func (s *Service) EndMembershipWithIdempotency(ctx context.Context, userID, rout
 		return idempotency.Completion{}, appErr
 	}
 	if entry.State == "completed" {
+		if input.ActorAudience == auth.SessionAudienceRestrictedBusiness && s.repo != nil {
+			actor := auth.BusinessActor{UserID: userID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+			if _, appErr := s.repo.GetCarpoolMembershipForActor(ctx, actor, input.MembershipID, input.ActorRole); appErr != nil {
+				return idempotency.Completion{}, appErr
+			}
+		}
 		return idempotency.CompletionFromEntry(entry), nil
 	}
 

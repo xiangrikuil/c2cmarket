@@ -164,6 +164,7 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+		       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
 		FROM users u
@@ -175,6 +176,9 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
+		&user.GovernanceVersion,
+		&user.CurrentGovernanceActionID,
+		&user.SecurityLockedAt,
 		&user.IsAdmin,
 		&binding.userID,
 		&binding.username,
@@ -345,6 +349,9 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 		       u.username,
 		       u.display_name,
 		       u.account_status,
+		       u.governance_version,
+		       COALESCE(u.current_governance_action_id::text, ''),
+		       u.security_locked_at,
 		       r.username_snapshot,
 		       EXISTS(
 		         SELECT 1 FROM user_permissions p
@@ -466,10 +473,13 @@ func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject strin
 	err := q.QueryRow(ctx, `
 		SELECT u.id::text,
 		       u.analytics_user_id::text,
-		       u.username,
-		       u.display_name,
-		       u.account_status,
-		       EXISTS(
+			       u.username,
+			       u.display_name,
+			       u.account_status,
+			       u.governance_version,
+			       COALESCE(u.current_governance_action_id::text, ''),
+			       u.security_locked_at,
+			       EXISTS(
 		         SELECT 1 FROM user_permissions p
 		         WHERE p.user_id = u.id AND p.permission = 'admin'
 		       ) AS is_admin,
@@ -489,6 +499,9 @@ func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject strin
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
+		&user.GovernanceVersion,
+		&user.CurrentGovernanceActionID,
+		&user.SecurityLockedAt,
 		&user.IsAdmin,
 		&binding.userID,
 		&binding.username,
@@ -580,6 +593,7 @@ func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.P
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+		       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       c.password_algorithm, c.password_salt, c.password_hash,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
@@ -598,6 +612,9 @@ func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.P
 		&credential.User.Username,
 		&credential.User.DisplayName,
 		&credential.User.Status,
+		&credential.User.GovernanceVersion,
+		&credential.User.CurrentGovernanceActionID,
+		&credential.User.SecurityLockedAt,
 		&credential.User.IsAdmin,
 		&credential.Algorithm,
 		&credential.Salt,
@@ -635,6 +652,7 @@ func (s *Store) PasswordCredentialByUserID(ctx context.Context, userID string) (
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+		       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       c.password_algorithm, c.password_salt, c.password_hash,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
@@ -648,6 +666,9 @@ func (s *Store) PasswordCredentialByUserID(ctx context.Context, userID string) (
 		&credential.User.Username,
 		&credential.User.DisplayName,
 		&credential.User.Status,
+		&credential.User.GovernanceVersion,
+		&credential.User.CurrentGovernanceActionID,
+		&credential.User.SecurityLockedAt,
 		&credential.User.IsAdmin,
 		&credential.Algorithm,
 		&credential.Salt,
@@ -695,15 +716,22 @@ func (s *Store) CreateSession(ctx context.Context, userID, sessionTokenHash, csr
 	if s == nil || s.pool == nil {
 		return internalStoreError()
 	}
-	_, err := s.pool.Exec(ctx, `
+	result, err := s.pool.Exec(ctx, `
 		INSERT INTO auth_sessions (
 			user_id, session_token_hash, csrf_token_hash, expires_at,
 			renewed_at, absolute_expires_at, created_at, updated_at, last_seen_at
 		)
-		VALUES ($1, $2, $3, $4, $6, $5, $6, $6, $6)
+		SELECT u.id, $2, $3, $4, $6, $5, $6, $6, $6
+		FROM users u
+		WHERE u.id = $1
+		  AND u.account_status = 'active'
+		  AND u.security_locked_at IS NULL
 	`, userID, sessionTokenHash, csrfTokenHash, expiresAt, absoluteExpiresAt, now)
 	if err != nil {
 		return internalStoreError()
+	}
+	if result.RowsAffected() != 1 {
+		return domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
 	return nil
 }
@@ -778,8 +806,9 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		return auth.User{}, auth.Session{}, internalStoreError()
 	}
 	query := `
-		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
-		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
+			SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+			       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
+			       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       s.session_token_hash, s.user_id::text, s.expires_at, s.renewed_at, s.absolute_expires_at, s.revoked_at,
 		       s.password_reauthenticated_at, COALESCE(s.oauth_link_state_hash, ''),
 		       COALESCE(s.oauth_link_state_purpose, ''), s.oauth_link_state_expires_at,
@@ -789,6 +818,8 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		JOIN users u ON u.id = s.user_id
 		LEFT JOIN linux_do_bindings l ON l.user_id = u.id
 		WHERE s.session_token_hash = $1
+		  AND u.account_status = 'active'
+		  AND u.security_locked_at IS NULL
 	`
 	args := []any{sessionTokenHash}
 	if requireCSRF {
@@ -805,6 +836,9 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
+		&user.GovernanceVersion,
+		&user.CurrentGovernanceActionID,
+		&user.SecurityLockedAt,
 		&user.IsAdmin,
 		&session.ID,
 		&session.UserID,

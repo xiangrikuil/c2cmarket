@@ -375,3 +375,77 @@ func HasCapability(user User, required string) bool {
 Load current durable identity facts, project the fixed vocabulary, reject before side effects, and expose the resulting slice only for clients to render the same boundary.
 
 The replacement session is authoritative before active user state is refetched, and navigation sees the new profile.
+
+## Scenario: Account-Governance Session Audience Isolation
+
+Date: 2026-08-13
+Author: Codex
+
+### 1. Scope / Trigger
+
+- Trigger: changing login routing, OAuth callbacks, session middleware, CSRF rotation, account-governance actions, or routes available to restricted users.
+- Goal: keep `normal`, `restricted_business`, and `account_appeal` credentials independent while binding restricted access to the exact current governance action.
+
+### 2. Signatures
+
+```go
+StartRestrictedBusinessOAuth(ctx context.Context) (string, *domain.AppError)
+CompleteRestrictedBusinessOAuth(ctx context.Context, state string, profile OAuthProfile) (AuthenticationResult, *domain.AppError)
+GetRestrictedBusinessSession(ctx context.Context, sessionID string) (User, RestrictedBusinessSession, *domain.AppError)
+```
+
+```text
+normal cookie/state:              c2c_session / c2c_oauth_state
+restricted cookie/state:          c2c_restricted_business_session / c2c_restricted_business_oauth_state
+account-appeal cookie/state:       c2c_account_appeal_session / c2c_account_appeal_oauth_state
+route selection header:            X-Session-Audience: restricted_business
+```
+
+### 3. Contracts
+
+- The backend authenticates identity first, then reads the current account projection before creating any session: active and unlocked creates `normal`; suspended/banned and unlocked creates `restricted_business`; archived or security-locked creates no business session. Never create a normal session and downgrade it.
+- Restricted and appeal OAuth use separate one-time state tables and purpose-bound cookies. A callback must match exactly one cookie name, signed purpose, and stored state; it never falls back to another purpose.
+- Restricted/appeal OAuth resolves only an existing `(provider, provider_subject)`. It must not call registration/upsert paths or mutate identity, profile, attribution, referral, notification, or normal-session facts.
+- A restricted session stores the governance action ID, governance version, and restriction effective time. Every read and CSRF rotation atomically rechecks suspended/banned status, no security lock, effective current action, and exact version.
+- Route middleware is normal-only by default. A shared business route must opt in and build an explicit `BusinessActor`; the audience header only selects which server credential to validate and never grants authority.
+- Status/action/version or security-lock changes invalidate old restricted sessions. Restoration revokes them and never upgrades them into normal sessions.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Restricted state used by appeal callback, or the reverse | `403 CSRF_TOKEN_INVALID`; original matching state remains usable |
+| Unknown OAuth identity requests restricted/appeal access | Generic ineligible/restricted response; no user, identity, or session rows |
+| Restricted session action/version no longer matches | `401 SESSION_EXPIRED`; CSRF rotation performs no update |
+| Security lock is present | No business session is issued or accepted |
+| Route does not explicitly allow restricted audience | Reject; never fall back to normal or merge both audiences |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a suspended existing linux.do user completes the restricted purpose and receives only a 24-hour restricted cookie bound to the current action/version.
+- Base: normal and restricted cookies coexist; a normal-only route validates only the normal cookie.
+- Bad: call ordinary OAuth login and then replace its cookie based on account status.
+- Bad: update CSRF first and check governance version in a later query.
+
+### 6. Tests Required
+
+- Unit/handler tests assert password and OAuth audience routing, exact cookie/purpose matching, no fallback, one-time state, unknown-identity no-registration, dedicated logout/CSRF, and explicit route audience declarations.
+- PostgreSQL tests assert existing-identity-only completion, state replay rejection, cross-purpose isolation, action/version invalidation, atomic CSRF rejection, and lifecycle cleanup counters.
+- Frontend tests assert restricted login does not populate normal session cache and redirects only from the server-returned audience.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+result := ordinaryOAuthLogin(profile)
+if result.User.Status != AccountStatusActive { replaceCookieWithRestricted(result) }
+```
+
+#### Correct
+
+```go
+// Purpose-specific state is consumed and current governance is checked in the
+// same transaction that creates only the selected session audience.
+result, appErr := authService.CompleteRestrictedBusinessOAuth(ctx, state, profile)
+```

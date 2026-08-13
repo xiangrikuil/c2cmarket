@@ -31,6 +31,88 @@ func (s *Store) ResolveExistingOAuthUser(ctx context.Context, provider, subject 
 	return user, found, nil
 }
 
+func (s *Store) CompleteAccountAppealOAuth(
+	ctx context.Context,
+	stateHash string,
+	profile auth.OAuthProfile,
+	sessionTokenHash, csrfTokenHash string,
+	sessionExpiresAt, now time.Time,
+) (auth.User, auth.AccountAppealSession, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+	}
+	provider := auth.CanonicalOAuthProvider(profile.Provider)
+	subject := auth.CanonicalOAuthSubject(profile.Subject)
+	if !auth.IsLinuxDoProvider(provider) || subject == "" {
+		return auth.User{}, auth.AccountAppealSession{}, accountAppealStoreIneligibleError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	if appErr := consumeGovernanceOAuthState(ctx, tx, "account_appeal_oauth_states", stateHash, now); appErr != nil {
+		return auth.User{}, auth.AccountAppealSession{}, appErr
+	}
+
+	var userID string
+	err = tx.QueryRow(ctx, `
+		SELECT user_id::text
+		FROM auth_identities
+		WHERE provider = $1 AND provider_subject = $2
+	`, provider, subject).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+		}
+		return auth.User{}, auth.AccountAppealSession{}, accountAppealStoreIneligibleError()
+	}
+	if err != nil {
+		return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+	}
+	if appErr := lockAccountGovernanceUser(ctx, tx, userID); appErr != nil {
+		return auth.User{}, auth.AccountAppealSession{}, appErr
+	}
+	user, found, err := oauthUserByIdentity(ctx, tx, provider, subject, true)
+	if err != nil {
+		return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+	}
+	if !found || !isAccountAppealStatus(user.Status) {
+		if err := tx.Commit(ctx); err != nil {
+			return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+		}
+		return auth.User{}, auth.AccountAppealSession{}, accountAppealStoreIneligibleError()
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE account_appeal_sessions
+		SET revoked_at = COALESCE(revoked_at, $2)
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, user.ID, now); err != nil {
+		return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+	}
+	var session auth.AccountAppealSession
+	err = tx.QueryRow(ctx, `
+		INSERT INTO account_appeal_sessions (
+			user_id, session_token_hash, csrf_token_hash, created_at, expires_at
+		)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id::text, user_id::text, created_at, expires_at, revoked_at
+	`, user.ID, strings.TrimSpace(sessionTokenHash), strings.TrimSpace(csrfTokenHash), now, sessionExpiresAt).Scan(
+		&session.ID,
+		&session.UserID,
+		&session.CreatedAt,
+		&session.ExpiresAt,
+		&session.RevokedAt,
+	)
+	if err != nil {
+		return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return auth.User{}, auth.AccountAppealSession{}, internalStoreError()
+	}
+	return auth.HydrateCapabilities(user), session, nil
+}
+
 func (s *Store) CreateAccountAppealSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, now time.Time) (auth.User, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return auth.User{}, internalStoreError()
@@ -137,6 +219,9 @@ func (s *Store) GetAccountAppealSessionWithCSRF(ctx context.Context, sessionToke
 		       user_account.username,
 		       user_account.display_name,
 		       user_account.account_status,
+		       user_account.governance_version,
+		       COALESCE(user_account.current_governance_action_id::text, ''),
+		       user_account.security_locked_at,
 		       EXISTS (
 		         SELECT 1
 		         FROM user_permissions permission
@@ -161,6 +246,9 @@ func (s *Store) GetAccountAppealSessionWithCSRF(ctx context.Context, sessionToke
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
+		&user.GovernanceVersion,
+		&user.CurrentGovernanceActionID,
+		&user.SecurityLockedAt,
 		&user.IsAdmin,
 		&session.ID,
 		&session.UserID,

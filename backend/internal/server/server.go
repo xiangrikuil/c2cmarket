@@ -10,6 +10,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/health"
 	"c2c-market/backend/internal/middleware"
+	"c2c-market/backend/internal/module/accountgovernance"
 	"c2c-market/backend/internal/module/announcement"
 	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiintent"
@@ -149,6 +150,35 @@ type PublicProfileService interface {
 	PublicUserProfileBundle(ctx context.Context, username string) (profile.PublicUserProfileBundle, *domain.AppError)
 }
 
+type AccountGovernanceService interface {
+	AccountGovernanceBusinessCenter(ctx context.Context, actor auth.BusinessActor) (accountgovernance.Center, *domain.AppError)
+}
+
+type APIOrderContinuityService interface {
+	APIOrdersForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]apiorder.Order, *domain.AppError)
+	APIOrderForActor(ctx context.Context, actor auth.BusinessActor, orderID, participantRole string) (apiorder.Order, *domain.AppError)
+	ConfirmAPIOrderCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	OpenAPIOrderDisputeForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ConfirmAPIOrderPaymentForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ReportAPIOrderPaymentIssueForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	SubmitAPIOrderDeliveryForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type CarpoolContinuityService interface {
+	CarpoolApplicationsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Application, *domain.AppError)
+	CarpoolApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (carpool.Application, *domain.AppError)
+	CarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Membership, *domain.AppError)
+	ConfirmCarpoolMembershipCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	EndCarpoolMembershipForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type DisputeContinuityService interface {
+	DisputesForActor(ctx context.Context, actor auth.BusinessActor) ([]report.DisputeCase, *domain.AppError)
+	DisputeForActor(ctx context.Context, actor auth.BusinessActor, id string) (report.DisputeCase, *domain.AppError)
+	DisputeParticipantActionForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input report.DisputeParticipantActionInput, buildCompletion report.DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	SubmitInfoSupplementForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input report.SupplementInput, buildCompletion report.SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
 type PromotionRewardService interface {
 	PromotionRewardPublicConfig(ctx context.Context) (promotionreward.PublicConfig, *domain.AppError)
 	MyReferralSummary(ctx context.Context, user auth.User) (promotionreward.ReferralSummary, *domain.AppError)
@@ -168,10 +198,16 @@ type PromotionRewardService interface {
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
+	AuthenticateWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.AuthenticationResult, *domain.AppError)
+	StartRestrictedBusinessOAuth(ctx context.Context) (string, *domain.AppError)
+	CompleteRestrictedBusinessOAuth(ctx context.Context, state string, profile auth.OAuthProfile) (auth.AuthenticationResult, *domain.AppError)
+	StartAccountAppealOAuth(ctx context.Context) (string, *domain.AppError)
+	CompleteAccountAppealOAuth(ctx context.Context, state string, profile auth.OAuthProfile) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	StartAccountAppealSession(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	GetAccountAppealSession(ctx context.Context, sessionID string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
+	AuthenticateWithPassword(ctx context.Context, username, password string) (auth.AuthenticationResult, *domain.AppError)
 	StudentRegistrationConfig(ctx context.Context) (auth.StudentRegistrationConfig, *domain.AppError)
 	AdminStudentRegistration(ctx context.Context, user auth.User) (auth.StudentRegistrationConfig, *domain.AppError)
 	UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentRegistrationSettingUpdate, build auth.StudentRegistrationCompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -181,11 +217,18 @@ type Service interface {
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
 	ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError
+	ReauthenticatePasswordForPurpose(ctx context.Context, sessionID, csrfToken, password, purpose string) *domain.AppError
+	StartAdminReauthenticationOAuth(ctx context.Context, sessionID string) (string, *domain.AppError)
+	CompleteAdminReauthenticationOAuth(ctx context.Context, sessionID, state string, profile auth.OAuthProfile) *domain.AppError
 	StartLinuxDoLink(ctx context.Context, sessionID string) (string, *domain.AppError)
 	CompleteLinuxDoLink(ctx context.Context, sessionID, state string, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
 	GetSession(ctx context.Context, sessionID string) (auth.User, auth.Session, *domain.AppError)
 	GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.Session, *domain.AppError)
+	GetRestrictedBusinessSession(ctx context.Context, sessionID string) (auth.User, auth.RestrictedBusinessSession, *domain.AppError)
+	GetRestrictedBusinessSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.RestrictedBusinessSession, *domain.AppError)
+	RefreshRestrictedBusinessSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError)
+	LogoutRestrictedBusinessSession(ctx context.Context, sessionID string)
 	RenewSession(ctx context.Context, sessionID string) (auth.Session, bool, *domain.AppError)
 	RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError)
 	Logout(ctx context.Context, sessionID string)
@@ -482,40 +525,48 @@ type ApplicationService interface {
 	PromotionRewardService
 	ReputationGovernanceService
 	PublicProfileService
+	AccountGovernanceService
+	APIOrderContinuityService
+	CarpoolContinuityService
+	DisputeContinuityService
 }
 
 type Server struct {
-	app              Service
-	carpools         CarpoolService
-	apiQuotas        APIQuotaService
-	apiPayment       APIPaymentSettingsService
-	apiHealth        APIHealthService
-	adminAPIHealth   AdminAPIHealthService
-	apiModelTester   APIModelTesterService
-	adminUsers       AdminUserService
-	operationAudit   OperationAuditService
-	apiPromotions    APIPromotionService
-	growth           GrowthService
-	promotionRewards PromotionRewardService
-	reputation       ReputationGovernanceService
-	publicProfiles   PublicProfileService
-	devPersonas      DevPersonaSessionService
-	mux              chi.Router
-	enableDevAuth    bool
-	readinessChecker health.Checker
-	navigationBadges NavigationBadgeService
-	realtimeHub      *realtime.Hub
-	oauth            OAuthOptions
-	frontendOrigin   string
-	cookieSecure     bool
-	allowedOrigins   []string
-	rateLimiter      *middleware.RateLimiter
-	oauthHTTPClient  *http.Client
-	clientIPResolver middleware.ClientIPResolver
-	metrics          *observability.Metrics
-	metricsToken     string
-	metricsAuth      bool
-	turnstile        turnstile.Verifier
+	app                Service
+	carpools           CarpoolService
+	apiQuotas          APIQuotaService
+	apiPayment         APIPaymentSettingsService
+	apiHealth          APIHealthService
+	adminAPIHealth     AdminAPIHealthService
+	apiModelTester     APIModelTesterService
+	adminUsers         AdminUserService
+	operationAudit     OperationAuditService
+	apiPromotions      APIPromotionService
+	growth             GrowthService
+	promotionRewards   PromotionRewardService
+	reputation         ReputationGovernanceService
+	publicProfiles     PublicProfileService
+	accountGovernance  AccountGovernanceService
+	apiOrderContinuity APIOrderContinuityService
+	carpoolContinuity  CarpoolContinuityService
+	disputeContinuity  DisputeContinuityService
+	devPersonas        DevPersonaSessionService
+	mux                chi.Router
+	enableDevAuth      bool
+	readinessChecker   health.Checker
+	navigationBadges   NavigationBadgeService
+	realtimeHub        *realtime.Hub
+	oauth              OAuthOptions
+	frontendOrigin     string
+	cookieSecure       bool
+	allowedOrigins     []string
+	rateLimiter        *middleware.RateLimiter
+	oauthHTTPClient    *http.Client
+	clientIPResolver   middleware.ClientIPResolver
+	metrics            *observability.Metrics
+	metricsToken       string
+	metricsAuth        bool
+	turnstile          turnstile.Verifier
 }
 
 func NewServer(service ApplicationService, options ...ServerOptions) http.Handler {
@@ -547,37 +598,41 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		metrics = observability.New(observability.Sources{RateLimiter: rateLimiter})
 	}
 	server := &Server{
-		app:              service,
-		carpools:         service,
-		apiQuotas:        service,
-		apiPayment:       service,
-		apiHealth:        option.APIHealth,
-		adminAPIHealth:   option.AdminAPIHealth,
-		apiModelTester:   apiModelTester,
-		adminUsers:       service,
-		operationAudit:   service,
-		apiPromotions:    service,
-		growth:           service,
-		promotionRewards: service,
-		reputation:       service,
-		publicProfiles:   service,
-		devPersonas:      service,
-		mux:              chi.NewRouter(),
-		enableDevAuth:    option.EnableDevAuth,
-		readinessChecker: option.ReadinessChecker,
-		navigationBadges: navigationBadges,
-		realtimeHub:      realtimeHub,
-		oauth:            option.OAuth,
-		frontendOrigin:   option.FrontendOrigin,
-		cookieSecure:     option.AppEnv == config.EnvProduction,
-		allowedOrigins:   append([]string(nil), option.AllowedOrigins...),
-		rateLimiter:      rateLimiter,
-		oauthHTTPClient:  &http.Client{Timeout: 10 * time.Second},
-		clientIPResolver: middleware.NewClientIPResolver(option.TrustXForwardedFor, option.TrustedProxies),
-		metrics:          metrics,
-		metricsToken:     strings.TrimSpace(option.MetricsBearerToken),
-		metricsAuth:      option.AppEnv == config.EnvProduction || strings.TrimSpace(option.MetricsBearerToken) != "",
-		turnstile:        option.TurnstileVerifier,
+		app:                service,
+		carpools:           service,
+		apiQuotas:          service,
+		apiPayment:         service,
+		apiHealth:          option.APIHealth,
+		adminAPIHealth:     option.AdminAPIHealth,
+		apiModelTester:     apiModelTester,
+		adminUsers:         service,
+		operationAudit:     service,
+		apiPromotions:      service,
+		growth:             service,
+		promotionRewards:   service,
+		reputation:         service,
+		publicProfiles:     service,
+		accountGovernance:  service,
+		apiOrderContinuity: service,
+		carpoolContinuity:  service,
+		disputeContinuity:  service,
+		devPersonas:        service,
+		mux:                chi.NewRouter(),
+		enableDevAuth:      option.EnableDevAuth,
+		readinessChecker:   option.ReadinessChecker,
+		navigationBadges:   navigationBadges,
+		realtimeHub:        realtimeHub,
+		oauth:              option.OAuth,
+		frontendOrigin:     option.FrontendOrigin,
+		cookieSecure:       option.AppEnv == config.EnvProduction,
+		allowedOrigins:     append([]string(nil), option.AllowedOrigins...),
+		rateLimiter:        rateLimiter,
+		oauthHTTPClient:    &http.Client{Timeout: 10 * time.Second},
+		clientIPResolver:   middleware.NewClientIPResolver(option.TrustXForwardedFor, option.TrustedProxies),
+		metrics:            metrics,
+		metricsToken:       strings.TrimSpace(option.MetricsBearerToken),
+		metricsAuth:        option.AppEnv == config.EnvProduction || strings.TrimSpace(option.MetricsBearerToken) != "",
+		turnstile:          option.TurnstileVerifier,
 	}
 	server.routes()
 	return middleware.WithRequestID(

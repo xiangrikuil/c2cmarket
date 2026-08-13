@@ -45,8 +45,9 @@ const (
 	CompletionSourceBuyerConfirmed = "buyer_confirmed"
 	CompletionSourceAutoCompleted  = "auto_completed"
 
-	CancelReasonBuyer          = "buyer_cancelled"
-	CancelReasonPaymentTimeout = "payment_timeout"
+	CancelReasonBuyer             = "buyer_cancelled"
+	CancelReasonPaymentTimeout    = "payment_timeout"
+	CancelReasonAccountGovernance = "ACCOUNT_GOVERNANCE_CANCELLED"
 
 	EventCreated                 = "api_order.created"
 	EventPaymentInstructionsRead = "api_order.payment_instructions_read"
@@ -57,6 +58,7 @@ const (
 	EventCompleted               = "api_order.completed"
 	EventCancelled               = "api_order.cancelled"
 	EventPaymentTimeoutCancelled = "api_order.payment_timeout_cancelled"
+	EventGovernanceCancelled     = "api_order.governance_cancelled"
 	EventDisputeOpened           = "api_order.dispute_opened"
 	EventDisputeRemedyAwaiting   = "api_order.dispute_remedy_awaiting"
 	EventDisputeRemedyClaimed    = "api_order.dispute_remedy_claimed"
@@ -235,20 +237,25 @@ type CreateInput struct {
 }
 
 type ActionInput struct {
-	OrderID             string
-	ActorUserID         string
-	PaymentSummary      string
-	PaymentIssueReason  string
-	PaymentIssueNote    string
-	DeliveryNote        string
-	DeliveryCredential  DeliveryCredentialInput
-	Reason              string
-	IssueCode           string
-	RequestedResolution string
-	RequestedAmountCNY  string
-	IssueOccurredAt     string
-	ExpectedVersion     int64
-	RequestID           string
+	OrderID                string
+	ActorUserID            string
+	ActorAudience          string
+	ParticipantRole        string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	PaymentSummary         string
+	PaymentIssueReason     string
+	PaymentIssueNote       string
+	DeliveryNote           string
+	DeliveryCredential     DeliveryCredentialInput
+	Reason                 string
+	IssueCode              string
+	RequestedResolution    string
+	RequestedAmountCNY     string
+	IssueOccurredAt        string
+	ExpectedVersion        int64
+	RequestID              string
 }
 
 type DeliveryCredentialInput struct {

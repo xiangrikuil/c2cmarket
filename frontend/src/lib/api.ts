@@ -3953,15 +3953,16 @@ function mockAdminUserSummary() {
 }
 
 function mockAdminUserActions(item: AdminUser): AdminUserDetail['availableActions'] {
-  const transitions: Record<AdminUserStatus, AdminUserStatus[]> = {
-    active: ['suspended', 'banned', 'archived'],
-    suspended: ['active', 'banned', 'archived'],
-    banned: ['active', 'archived'],
-    archived: ['active'],
+	type MutableAdminUserStatus = 'active' | 'suspended' | 'banned'
+	const transitions: Record<AdminUserStatus, MutableAdminUserStatus[]> = {
+		active: ['suspended', 'banned'],
+		suspended: ['active', 'banned'],
+		banned: ['active'],
+		archived: [],
   }
   const activeAdminCount = adminUserMockStore.filter(user => user.isAdmin && user.accountStatus === 'active').length
   const statusActions: AdminUserDetail['availableActions'] = transitions[item.accountStatus].map(targetStatus => {
-    const action = targetStatus === 'active' ? 'restore' : targetStatus === 'suspended' ? 'suspend' : targetStatus === 'banned' ? 'ban' : 'archive'
+		const action = targetStatus === 'active' ? 'restore' : targetStatus === 'suspended' ? 'suspend' : 'ban'
     const lastActiveAdmin = item.isAdmin && item.accountStatus === 'active' && activeAdminCount <= 1
     return {
       action,
@@ -4073,8 +4074,12 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserDetai
 export async function updateAdminUserStatus(input: {
   userId: string
   version: number
-  status: AdminUserStatus
+	status: 'active' | 'suspended' | 'banned'
   reason: string
+	publicReason?: string
+	internalNote?: string
+	expiresAt?: string
+	isIndefinite?: boolean
 }): Promise<AdminUserDetail> {
   if (shouldUseRealBackend()) return backendUpdateAdminUserStatus(input)
   await wait()

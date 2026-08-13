@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 )
 
@@ -326,28 +327,56 @@ type AdminActionInput struct {
 }
 
 type SupplementInput struct {
-	EntityType         string
-	EntityID           string
-	InfoRequestID      string
-	SubmittingUserID   string
-	SubmittingUsername string
-	SubmittingName     string
-	Body               string
-	RequestID          string
+	EntityType             string
+	EntityID               string
+	InfoRequestID          string
+	SubmittingUserID       string
+	SubmittingUsername     string
+	SubmittingName         string
+	Body                   string
+	RequestID              string
+	ActorAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
 }
 
 type DisputeParticipantActionInput struct {
-	DisputeID   string
-	ActorUserID string
-	Action      string
-	Body        string
-	Resolution  string
-	AmountCNY   string
-	Terms       string
-	ProposalID  string
-	Note        string
-	Reason      string
-	RequestID   string
+	DisputeID              string
+	ActorUserID            string
+	Action                 string
+	Body                   string
+	Resolution             string
+	AmountCNY              string
+	Terms                  string
+	ProposalID             string
+	Note                   string
+	Reason                 string
+	RequestID              string
+	ActorAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+}
+
+func WithBusinessActor(input DisputeParticipantActionInput, actor auth.BusinessActor) DisputeParticipantActionInput {
+	input.ActorUserID = actor.UserID
+	input.ActorAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return input
+}
+
+func WithSupplementBusinessActor(input SupplementInput, actor auth.BusinessActor) SupplementInput {
+	input.SubmittingUserID = actor.UserID
+	input.SubmittingUsername = actor.Username
+	input.SubmittingName = actor.DisplayName
+	input.ActorAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return input
 }
 
 type MutationResult struct {

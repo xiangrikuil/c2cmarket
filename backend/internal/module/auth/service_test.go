@@ -458,7 +458,7 @@ func TestAdminUserStatusMutationRevokesSessionsAndReplaysIdempotently(t *testing
 		"POST /api/v1/admin/users/{id}/status",
 		"status-key",
 		"status-hash",
-		AdminUserStatusInput{TargetUserID: member.ID, Status: AccountStatusSuspended, ExpectedVersion: detail.User.Version, Reason: "异常登录核查", RequestID: "request-1"},
+		AdminUserStatusInput{TargetUserID: member.ID, Status: AccountStatusSuspended, ExpectedVersion: detail.User.Version, Reason: "异常登录核查", IsIndefinite: true, RequestID: "request-1"},
 		adminUserCompletionForTest,
 	)
 	if appErr != nil || completion.Status != 200 {
@@ -476,7 +476,7 @@ func TestAdminUserStatusMutationRevokesSessionsAndReplaysIdempotently(t *testing
 	}
 	replay, appErr := service.UpdateAdminUserStatusWithIdempotency(
 		context.Background(), admin, "POST /api/v1/admin/users/{id}/status", "status-key", "status-hash",
-		AdminUserStatusInput{TargetUserID: member.ID, Status: AccountStatusSuspended, ExpectedVersion: detail.User.Version, Reason: "异常登录核查", RequestID: "request-1"},
+		AdminUserStatusInput{TargetUserID: member.ID, Status: AccountStatusSuspended, ExpectedVersion: detail.User.Version, Reason: "异常登录核查", IsIndefinite: true, RequestID: "request-1"},
 		adminUserCompletionForTest,
 	)
 	if appErr != nil || string(replay.Body) != string(completion.Body) {
@@ -494,7 +494,7 @@ func TestAdminUserGovernanceRejectsSelfInvalidTransitionAndStaleVersion(t *testi
 	member, _, _ := service.CreateDevSession(context.Background(), "guard-member", false)
 	if _, appErr := service.UpdateAdminUserStatusWithIdempotency(
 		context.Background(), admin, "status", "self-key", "self-hash",
-		AdminUserStatusInput{TargetUserID: admin.ID, Status: AccountStatusSuspended, ExpectedVersion: 1, Reason: "自操作"}, adminUserCompletionForTest,
+		AdminUserStatusInput{TargetUserID: admin.ID, Status: AccountStatusSuspended, ExpectedVersion: 1, Reason: "自操作", IsIndefinite: true}, adminUserCompletionForTest,
 	); appErr == nil || appErr.Code != domain.CodePermissionDenied {
 		t.Fatalf("expected self-target denial, got %v", appErr)
 	}
@@ -562,9 +562,48 @@ func TestAdminUserPermissionMutationProtectsLastActiveAdministrator(t *testing.T
 	}
 	if _, appErr := service.UpdateAdminUserStatusWithIdempotency(
 		context.Background(), User{ID: secondAdmin.ID, IsAdmin: true}, "status", "last-key", "last-hash",
-		AdminUserStatusInput{TargetUserID: admin.ID, Status: AccountStatusArchived, ExpectedVersion: 1, Reason: "归档旧账号"}, adminUserCompletionForTest,
+		AdminUserStatusInput{TargetUserID: admin.ID, Status: AccountStatusBanned, ExpectedVersion: 1, Reason: "封禁旧账号"}, adminUserCompletionForTest,
 	); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
 		t.Fatalf("expected last-admin protection, got %v", appErr)
+	}
+}
+
+func TestAdminUserGrantConsumesPurposeBoundPasswordReauthentication(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	admin, session, appErr := service.CreateDevSession(context.Background(), "reauth-admin", true)
+	if appErr != nil {
+		t.Fatalf("create administrator session: %v", appErr)
+	}
+	firstMember, _, _ := service.CreateDevSession(context.Background(), "reauth-member-one", false)
+	secondMember, _, _ := service.CreateDevSession(context.Background(), "reauth-member-two", false)
+	password := "StrongPassword1!"
+	service.mu.Lock()
+	service.passwordCredentialsByUserID[admin.ID] = newPasswordCredential(admin, password)
+	service.mu.Unlock()
+
+	if appErr := service.ReauthenticatePasswordForPurpose(
+		context.Background(), session.ID, session.CSRFToken, password, AdminReauthenticationPurposeGrantAdmin,
+	); appErr != nil {
+		t.Fatalf("purpose-bound password reauthentication: %v", appErr)
+	}
+	if _, appErr := service.UpdateAdminUserPermissionWithIdempotency(
+		context.Background(), admin, "permission", "grant-one", "grant-one-hash",
+		AdminUserPermissionInput{
+			TargetUserID: firstMember.ID, Grant: true, ExpectedVersion: 1,
+			Reason: "授予值班权限", AdminSessionTokenHash: session.ID,
+		}, adminUserCompletionForTest,
+	); appErr != nil {
+		t.Fatalf("grant after reauthentication: %v", appErr)
+	}
+	if _, appErr := service.UpdateAdminUserPermissionWithIdempotency(
+		context.Background(), admin, "permission", "grant-two", "grant-two-hash",
+		AdminUserPermissionInput{
+			TargetUserID: secondMember.ID, Grant: true, ExpectedVersion: 1,
+			Reason: "重复使用重验", AdminSessionTokenHash: session.ID,
+		}, adminUserCompletionForTest,
+	); appErr == nil || appErr.Code != domain.CodeRecentReauthenticationRequired {
+		t.Fatalf("expected consumed grant rejection, got %v", appErr)
 	}
 }
 
@@ -578,8 +617,8 @@ func TestAdminUserDetailReturnsAuthoritativeGovernanceActions(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("load member detail: %v", appErr)
 	}
-	if len(memberDetail.AvailableActions) != 4 {
-		t.Fatalf("expected three status actions and one permission action: %+v", memberDetail.AvailableActions)
+	if len(memberDetail.AvailableActions) != 3 {
+		t.Fatalf("expected two status actions and one permission action: %+v", memberDetail.AvailableActions)
 	}
 	for _, action := range memberDetail.AvailableActions {
 		if !action.Allowed || !action.RequiresReason || !action.RequiresConfirmation {
@@ -589,7 +628,7 @@ func TestAdminUserDetailReturnsAuthoritativeGovernanceActions(t *testing.T) {
 
 	if _, appErr := service.UpdateAdminUserStatusWithIdempotency(
 		context.Background(), admin, "status", "observer-suspend", "observer-suspend-hash",
-		AdminUserStatusInput{TargetUserID: observer.ID, Status: AccountStatusSuspended, ExpectedVersion: 1, Reason: "暂停值班"}, adminUserCompletionForTest,
+		AdminUserStatusInput{TargetUserID: observer.ID, Status: AccountStatusSuspended, ExpectedVersion: 1, Reason: "暂停值班", IsIndefinite: true}, adminUserCompletionForTest,
 	); appErr != nil {
 		t.Fatalf("suspend observer: %v", appErr)
 	}

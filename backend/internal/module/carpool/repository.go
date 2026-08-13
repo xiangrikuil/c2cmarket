@@ -29,7 +29,9 @@ type Repository interface {
 	CreateCarpoolApplication(ctx context.Context, application Application, ack *RiskAcknowledgement) *domain.AppError
 	CreateCarpoolApplicationWithIdempotency(ctx context.Context, entry idempotency.Entry, application Application, ack *RiskAcknowledgement, buildCompletion ApplicationCompletionBuilder) (Application, idempotency.Completion, *domain.AppError)
 	ListCarpoolApplicationsByBuyer(ctx context.Context, buyerUserID string) ([]Application, *domain.AppError)
+	ListCarpoolApplicationsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]Application, *domain.AppError)
 	GetCarpoolApplicationForBuyer(ctx context.Context, buyerUserID, applicationID string) (Application, *domain.AppError)
+	GetCarpoolApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (Application, *domain.AppError)
 	ListCarpoolApplicationsByOwner(ctx context.Context, ownerUserID string) ([]Application, *domain.AppError)
 	GetCarpoolApplicationForOwner(ctx context.Context, ownerUserID, applicationID string) (Application, *domain.AppError)
 	AcceptCarpoolApplicationWithIdempotency(ctx context.Context, entry idempotency.Entry, input AcceptApplicationInput, now time.Time, buildCompletion ApplicationCompletionBuilder) (Application, idempotency.Completion, *domain.AppError)
@@ -40,6 +42,8 @@ type Repository interface {
 	ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, entry idempotency.Entry, input ConfirmApplicationJoinInput, now time.Time, buildCompletion ApplicationCompletionBuilder) (Application, idempotency.Completion, *domain.AppError)
 	ListCarpoolMembershipsByBuyer(ctx context.Context, buyerUserID string) ([]Membership, *domain.AppError)
 	ListCarpoolMembershipsByOwner(ctx context.Context, ownerUserID string) ([]Membership, *domain.AppError)
+	ListCarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]Membership, *domain.AppError)
+	GetCarpoolMembershipForActor(ctx context.Context, actor auth.BusinessActor, membershipID, participantRole string) (Membership, *domain.AppError)
 	ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, entry idempotency.Entry, input ConfirmMembershipCompleteInput, now time.Time, buildCompletion MembershipCompletionBuilder) (Membership, idempotency.Completion, *domain.AppError)
 	EndCarpoolMembershipWithIdempotency(ctx context.Context, entry idempotency.Entry, input EndMembershipInput, now time.Time, buildCompletion MembershipCompletionBuilder) (Membership, idempotency.Completion, *domain.AppError)
 }

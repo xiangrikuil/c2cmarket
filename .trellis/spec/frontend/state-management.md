@@ -1098,3 +1098,60 @@ const homeAnnouncementQuery = useActiveHomeAnnouncement(homeAnnouncementEnabled)
 
 prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)
 ```
+
+## Scenario: Authentication Audience Controls Client Session State
+
+日期：2026-08-13
+
+执行者：Codex
+
+### 1. Scope / Trigger
+
+- 触发条件：登录、OAuth 回调、受限业务中心、账号申诉或管理员 OAuth 重验的前端请求与跳转。
+
+### 2. Signatures
+
+```ts
+type SessionAudience = 'normal' | 'restricted_business'
+type AuthenticationResult = { user: User; csrfToken: string; audience: SessionAudience }
+startAdminGrantReauthentication(returnTo: string): Promise<OAuthStartResponse>
+```
+
+### 3. Contracts
+
+- 登录成功后的 audience 只使用后端响应；前端不得根据本地 `accountStatus` 猜测或请求指定最终 audience。
+- 只有 `normal` 响应可以写普通会话/CSRF 缓存。`restricted_business` 跳转独立中心，不得短暂写入普通 profile、查询缓存或普通 CSRF。
+- 账号申诉和管理员 OAuth 重验使用独立 Cookie/回调。启动管理员重验不得清空、替换或刷新普通会话缓存，也不得把待提交治理表单写入 URL 或持久存储。
+- 受限业务页面只管理该 audience 的临时状态；退出或失效不能回退使用普通 Cookie。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 必须结果 |
+| --- | --- |
+| 后端返回 `normal` | 更新普通会话缓存并进入正常应用 |
+| 后端返回 `restricted_business` | 不写普通缓存，进入受限业务中心 |
+| 管理员 OAuth 重验开始 | 保留当前普通缓存并跳转 provider |
+| OAuth purpose/Cookie 错配 | 展示通用失败，不尝试其他会话 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：暂停用户密码验证成功后直接进入受限业务中心，普通查询缓存保持空。
+- Base：OAuth-only 管理员启动重验后返回管理页，后端 grant 在十分钟内可用。
+- Bad：先调用普通登录缓存写入，再根据状态清空并重定向。
+
+### 6. Tests Required
+
+- Adapter tests assert restricted login does not populate normal cache and administrator OAuth reauthentication uses `affectsSessionCache: false`.
+- Route/login tests assert redirects follow response audience and no local-status audience inference exists.
+- Full Vitest, Nuxt typecheck, and real-mode build remain required.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong
+if (result.user.accountStatus !== 'active') normalSession.value = result
+
+// Correct
+if (result.audience === 'normal') setNormalSession(result)
+else navigateTo('/restricted-business')
+```

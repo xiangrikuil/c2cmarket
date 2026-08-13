@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 
@@ -129,8 +131,14 @@ type adminAuditLogDTO struct {
 }
 
 type adminUserStatusRequest struct {
-	Status string `json:"status"`
-	Reason string `json:"reason"`
+	Status         string  `json:"status"`
+	Reason         string  `json:"reason"`
+	PublicReason   string  `json:"publicReason"`
+	InternalNote   string  `json:"internalNote"`
+	ExpiresAt      *string `json:"expiresAt"`
+	IsIndefinite   bool    `json:"isIndefinite"`
+	LinkedCaseType string  `json:"linkedCaseType"`
+	LinkedCaseID   string  `json:"linkedCaseId"`
 }
 
 type adminUserPermissionRequest struct {
@@ -246,6 +254,15 @@ func (s *Server) handleUpdateAdminUserStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	userID := chi.URLParam(r, "id")
+	var expiresAt *time.Time
+	if request.ExpiresAt != nil {
+		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*request.ExpiresAt))
+		if err != nil {
+			writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid suspension expiry", "暂停到期时间必须是 RFC3339 时间。", "expiresAt", "invalid", "暂停到期时间格式不正确。"))
+			return
+		}
+		expiresAt = &parsed
+	}
 	routeKey := "POST /api/v1/admin/users/{id}/status:" + userID
 	completion, appErr := s.adminUsers.UpdateAdminUserStatusWithIdempotency(
 		r.Context(),
@@ -258,6 +275,12 @@ func (s *Server) handleUpdateAdminUserStatus(w http.ResponseWriter, r *http.Requ
 			Status:          request.Status,
 			ExpectedVersion: version,
 			Reason:          request.Reason,
+			PublicReason:    request.PublicReason,
+			InternalNote:    request.InternalNote,
+			ExpiresAt:       expiresAt,
+			IsIndefinite:    request.IsIndefinite,
+			LinkedCaseType:  request.LinkedCaseType,
+			LinkedCaseID:    request.LinkedCaseID,
 			RequestID:       requestIDFrom(r),
 		},
 		adminUserMutationCompletionBuilder(),
@@ -273,6 +296,11 @@ func (s *Server) handleUpdateAdminUserPermission(w http.ResponseWriter, r *http.
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	sessionToken, ok := middleware.SessionToken(r)
+	if !ok {
+		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
 		return
 	}
 	body, request, appErr := decodeStrictJSON[adminUserPermissionRequest](r)
@@ -298,11 +326,12 @@ func (s *Server) handleUpdateAdminUserPermission(w http.ResponseWriter, r *http.
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
 		auth.AdminUserPermissionInput{
-			TargetUserID:    userID,
-			Grant:           *request.IsAdmin,
-			ExpectedVersion: version,
-			Reason:          request.Reason,
-			RequestID:       requestIDFrom(r),
+			TargetUserID:          userID,
+			Grant:                 *request.IsAdmin,
+			ExpectedVersion:       version,
+			Reason:                request.Reason,
+			AdminSessionTokenHash: sessionToken,
+			RequestID:             requestIDFrom(r),
 		},
 		adminUserMutationCompletionBuilder(),
 	)

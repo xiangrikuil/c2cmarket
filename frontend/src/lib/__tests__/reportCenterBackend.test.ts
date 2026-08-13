@@ -17,6 +17,7 @@ function problemResponse(detail: string, status = 503) {
 
 function sessionResponse() {
   return jsonResponse({
+		audience: 'normal',
     csrfToken: 'csrf-report-center',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {
@@ -33,6 +34,7 @@ function sessionResponse() {
 
 function adminSessionResponse() {
   return jsonResponse({
+		audience: 'normal',
     csrfToken: 'csrf-admin-report',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {

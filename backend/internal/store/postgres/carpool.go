@@ -63,6 +63,9 @@ func (s *Store) PublishCarpoolListing(ctx context.Context, listing carpool.Listi
 }
 
 func createCarpoolListingMutationInTx(ctx context.Context, tx pgx.Tx, listing carpool.Listing, ack *carpool.RiskAcknowledgement, eventType, actorUserID, actorKind, requestID string, validatePublish bool, now time.Time) *domain.AppError {
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, listing.OwnerUserID); appErr != nil {
+		return appErr
+	}
 	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
 		return appErr
 	}
@@ -829,6 +832,9 @@ func (s *Store) CreateCarpoolApplicationWithIdempotency(ctx context.Context, ent
 }
 
 func createCarpoolApplicationMutationInTx(ctx context.Context, tx pgx.Tx, application carpool.Application, ack *carpool.RiskAcknowledgement) *domain.AppError {
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
+		return appErr
+	}
 	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。"); appErr != nil {
 		return appErr
 	}
@@ -946,12 +952,62 @@ func (s *Store) ListCarpoolApplicationsByBuyer(ctx context.Context, buyerUserID 
 	return scanCarpoolApplications(rows)
 }
 
+func (s *Store) ListCarpoolApplicationsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Application, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == carpool.JoinActorOwner {
+			return s.ListCarpoolApplicationsByOwner(ctx, actor.UserID)
+		}
+		return s.ListCarpoolApplicationsByBuyer(ctx, actor.UserID)
+	}
+	where, args, ok := restrictedCarpoolWhere(actor, participantRole, "carpool_application", "carpool_applications", "")
+	if !ok {
+		return nil, carpoolRelationshipNotFound()
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+carpoolApplicationColumns+` FROM carpool_applications `+where+` ORDER BY updated_at DESC`, args...)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanCarpoolApplications(rows)
+}
+
 func (s *Store) GetCarpoolApplicationForBuyer(ctx context.Context, buyerUserID, applicationID string) (carpool.Application, *domain.AppError) {
 	application, err := s.getCarpoolApplication(ctx, s.pool, applicationID, false)
 	if errors.Is(err, pgx.ErrNoRows) || application.BuyerUserID != buyerUserID {
 		return carpool.Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
 	}
 	if err != nil {
+		return carpool.Application{}, internalStoreError()
+	}
+	return application, nil
+}
+
+func (s *Store) GetCarpoolApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (carpool.Application, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == carpool.JoinActorOwner {
+			return s.GetCarpoolApplicationForOwner(ctx, actor.UserID, applicationID)
+		}
+		return s.GetCarpoolApplicationForBuyer(ctx, actor.UserID, applicationID)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Application{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	if appErr := lockAccountGovernanceUser(ctx, tx, actor.UserID); appErr != nil {
+		return carpool.Application{}, appErr
+	}
+	application, err := s.getCarpoolApplication(ctx, tx, applicationID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return carpool.Application{}, carpoolRelationshipNotFound()
+	}
+	if err != nil {
+		return carpool.Application{}, internalStoreError()
+	}
+	if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, participantRole, "carpool_application", application.ID, application.BuyerUserID, application.OwnerUserID, application.CreatedAt); appErr != nil {
+		return carpool.Application{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return carpool.Application{}, internalStoreError()
 	}
 	return application, nil
@@ -1233,6 +1289,134 @@ func (s *Store) ListCarpoolMembershipsByOwner(ctx context.Context, ownerUserID s
 	return scanCarpoolMemberships(rows)
 }
 
+func (s *Store) ListCarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Membership, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == carpool.JoinActorOwner {
+			return s.ListCarpoolMembershipsByOwner(ctx, actor.UserID)
+		}
+		return s.ListCarpoolMembershipsByBuyer(ctx, actor.UserID)
+	}
+	where, args, ok := restrictedCarpoolWhere(actor, participantRole, "carpool_membership", "carpool_memberships", "")
+	if !ok {
+		return nil, carpoolRelationshipNotFound()
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+carpoolMembershipColumns+` FROM carpool_memberships `+where+` ORDER BY updated_at DESC`, args...)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanCarpoolMemberships(rows)
+}
+
+func (s *Store) GetCarpoolMembershipForActor(ctx context.Context, actor auth.BusinessActor, membershipID, participantRole string) (carpool.Membership, *domain.AppError) {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Membership{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	if appErr := lockAccountGovernanceUser(ctx, tx, actor.UserID); appErr != nil {
+		return carpool.Membership{}, appErr
+	}
+	membership, err := s.getCarpoolMembership(ctx, tx, membershipID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
+	}
+	if err != nil {
+		return carpool.Membership{}, internalStoreError()
+	}
+	if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, participantRole, "carpool_membership", membership.ID, membership.BuyerUserID, membership.OwnerUserID, membership.CreatedAt); appErr != nil {
+		return carpool.Membership{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Membership{}, internalStoreError()
+	}
+	return membership, nil
+}
+
+func restrictedCarpoolWhere(actor auth.BusinessActor, participantRole, resourceType, tableName, resourceID string) (string, []any, bool) {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || actor.UserID == "" || actor.GovernanceActionID == "" || actor.GovernanceVersion < 1 || actor.RestrictionEffectiveAt.IsZero() {
+		return "", nil, false
+	}
+	participantColumn := "buyer_user_id"
+	if participantRole == carpool.JoinActorOwner {
+		participantColumn = "owner_user_id"
+	} else if participantRole != carpool.JoinActorBuyer {
+		return "", nil, false
+	}
+	where := `WHERE ` + tableName + `.` + participantColumn + ` = $1
+		AND ` + tableName + `.created_at <= $4
+		AND EXISTS (
+			SELECT 1
+			FROM account_governance_resource_dispositions disposition
+			JOIN account_governance_disposition_actions link ON link.disposition_id = disposition.id
+			JOIN account_governance_actions action ON action.id = link.governance_action_id
+			JOIN users user_account ON user_account.id = action.target_user_id
+			WHERE disposition.resource_type = $5
+			  AND disposition.resource_id = ` + tableName + `.id
+			  AND disposition.result = 'preserved'
+			  AND link.governance_action_id = $2
+			  AND action.target_user_id = $1
+			  AND action.governance_version = $3
+			  AND action.effective_at = $4
+			  AND action.status = 'effective'
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = action.id
+			  AND user_account.governance_version = action.governance_version
+		)`
+	args := []any{actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt, resourceType}
+	if strings.TrimSpace(resourceID) != "" {
+		where += ` AND ` + tableName + `.id = $6`
+		args = append(args, resourceID)
+	}
+	return where, args, true
+}
+
+func authorizeRestrictedCarpoolInTx(ctx context.Context, tx pgx.Tx, actor auth.BusinessActor, participantRole, resourceType, resourceID, buyerUserID, ownerUserID string, createdAt time.Time) *domain.AppError {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || createdAt.After(actor.RestrictionEffectiveAt) {
+		return carpoolRelationshipNotFound()
+	}
+	if participantRole == carpool.JoinActorBuyer && buyerUserID != actor.UserID || participantRole == carpool.JoinActorOwner && ownerUserID != actor.UserID {
+		return carpoolRelationshipNotFound()
+	}
+	if participantRole != carpool.JoinActorBuyer && participantRole != carpool.JoinActorOwner {
+		return carpoolRelationshipNotFound()
+	}
+	var authorized bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users user_account
+			JOIN account_governance_actions action ON action.id = user_account.current_governance_action_id
+			JOIN account_governance_disposition_actions link ON link.governance_action_id = action.id
+			JOIN account_governance_resource_dispositions disposition ON disposition.id = link.disposition_id
+			WHERE user_account.id = $1
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = $2
+			  AND user_account.governance_version = $3
+			  AND action.status = 'effective'
+			  AND action.effective_at = $4
+			  AND disposition.resource_type = $5
+			  AND disposition.resource_id = $6
+			  AND disposition.result = 'preserved'
+		)
+	`, actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt, resourceType, resourceID).Scan(&authorized); err != nil {
+		return internalStoreError()
+	}
+	if !authorized {
+		return carpoolRelationshipNotFound()
+	}
+	return nil
+}
+
+func carpoolRelationshipNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool relationship not found", "拼车关系不存在。")
+}
+
 func (s *Store) ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, entry idempotency.Entry, input carpool.ConfirmMembershipCompleteInput, now time.Time, buildCompletion carpool.MembershipCompletionBuilder) (carpool.Membership, idempotency.Completion, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return carpool.Membership{}, idempotency.Completion{}, internalStoreError()
@@ -1246,6 +1430,11 @@ func (s *Store) ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Cont
 	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
 	if appErr != nil {
 		return carpool.Membership{}, idempotency.Completion{}, appErr
+	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.ActorUserID); appErr != nil {
+			return carpool.Membership{}, idempotency.Completion{}, appErr
+		}
 	}
 
 	membership, appErr := s.confirmCarpoolMembershipCompleteInTx(ctx, tx, input, now)
@@ -1278,6 +1467,11 @@ func (s *Store) EndCarpoolMembershipWithIdempotency(ctx context.Context, entry i
 	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
 	if appErr != nil {
 		return carpool.Membership{}, idempotency.Completion{}, appErr
+	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.ActorUserID); appErr != nil {
+			return carpool.Membership{}, idempotency.Completion{}, appErr
+		}
 	}
 
 	membership, appErr := s.endCarpoolMembershipInTx(ctx, tx, input, now)
@@ -1700,6 +1894,9 @@ func (s *Store) acceptCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, inp
 	if err != nil {
 		return carpool.Application{}, internalStoreError()
 	}
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
+		return carpool.Application{}, appErr
+	}
 	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
 		return carpool.Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
@@ -1866,6 +2063,9 @@ func (s *Store) confirmCarpoolApplicationJoinInTx(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return carpool.Application{}, internalStoreError()
 	}
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
+		return carpool.Application{}, appErr
+	}
 	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
 		return carpool.Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
@@ -2020,6 +2220,14 @@ func (s *Store) confirmCarpoolMembershipCompleteInTx(ctx context.Context, tx pgx
 	if err != nil {
 		return carpool.Membership{}, internalStoreError()
 	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		actor := auth.BusinessActor{UserID: input.ActorUserID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+		if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, input.ActorRole, "carpool_membership", membership.ID, membership.BuyerUserID, membership.OwnerUserID, membership.CreatedAt); appErr != nil {
+			return carpool.Membership{}, appErr
+		}
+	} else if input.ActorAudience != "" && input.ActorAudience != auth.SessionAudienceNormal {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
+	}
 	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
 		return carpool.Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
@@ -2117,6 +2325,14 @@ func (s *Store) endCarpoolMembershipInTx(ctx context.Context, tx pgx.Tx, input c
 	}
 	if err != nil {
 		return carpool.Membership{}, internalStoreError()
+	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		actor := auth.BusinessActor{UserID: input.ActorUserID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+		if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, input.ActorRole, "carpool_membership", membership.ID, membership.BuyerUserID, membership.OwnerUserID, membership.CreatedAt); appErr != nil {
+			return carpool.Membership{}, appErr
+		}
+	} else if input.ActorAudience != "" && input.ActorAudience != auth.SessionAudienceNormal {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
 	}
 	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
 		return carpool.Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")

@@ -13,6 +13,21 @@ const (
 	AccountStatusBanned    = "banned"
 	AccountStatusArchived  = "archived"
 
+	SessionAudienceNormal             = "normal"
+	SessionAudienceRestrictedBusiness = "restricted_business"
+	SessionAudienceAccountAppeal      = "account_appeal"
+
+	GovernanceActionSuspend          = "suspend"
+	GovernanceActionExtendSuspension = "extend_suspension"
+	GovernanceActionBan              = "ban"
+	GovernanceActionRestore          = "restore"
+	GovernanceReasonManual           = "MANUAL_ACCOUNT_GOVERNANCE"
+
+	AdminReauthenticationPurposeGrantAdmin  = "grant_admin"
+	AdminReauthenticationMethodPassword     = "password"
+	AdminReauthenticationMethodLinuxDoOAuth = "linux_do_oauth"
+	OAuthPurposeGrantAdminReauthentication  = "grant_admin_reauth"
+
 	AdminUserStatusAll      = "all"
 	AdminUserRoleAll        = "all"
 	AdminUserRoleAdmin      = "admin"
@@ -36,29 +51,67 @@ const (
 )
 
 type User struct {
-	ID              string
-	AnalyticsUserID string
-	Username        string
-	DisplayName     string
-	IsAdmin         bool
-	Status          string
-	LinuxDoBinding  *LinuxDoBinding
-	StudentClaim    *StudentEmailClaim
-	Capabilities    []string
+	ID                        string
+	AnalyticsUserID           string
+	Username                  string
+	DisplayName               string
+	IsAdmin                   bool
+	Status                    string
+	LinuxDoBinding            *LinuxDoBinding
+	StudentClaim              *StudentEmailClaim
+	Capabilities              []string
+	GovernanceVersion         int64
+	CurrentGovernanceActionID string
+	SecurityLockedAt          *time.Time
+}
+
+type AuthenticationResult struct {
+	User              User
+	Audience          string
+	Session           Session
+	RestrictedSession RestrictedBusinessSession
+}
+
+type RestrictedBusinessSession struct {
+	ID                     string
+	UserID                 string
+	CSRFToken              string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	CreatedAt              time.Time
+	ExpiresAt              time.Time
+	RevokedAt              *time.Time
+	LastSeenAt             time.Time
+}
+
+type BusinessActor struct {
+	UserID                 string
+	Username               string
+	DisplayName            string
+	Audience               string
+	AccountStatus          string
+	Capabilities           []string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
 }
 
 type AdminUser struct {
-	ID           string
-	Username     string
-	DisplayName  string
-	IsAdmin      bool
-	Status       string
-	LinuxDoBound bool
-	TrustLevel   *int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	LastActiveAt *time.Time
-	Version      int64
+	ID                        string
+	Username                  string
+	DisplayName               string
+	IsAdmin                   bool
+	Status                    string
+	LinuxDoBound              bool
+	TrustLevel                *int
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	LastActiveAt              *time.Time
+	Version                   int64
+	GovernanceVersion         int64
+	CurrentGovernanceActionID string
+	SecurityLockedAt          *time.Time
 }
 
 type AdminUserDirectoryQuery struct {
@@ -196,16 +249,61 @@ type AdminUserStatusInput struct {
 	Status          string
 	ExpectedVersion int64
 	Reason          string
+	ReasonCode      string
+	PublicReason    string
+	InternalNote    string
+	ExpiresAt       *time.Time
+	IsIndefinite    bool
+	LinkedCaseType  string
+	LinkedCaseID    string
 	RequestID       string
 }
 
 type AdminUserPermissionInput struct {
-	TargetUserID    string
-	AdminUserID     string
-	Grant           bool
-	ExpectedVersion int64
-	Reason          string
-	RequestID       string
+	TargetUserID          string
+	AdminUserID           string
+	Grant                 bool
+	ExpectedVersion       int64
+	Reason                string
+	AdminSessionTokenHash string
+	RequestID             string
+}
+
+type AccountGovernanceAction struct {
+	ID                 string
+	TargetUserID       string
+	ActionType         string
+	Status             string
+	GovernanceVersion  int64
+	ReasonCode         string
+	PublicReason       string
+	InternalNote       string
+	LinkedCaseType     string
+	LinkedCaseID       string
+	EffectiveAt        time.Time
+	ExpiresAt          *time.Time
+	IsIndefinite       bool
+	SupersedesActionID string
+	SupersededAt       *time.Time
+	ActorUserID        string
+	RequestID          string
+	CreatedAt          time.Time
+}
+
+type AdminReauthenticationGrant struct {
+	ID            string
+	AdminUserID   string
+	AuthSessionID string
+	Purpose       string
+	Method        string
+	VerifiedAt    time.Time
+	ExpiresAt     time.Time
+	ConsumedAt    *time.Time
+	RevokedAt     *time.Time
+}
+
+func IsRestrictedBusinessAccountStatus(status string) bool {
+	return status == AccountStatusSuspended || status == AccountStatusBanned
 }
 
 type AdminUserMutationResult struct {

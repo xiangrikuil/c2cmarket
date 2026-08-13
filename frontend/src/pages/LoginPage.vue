@@ -147,6 +147,10 @@ async function submitPasswordLogin() {
       password: password.value,
       turnstileToken: turnstileToken.value,
     })
+		if (session.value.audience === 'restricted_business') {
+			await router.push('/restricted-business')
+			return
+		}
     trackAnalytics('login_success', {
       method: 'password',
       source_route: '/login',

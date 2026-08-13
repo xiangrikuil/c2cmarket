@@ -351,21 +351,29 @@ type ApplicationAuditEvent struct {
 }
 
 type ConfirmMembershipCompleteInput struct {
-	MembershipID    string
-	ActorUserID     string
-	ActorRole       string
-	ExpectedVersion int64
-	RequestID       string
+	MembershipID           string
+	ActorUserID            string
+	ActorRole              string
+	ActorAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	ExpectedVersion        int64
+	RequestID              string
 }
 
 type EndMembershipInput struct {
-	MembershipID    string
-	ActorUserID     string
-	ActorRole       string
-	TargetStatus    string
-	Reason          string
-	ExpectedVersion int64
-	RequestID       string
+	MembershipID           string
+	ActorUserID            string
+	ActorRole              string
+	ActorAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	TargetStatus           string
+	Reason                 string
+	ExpectedVersion        int64
+	RequestID              string
 }
 
 type MembershipCompletionBuilder func(Membership) (idempotency.Completion, *domain.AppError)

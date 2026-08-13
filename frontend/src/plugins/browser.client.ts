@@ -35,13 +35,17 @@ export default defineNuxtPlugin((nuxtApp) => {
     const rawOutcome = Array.isArray(route.query.authOutcome)
       ? route.query.authOutcome[0]
       : route.query.authOutcome
-    if ((rawOutcome !== 'registered' && rawOutcome !== 'logged_in') || consumedAuthOutcomes.has(route.fullPath)) return
+		if (rawOutcome === 'restricted_business') {
+			void router.replace({ path: '/restricted-business' })
+			return
+		}
+		if ((rawOutcome !== 'registered' && rawOutcome !== 'logged_in' && rawOutcome !== 'admin_reauthenticated') || consumedAuthOutcomes.has(route.fullPath)) return
 
     consumedAuthOutcomes.add(route.fullPath)
-    trackAnalytics(rawOutcome === 'registered' ? 'registration_success' : 'login_success', {
+		if (rawOutcome !== 'admin_reauthenticated') trackAnalytics(rawOutcome === 'registered' ? 'registration_success' : 'login_success', {
       method: 'oauth_linux_do',
       source_route: route.path,
-    })
+		})
     clearRegistrationAttribution()
     clearReferralCapture()
 

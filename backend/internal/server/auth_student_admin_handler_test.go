@@ -153,7 +153,7 @@ func TestStudentRecentPasswordLinuxDoLinkRotatesHTTPAuthSession(t *testing.T) {
 	}
 	var stateCookie *http.Cookie
 	for _, cookie := range startResponse.Result().Cookies() {
-		if cookie.Name == oauthStateCookieName {
+		if cookie.Name == oauthLinkStateCookieName {
 			stateCookie = cookie
 			break
 		}
