@@ -87,8 +87,11 @@ type RestrictedBusinessSession struct {
 
 type BusinessActor struct {
 	UserID                 string
+	Username               string
+	DisplayName            string
 	Audience               string
 	AccountStatus          string
+	Capabilities           []string
 	GovernanceActionID     string
 	GovernanceVersion      int64
 	RestrictionEffectiveAt time.Time

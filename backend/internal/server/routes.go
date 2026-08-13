@@ -38,6 +38,7 @@ func (s *Server) routes() {
 		r.Post("/auth/restricted-business/logout", s.handleRestrictedBusinessLogout)
 		r.Get("/search", s.limitHandler("search", 60, s.handleSearch))
 		r.Get("/me/profile", s.handleMyProfile)
+		r.Get("/me/account-governance/business-center", s.handleAccountGovernanceBusinessCenter)
 		r.Get("/me/api-payment-settings", s.handleMyAPIAccountPaymentSettings)
 		r.Put("/me/api-payment-settings", s.handleUpdateMyAPIAccountPaymentSettings)
 		r.Get("/me/navigation-badges", s.handleNavigationBadges)

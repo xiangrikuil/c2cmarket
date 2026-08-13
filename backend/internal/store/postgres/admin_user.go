@@ -556,6 +556,18 @@ func (s *Store) UpdateAdminUserStatusWithIdempotency(ctx context.Context, entry 
 			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
 		}
 	}
+	if auth.IsRestrictedBusinessAccountStatus(input.Status) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO account_governance_jobs (
+				target_user_id, governance_action_id, expected_governance_version,
+				status, phase, available_at, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, 'pending', 'sales', $4, $4, $4)
+			ON CONFLICT (governance_action_id) DO NOTHING
+		`, current.ID, actionID, current.GovernanceVersion, now); err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+	}
 	after := adminAccountAuditProjection{AccountStatus: current.Status, IsAdmin: boolPointerForStore(current.IsAdmin)}
 	if appErr := insertAdminUserGovernanceSideEffects(ctx, tx, current, input.AdminUserID, "user.account_status_changed", input.Reason, input.RequestID, before, after, now); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr

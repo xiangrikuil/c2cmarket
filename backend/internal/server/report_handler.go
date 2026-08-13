@@ -290,7 +290,11 @@ func (s *Server) handleSubmitDisputeSupplement(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleSubmitInfoSupplement(w http.ResponseWriter, r *http.Request, entityType string) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if entityType == report.InfoRequestEntityReport {
+		s.handleSubmitReportInfoSupplement(w, r)
+		return
+	}
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -302,8 +306,31 @@ func (s *Server) handleSubmitInfoSupplement(w http.ResponseWriter, r *http.Reque
 	}
 	entityID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/me/" + entityType + "s/{id}/supplements:" + entityID
-	completion, appErr := s.app.SubmitInfoSupplementWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body), report.SupplementInput{
+	completion, appErr := s.disputeContinuity.SubmitInfoSupplementForActorWithIdempotency(r.Context(), actor, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body), report.SupplementInput{
 		EntityType: entityType, EntityID: entityID, InfoRequestID: req.OpenInfoRequestID, Body: req.Body, RequestID: requestIDFrom(r),
+	}, supplementCompletionBuilder(actor.UserID))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
+}
+
+func (s *Server) handleSubmitReportInfoSupplement(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[infoSupplementRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	entityID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/me/reports/{id}/supplements:" + entityID
+	completion, appErr := s.app.SubmitInfoSupplementWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body), report.SupplementInput{
+		EntityType: report.InfoRequestEntityReport, EntityID: entityID, InfoRequestID: req.OpenInfoRequestID, Body: req.Body, RequestID: requestIDFrom(r),
 	}, supplementCompletionBuilder(user.ID))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -346,37 +373,37 @@ func (s *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyDisputes(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	items, appErr := s.app.MyDisputes(r.Context(), user)
+	items, appErr := s.disputeContinuity.DisputesForActor(r.Context(), actor)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toMyDisputeResponses(items, user.ID))
+	writePaginatedJSON(w, r, toMyDisputeResponses(items, actor.UserID))
 }
 
 func (s *Server) handleMyDispute(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	item, appErr := s.app.MyDispute(r.Context(), user, chi.URLParam(r, "id"))
+	item, appErr := s.disputeContinuity.DisputeForActor(r.Context(), actor, chi.URLParam(r, "id"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
 	setETag(w, item.Version)
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusOK, toMyDisputeDetailResponse(item, user.ID))
+	writeJSON(w, http.StatusOK, toMyDisputeDetailResponse(item, actor.UserID))
 }
 
 func (s *Server) handleAppendDisputeMessage(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -386,14 +413,14 @@ func (s *Server) handleAppendDisputeMessage(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action: report.DisputeMessageActionAppend,
 		Body:   req.Body,
 	})
 }
 
 func (s *Server) handleCreateDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -403,7 +430,7 @@ func (s *Server) handleCreateDisputeSettlementProposal(w http.ResponseWriter, r 
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action:     report.DisputeMessageActionPropose,
 		Resolution: req.Resolution,
 		AmountCNY:  req.AmountCNY,
@@ -412,7 +439,7 @@ func (s *Server) handleCreateDisputeSettlementProposal(w http.ResponseWriter, r 
 }
 
 func (s *Server) handleConfirmDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -422,14 +449,14 @@ func (s *Server) handleConfirmDisputeSettlementProposal(w http.ResponseWriter, r
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action:     report.DisputeMessageActionConfirm,
 		ProposalID: chi.URLParam(r, "proposalId"),
 	})
 }
 
 func (s *Server) handleRejectDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -439,7 +466,7 @@ func (s *Server) handleRejectDisputeSettlementProposal(w http.ResponseWriter, r 
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action:     report.DisputeMessageActionReject,
 		ProposalID: chi.URLParam(r, "proposalId"),
 		Reason:     req.Reason,
@@ -447,7 +474,7 @@ func (s *Server) handleRejectDisputeSettlementProposal(w http.ResponseWriter, r 
 }
 
 func (s *Server) handleEscalateDispute(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -457,14 +484,14 @@ func (s *Server) handleEscalateDispute(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action: report.DisputeMessageActionEscalate,
 		Reason: req.Reason,
 	})
 }
 
 func (s *Server) handleClaimDisputeRemedy(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -474,14 +501,14 @@ func (s *Server) handleClaimDisputeRemedy(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action: report.DisputeRemedyActionClaim,
 		Note:   req.Note,
 	})
 }
 
 func (s *Server) handleConfirmDisputeRemedy(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -491,14 +518,14 @@ func (s *Server) handleConfirmDisputeRemedy(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action: report.DisputeRemedyActionConfirm,
 		Reason: req.Reason,
 	})
 }
 
 func (s *Server) handleContestDisputeRemedy(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -508,20 +535,20 @@ func (s *Server) handleContestDisputeRemedy(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
 		Action: report.DisputeRemedyActionContest,
 		Reason: req.Reason,
 	})
 }
 
-func (s *Server) handleDisputeParticipantAction(w http.ResponseWriter, r *http.Request, user auth.User, body []byte, input report.DisputeParticipantActionInput) {
+func (s *Server) handleDisputeParticipantAction(w http.ResponseWriter, r *http.Request, actor auth.BusinessActor, body []byte, input report.DisputeParticipantActionInput) {
 	input.DisputeID = chi.URLParam(r, "id")
 	input.RequestID = requestIDFrom(r)
 	routeKey := r.Method + " /api/v1/me/disputes/{id}/" + input.Action
-	completion, appErr := s.app.DisputeParticipantActionWithIdempotency(
-		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+	completion, appErr := s.disputeContinuity.DisputeParticipantActionForActorWithIdempotency(
+		r.Context(), actor, routeKey, r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey+":"+input.DisputeID+":"+input.ProposalID, body),
-		input, disputeParticipantCompletionBuilder(user.ID),
+		input, disputeParticipantCompletionBuilder(actor.UserID),
 	)
 	if appErr != nil {
 		writeProblem(w, r, appErr)

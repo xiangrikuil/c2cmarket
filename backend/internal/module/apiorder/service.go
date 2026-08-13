@@ -121,6 +121,20 @@ func (s *Service) BuyerOrders(ctx context.Context, user auth.User) ([]Order, *do
 	return orders, nil
 }
 
+func (s *Service) OrdersForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]Order, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		user := auth.User{ID: actor.UserID}
+		if participantRole == "seller" {
+			return s.SellerOrders(ctx, user)
+		}
+		return s.BuyerOrders(ctx, user)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return nil, notFound()
+	}
+	return s.repo.ListAPIOrdersForActor(ctx, actor, participantRole, s.now())
+}
+
 func (s *Service) HasOrderForIntent(intentID string) bool {
 	intentID = strings.TrimSpace(intentID)
 	if intentID == "" {
@@ -149,6 +163,20 @@ func (s *Service) BuyerOrder(ctx context.Context, user auth.User, orderID string
 	order = s.materializeTimeoutLocked(order.ID)
 	order = s.withCredentialLocked(order)
 	return order, nil
+}
+
+func (s *Service) OrderForActor(ctx context.Context, actor auth.BusinessActor, orderID, participantRole string) (Order, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		user := auth.User{ID: actor.UserID}
+		if participantRole == "seller" {
+			return s.SellerOrder(ctx, user, orderID)
+		}
+		return s.BuyerOrder(ctx, user, orderID)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return Order{}, notFound()
+	}
+	return s.repo.GetAPIOrderForActor(ctx, actor, orderID, participantRole, s.now())
 }
 
 func (s *Service) ReadPaymentInstructions(ctx context.Context, user auth.User, orderID, requestID string) (PaymentInstructionsView, *domain.AppError) {
@@ -310,12 +338,28 @@ func (s *Service) ConfirmCompleteWithIdempotency(ctx context.Context, userID, ro
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "confirm_complete")
 }
 
+func (s *Service) ConfirmCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input = withBusinessActor(input, actor)
+	if err := validateActionInput(input, "confirm_complete"); err != nil {
+		return idempotency.Completion{}, err
+	}
+	return s.createOrUpdateWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "confirm_complete")
+}
+
 func (s *Service) OpenDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.ActorUserID = userID
 	if err := validateActionInput(input, "open_dispute"); err != nil {
 		return idempotency.Completion{}, err
 	}
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "open_dispute")
+}
+
+func (s *Service) OpenDisputeForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input = withBusinessActor(input, actor)
+	if err := validateActionInput(input, "open_dispute"); err != nil {
+		return idempotency.Completion{}, err
+	}
+	return s.createOrUpdateWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "open_dispute")
 }
 
 func (s *Service) CloseDisputeProjection(_ context.Context, disputeCaseID, actorUserID, requestID string) *domain.AppError {
@@ -396,12 +440,28 @@ func (s *Service) ConfirmPaymentWithIdempotency(ctx context.Context, userID, rou
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "confirm_payment")
 }
 
+func (s *Service) ConfirmPaymentForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input = withBusinessActor(input, actor)
+	if err := validateActionInput(input, "confirm_payment"); err != nil {
+		return idempotency.Completion{}, err
+	}
+	return s.createOrUpdateWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "confirm_payment")
+}
+
 func (s *Service) ReportPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.ActorUserID = userID
 	if err := validateActionInput(input, "report_payment_issue"); err != nil {
 		return idempotency.Completion{}, err
 	}
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "report_payment_issue")
+}
+
+func (s *Service) ReportPaymentIssueForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input = withBusinessActor(input, actor)
+	if err := validateActionInput(input, "report_payment_issue"); err != nil {
+		return idempotency.Completion{}, err
+	}
+	return s.createOrUpdateWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "report_payment_issue")
 }
 
 func (s *Service) SubmitDeliveryWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -415,6 +475,28 @@ func (s *Service) SubmitDeliveryWithIdempotency(ctx context.Context, userID, rou
 		return idempotency.Completion{}, err
 	}
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "submit_delivery")
+}
+
+func (s *Service) SubmitDeliveryForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input = withBusinessActor(input, actor)
+	var appErr *domain.AppError
+	input, appErr = normalizeSubmitDeliveryInput(input)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if err := validateActionInput(input, "submit_delivery"); err != nil {
+		return idempotency.Completion{}, err
+	}
+	return s.createOrUpdateWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "submit_delivery")
+}
+
+func withBusinessActor(input ActionInput, actor auth.BusinessActor) ActionInput {
+	input.ActorUserID = actor.UserID
+	input.ActorAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return input
 }
 
 func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, createInput CreateInput, actionInput ActionInput, buildCompletion CompletionBuilder, action string) (idempotency.Completion, *domain.AppError) {
@@ -437,7 +519,7 @@ func (s *Service) createOrUpdateWithIdempotencyResult(ctx context.Context, userI
 	}
 	if entry.State == "completed" {
 		if entry.ResourceType == resourceType && entry.ResourceID != "" {
-			order, replayErr := s.orderForReplay(ctx, userID, entry.ResourceID, action)
+			order, replayErr := s.orderForReplay(ctx, userID, entry.ResourceID, action, actionInput)
 			if replayErr != nil {
 				return Order{}, idempotency.Completion{}, false, replayErr
 			}
@@ -505,7 +587,21 @@ func (s *Service) createOrUpdateWithIdempotencyResult(ctx context.Context, userI
 	return order, completion, action == "create", nil
 }
 
-func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action string) (Order, *domain.AppError) {
+func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action string, input ActionInput) (Order, *domain.AppError) {
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		actor := auth.BusinessActor{
+			UserID:                 userID,
+			Audience:               input.ActorAudience,
+			GovernanceActionID:     input.GovernanceActionID,
+			GovernanceVersion:      input.GovernanceVersion,
+			RestrictionEffectiveAt: input.RestrictionEffectiveAt,
+		}
+		role := input.ParticipantRole
+		if action == "open_dispute" {
+			return s.OrderForActor(ctx, actor, orderID, role)
+		}
+		return s.OrderForActor(ctx, actor, orderID, role)
+	}
 	switch action {
 	case "create", "submit_payment", "cancel", "confirm_complete":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)

@@ -45,6 +45,10 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 	if err != nil {
 		return maintenance.Result{}, internalStoreError()
 	}
+	result.GovernanceDispositionResources, result.GovernanceDispositionJobsCompleted, err = s.processAccountGovernanceDispositionJobInTx(ctx, tx, now, batchSize)
+	if err != nil {
+		return maintenance.Result{}, internalStoreError()
+	}
 	result.DisputeRemedyConfirmationsExpired, err = expireDisputeRemedyConfirmationsInTx(ctx, tx, now, batchSize)
 	if err != nil {
 		return maintenance.Result{}, internalStoreError()

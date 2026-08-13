@@ -67,7 +67,11 @@ func isStudentOnlyIdentity(user User) bool {
 }
 
 func HasCapability(user User, capability string) bool {
-	for _, current := range ProjectCapabilities(user) {
+	return HasProjectedCapability(ProjectCapabilities(user), capability)
+}
+
+func HasProjectedCapability(capabilities []string, capability string) bool {
+	for _, current := range capabilities {
 		if current == capability {
 			return true
 		}
@@ -75,10 +79,21 @@ func HasCapability(user User, capability string) bool {
 	return false
 }
 
+func RequireProjectedCapability(capabilities []string, capability string) *domain.AppError {
+	if HasProjectedCapability(capabilities, capability) {
+		return nil
+	}
+	return capabilityRequiredError(capability)
+}
+
 func RequireCapability(user User, capability string) *domain.AppError {
 	if HasCapability(user, capability) {
 		return nil
 	}
+	return capabilityRequiredError(capability)
+}
+
+func capabilityRequiredError(capability string) *domain.AppError {
 	return domain.NewFieldError(
 		http.StatusForbidden,
 		domain.CodeCapabilityRequired,

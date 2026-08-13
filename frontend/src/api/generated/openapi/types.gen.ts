@@ -714,6 +714,45 @@ export type SessionResponse = {
     expiresAt: string;
 };
 
+export type AccountGovernanceBusinessCenter = {
+    generatedAt: string;
+    accountStatus: 'active' | 'suspended' | 'banned' | 'archived';
+    processingStatus: 'not_started' | 'processing' | 'completed';
+    currentAction: AccountGovernanceCurrentAction | null;
+    items: Array<AccountGovernanceDisposition>;
+};
+
+export type AccountGovernanceCurrentAction = {
+    actionType: 'suspend' | 'ban' | 'restore' | 'archive' | 'extend_suspension';
+    reasonCode: string;
+    publicReason: string;
+    effectiveAt: string;
+    expiresAt: string | null;
+    indefinite: boolean;
+    governanceVersion: number;
+};
+
+export type AccountGovernanceDisposition = {
+    id: string;
+    resourceType: 'api_service' | 'api_quota_batch' | 'api_quota_offer' | 'api_service_promotion' | 'api_order' | 'api_purchase_intent' | 'carpool_listing' | 'carpool_application' | 'carpool_membership';
+    resourceId: string;
+    resourceLabel: string;
+    participantRole: 'buyer' | 'seller';
+    result: 'cancelled' | 'preserved' | 'already_terminal' | 'sales_stopped';
+    reasonCode: 'ACCOUNT_GOVERNANCE_CANCELLED';
+    triggerRoles: Array<'buyer' | 'seller'>;
+    beforeStatus: string;
+    afterStatus: string;
+    releasedResourceType?: 'package_stock' | 'usd_allowance' | 'quota_inventory_unit' | 'carpool_seat';
+    releasedQuantity?: string;
+    governanceEffectiveAt: string;
+    paymentClaimEligible: boolean;
+    paymentClaimDeadlineAt: string | null;
+    actionCodes: Array<'view_resource' | 'payment_claim'>;
+    targetUrl: string;
+    updatedAt: string;
+};
+
 export type DevPersonaSessionRequest = {
     persona: 'buyer' | 'seller' | 'admin';
 };
@@ -4724,6 +4763,8 @@ export type EmptyRequestWritable = {
     [key: string]: never;
 };
 
+export type SessionAudience = 'normal' | 'restricted_business';
+
 export type IdempotencyKey = string;
 
 export type IfMatch = string;
@@ -4989,6 +5030,38 @@ export type LogoutRestrictedBusinessSessionResponses = {
 };
 
 export type LogoutRestrictedBusinessSessionResponse = LogoutRestrictedBusinessSessionResponses[keyof LogoutRestrictedBusinessSessionResponses];
+
+export type GetAccountGovernanceBusinessCenterData = {
+    body?: never;
+    headers?: {
+        'X-Session-Audience'?: 'normal' | 'restricted_business';
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/account-governance/business-center';
+};
+
+export type GetAccountGovernanceBusinessCenterErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetAccountGovernanceBusinessCenterError = GetAccountGovernanceBusinessCenterErrors[keyof GetAccountGovernanceBusinessCenterErrors];
+
+export type GetAccountGovernanceBusinessCenterResponses = {
+    /**
+     * Account-governance disposition projection.
+     */
+    200: AccountGovernanceBusinessCenter;
+};
+
+export type GetAccountGovernanceBusinessCenterResponse = GetAccountGovernanceBusinessCenterResponses[keyof GetAccountGovernanceBusinessCenterResponses];
 
 export type LoginWithPasswordData = {
     body: PasswordLoginRequest;

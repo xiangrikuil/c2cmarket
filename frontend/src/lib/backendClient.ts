@@ -23,7 +23,8 @@ import {
   type MockPersona,
 } from '@/lib/mockAuth'
 import type {
-  AccountAppealSessionResponse,
+	AccountAppealSessionResponse,
+	AccountGovernanceBusinessCenter,
   AccountGovernanceAppeal as AccountGovernanceAppealResponse,
   EmailRegistrationConfirmRequest,
   EmailRegistrationStartResponse,
@@ -56,6 +57,7 @@ export type { OAuthStartResponse, PasswordLoginRequest }
 
 export type AccountAppealSession = AccountAppealSessionResponse
 export type AccountGovernanceAppeal = AccountGovernanceAppealResponse
+export type AccountGovernanceBusinessCenterResponse = AccountGovernanceBusinessCenter
 
 export type EmailRegistrationConfig = StudentRegistrationPublicConfig
 export type EmailRegistrationChallenge = EmailRegistrationStartResponse
@@ -447,6 +449,21 @@ export async function getRestrictedBusinessSession(options: { forceRefresh?: boo
 	if (!options.forceRefresh && cachedRestrictedBusinessSession) return cachedRestrictedBusinessSession
 	const session = await backendRequest<BackendSession>('/api/v1/auth/restricted-business/session', {}, { affectsSessionCache: false })
 	return cacheRestrictedBusinessSession(session)
+}
+
+export async function getAccountGovernanceBusinessCenter(audience: BackendSession['audience'] = 'normal') {
+	if (!shouldUseRealBackend()) {
+		return {
+			generatedAt: new Date().toISOString(),
+			accountStatus: 'active',
+			processingStatus: 'completed',
+			currentAction: null,
+			items: [],
+		} satisfies AccountGovernanceBusinessCenterResponse
+	}
+	return backendRequest<AccountGovernanceBusinessCenterResponse>('/api/v1/me/account-governance/business-center', {
+		headers: { 'X-Session-Audience': audience },
+	}, { affectsSessionCache: audience === 'normal' })
 }
 
 export async function logoutRestrictedBusinessSession() {

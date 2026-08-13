@@ -101,6 +101,7 @@ versions:
 | `000092_operation_audit_projection` | unified operation-audit projection indexes and source event references |
 | `000093_contact_usage_scopes` | canonical contact usage scopes for buyer, dispute, carpool owner, and API merchant contexts |
 | `000094_account_governance_session_foundation` | immutable governance actions, restricted-business sessions, dedicated restricted/appeal OAuth state tables, exact suspension expiry jobs, and purpose-bound administrator reauthentication |
+| `000095_account_governance_business_disposition` | durable governance disposition jobs, unique cross-action resource outcomes, structured governance cancellation facts, and non-restoring sales-stop links |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product

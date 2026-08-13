@@ -61,7 +61,14 @@ func (s *Server) requireBusinessActor(r *http.Request, allowRestricted, requireC
 		if appErr != nil {
 			return auth.BusinessActor{}, appErr
 		}
-		return auth.BusinessActor{UserID: user.ID, Audience: audience, AccountStatus: user.Status}, nil
+		return auth.BusinessActor{
+			UserID:        user.ID,
+			Username:      user.Username,
+			DisplayName:   user.DisplayName,
+			Audience:      audience,
+			AccountStatus: user.Status,
+			Capabilities:  append([]string(nil), user.Capabilities...),
+		}, nil
 	case auth.SessionAudienceRestrictedBusiness:
 		if !allowRestricted {
 			return auth.BusinessActor{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Session audience forbidden", "该接口不接受受限业务会话。")
@@ -87,6 +94,8 @@ func (s *Server) requireBusinessActor(r *http.Request, allowRestricted, requireC
 		}
 		return auth.BusinessActor{
 			UserID:                 user.ID,
+			Username:               user.Username,
+			DisplayName:            user.DisplayName,
 			Audience:               audience,
 			AccountStatus:          user.Status,
 			GovernanceActionID:     session.GovernanceActionID,

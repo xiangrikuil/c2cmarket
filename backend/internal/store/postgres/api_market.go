@@ -1511,6 +1511,9 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if err != nil {
 		return apiintent.Intent{}, internalStoreError()
 	}
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, input.BuyerUserID, service.OwnerUserID); appErr != nil {
+		return apiintent.Intent{}, appErr
+	}
 	if validateErr := validateCreateAPIPurchaseIntentForStore(input, service); validateErr != nil {
 		return apiintent.Intent{}, validateErr
 	}
