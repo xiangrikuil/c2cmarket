@@ -1,6 +1,6 @@
 # Administrator Registration Invite Codes Contract
 
-Date: 2026-08-13
+Date: 2026-08-14
 
 Executor: Codex
 
@@ -23,6 +23,7 @@ GET    /api/registration-invite-code/batches/{batch_id}/codes
 GET    /api/registration-invite-code/{id}
 POST   /api/registration-invite-code/
 PUT    /api/registration-invite-code/
+PUT    /api/registration-invite-code/batch/disable
 DELETE /api/registration-invite-code/batch
 DELETE /api/registration-invite-code/invalid
 DELETE /api/registration-invite-code/{id}
@@ -38,6 +39,8 @@ ConsumeRegistrationInviteCodeWithTx(tx, key, required, userId) error
 GET /batches -> [{ batch_id, name, created_time, count }]
 GET /batches/{batch_id}/codes -> [complete_code]
 DELETE /batch body -> { "ids": [positive_unique_id] }
+PUT /batch/disable body -> { "ids": [positive_unique_id] }
+PUT /batch/disable response data -> changed_count
 ```
 
 Statuses are fixed as `1=enabled`, `2=disabled`, and `3=used`. `expired_time=0` means no expiration; every other value is a Unix timestamp in seconds.
@@ -53,12 +56,15 @@ Statuses are fixed as `1=enabled`, `2=disabled`, and `3=used`. `expired_time=0` 
 - Batch summaries are ordered newest first and return at most 100 batches. A summary uses the latest row's current name only as a display label; editable `name` is never batch identity, so duplicate names remain separate.
 - Batch export accepts one valid `batch_id`, returns all complete codes in ascending row-ID order, and includes enabled, disabled, expired, and used rows. It is independent of list pagination and is capped at 100 codes.
 - Batch delete accepts 1-100 unique positive IDs. It locks and loads the full set in one transaction, requires every ID to exist, rejects the whole request if any row is used or still-valid enabled, and deletes only after every row passes. A rejected request deletes zero rows.
+- Batch disable accepts 1-100 unique positive IDs in one administrator request. It sorts, locks, and loads the complete set in one transaction; missing IDs reject the request. Any used row rejects the whole request with zero updates. Disabled rows are idempotent successes, while every enabled unused row becomes disabled even when expired. The response `data` is the count changed from enabled to disabled.
 - New-account creation and code consumption run in one database transaction. Consumption locks the row through `lockForUpdate`, then performs an `id + enabled` conditional update and requires `RowsAffected == 1`.
 - Successful consumption writes `status=used`, `used_user_id`, and `used_time`. Any failure in account creation, identity binding, or code consumption rolls back the whole transaction.
 - Password registration sends `registration_code`; affiliate attribution continues to use `aff_code`. The browser sends `registration_code` only while the required option is enabled.
 - OAuth state and WeChat new-account flows may carry `registration_code`. Existing identities return before code validation. A new identity missing a required code returns a stable code and redirects to sign-up.
 - Management mutations use the existing administrator audit pipeline, but audit metadata must not contain a complete registration code.
 - Batch export audit metadata contains only `batch_id` and count. Batch deletion audit metadata contains IDs and count, never code values.
+- Batch-disable audit uses `registration_code.disable_batch` and contains only the ID array, selected count, and changed count; it never contains complete code values.
+- In the fixed administrator layout, registration-code data uses a bounded internal vertical scroll area with a persistent visible track, sticky header cells, and pagination outside the data viewport. Narrow desktop widths retain horizontal scrolling in the same scroll area; mobile cards use internal vertical scrolling and keep pagination outside the card viewport.
 
 ### 4. Validation & Error Matrix
 
@@ -74,6 +80,9 @@ Statuses are fixed as `1=enabled`, `2=disabled`, and `3=used`. `expired_time=0` 
 | Batch export ID is malformed, missing, or exceeds 100 rows | Reject; return no code list |
 | Batch delete body has 0 or more than 100 IDs, duplicates, non-positive IDs, or missing rows | Reject and delete zero rows |
 | Batch delete contains any used or still-valid enabled row | Reject the entire transaction and delete zero rows |
+| Batch disable body has 0 or more than 100 IDs, duplicates, non-positive IDs, or missing rows | Reject and update zero rows |
+| Batch disable contains any used row | Reject the entire transaction and update zero rows |
+| Batch disable contains disabled rows | Accept them idempotently; update only enabled unused rows |
 | Management caller is not Admin/Root | Reject through `AdminAuth` |
 | Non-Root caller changes the required-code option | Reject through the existing Root boundary |
 
@@ -85,20 +94,23 @@ Statuses are fixed as `1=enabled`, `2=disabled`, and `3=used`. `expired_time=0` 
 - Good: a batch spans more than one list page or contains mixed statuses; export still returns every row once in creation order.
 - Base: when the required option is disabled, password registration does not send a hidden stale registration code, while affiliate attribution remains available.
 - Base: batch delete receives only disabled and expired unused rows; all selected rows are deleted in one transaction.
+- Good: batch disable receives enabled, expired-enabled, and disabled unused rows; enabled rows become disabled, the disabled row remains unchanged, and `changed_count` excludes the already-disabled row.
+- Base: a batch-disable request contains only disabled rows; it succeeds with `changed_count=0`.
 - Base: an existing OAuth or WeChat identity continues to log in after the required option is enabled.
 - Bad: reuse a user's affiliate code as the administrator registration code, or let `?aff=` populate `registration_code`.
 - Bad: commit the user transaction and consume the code in a second transaction, which can leave a new account without a consumed code.
 - Bad: physically delete used rows or include them in cleanup.
 - Bad: group historical rows by editable batch name, merge same-name generation requests, loop over single-delete endpoints, or partially delete an invalid selection.
+- Bad: loop over single-row disable endpoints, or disable valid rows before discovering that another selected row is used.
 
 ### 6. Tests Required
 
-- Model unit tests cover create/search, shared new-batch IDs, deterministic legacy IDs, duplicate-name batch isolation, complete ordered batch export, expiration boundary, atomic batch-delete restrictions, cleanup scope, and used-row immutability.
-- Controller tests cover generation and delete bounds, malformed/missing batch IDs, Admin authorization, stable error codes, pagination response, export/delete responses, and management audit without complete codes.
+- Model unit tests cover create/search, shared new-batch IDs, deterministic legacy IDs, duplicate-name batch isolation, complete ordered batch export, expiration boundary, atomic batch-delete restrictions, atomic/idempotent batch disable, cleanup scope, and used-row immutability.
+- Controller tests cover generation and delete bounds, malformed/missing batch IDs, Admin authorization, stable error codes, pagination response, export/delete/disable responses, and management audit without complete codes.
 - Registration tests cover password, OAuth, and WeChat new/existing identity branches and prove `registration_code` is independent from `aff_code`.
 - PostgreSQL concurrency tests prove only one transaction consumes a code and only one account remains associated with it.
 - Frontend tests cover option-controlled fields and payload, affiliate-query isolation, OAuth/WeChat missing-code redirect, selection reset, newline-only TXT output, and stable-error translation.
-- Browser checks cover sign-up and management pages at desktop and 390x844 mobile viewports; verify desktop horizontal table scrolling, mobile cards, current-page selection, duplicate-name batch labels, batch export counts, atomic delete rejection, and no console errors. Used rows expose no edit/delete actions.
+- Browser checks cover sign-up and management pages at desktop and 390x844 mobile viewports; verify the persistent desktop vertical scrollbar, sticky header cells after changing viewport `scrollTop`, narrow-desktop horizontal scrolling, pagination outside the data viewport, mobile internal card scrolling, current-page selection, duplicate-name batch labels, batch export counts, atomic delete/disable rejection, and no console errors. Used rows expose no edit/delete actions.
 - Before release run `go test ./... -count=1`, focused race tests, `go vet ./...`, frontend typecheck/tests/production build, and `git diff --check`.
 
 ### 7. Wrong vs Correct
@@ -113,6 +125,7 @@ mark the code used in a second transaction
 group rows by editable name
 export only the current page
 delete each selected row with a separate request
+disable each selected row with a separate request
 ```
 
 #### Correct
@@ -128,4 +141,9 @@ commit the same transaction
 identify each generated batch by immutable batch_id
 load the full batch by batch_id and export complete codes only
 lock and validate the complete ID set, then delete once in the same transaction
+
+validate 1-100 unique positive IDs for batch disable
+lock and load the complete selection in one transaction
+reject before updating when any row is missing or used
+update enabled unused rows once and return RowsAffected as changed_count
 ```
