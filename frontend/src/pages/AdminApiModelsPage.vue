@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { CloudDownload, FilePenLine, Plus, Power, PowerOff, RotateCcw, Save, Search, TriangleAlert, X } from 'lucide-vue-next'
+import { computed, reactive, ref } from 'vue'
+import { Ban, CloudDownload, FilePenLine, MoreHorizontal, Plus, RefreshCcw, RotateCcw, Save, Search, TriangleAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import AdminApiModelSyncDialog from '@/components/admin/AdminApiModelSyncDialog.vue'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Dialog,
   DialogContent,
@@ -17,6 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -24,16 +32,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   useAdminAPIModelProviders,
   useAdminAPIModels,
   useCreateAPIModel,
   useCreateAPIModelProvider,
-  useSetAPIModelsBulkStatus,
-  useSetAPIModelActive,
-  useSetAPIModelProviderActive,
+  useApplyAPIModelLifecycle,
+  useApplyAPIModelProviderLifecycle,
   useUpdateAPIModel,
   useUpdateAPIModelProvider,
 } from '@/queries/useApiModelCatalogQueries'
@@ -44,12 +50,13 @@ import {
   type AdminApiModelProvider,
   type ApiModelCapability,
   type ApiModelInput,
-  type ApiModelProviderCategory,
   type ApiModelProviderInput,
+  type CatalogLifecycleAction,
+  type CatalogStatus,
 } from '@/types/apiModelCatalog'
 
 type CatalogTab = 'models' | 'providers'
-type StatusFilter = 'all' | 'active' | 'inactive'
+type StatusFilter = 'all' | CatalogStatus
 
 const activeCatalogTab = ref<CatalogTab>('models')
 const statusFilter = ref<StatusFilter>('all')
@@ -60,20 +67,21 @@ const editingProviderId = ref('')
 const isModelFormOpen = ref(false)
 const isProviderFormOpen = ref(false)
 const isSyncDialogOpen = ref(false)
-const selectedModelIds = ref<string[]>([])
+const lifecycleTarget = ref<{ kind: 'provider' | 'model', item: AdminApiModelProvider | AdminApiModel, action: CatalogLifecycleAction } | null>(null)
+const lifecycleReason = ref('')
+const unblockTargetStatus = ref<'active' | 'deprecated'>('active')
 
 const providersQuery = useAdminAPIModelProviders()
 const modelsQuery = useAdminAPIModels()
 const createProviderMutation = useCreateAPIModelProvider()
 const updateProviderMutation = useUpdateAPIModelProvider()
-const providerActiveMutation = useSetAPIModelProviderActive()
+const providerLifecycleMutation = useApplyAPIModelProviderLifecycle()
 const createModelMutation = useCreateAPIModel()
 const updateModelMutation = useUpdateAPIModel()
-const modelActiveMutation = useSetAPIModelActive()
-const bulkStatusMutation = useSetAPIModelsBulkStatus()
+const modelLifecycleMutation = useApplyAPIModelLifecycle()
 
 const providers = computed(() => providersQuery.data.value ?? [])
-const activeProviders = computed(() => providers.value.filter(item => item.active))
+const activeProviders = computed(() => providers.value.filter(item => item.effectiveStatus === 'active'))
 const rows = computed(() => modelsQuery.data.value ?? [])
 const providerForm = reactive<ApiModelProviderInput>(emptyProviderForm())
 const modelForm = reactive<ApiModelInput>(emptyModelForm())
@@ -87,9 +95,6 @@ const visibleRows = computed(() => {
       .some(value => value.toLowerCase().includes(search))
   })
 })
-const selectedModels = computed(() => rows.value.filter(item => selectedModelIds.value.includes(item.id)))
-const allVisibleSelected = computed(() => visibleRows.value.length > 0 && visibleRows.value.every(item => selectedModelIds.value.includes(item.id)))
-const someVisibleSelected = computed(() => visibleRows.value.some(item => selectedModelIds.value.includes(item.id)))
 const isSavingProvider = computed(() => createProviderMutation.isPending.value || updateProviderMutation.isPending.value)
 const isSavingModel = computed(() => createModelMutation.isPending.value || updateModelMutation.isPending.value)
 const isLoading = computed(() => providersQuery.isLoading.value || modelsQuery.isLoading.value)
@@ -103,12 +108,7 @@ const modelFormTitle = computed(() => editingModelId.value ? '编辑 API 模型'
 const editingProvider = computed(() => providers.value.find(item => item.id === editingProviderId.value) ?? null)
 const editingModel = computed(() => rows.value.find(item => item.id === editingModelId.value) ?? null)
 
-watch(rows, currentRows => {
-  const validIds = new Set(currentRows.map(item => item.id))
-  selectedModelIds.value = selectedModelIds.value.filter(id => validIds.has(id))
-})
-
-const providerLabelMap = Object.fromEntries(apiModelProviderCategories.map(item => [item.value, item.label])) as Record<ApiModelProviderCategory, string>
+const providerLabelMap = Object.fromEntries(apiModelProviderCategories.map(item => [item.value, item.label])) as Record<string, string>
 
 function openCreateProvider() {
   editingProviderId.value = ''
@@ -147,7 +147,6 @@ function emptyProviderForm(): ApiModelProviderInput {
     providerCategory: 'gpt',
     code: '',
     displayName: '',
-    active: true,
     sortOrder: nextProviderSortOrder(),
   }
 }
@@ -162,7 +161,6 @@ function emptyModelForm(): ApiModelInput {
     outputTokenPrice: '',
     sourceUrl: '',
     sourceVersion: '',
-    active: true,
     sortOrder: nextModelSortOrder(),
   }
 }
@@ -180,7 +178,6 @@ function inputFromProvider(provider: AdminApiModelProvider): ApiModelProviderInp
     providerCategory: provider.providerCategory,
     code: provider.code,
     displayName: provider.displayName,
-    active: provider.active,
     sortOrder: provider.sortOrder,
   }
 }
@@ -195,7 +192,6 @@ function inputFromModel(model: AdminApiModel): ApiModelInput {
     outputTokenPrice: model.outputPricePerMillion ?? '',
     sourceUrl: model.currentPriceSourceUrl ?? '',
     sourceVersion: model.currentPriceSourceVersion ?? '',
-    active: model.active,
     sortOrder: model.sortOrder,
   }
 }
@@ -261,49 +257,54 @@ async function saveModel() {
   }
 }
 
-async function setProviderActive(provider: AdminApiModelProvider, active: boolean) {
-  if (!active && !window.confirm(`停用提供商“${provider.displayName}”会使其关联模型无法用于新服务发布，已有订单仍使用快照。确认继续？`)) return
+function openLifecycle(kind: 'provider' | 'model', item: AdminApiModelProvider | AdminApiModel, action: CatalogLifecycleAction) {
+  lifecycleTarget.value = { kind, item, action }
+  lifecycleReason.value = ''
+  unblockTargetStatus.value = 'active'
+}
+
+async function applyLifecycle() {
+  const target = lifecycleTarget.value
+  if (!target) return
+  if (lifecycleReason.value.trim().length < 2) {
+    toast.warning('请填写至少 2 个字符的状态变更原因。')
+    return
+  }
+  const input = {
+    id: target.item.id,
+    version: target.item.version,
+    action: target.action,
+    reason: lifecycleReason.value,
+    targetStatus: target.action === 'unblock' ? unblockTargetStatus.value : undefined,
+  }
   try {
-    await providerActiveMutation.mutateAsync({ id: provider.id, active })
-    toast.success(active ? 'API 提供商已启用。' : 'API 提供商已停用。')
+    if (target.kind === 'provider') await providerLifecycleMutation.mutateAsync(input)
+    else await modelLifecycleMutation.mutateAsync(input)
+    toast.success('目录状态已更新。')
+    lifecycleTarget.value = null
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '提供商状态更新失败')
+    toast.error(error instanceof Error ? error.message : '目录状态更新失败')
   }
 }
 
-async function setModelActive(model: AdminApiModel, active: boolean) {
-  if (!active && !window.confirm(`停用模型“${model.modelKey}”会将其从新服务发布选择中移除，已有订单仍使用快照。确认继续？`)) return
-  try {
-    await modelActiveMutation.mutateAsync({ id: model.id, active })
-    toast.success(active ? 'API 模型已启用。' : 'API 模型已停用。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '模型状态更新失败')
-  }
+function lifecycleActions(status: CatalogStatus): CatalogLifecycleAction[] {
+  if (status === 'active') return ['deprecate', 'block']
+  if (status === 'deprecated') return ['reactivate', 'block']
+  return ['unblock']
 }
 
-function toggleModelSelection(modelId: string, checked: boolean) {
-  selectedModelIds.value = checked
-    ? Array.from(new Set([...selectedModelIds.value, modelId]))
-    : selectedModelIds.value.filter(id => id !== modelId)
+function lifecycleActionLabel(action: CatalogLifecycleAction) {
+  return { deprecate: '退役目录', block: '紧急阻断', reactivate: '重新启用', unblock: '解除阻断' }[action]
 }
 
-function toggleVisibleModels(checked: boolean) {
-  const visibleIds = new Set(visibleRows.value.map(item => item.id))
-  selectedModelIds.value = checked
-    ? Array.from(new Set([...selectedModelIds.value, ...visibleIds]))
-    : selectedModelIds.value.filter(id => !visibleIds.has(id))
+function statusLabel(status: CatalogStatus) {
+  return { active: '可用', deprecated: '已退役', blocked: '已阻断' }[status]
 }
 
-async function setSelectedModelsActive(active: boolean) {
-  if (selectedModelIds.value.length === 0) return
-  if (!active && !window.confirm(`停用选中的 ${selectedModelIds.value.length} 个模型后，它们将从新服务发布选择中移除。确认继续？`)) return
-  try {
-    const result = await bulkStatusMutation.mutateAsync({ modelIds: [...selectedModelIds.value], active })
-    toast.success(active ? `已启用 ${result.changed} 个模型。` : `已停用 ${result.changed} 个模型。`)
-    selectedModelIds.value = []
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '批量更新模型状态失败')
-  }
+function statusClass(status: CatalogStatus) {
+  if (status === 'active') return 'border-success/30 bg-success/10 text-success'
+  if (status === 'blocked') return 'border-destructive/30 bg-destructive/10 text-destructive'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function setCapability(capability: ApiModelCapability, checked: boolean) {
@@ -314,7 +315,7 @@ function setCapability(capability: ApiModelCapability, checked: boolean) {
 
 function matchesStatusFilter(item: AdminApiModel) {
   if (statusFilter.value === 'all') return true
-  return statusFilter.value === 'active' ? item.active : !item.active
+  return item.effectiveStatus === statusFilter.value
 }
 
 function nextProviderSortOrder() {
@@ -387,7 +388,8 @@ function nextModelSortOrder() {
             <div class="flex w-fit max-w-full items-center gap-1 overflow-x-auto rounded-lg border border-border bg-muted/40 p-1" aria-label="模型状态筛选">
               <Button size="sm" class="shrink-0" :variant="statusFilter === 'all' ? 'default' : 'ghost'" @click="statusFilter = 'all'">全部</Button>
               <Button size="sm" class="shrink-0" :variant="statusFilter === 'active' ? 'default' : 'ghost'" @click="statusFilter = 'active'">已启用</Button>
-              <Button size="sm" class="shrink-0" :variant="statusFilter === 'inactive' ? 'default' : 'ghost'" @click="statusFilter = 'inactive'">已停用</Button>
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'deprecated' ? 'default' : 'ghost'" @click="statusFilter = 'deprecated'">已退役</Button>
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'blocked' ? 'default' : 'ghost'" @click="statusFilter = 'blocked'">已阻断</Button>
             </div>
 
             <Select v-model="providerFilter">
@@ -401,51 +403,23 @@ function nextModelSortOrder() {
             </Select>
           </div>
 
-          <div v-if="selectedModels.length > 0" class="sticky top-[4.5rem] z-20 flex flex-col gap-2 rounded-lg border border-primary/30 bg-background/95 px-3 py-2 shadow-sm backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-            <span class="text-sm font-medium">已选择 {{ selectedModels.length }} 项</span>
-            <div class="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" :disabled="bulkStatusMutation.isPending.value" @click="setSelectedModelsActive(true)">
-                <Power class="h-4 w-4" />批量启用
-              </Button>
-              <Button size="sm" variant="outline" :disabled="bulkStatusMutation.isPending.value" @click="setSelectedModelsActive(false)">
-                <PowerOff class="h-4 w-4" />批量停用
-              </Button>
-              <Button size="icon" variant="ghost" title="清除选择" aria-label="清除选择" :disabled="bulkStatusMutation.isPending.value" @click="selectedModelIds = []">
-                <X class="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
           <div class="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
             <div class="max-w-full overflow-x-auto">
               <table class="c2c-table w-full min-w-[920px] text-sm">
                 <thead class="sticky top-0 z-10 bg-muted/95">
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                    <th class="w-12 px-3 py-2.5 font-medium">
-                      <Checkbox
-                        :model-value="allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false"
-                        aria-label="选择当前筛选的全部模型"
-                        @update:model-value="value => toggleVisibleModels(Boolean(value))"
-                      />
-                    </th>
                     <th class="px-3 py-2.5 font-medium">模型</th>
                     <th class="px-3 py-2.5 font-medium">提供商</th>
                     <th class="px-3 py-2.5 font-medium">官网价格</th>
                     <th class="px-3 py-2.5 font-medium">状态</th>
-                    <th class="w-24 px-3 py-2.5 text-right font-medium">操作</th>
+                    <th class="w-36 px-3 py-2.5 text-right font-medium">操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="model in visibleRows" :key="model.id" class="border-b border-border/70 last:border-0">
-                    <td class="px-3 py-2.5">
-                      <Checkbox
-                        :model-value="selectedModelIds.includes(model.id)"
-                        :aria-label="`选择 ${model.modelKey}`"
-                        @update:model-value="value => toggleModelSelection(model.id, Boolean(value))"
-                      />
-                    </td>
                     <td class="max-w-[280px] px-3 py-2.5">
                       <div class="truncate font-mono font-medium" :title="model.modelKey">{{ model.modelKey }}</div>
+                      <div v-if="model.identityLocked" class="mt-1 text-xs text-muted-foreground" :title="model.identityLockReason">身份已锁定</div>
                     </td>
                     <td class="px-3 py-2.5">
                       <div class="font-medium">{{ model.provider }}</div>
@@ -459,27 +433,27 @@ function nextModelSortOrder() {
                       </div>
                     </td>
                     <td class="px-3 py-2.5">
-                      <div class="flex items-start gap-2">
-                        <Switch
-                          :model-value="model.active"
-                          :disabled="modelActiveMutation.isPending.value"
-                          :aria-label="`${model.active ? '停用' : '启用'} ${model.modelKey}`"
-                          @update:model-value="value => setModelActive(model, Boolean(value))"
-                        />
-                        <div class="leading-none">
-                          <div class="text-sm font-medium">{{ model.active ? '已启用' : '已停用' }}</div>
-                          <div v-if="!model.providerActive" class="mt-1 text-xs text-warning">提供商已停用</div>
-                        </div>
+                      <div class="space-y-1.5">
+                        <Badge variant="outline" :class="statusClass(model.status)">{{ statusLabel(model.status) }}</Badge>
+                        <div v-if="model.effectiveStatusSource === 'parent'" class="text-xs text-warning">因提供商{{ statusLabel(model.effectiveStatus) }}</div>
                       </div>
                     </td>
                     <td class="px-3 py-2.5 text-right">
-                      <Button size="sm" variant="outline" @click="openEditModel(model)">
-                        <FilePenLine class="h-4 w-4" />编辑
-                      </Button>
+                      <div class="flex justify-end gap-1">
+                        <Button size="icon" variant="ghost" title="编辑模型" aria-label="编辑模型" @click="openEditModel(model)"><FilePenLine class="h-4 w-4" /></Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger as-child><Button size="icon" variant="ghost" title="目录状态操作" aria-label="目录状态操作"><MoreHorizontal class="h-4 w-4" /></Button></DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem v-for="action in lifecycleActions(model.status)" :key="action" :class="action === 'block' ? 'text-destructive' : ''" @select="openLifecycle('model', model, action)">
+                              <Ban v-if="action === 'block'" class="h-4 w-4" /><RefreshCcw v-else class="h-4 w-4" />{{ lifecycleActionLabel(action) }}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </td>
                   </tr>
                   <tr v-if="visibleRows.length === 0">
-                    <td colspan="6" class="px-3 py-10 text-center text-sm text-muted-foreground">当前筛选下暂无 API 模型。</td>
+                    <td colspan="5" class="px-3 py-10 text-center text-sm text-muted-foreground">当前筛选下暂无 API 模型。</td>
                   </tr>
                 </tbody>
               </table>
@@ -505,22 +479,22 @@ function nextModelSortOrder() {
                       <div class="font-medium">{{ provider.displayName }}</div>
                       <div class="mt-0.5 font-mono text-xs text-muted-foreground">{{ provider.code }}</div>
                     </td>
-                    <td class="px-3 py-2.5 text-muted-foreground">{{ providerLabelMap[provider.providerCategory] }}</td>
+                    <td class="px-3 py-2.5 text-muted-foreground">{{ providerLabelMap[provider.providerCategory] ?? provider.providerCategory }}</td>
                     <td class="px-3 py-2.5">
-                      <div class="flex items-center gap-2">
-                        <Switch
-                          :model-value="provider.active"
-                          :disabled="providerActiveMutation.isPending.value"
-                          :aria-label="`${provider.active ? '停用' : '启用'} ${provider.displayName}`"
-                          @update:model-value="value => setProviderActive(provider, Boolean(value))"
-                        />
-                        <span class="text-sm font-medium">{{ provider.active ? '已启用' : '已停用' }}</span>
-                      </div>
+                      <Badge variant="outline" :class="statusClass(provider.status)">{{ statusLabel(provider.status) }}</Badge>
                     </td>
                     <td class="px-3 py-2.5 text-right">
-                      <Button size="sm" variant="outline" @click="openEditProvider(provider)">
-                        <FilePenLine class="h-4 w-4" />编辑
-                      </Button>
+                      <div class="flex justify-end gap-1">
+                        <Button size="icon" variant="ghost" title="编辑提供商" aria-label="编辑提供商" @click="openEditProvider(provider)"><FilePenLine class="h-4 w-4" /></Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger as-child><Button size="icon" variant="ghost" title="目录状态操作" aria-label="目录状态操作"><MoreHorizontal class="h-4 w-4" /></Button></DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem v-for="action in lifecycleActions(provider.status)" :key="action" :class="action === 'block' ? 'text-destructive' : ''" @select="openLifecycle('provider', provider, action)">
+                              <Ban v-if="action === 'block'" class="h-4 w-4" /><RefreshCcw v-else class="h-4 w-4" />{{ lifecycleActionLabel(action) }}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </td>
                   </tr>
                   <tr v-if="providers.length === 0">
@@ -549,33 +523,20 @@ function nextModelSortOrder() {
         <div class="space-y-4">
           <label class="space-y-2">
             <span class="text-sm font-medium">分类</span>
-            <Select v-model="providerForm.providerCategory">
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="item in apiModelProviderCategories" :key="item.value" :value="item.value">{{ item.label }}</SelectItem>
-              </SelectContent>
-            </Select>
+            <Input v-model="providerForm.providerCategory" :disabled="Boolean(editingProvider?.identityLocked)" placeholder="例如 deepseek" />
+            <span v-if="editingProvider?.identityLocked" class="block text-xs text-muted-foreground">{{ editingProvider.identityLockReason }}</span>
           </label>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="space-y-2">
               <span class="text-sm font-medium">Code</span>
-              <Input v-model="providerForm.code" placeholder="openai" />
+              <Input v-model="providerForm.code" :disabled="Boolean(editingProvider?.identityLocked)" placeholder="openai" />
             </label>
             <label class="space-y-2">
               <span class="text-sm font-medium">展示名</span>
               <Input v-model="providerForm.displayName" placeholder="OpenAI" />
             </label>
           </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">排序</span>
-              <Input v-model.number="providerForm.sortOrder" type="number" />
-            </label>
-            <label class="flex items-end gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <Checkbox v-model="providerForm.active" class="mb-1" />
-              <span>启用提供商</span>
-            </label>
-          </div>
+          <label class="block max-w-xs space-y-2"><span class="text-sm font-medium">排序</span><Input v-model.number="providerForm.sortOrder" type="number" /></label>
           <DialogFooter>
             <Button variant="outline" :disabled="isSavingProvider" @click="isProviderFormOpen = false">取消</Button>
             <Button :disabled="isSavingProvider" @click="saveProvider">
@@ -601,11 +562,11 @@ function nextModelSortOrder() {
         <div class="space-y-4">
           <label class="space-y-2">
             <span class="text-sm font-medium">API 提供商</span>
-            <Select v-model="modelForm.providerId">
+            <Select v-model="modelForm.providerId" :disabled="Boolean(editingModel?.identityLocked)">
               <SelectTrigger><SelectValue placeholder="选择提供商" /></SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="provider in activeProviders" :key="provider.id" :value="provider.id">
-                  {{ provider.displayName }} · {{ providerLabelMap[provider.providerCategory] }}
+                  {{ provider.displayName }} · {{ providerLabelMap[provider.providerCategory] ?? provider.providerCategory }}
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -613,7 +574,8 @@ function nextModelSortOrder() {
 
           <label class="block max-w-md space-y-2">
             <span class="text-sm font-medium">模型标识</span>
-            <Input v-model="modelForm.modelKey" placeholder="gpt-4.1-mini" />
+            <Input v-model="modelForm.modelKey" :disabled="Boolean(editingModel?.identityLocked)" placeholder="gpt-4.1-mini" />
+            <span v-if="editingModel?.identityLocked" class="block text-xs text-muted-foreground">{{ editingModel.identityLockReason }}</span>
           </label>
 
           <div class="space-y-2">
@@ -657,16 +619,7 @@ function nextModelSortOrder() {
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">排序</span>
-              <Input v-model.number="modelForm.sortOrder" type="number" />
-            </label>
-            <label class="flex items-end gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <Checkbox v-model="modelForm.active" class="mb-1" />
-              <span>启用模型</span>
-            </label>
-          </div>
+          <label class="block max-w-xs space-y-2"><span class="text-sm font-medium">排序</span><Input v-model.number="modelForm.sortOrder" type="number" /></label>
 
           <DialogFooter>
             <Button variant="outline" :disabled="isSavingModel" @click="isModelFormOpen = false">取消</Button>
@@ -682,5 +635,31 @@ function nextModelSortOrder() {
       v-model:open="isSyncDialogOpen"
       :providers="providers"
     />
+
+    <Dialog :open="Boolean(lifecycleTarget)" @update:open="open => { if (!open) lifecycleTarget = null }">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ lifecycleTarget ? lifecycleActionLabel(lifecycleTarget.action) : '目录状态操作' }}</DialogTitle>
+          <DialogDescription>该操作会立即影响新发布和新订单资格，历史正式订单仍按快照继续处理。</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-4">
+          <label v-if="lifecycleTarget?.action === 'unblock'" class="block space-y-2">
+            <span class="text-sm font-medium">解除后状态</span>
+            <Select v-model="unblockTargetStatus">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="active">恢复可用</SelectItem><SelectItem value="deprecated">保持退役</SelectItem></SelectContent>
+            </Select>
+          </label>
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">操作原因</span>
+            <Textarea v-model="lifecycleReason" maxlength="500" class="min-h-24" placeholder="说明本次目录治理依据，至少 2 个字符。" />
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="lifecycleTarget = null">取消</Button>
+          <Button :variant="lifecycleTarget?.action === 'block' ? 'destructive' : 'default'" :disabled="providerLifecycleMutation.isPending.value || modelLifecycleMutation.isPending.value" @click="applyLifecycle">确认执行</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

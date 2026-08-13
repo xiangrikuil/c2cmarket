@@ -82,58 +82,6 @@ func (s *Store) AdminApplyAPIModelSyncWithIdempotency(
 	return result, completion, nil
 }
 
-func (s *Store) AdminSetAPIModelsActiveWithIdempotency(
-	ctx context.Context,
-	entry idempotency.Entry,
-	input catalog.APIModelBulkStatusMutationInput,
-	now time.Time,
-	buildCompletion catalog.APIModelSyncCompletionBuilder,
-) (catalog.APIModelBulkMutationResult, idempotency.Completion, *domain.AppError) {
-	if s == nil || s.pool == nil || buildCompletion == nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, internalStoreError()
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
-
-	existingEntry, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
-	if appErr != nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, appErr
-	}
-	modelIDs := append([]string(nil), input.ModelIDs...)
-	lockedIDs, appErr := lockAPIModelsInTx(ctx, tx, modelIDs)
-	if appErr != nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, appErr
-	}
-	if len(lockedIDs) != len(modelIDs) {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, apiModelNotFound()
-	}
-
-	result := catalog.APIModelBulkMutationResult{IDs: modelIDs}
-	commandTag, err := tx.Exec(ctx, `
-		UPDATE api_model_catalog
-		SET active = $2, updated_at = $3
-		WHERE id = ANY($1::uuid[]) AND active IS DISTINCT FROM $2
-	`, modelIDs, input.Active, now)
-	if err != nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, internalStoreError()
-	}
-	result.Changed = int(commandTag.RowsAffected())
-	completion, appErr := buildCompletion(result)
-	if appErr != nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, appErr
-	}
-	if appErr := completeIdempotencyInTx(ctx, tx, existingEntry, completion, now); appErr != nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, appErr
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return catalog.APIModelBulkMutationResult{}, idempotency.Completion{}, internalStoreError()
-	}
-	return result, completion, nil
-}
-
 func validateAPIModelSyncItemsInTx(ctx context.Context, tx pgx.Tx, items []catalog.APIModelSyncSelection) *domain.AppError {
 	providerCodes := make(map[string]string)
 	for _, item := range items {
@@ -212,11 +160,11 @@ func insertSyncedAPIModelInTx(ctx context.Context, tx pgx.Tx, item catalog.APIMo
 	var modelID string
 	err := tx.QueryRow(ctx, `
 		INSERT INTO api_model_catalog (
-		  provider_id, model_key, capabilities, active, sort_order, updated_at
+		  provider_id, model_key, capabilities, status, sort_order, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id::text
-	`, item.ProviderID, item.ModelKey, item.Capabilities, item.Active, sortOrder, now).Scan(&modelID)
+	`, item.ProviderID, item.ModelKey, item.Capabilities, syncedModelStatus(item.Active), sortOrder, now).Scan(&modelID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return "", apiModelSyncVersionConflict()
@@ -227,12 +175,19 @@ func insertSyncedAPIModelInTx(ctx context.Context, tx pgx.Tx, item catalog.APIMo
 		ProviderID: item.ProviderID, ModelKey: item.ModelKey, Capabilities: item.Capabilities,
 		InputTokenPrice: item.InputPricePerMillion, CachedInputTokenPrice: item.CachedInputPricePerMillion,
 		OutputTokenPrice: item.OutputPricePerMillion, SourceURL: item.SourceURL,
-		SourceVersion: item.SourceVersion, Active: item.Active, SortOrder: sortOrder,
+		SourceVersion: item.SourceVersion, SortOrder: sortOrder,
 	}
 	if appErr := insertAPIModelPriceVersionAt(ctx, tx, modelID, form, now); appErr != nil {
 		return "", appErr
 	}
 	return modelID, nil
+}
+
+func syncedModelStatus(active bool) string {
+	if active {
+		return catalog.StatusActive
+	}
+	return catalog.StatusDeprecated
 }
 
 func updateSyncedAPIModelPriceInTx(ctx context.Context, tx pgx.Tx, item catalog.APIModelSyncSelection, now time.Time) *domain.AppError {
@@ -260,32 +215,6 @@ func updateSyncedAPIModelPriceInTx(ctx context.Context, tx pgx.Tx, item catalog.
 		return internalStoreError()
 	}
 	return nil
-}
-
-func lockAPIModelsInTx(ctx context.Context, tx pgx.Tx, modelIDs []string) (map[string]bool, *domain.AppError) {
-	rows, err := tx.Query(ctx, `
-		SELECT id::text
-		FROM api_model_catalog
-		WHERE id = ANY($1::uuid[])
-		ORDER BY id
-		FOR UPDATE
-	`, modelIDs)
-	if err != nil {
-		return nil, internalStoreError()
-	}
-	defer rows.Close()
-	locked := make(map[string]bool, len(modelIDs))
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, internalStoreError()
-		}
-		locked[id] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, internalStoreError()
-	}
-	return locked, nil
 }
 
 func apiModelSyncVersionConflict() *domain.AppError {

@@ -251,7 +251,7 @@ async function productPlanName(productPlanId: string | undefined) {
 function splitProductPlanName(name: string) {
   const normalized = name.trim()
   if (!normalized) return { product: '官方价格记录', plan: '后端记录' }
-  const known = ['ChatGPT', 'Claude', 'Cursor', 'Gemini', 'Perplexity']
+  const known = ['ChatGPT', 'Claude', 'Grok']
   const prefix = known.find(item => normalized.includes(item))
   if (!prefix) return { product: normalized, plan: '官方记录' }
   return {

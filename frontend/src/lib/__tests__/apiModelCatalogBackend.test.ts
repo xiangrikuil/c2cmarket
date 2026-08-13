@@ -48,7 +48,7 @@ afterEach(() => {
   vi.resetModules()
 })
 
-test('models.dev Mock 预览无写入，新增默认停用并可批量启用', async () => {
+test('models.dev Mock 预览无写入，新增模型默认退役并通过专用动作启用', async () => {
   const backend = await loadMockBackend()
   const providers = await backend.getAdminAPIModelProviders()
   const openai = providers.find(provider => provider.code === 'openai')
@@ -59,54 +59,34 @@ test('models.dev Mock 预览无写入，新增默认停用并可批量启用', a
   const afterPreview = await backend.getAdminAPIModels()
   assert.equal(afterPreview.length, before.length)
   assert.equal(preview.counts.new, 1)
-  assert.ok(preview.counts.priceChanged >= 1)
+  assert.ok(preview.counts.sourceMissing >= 1)
 
-  const newItem = preview.items.find(item => item.modelKey === 'gpt-4.1-mini')
+  const newItem = preview.items.find(item => item.modelKey === 'gpt-5-mini')
   assert.equal(newItem?.status, 'new')
   const applied = await backend.applyAPIModelsDevSync([selectionFrom(newItem!)])
   assert.equal(applied.created, 1)
 
   const afterApply = await backend.getAdminAPIModels()
-  const imported = afterApply.find(model => model.modelKey === 'gpt-4.1-mini')
+  const imported = afterApply.find(model => model.modelKey === 'gpt-5-mini')
   assert.ok(imported)
   assert.equal(imported.active, false)
-  assert.equal(backend.getMockPublicAPIModels().some(model => model.name === 'gpt-4.1-mini'), false)
+  assert.equal(backend.getMockPublicAPIModels().some(model => model.name === 'gpt-5-mini'), false)
 
-  const activated = await backend.setAPIModelsBulkStatus({ modelIds: [imported.id], active: true })
-  assert.equal(activated.changed, 1)
-  assert.equal(backend.getMockPublicAPIModels().some(model => model.name === 'gpt-4.1-mini'), true)
+  const activated = await backend.applyAPIModelLifecycle(imported.id, imported.version, 'reactivate', '审核模型后启用')
+  assert.equal(activated.status, 'active')
+  assert.equal(backend.getMockPublicAPIModels().some(model => model.name === 'gpt-5-mini'), true)
 })
 
-test('models.dev Mock 改价保留原状态并拒绝过期预览', async () => {
+test('models.dev Mock 识别价格来源变化和来源缺失，不自动改写本地目录', async () => {
   const backend = await loadMockBackend()
   const providers = await backend.getAdminAPIModelProviders()
   const openai = providers.find(provider => provider.code === 'openai')
   assert.ok(openai)
 
   const preview = await backend.previewAPIModelsDevSync([openai.id])
-  const changed = preview.items.find(item => item.modelKey === 'gpt-5-mini')
-  assert.equal(changed?.status, 'price_changed')
-
-  const before = (await backend.getAdminAPIModels()).find(model => model.modelKey === 'gpt-5-mini')
-  assert.ok(before)
-
-  const tampered = selectionFrom(changed!, false)
-  tampered.outputPricePerMillion = '0.000001'
-  await assert.rejects(
-    () => backend.applyAPIModelsDevSync([tampered]),
-    /同步候选项已变化/,
-  )
-  const afterTamperedApply = (await backend.getAdminAPIModels()).find(model => model.modelKey === 'gpt-5-mini')
-  assert.equal(afterTamperedApply?.outputPricePerMillion, before.outputPricePerMillion)
-
-  await backend.applyAPIModelsDevSync([selectionFrom(changed!, false)])
-  const after = (await backend.getAdminAPIModels()).find(model => model.modelKey === 'gpt-5-mini')
-  assert.ok(after)
-  assert.equal(after.active, before.active)
-  assert.equal(after.outputPricePerMillion, '2.100000')
-
-  await assert.rejects(
-    () => backend.applyAPIModelsDevSync([selectionFrom(changed!, false)]),
-    /同步候选项已变化/,
-  )
+  assert.equal(preview.items.find(item => item.modelKey === 'gpt-4.1-mini')?.status, 'price_changed')
+  assert.equal(preview.items.find(item => item.modelKey === 'gpt-4.1')?.status, 'source_missing')
+  const before = await backend.getAdminAPIModels()
+  const after = await backend.getAdminAPIModels()
+  assert.deepEqual(after, before)
 })

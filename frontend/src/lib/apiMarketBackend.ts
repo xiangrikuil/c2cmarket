@@ -272,6 +272,7 @@ export type BackendAPIOrder = {
   status: string
 	disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
   selectedPackageId?: string
@@ -336,6 +337,19 @@ export type BackendAPIOrder = {
   version: number
   createdAt: string
   updatedAt: string
+}
+
+export type ApiOrderCatalogRiskHold = {
+  id: string
+  sourceType: 'api_model_provider' | 'api_model_catalog'
+  sourceId: string
+  status: 'active' | 'restored' | 'refund_pending' | 'dispute_opened'
+  reason: string
+  createdAt: string
+  resolvedBy?: string
+  resolvedAt?: string | null
+  resolutionNote?: string
+  version: number
 }
 
 type BackendAPIOrderPaymentInstructions = {
@@ -1446,6 +1460,7 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     status: apiOrderStatus(order.status),
 		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     disputeCaseId: order.disputeCaseId,
+    catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitleSnapshot,
     billingModeSnapshot: order.billingModeSnapshot,
     selectedPackageId: order.selectedPackageId,
@@ -1490,6 +1505,20 @@ export async function backendAdminAPIOrder(id: string): Promise<AdminApiOrderDet
   await ensureBackendSession('admin', true)
   const order = await backendRequest<BackendAPIOrder>(`/api/v1/admin/api-orders/${encodeURIComponent(id)}`)
   return mapBackendAdminAPIOrderDetail(order)
+}
+
+export async function backendResolveAdminAPIOrderCatalogRiskHold(
+  id: string,
+  action: 'restore' | 'refund-pending' | 'open-dispute',
+  resolutionNote: string,
+  version: number,
+): Promise<AdminApiOrderDetail> {
+  const response = await backendMutation<BackendAPIOrder>(
+    `/api/v1/admin/api-orders/${encodeURIComponent(id)}/catalog-risk-hold/${action}`,
+    { resolutionNote },
+    { idempotencyPrefix: `admin-api-order-catalog-risk-${action}`, ifMatch: version },
+  )
+  return mapBackendAdminAPIOrderDetail(response)
 }
 
 export async function backendAPIIntentById(id: string) {
@@ -1747,6 +1776,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     status: apiOrderStatus(order.status),
     disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     disputeCaseId: order.disputeCaseId,
+    catalogRiskHold: order.catalogRiskHold,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
     amountDecimal: order.amount,

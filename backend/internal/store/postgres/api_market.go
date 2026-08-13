@@ -777,6 +777,9 @@ func (s *Store) updateAPIServicePublicationInTx(ctx context.Context, tx pgx.Tx, 
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该操作。")
 	}
 	if action == "publish" || action == "resume" {
+		if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
+			return apimarket.Service{}, appErr
+		}
 		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
 			return apimarket.Service{}, appErr
 		}
@@ -1558,6 +1561,9 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if validateErr := validateCreateAPIPurchaseIntentForStore(input, service); validateErr != nil {
 		return apiintent.Intent{}, validateErr
 	}
+	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
+		return apiintent.Intent{}, appErr
+	}
 	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1589,6 +1595,41 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 		return apiintent.Intent{}, appErr
 	}
 	return intent, nil
+}
+
+func ensureAPIServiceCatalogActiveInTx(ctx context.Context, tx pgx.Tx, serviceID string) *domain.AppError {
+	rows, err := tx.Query(ctx, `
+		SELECT catalog.status, provider.status
+		FROM api_service_models service_model
+		JOIN api_model_catalog catalog ON catalog.id = service_model.model_catalog_id
+		JOIN api_model_providers provider ON provider.id = catalog.provider_id
+		WHERE service_model.api_service_id = $1
+		ORDER BY service_model.id
+		FOR SHARE OF service_model, catalog, provider
+	`, serviceID)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer rows.Close()
+
+	modelCount := 0
+	for rows.Next() {
+		var modelStatus, providerStatus string
+		if err := rows.Scan(&modelStatus, &providerStatus); err != nil {
+			return internalStoreError()
+		}
+		modelCount++
+		if modelStatus != "active" || providerStatus != "active" {
+			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "API model catalog unavailable", "关联模型目录已退役或被阻断，当前不能发布或创建新交易。")
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return internalStoreError()
+	}
+	if modelCount == 0 {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "API model catalog unavailable", "API 服务未配置可用模型，当前不能发布或创建新交易。")
+	}
+	return nil
 }
 
 func (s *Store) updateAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, input apiintent.ActionInput, now time.Time, action string) (apiintent.Intent, *domain.AppError) {

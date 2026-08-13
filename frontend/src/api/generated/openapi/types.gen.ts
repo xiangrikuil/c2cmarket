@@ -846,6 +846,23 @@ export type GrowthOverview = {
     retentionCohorts: Array<GrowthRetentionCohort>;
 };
 
+export type CatalogCoreKey = 'gpt' | 'claude' | 'grok';
+
+export type CatalogStatus = 'active' | 'deprecated' | 'blocked';
+
+export type CatalogEffectiveStatusSource = 'self' | 'parent';
+
+export type CatalogLifecycleRequest = {
+    reason: string;
+};
+
+export type CatalogLifecycleUnblockRequest = {
+    reason: string;
+    targetStatus: 'active' | 'deprecated';
+};
+
+export type CatalogLifecycleResource = ProductCategory | ProductPlan | ApiModelProvider | ApiModel;
+
 export type ProductCategory = {
     id: string;
     code: string;
@@ -856,6 +873,16 @@ export type ProductCategory = {
     iconDataUrl: string;
     sortOrder: number;
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
 };
 
 export type ProductCategoryList = {
@@ -870,7 +897,6 @@ export type ProductCategoryRequest = {
      * Empty string removes the icon; otherwise PNG or WebP data URL.
      */
     iconDataUrl: string;
-    active: boolean;
     sortOrder: number;
 };
 
@@ -900,6 +926,16 @@ export type ProductPlan = {
     quotaUnit: string;
     quotaPeriod: 'monthly';
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
     allowCustomVariant: boolean;
     sortOrder: number;
     createdAt: string;
@@ -927,27 +963,35 @@ export type ProductPlanRequest = {
     quotaLabel: string;
     quotaUnit: string;
     quotaPeriod: 'monthly';
-    active: boolean;
     allowCustomVariant: boolean;
     sortOrder: number;
 };
 
 export type ApiModelProvider = {
     id: string;
-    providerCategory: 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other';
+    providerCategory: string;
     code: string;
     displayName: string;
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
     sortOrder: number;
     createdAt: string;
     updatedAt: string;
 };
 
 export type ApiModelProviderRequest = {
-    providerCategory: 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other';
+    providerCategory: string;
     code: string;
     displayName: string;
-    active: boolean;
     sortOrder: number;
 };
 
@@ -959,13 +1003,23 @@ export type ApiModelProviderList = {
 export type ApiModel = {
     id: string;
     providerId: string;
-    providerCategory: 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other';
+    providerCategory: string;
     providerCode: string;
     provider: string;
     providerActive: boolean;
     modelKey: string;
     capabilities: Array<'text' | 'chat' | 'vision' | 'image_generation' | 'image_edit' | 'reasoning'>;
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
     currentPriceVersionId?: string;
     currentPriceSourceUrl?: string;
     currentPriceSourceVersion?: string;
@@ -996,7 +1050,6 @@ export type ApiModelRequest = {
     outputTokenPrice?: string;
     sourceUrl?: string;
     sourceVersion?: string;
-    active: boolean;
     sortOrder: number;
 };
 
@@ -1085,11 +1138,6 @@ export type ApiModelSyncSelection = {
 
 export type ApiModelSyncApplyRequest = {
     items: Array<ApiModelSyncSelection>;
-};
-
-export type ApiModelBulkStatusRequest = {
-    modelIds: Array<string>;
-    active: boolean;
 };
 
 export type ApiModelBulkMutationResult = {
@@ -2801,6 +2849,24 @@ export type ApiOrder = {
     version: number;
     createdAt: string;
     updatedAt: string;
+    catalogRiskHold?: ApiOrderCatalogRiskHold;
+};
+
+export type ApiOrderCatalogRiskHold = {
+    id: string;
+    sourceType: 'api_model_provider' | 'api_model_catalog';
+    sourceId: string;
+    status: 'active' | 'restored' | 'refund_pending' | 'dispute_opened';
+    reason: string;
+    createdAt: string;
+    resolvedBy?: string;
+    resolvedAt?: string | null;
+    resolutionNote?: string;
+    version: number;
+};
+
+export type ApiOrderCatalogRiskHoldActionRequest = {
+    resolutionNote: string;
 };
 
 export type ApiOrderPaymentInstructions = {
@@ -5890,7 +5956,7 @@ export type ListProductPlansData = {
     path?: never;
     query?: {
         /**
-         * Optional product category code such as gpt, claude, cursor, gemini, perplexity, or other.
+         * Optional database-driven product category code, for example gpt, claude, grok, or an administrator-defined code.
          */
         category?: string;
     };
@@ -12097,6 +12163,147 @@ export type GetAdminApiOrderResponses = {
 
 export type GetAdminApiOrderResponse = GetAdminApiOrderResponses[keyof GetAdminApiOrderResponses];
 
+export type RestoreAdminApiOrderCatalogRiskHoldData = {
+    body: ApiOrderCatalogRiskHoldActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-orders/{id}/catalog-risk-hold/restore';
+};
+
+export type RestoreAdminApiOrderCatalogRiskHoldErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RestoreAdminApiOrderCatalogRiskHoldError = RestoreAdminApiOrderCatalogRiskHoldErrors[keyof RestoreAdminApiOrderCatalogRiskHoldErrors];
+
+export type RestoreAdminApiOrderCatalogRiskHoldResponses = {
+    /**
+     * Hold marked restored; the order main status is unchanged.
+     */
+    200: ApiOrder;
+};
+
+export type RestoreAdminApiOrderCatalogRiskHoldResponse = RestoreAdminApiOrderCatalogRiskHoldResponses[keyof RestoreAdminApiOrderCatalogRiskHoldResponses];
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingData = {
+    body: ApiOrderCatalogRiskHoldActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-orders/{id}/catalog-risk-hold/refund-pending';
+};
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingError = MarkAdminApiOrderCatalogRiskRefundPendingErrors[keyof MarkAdminApiOrderCatalogRiskRefundPendingErrors];
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingResponses = {
+    /**
+     * Hold marked refund_pending; no refund or order cancellation is performed.
+     */
+    200: ApiOrder;
+};
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingResponse = MarkAdminApiOrderCatalogRiskRefundPendingResponses[keyof MarkAdminApiOrderCatalogRiskRefundPendingResponses];
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedData = {
+    body: ApiOrderCatalogRiskHoldActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-orders/{id}/catalog-risk-hold/open-dispute';
+};
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedError = MarkAdminApiOrderCatalogRiskDisputeOpenedErrors[keyof MarkAdminApiOrderCatalogRiskDisputeOpenedErrors];
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedResponses = {
+    /**
+     * Hold marked dispute_opened; participants continue dispute handling through the existing order dispute actions.
+     */
+    200: ApiOrder;
+};
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedResponse = MarkAdminApiOrderCatalogRiskDisputeOpenedResponses[keyof MarkAdminApiOrderCatalogRiskDisputeOpenedResponses];
+
 export type GetAdminStudentRegistrationData = {
     body?: never;
     path?: never;
@@ -13719,7 +13926,7 @@ export type ListAdminProductPlansData = {
     path?: never;
     query?: {
         /**
-         * Optional product category code such as gpt, claude, cursor, gemini, perplexity, or other.
+         * Optional database-driven product category code, for example gpt, claude, grok, or an administrator-defined code.
          */
         category?: string;
     };
@@ -13905,16 +14112,20 @@ export type UpdateAdminProductCategoryResponses = {
 
 export type UpdateAdminProductCategoryResponse = UpdateAdminProductCategoryResponses[keyof UpdateAdminProductCategoryResponses];
 
-export type ActivateAdminProductCategoryData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductCategoryData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-categories/{id}/activate';
+    url: '/api/v1/admin/product-categories/{id}/deprecate';
 };
 
-export type ActivateAdminProductCategoryErrors = {
+export type DeprecateAdminProductCategoryErrors = {
     /**
      * Problem Details error.
      */
@@ -13923,29 +14134,49 @@ export type ActivateAdminProductCategoryErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminProductCategoryError = ActivateAdminProductCategoryErrors[keyof ActivateAdminProductCategoryErrors];
-
-export type ActivateAdminProductCategoryResponses = {
     /**
-     * Product category activated.
+     * Problem Details error.
      */
-    200: ProductCategory;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminProductCategoryResponse = ActivateAdminProductCategoryResponses[keyof ActivateAdminProductCategoryResponses];
+export type DeprecateAdminProductCategoryError = DeprecateAdminProductCategoryErrors[keyof DeprecateAdminProductCategoryErrors];
 
-export type DeactivateAdminProductCategoryData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminProductCategoryResponse = DeprecateAdminProductCategoryResponses[keyof DeprecateAdminProductCategoryResponses];
+
+export type BlockAdminProductCategoryData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-categories/{id}/deactivate';
+    url: '/api/v1/admin/product-categories/{id}/block';
 };
 
-export type DeactivateAdminProductCategoryErrors = {
+export type BlockAdminProductCategoryErrors = {
     /**
      * Problem Details error.
      */
@@ -13954,18 +14185,136 @@ export type DeactivateAdminProductCategoryErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminProductCategoryError = DeactivateAdminProductCategoryErrors[keyof DeactivateAdminProductCategoryErrors];
-
-export type DeactivateAdminProductCategoryResponses = {
     /**
-     * Product category deactivated. The row is retained for historical references.
+     * Problem Details error.
      */
-    200: ProductCategory;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminProductCategoryResponse = DeactivateAdminProductCategoryResponses[keyof DeactivateAdminProductCategoryResponses];
+export type BlockAdminProductCategoryError = BlockAdminProductCategoryErrors[keyof BlockAdminProductCategoryErrors];
+
+export type BlockAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminProductCategoryResponse = BlockAdminProductCategoryResponses[keyof BlockAdminProductCategoryResponses];
+
+export type ReactivateAdminProductCategoryData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-categories/{id}/reactivate';
+};
+
+export type ReactivateAdminProductCategoryErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminProductCategoryError = ReactivateAdminProductCategoryErrors[keyof ReactivateAdminProductCategoryErrors];
+
+export type ReactivateAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminProductCategoryResponse = ReactivateAdminProductCategoryResponses[keyof ReactivateAdminProductCategoryResponses];
+
+export type UnblockAdminProductCategoryData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-categories/{id}/unblock';
+};
+
+export type UnblockAdminProductCategoryErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminProductCategoryError = UnblockAdminProductCategoryErrors[keyof UnblockAdminProductCategoryErrors];
+
+export type UnblockAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminProductCategoryResponse = UnblockAdminProductCategoryResponses[keyof UnblockAdminProductCategoryResponses];
 
 export type GetAdminProductPlanData = {
     body?: never;
@@ -14037,16 +14386,20 @@ export type UpdateAdminProductPlanResponses = {
 
 export type UpdateAdminProductPlanResponse = UpdateAdminProductPlanResponses[keyof UpdateAdminProductPlanResponses];
 
-export type ActivateAdminProductPlanData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductPlanData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-plans/{id}/activate';
+    url: '/api/v1/admin/product-plans/{id}/deprecate';
 };
 
-export type ActivateAdminProductPlanErrors = {
+export type DeprecateAdminProductPlanErrors = {
     /**
      * Problem Details error.
      */
@@ -14055,29 +14408,49 @@ export type ActivateAdminProductPlanErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminProductPlanError = ActivateAdminProductPlanErrors[keyof ActivateAdminProductPlanErrors];
-
-export type ActivateAdminProductPlanResponses = {
     /**
-     * Product plan activated.
+     * Problem Details error.
      */
-    200: ProductPlan;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminProductPlanResponse = ActivateAdminProductPlanResponses[keyof ActivateAdminProductPlanResponses];
+export type DeprecateAdminProductPlanError = DeprecateAdminProductPlanErrors[keyof DeprecateAdminProductPlanErrors];
 
-export type DeactivateAdminProductPlanData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminProductPlanResponse = DeprecateAdminProductPlanResponses[keyof DeprecateAdminProductPlanResponses];
+
+export type BlockAdminProductPlanData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-plans/{id}/deactivate';
+    url: '/api/v1/admin/product-plans/{id}/block';
 };
 
-export type DeactivateAdminProductPlanErrors = {
+export type BlockAdminProductPlanErrors = {
     /**
      * Problem Details error.
      */
@@ -14086,18 +14459,136 @@ export type DeactivateAdminProductPlanErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminProductPlanError = DeactivateAdminProductPlanErrors[keyof DeactivateAdminProductPlanErrors];
-
-export type DeactivateAdminProductPlanResponses = {
     /**
-     * Product plan deactivated. The row is retained for historical references.
+     * Problem Details error.
      */
-    200: ProductPlan;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminProductPlanResponse = DeactivateAdminProductPlanResponses[keyof DeactivateAdminProductPlanResponses];
+export type BlockAdminProductPlanError = BlockAdminProductPlanErrors[keyof BlockAdminProductPlanErrors];
+
+export type BlockAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminProductPlanResponse = BlockAdminProductPlanResponses[keyof BlockAdminProductPlanResponses];
+
+export type ReactivateAdminProductPlanData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-plans/{id}/reactivate';
+};
+
+export type ReactivateAdminProductPlanErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminProductPlanError = ReactivateAdminProductPlanErrors[keyof ReactivateAdminProductPlanErrors];
+
+export type ReactivateAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminProductPlanResponse = ReactivateAdminProductPlanResponses[keyof ReactivateAdminProductPlanResponses];
+
+export type UnblockAdminProductPlanData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-plans/{id}/unblock';
+};
+
+export type UnblockAdminProductPlanErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminProductPlanError = UnblockAdminProductPlanErrors[keyof UnblockAdminProductPlanErrors];
+
+export type UnblockAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminProductPlanResponse = UnblockAdminProductPlanResponses[keyof UnblockAdminProductPlanResponses];
 
 export type ListAdminApiModelProvidersData = {
     body?: never;
@@ -14227,16 +14718,20 @@ export type UpdateAdminApiModelProviderResponses = {
 
 export type UpdateAdminApiModelProviderResponse = UpdateAdminApiModelProviderResponses[keyof UpdateAdminApiModelProviderResponses];
 
-export type ActivateAdminApiModelProviderData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelProviderData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-model-providers/{id}/activate';
+    url: '/api/v1/admin/api-model-providers/{id}/deprecate';
 };
 
-export type ActivateAdminApiModelProviderErrors = {
+export type DeprecateAdminApiModelProviderErrors = {
     /**
      * Problem Details error.
      */
@@ -14245,29 +14740,49 @@ export type ActivateAdminApiModelProviderErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminApiModelProviderError = ActivateAdminApiModelProviderErrors[keyof ActivateAdminApiModelProviderErrors];
-
-export type ActivateAdminApiModelProviderResponses = {
     /**
-     * API model provider activated.
+     * Problem Details error.
      */
-    200: ApiModelProvider;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminApiModelProviderResponse = ActivateAdminApiModelProviderResponses[keyof ActivateAdminApiModelProviderResponses];
+export type DeprecateAdminApiModelProviderError = DeprecateAdminApiModelProviderErrors[keyof DeprecateAdminApiModelProviderErrors];
 
-export type DeactivateAdminApiModelProviderData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminApiModelProviderResponse = DeprecateAdminApiModelProviderResponses[keyof DeprecateAdminApiModelProviderResponses];
+
+export type BlockAdminApiModelProviderData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-model-providers/{id}/deactivate';
+    url: '/api/v1/admin/api-model-providers/{id}/block';
 };
 
-export type DeactivateAdminApiModelProviderErrors = {
+export type BlockAdminApiModelProviderErrors = {
     /**
      * Problem Details error.
      */
@@ -14276,18 +14791,136 @@ export type DeactivateAdminApiModelProviderErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminApiModelProviderError = DeactivateAdminApiModelProviderErrors[keyof DeactivateAdminApiModelProviderErrors];
-
-export type DeactivateAdminApiModelProviderResponses = {
     /**
-     * API model provider deactivated. The row is retained for model catalog references.
+     * Problem Details error.
      */
-    200: ApiModelProvider;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminApiModelProviderResponse = DeactivateAdminApiModelProviderResponses[keyof DeactivateAdminApiModelProviderResponses];
+export type BlockAdminApiModelProviderError = BlockAdminApiModelProviderErrors[keyof BlockAdminApiModelProviderErrors];
+
+export type BlockAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminApiModelProviderResponse = BlockAdminApiModelProviderResponses[keyof BlockAdminApiModelProviderResponses];
+
+export type ReactivateAdminApiModelProviderData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-model-providers/{id}/reactivate';
+};
+
+export type ReactivateAdminApiModelProviderErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminApiModelProviderError = ReactivateAdminApiModelProviderErrors[keyof ReactivateAdminApiModelProviderErrors];
+
+export type ReactivateAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminApiModelProviderResponse = ReactivateAdminApiModelProviderResponses[keyof ReactivateAdminApiModelProviderResponses];
+
+export type UnblockAdminApiModelProviderData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-model-providers/{id}/unblock';
+};
+
+export type UnblockAdminApiModelProviderErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminApiModelProviderError = UnblockAdminApiModelProviderErrors[keyof UnblockAdminApiModelProviderErrors];
+
+export type UnblockAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminApiModelProviderResponse = UnblockAdminApiModelProviderResponses[keyof UnblockAdminApiModelProviderResponses];
 
 export type GetAdminApiProbeLatencyCalibrationData = {
     body?: never;
@@ -14547,50 +15180,6 @@ export type ApplyAdminApiModelModelsDevSyncResponses = {
 
 export type ApplyAdminApiModelModelsDevSyncResponse = ApplyAdminApiModelModelsDevSyncResponses[keyof ApplyAdminApiModelModelsDevSyncResponses];
 
-export type SetAdminApiModelsBulkStatusData = {
-    body: ApiModelBulkStatusRequest;
-    headers: {
-        'Idempotency-Key': string;
-    };
-    path?: never;
-    query?: never;
-    url: '/api/v1/admin/api-models/bulk-status';
-};
-
-export type SetAdminApiModelsBulkStatusErrors = {
-    /**
-     * Problem Details error.
-     */
-    400: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-};
-
-export type SetAdminApiModelsBulkStatusError = SetAdminApiModelsBulkStatusErrors[keyof SetAdminApiModelsBulkStatusErrors];
-
-export type SetAdminApiModelsBulkStatusResponses = {
-    /**
-     * Selected models activated or deactivated atomically.
-     */
-    200: ApiModelBulkMutationResult;
-};
-
-export type SetAdminApiModelsBulkStatusResponse = SetAdminApiModelsBulkStatusResponses[keyof SetAdminApiModelsBulkStatusResponses];
-
 export type GetAdminApiModelData = {
     body?: never;
     path: {
@@ -14661,16 +15250,20 @@ export type UpdateAdminApiModelResponses = {
 
 export type UpdateAdminApiModelResponse = UpdateAdminApiModelResponses[keyof UpdateAdminApiModelResponses];
 
-export type ActivateAdminApiModelData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-models/{id}/activate';
+    url: '/api/v1/admin/api-models/{id}/deprecate';
 };
 
-export type ActivateAdminApiModelErrors = {
+export type DeprecateAdminApiModelErrors = {
     /**
      * Problem Details error.
      */
@@ -14679,29 +15272,49 @@ export type ActivateAdminApiModelErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminApiModelError = ActivateAdminApiModelErrors[keyof ActivateAdminApiModelErrors];
-
-export type ActivateAdminApiModelResponses = {
     /**
-     * API model activated.
+     * Problem Details error.
      */
-    200: ApiModel;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminApiModelResponse = ActivateAdminApiModelResponses[keyof ActivateAdminApiModelResponses];
+export type DeprecateAdminApiModelError = DeprecateAdminApiModelErrors[keyof DeprecateAdminApiModelErrors];
 
-export type DeactivateAdminApiModelData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminApiModelResponse = DeprecateAdminApiModelResponses[keyof DeprecateAdminApiModelResponses];
+
+export type BlockAdminApiModelData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-models/{id}/deactivate';
+    url: '/api/v1/admin/api-models/{id}/block';
 };
 
-export type DeactivateAdminApiModelErrors = {
+export type BlockAdminApiModelErrors = {
     /**
      * Problem Details error.
      */
@@ -14710,18 +15323,136 @@ export type DeactivateAdminApiModelErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminApiModelError = DeactivateAdminApiModelErrors[keyof DeactivateAdminApiModelErrors];
-
-export type DeactivateAdminApiModelResponses = {
     /**
-     * API model deactivated. The row is retained for historical API service model snapshots.
+     * Problem Details error.
      */
-    200: ApiModel;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminApiModelResponse = DeactivateAdminApiModelResponses[keyof DeactivateAdminApiModelResponses];
+export type BlockAdminApiModelError = BlockAdminApiModelErrors[keyof BlockAdminApiModelErrors];
+
+export type BlockAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminApiModelResponse = BlockAdminApiModelResponses[keyof BlockAdminApiModelResponses];
+
+export type ReactivateAdminApiModelData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-models/{id}/reactivate';
+};
+
+export type ReactivateAdminApiModelErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminApiModelError = ReactivateAdminApiModelErrors[keyof ReactivateAdminApiModelErrors];
+
+export type ReactivateAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminApiModelResponse = ReactivateAdminApiModelResponses[keyof ReactivateAdminApiModelResponses];
+
+export type UnblockAdminApiModelData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-models/{id}/unblock';
+};
+
+export type UnblockAdminApiModelErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminApiModelError = UnblockAdminApiModelErrors[keyof UnblockAdminApiModelErrors];
+
+export type UnblockAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminApiModelResponse = UnblockAdminApiModelResponses[keyof UnblockAdminApiModelResponses];
 
 export type ListAdminModelAuditTargetsData = {
     body?: never;

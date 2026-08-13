@@ -460,9 +460,11 @@ func (s *Store) updateCarpoolListingInTx(ctx context.Context, tx pgx.Tx, input c
 	var planQuotaUnit string
 	var planQuotaPeriod string
 	err = tx.QueryRow(ctx, `
-		SELECT policy_version, COALESCE(risk_notice_code, ''), risk_ack_required, quota_label, quota_unit, quota_period
-		FROM product_plans
-		WHERE id = $1 AND active = true
+		SELECT plan.policy_version, COALESCE(plan.risk_notice_code, ''), plan.risk_ack_required,
+		       plan.quota_label, plan.quota_unit, plan.quota_period
+		FROM product_plans plan
+		JOIN product_categories category ON category.id = plan.category_id
+		WHERE plan.id = $1 AND plan.status = 'active' AND category.status = 'active'
 	`, input.ProductPlanID).Scan(&planPolicyVersion, &planRiskNoticeCode, &planRiskAckRequired, &planQuotaLabel, &planQuotaUnit, &planQuotaPeriod)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Product plan not found", "产品套餐不存在。")
@@ -832,11 +834,30 @@ func createCarpoolApplicationMutationInTx(ctx context.Context, tx pgx.Tx, applic
 	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。"); appErr != nil {
 		return appErr
 	}
+	var listingStatus, lockedPlanID, planStatus, categoryStatus string
+	var lockedOwnerID string
+	err := tx.QueryRow(ctx, `
+		SELECT listing.status, listing.owner_user_id::text, plan.id::text, plan.status, category.status
+		FROM carpool_listings listing
+		JOIN product_plans plan ON plan.id = listing.product_plan_id
+		JOIN product_categories category ON category.id = plan.category_id
+		WHERE listing.id = $1
+		FOR SHARE OF listing, plan, category
+	`, application.CarpoolListingID).Scan(&listingStatus, &lockedOwnerID, &lockedPlanID, &planStatus, &categoryStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Carpool catalog unavailable", "车源或关联目录已不可用，请刷新后重试。")
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	if listingStatus != carpool.ListingStatusActive || lockedOwnerID != application.OwnerUserID || lockedPlanID != application.ProductPlanID || planStatus != "active" || categoryStatus != "active" {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Carpool catalog unavailable", "车源或关联目录已退役、被阻断或发生变化，当前不能提交申请。")
+	}
 	if appErr := expireCarpoolApplicationsForBuyerInTx(ctx, tx, application.CarpoolListingID, application.BuyerUserID, application.RequestID, application.CreatedAt); appErr != nil {
 		return appErr
 	}
 	var activeMembershipExists bool
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1
 			FROM carpool_memberships
@@ -2495,7 +2516,12 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 
 func ensureCarpoolPlanAllowedForPublish(ctx context.Context, q queryer, productPlanID string) *domain.AppError {
 	var publishPolicy string
-	err := q.QueryRow(ctx, `SELECT publish_policy FROM product_plans WHERE id = $1 AND active = true`, productPlanID).Scan(&publishPolicy)
+	err := q.QueryRow(ctx, `
+		SELECT plan.publish_policy
+		FROM product_plans plan
+		JOIN product_categories category ON category.id = plan.category_id
+		WHERE plan.id = $1 AND plan.status = 'active' AND category.status = 'active'
+	`, productPlanID).Scan(&publishPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Product plan not found", "产品套餐不存在。")
 	}

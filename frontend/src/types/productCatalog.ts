@@ -1,6 +1,24 @@
 export type ProductCategoryCode = string
 
-export type ProductProviderCode = 'openai' | 'anthropic' | 'other' | string
+export type ProductProviderCode = string
+
+export type CatalogStatus = 'active' | 'deprecated' | 'blocked'
+export type CatalogLifecycleAction = 'deprecate' | 'block' | 'reactivate' | 'unblock'
+export type CatalogCoreKey = 'gpt' | 'claude' | 'grok'
+
+export type CatalogLifecycleFields = {
+  coreKey?: CatalogCoreKey
+  status: CatalogStatus
+  effectiveStatus: CatalogStatus
+  effectiveStatusSource: 'self' | 'parent'
+  statusChangedAt: string
+  statusChangedBy?: string
+  statusReason?: string
+  version: number
+  identityLocked: boolean
+  identityLockReason?: string
+  active: boolean
+}
 
 export type ProductPublishPolicy = 'allowed' | 'info_only' | 'blocked'
 
@@ -16,7 +34,7 @@ export type ProviderPolicyStatus = 'known_restricted' | 'possibly_restricted' | 
 export type ProductRiskLevel = 'normal' | 'elevated' | 'high'
 export type ProductQuotaPeriod = 'monthly'
 
-export type ProductCategory = {
+export type ProductCategory = CatalogLifecycleFields & {
   id: string
   code: ProductCategoryCode
   displayName: string
@@ -30,10 +48,9 @@ export type ProductCategoryInput = {
   displayName: string
   iconDataUrl: string
   sortOrder: number
-  active: boolean
 }
 
-export type ProductPlan = {
+export type ProductPlan = CatalogLifecycleFields & {
   id: string
   categoryId: string
   categoryCode: ProductCategoryCode
@@ -52,7 +69,6 @@ export type ProductPlan = {
   quotaLabel: string
   quotaUnit: string
   quotaPeriod: ProductQuotaPeriod
-  active: boolean
   allowCustomVariant: boolean
   sortOrder: number
   createdAt: string
@@ -75,7 +91,6 @@ export type ProductPlanInput = {
   quotaLabel: string
   quotaUnit: string
   quotaPeriod: ProductQuotaPeriod
-  active: boolean
   allowCustomVariant: boolean
   sortOrder: number
 }

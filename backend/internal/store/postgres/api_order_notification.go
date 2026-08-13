@@ -116,6 +116,39 @@ func apiOrderNotificationBody(order apiorder.Order, body string) string {
 	return "订单 " + order.OrderNo + "：" + body
 }
 
+func insertAPIOrderCatalogRiskNotificationInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, holdID, eventType string, now time.Time) *domain.AppError {
+	title := "订单目录风险暂停已处置"
+	body := "管理员已记录目录风险暂停处置结果，请查看订单状态。"
+	if eventType == apiorder.EventCatalogRiskHoldCreated {
+		title = "订单因目录风险暂停"
+		body = "关联模型目录被紧急阻断，付款、核款、交付、确认完成和自动超时已暂停；仍可查看证据或发起纠纷。"
+	}
+	recipients := []struct {
+		userID string
+		url    string
+	}{
+		{userID: order.BuyerUserID, url: "/my/api-orders/" + order.ID},
+		{userID: order.SellerUserID, url: "/merchant/api-orders/" + order.ID},
+	}
+	for _, recipient := range recipients {
+		if strings.TrimSpace(recipient.userID) == "" {
+			continue
+		}
+		dedupeKey := "api_order_catalog_risk_hold:" + holdID + ":" + eventType + ":" + recipient.userID
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO notifications (
+				user_id, type, title, body, target_type, target_id, target_url,
+				source_event_type, source_event_id, dedupe_key, created_at
+			) VALUES ($1, 'api_order', $2, $3, 'api_order', $4, $5, $6, $7, $8, $9)
+			ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+		`, recipient.userID, title, apiOrderNotificationBody(order, body), order.ID, recipient.url,
+			eventType, holdID, dedupeKey, now); err != nil {
+			return internalStoreError()
+		}
+	}
+	return nil
+}
+
 func insertAPIOrderDomainEventAndNotificationInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, actorUserID, eventType, requestID string, now time.Time) *domain.AppError {
 	spec, ok := apiOrderNotificationFor(order, actorUserID, eventType)
 	requestID = strings.TrimSpace(requestID)

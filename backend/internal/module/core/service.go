@@ -473,10 +473,6 @@ func (s *Service) UpdateProductCategory(ctx context.Context, user User, category
 	return s.catalogService.UpdateProductCategory(ctx, user, categoryID, input)
 }
 
-func (s *Service) SetProductCategoryActive(ctx context.Context, user User, categoryID string, active bool) (ProductCategory, *domain.AppError) {
-	return s.catalogService.SetProductCategoryActive(ctx, user, categoryID, active)
-}
-
 func (s *Service) ProductPlans(ctx context.Context, categoryCode string) ([]ProductPlan, *domain.AppError) {
 	return s.catalogService.ProductPlans(ctx, categoryCode)
 }
@@ -501,10 +497,6 @@ func (s *Service) UpdateProductPlan(ctx context.Context, user User, planID strin
 	return s.catalogService.UpdateProductPlan(ctx, user, planID, input)
 }
 
-func (s *Service) SetProductPlanActive(ctx context.Context, user User, planID string, active bool) (ProductPlan, *domain.AppError) {
-	return s.catalogService.SetProductPlanActive(ctx, user, planID, active)
-}
-
 func (s *Service) AdminAPIModelProviders(ctx context.Context, user User) ([]APIModelProvider, *domain.AppError) {
 	return s.catalogService.AdminAPIModelProviders(ctx, user)
 }
@@ -519,10 +511,6 @@ func (s *Service) CreateAPIModelProvider(ctx context.Context, user User, input A
 
 func (s *Service) UpdateAPIModelProvider(ctx context.Context, user User, providerID string, input APIModelProviderInput) (APIModelProvider, *domain.AppError) {
 	return s.catalogService.UpdateAPIModelProvider(ctx, user, providerID, input)
-}
-
-func (s *Service) SetAPIModelProviderActive(ctx context.Context, user User, providerID string, active bool) (APIModelProvider, *domain.AppError) {
-	return s.catalogService.SetAPIModelProviderActive(ctx, user, providerID, active)
 }
 
 func (s *Service) APIModels(ctx context.Context) ([]APIModelCatalog, *domain.AppError) {
@@ -549,20 +537,15 @@ func (s *Service) UpdateAPIModel(ctx context.Context, user User, modelID string,
 	return s.catalogService.UpdateAPIModel(ctx, user, modelID, input)
 }
 
-func (s *Service) SetAPIModelActive(ctx context.Context, user User, modelID string, active bool) (APIModelCatalog, *domain.AppError) {
-	return s.catalogService.SetAPIModelActive(ctx, user, modelID, active)
+func (s *Service) ApplyCatalogLifecycleWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input catalog.LifecycleActionInput, buildCompletion catalog.LifecycleCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.catalogService.ApplyCatalogLifecycleWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
-
 func (s *Service) PreviewAPIModelSync(ctx context.Context, user User, input catalog.APIModelSyncPreviewInput) (catalog.APIModelSyncPreview, *domain.AppError) {
 	return s.catalogService.PreviewAPIModelSync(ctx, user, input)
 }
 
 func (s *Service) ApplyAPIModelSyncWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input catalog.APIModelSyncApplyInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
 	return s.catalogService.ApplyAPIModelSyncWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) SetAPIModelsActiveWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input catalog.APIModelBulkStatusInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
-	return s.catalogService.SetAPIModelsActiveWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) ConfigureModelsDevSource(source modelsdev.Source) {
@@ -1391,6 +1374,10 @@ func (s *Service) AdminAPIOrder(ctx context.Context, user User, orderID string) 
 		return APIOrder{}, appErr
 	}
 	return orders[0], nil
+}
+
+func (s *Service) ResolveAPIOrderCatalogRiskHoldWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiorder.CatalogRiskHoldActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.apiOrder.ResolveCatalogRiskHoldWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) OwnerAPIOrder(ctx context.Context, user User, orderID string) (APIOrder, *domain.AppError) {

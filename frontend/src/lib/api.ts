@@ -178,6 +178,7 @@ import {
   backendAPIQuotaBatchAction,
   backendAPIQuotaCredentialSummary,
   backendAdminAPIOrder,
+  backendResolveAdminAPIOrderCatalogRiskHold,
   backendAdminAPIOrderRows,
   backendAdminAPIOrderRowsPage,
   backendAPIServiceById,
@@ -645,6 +646,7 @@ export type ApiOrder = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitle: string
   amount: number
   amountDecimal?: string
@@ -697,6 +699,19 @@ export type ApiOrder = {
   updatedAt: string
 }
 
+export type ApiOrderCatalogRiskHold = {
+  id: string
+  sourceType: 'api_model_provider' | 'api_model_catalog'
+  sourceId: string
+  status: 'active' | 'restored' | 'refund_pending' | 'dispute_opened'
+  reason: string
+  createdAt: string
+  resolvedBy?: string
+  resolvedAt?: string | null
+  resolutionNote?: string
+  version: number
+}
+
 export type AdminApiOrderDetail = {
   id: string
   purchaseKind: ApiOrderPurchaseKind
@@ -707,6 +722,7 @@ export type AdminApiOrderDetail = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
   selectedPackageId?: string
@@ -2483,7 +2499,7 @@ export async function getCarpools() {
 }
 
 export type CarpoolListPageFilters = CarpoolPageFilters & {
-  category?: ProductCategoryKey
+  category?: string
   plan?: string
   openingMethod?: string
 }
@@ -3898,6 +3914,7 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     status: order.status,
     disputeStatus: order.disputeStatus,
     disputeCaseId: order.disputeCaseId,
+    catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitle,
     selectedPackageId: order.selectedPackageId,
     selectedPackageSnapshot: order.packageSnapshot ? JSON.stringify(order.packageSnapshot) : undefined,
@@ -3929,6 +3946,29 @@ export async function getAdminApiOrderById(id: string): Promise<AdminApiOrderDet
   await wait()
   materializeMockApiOrderReviews()
   return clone(projectMockAdminApiOrder(findApiOrder(id)))
+}
+
+export async function resolveAdminApiOrderCatalogRiskHold(
+  id: string,
+  action: 'restore' | 'refund-pending' | 'open-dispute',
+  resolutionNote: string,
+  version: number,
+): Promise<AdminApiOrderDetail> {
+  if (shouldUseRealBackend()) return backendResolveAdminAPIOrderCatalogRiskHold(id, action, resolutionNote, version)
+  await wait()
+  const order = findApiOrder(id)
+  if (!order.catalogRiskHold || order.catalogRiskHold.status !== 'active' || order.catalogRiskHold.version !== version) {
+    throw new Error('该订单没有可处置的目录风险暂停，或版本已变化。')
+  }
+  order.catalogRiskHold = {
+    ...order.catalogRiskHold,
+    status: action === 'restore' ? 'restored' : action === 'refund-pending' ? 'refund_pending' : 'dispute_opened',
+    resolutionNote: resolutionNote.trim(),
+    resolvedAt: new Date().toISOString(),
+    version: version + 1,
+  }
+  persistApiOrderStore()
+  return clone(projectMockAdminApiOrder(order))
 }
 
 function withAdminRowLinks(rows: AdminRow[]) {
@@ -4591,6 +4631,13 @@ function apiDeliveryModes(value: unknown): ApiDeliveryMode[] {
   return modes.length ? modes : ['api_key_endpoint']
 }
 
+function apiModelProviderLabel(provider: string | undefined) {
+  if (provider === 'openai') return 'OpenAI'
+  if (provider === 'anthropic') return 'Anthropic'
+  if (provider === 'xai') return 'xAI'
+  return provider || '未标注供应商'
+}
+
 function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaultMultiplier: number): ApiService['modelPriceRows'] {
   const selected = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   return selected
@@ -4600,7 +4647,7 @@ function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaul
       return {
         modelId: model?.id ?? item.modelId ?? 'custom-model',
         modelName: model?.name ?? item.modelId ?? '自定义模型',
-        provider: model?.provider === 'openai' ? 'OpenAI' : model?.provider === 'anthropic' ? 'Anthropic' : 'Other',
+        provider: apiModelProviderLabel(model?.provider),
         officialInputPricePerMillion: model?.officialInputPricePerMillion ?? 0,
         officialCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion ?? null,
         officialOutputPricePerMillion: model?.officialOutputPricePerMillion ?? 0,

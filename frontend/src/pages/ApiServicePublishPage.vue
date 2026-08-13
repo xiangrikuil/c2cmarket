@@ -44,7 +44,7 @@ import {
   merchantNoteTemplate,
   modelProviderCategory,
   paymentMethodLabels,
-  providerCategoryLabels,
+  providerCategoryLabel,
   selectedCatalogItems,
   sub2ApiPricingPolicy,
 } from '@/components/api-service-publish/utils'
@@ -192,7 +192,7 @@ const probeConnectionError = computed(() => probeConnectionsQuery.error.value
   : '')
 const incompatibleSelectedModels = computed(() => selectedModels.value.filter(item => modelProviderCategory(item.provider) !== form.providerCategory))
 const missingSelectedModels = computed(() => form.selectedModels.filter(item => item.enabled && !catalogById.value.has(item.modelId)))
-const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.value ? providerCategoryLabels[pendingProviderCategory.value] : '')
+const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.value ? providerCategoryLabel(pendingProviderCategory.value) : '')
 const quotaForMinimumPurchase = computed(() => formatUsdQuotaForCny(form.cnyPerUsdCredit, form.minimumPurchaseCny ?? 0))
 const enabledPackages = computed(() => form.packages.filter(item => item.enabled))
 const enabledPayments = computed(() => enabledPaymentOptions(form))
@@ -558,7 +558,7 @@ const stepTwoSummary = computed(() => {
   const multiplier = form.distributionSystem === 'sub2api' ? '1.00x' : `${form.defaultMultiplier.toFixed(2)}x`
   const modelCount = selectedModels.value.length
   const connection = selectedProbeConnection.value?.name ?? '待选择连接'
-  return `${form.distributionSystem === 'sub2api' ? 'Sub2API' : '其他 API 接入'} · ${connection} · ${providerCategoryLabels[form.providerCategory]} · ${modelCount ? `${modelCount} 个模型` : '待选择模型'} · 统一倍率 ${multiplier}`
+  return `${form.distributionSystem === 'sub2api' ? 'Sub2API' : '其他 API 接入'} · ${connection} · ${providerCategoryLabel(form.providerCategory)} · ${modelCount ? `${modelCount} 个模型` : '待选择模型'} · 统一倍率 ${multiplier}`
 })
 const stepThreeSummary = computed(() => `${paymentSummary.value} · ${form.merchantIdentityMode === 'store_alias' ? '商家展示名' : '公开个人身份'}`)
 const primaryActionLabel = computed(() => {
@@ -880,7 +880,7 @@ function confirmProviderCategoryChange() {
               :loading="paymentSettingsLoading"
               @edit="paymentSettingsDialogOpen = true"
             />
-            <ProviderCategorySelector :model-value="form.providerCategory" :selected-count="selectedModels.length" @update:model-value="requestProviderCategory" />
+            <ProviderCategorySelector :model-value="form.providerCategory" :selected-count="selectedModels.length" :catalog="catalog" @update:model-value="requestProviderCategory" />
             <Card class="api-publish-card">
               <div class="api-publish-card-header">
                 <div class="flex flex-wrap items-start justify-between gap-3">

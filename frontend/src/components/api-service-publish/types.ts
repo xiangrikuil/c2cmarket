@@ -3,7 +3,7 @@ import type { ApiPaymentMethod } from '@/lib/apiPaymentSettings'
 import type { ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 
 export type DistributionSystem = 'sub2api' | 'new_api_proxy' | 'other'
-export type ApiProviderCategory = 'gpt' | 'claude' | 'other'
+export type ApiProviderCategory = string
 export type BillingMode = 'metered_credit' | 'fixed_package'
 export type SellingMode = 'free' | 'package' | 'limited'
 export const sellingModeLabels = {

@@ -139,6 +139,24 @@ type apiOrderResponse struct {
 	Version                       int64                               `json:"version"`
 	CreatedAt                     string                              `json:"createdAt"`
 	UpdatedAt                     string                              `json:"updatedAt"`
+	CatalogRiskHold               *apiOrderCatalogRiskHoldResponse    `json:"catalogRiskHold,omitempty"`
+}
+
+type apiOrderCatalogRiskHoldResponse struct {
+	ID             string  `json:"id"`
+	SourceType     string  `json:"sourceType"`
+	SourceID       string  `json:"sourceId"`
+	Status         string  `json:"status"`
+	Reason         string  `json:"reason"`
+	CreatedAt      string  `json:"createdAt"`
+	ResolvedBy     string  `json:"resolvedBy,omitempty"`
+	ResolvedAt     *string `json:"resolvedAt,omitempty"`
+	ResolutionNote string  `json:"resolutionNote,omitempty"`
+	Version        int64   `json:"version"`
+}
+
+type apiOrderCatalogRiskHoldRequest struct {
+	ResolutionNote string `json:"resolutionNote"`
 }
 
 type apiOrderPaymentInstructionsResponse struct {
@@ -254,6 +272,36 @@ func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
 		Items:      toAdminAPIOrderResponses(page.Items),
 		NextCursor: page.NextCursor,
 	})
+}
+
+func (s *Server) handleResolveAPIOrderCatalogRiskHold(w http.ResponseWriter, r *http.Request, resolution string) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, request, appErr := decodeStrictJSON[apiOrderCatalogRiskHoldRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	orderID := chi.URLParam(r, "id")
+	routeKey := "POST " + chi.RouteContext(r.Context()).RoutePattern() + ":" + orderID
+	completion, appErr := s.app.ResolveAPIOrderCatalogRiskHoldWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body),
+		apiorder.CatalogRiskHoldActionInput{OrderID: orderID, Resolution: resolution, ResolutionNote: request.ResolutionNote,
+			ExpectedVersion: version, RequestID: requestIDFrom(r)}, apiOrderCompletionBuilder(false),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func parseAdminAPIOrderFilter(r *http.Request) (apiorder.AdminOrderFilter, *domain.AppError) {
@@ -667,6 +715,15 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 	}
 	if includeCredential && order.DeliveryCredential != nil {
 		response.DeliveryCredential = toAPIOrderDeliveryCredentialResponse(*order.DeliveryCredential)
+	}
+	if order.CatalogRiskHold != nil {
+		response.CatalogRiskHold = &apiOrderCatalogRiskHoldResponse{
+			ID: order.CatalogRiskHold.ID, SourceType: order.CatalogRiskHold.SourceType, SourceID: order.CatalogRiskHold.SourceID,
+			Status: order.CatalogRiskHold.Status, Reason: order.CatalogRiskHold.Reason,
+			CreatedAt: order.CatalogRiskHold.CreatedAt.UTC().Format(time.RFC3339), ResolvedBy: order.CatalogRiskHold.ResolvedBy,
+			ResolvedAt: formatOptionalTime(order.CatalogRiskHold.ResolvedAt), ResolutionNote: order.CatalogRiskHold.ResolutionNote,
+			Version: order.CatalogRiskHold.Version,
+		}
 	}
 	return response
 }

@@ -37,7 +37,12 @@ export const publishDistributionOptions = [
 export const providerCategoryLabels: Record<ApiProviderCategory, string> = {
   gpt: 'GPT',
   claude: 'Claude',
+  grok: 'Grok',
   other: '其他',
+}
+
+export function providerCategoryLabel(category: ApiProviderCategory) {
+  return providerCategoryLabels[category] ?? category
 }
 
 export const accountPoolLabels: Record<AccountPoolType, string> = {
@@ -140,13 +145,15 @@ export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {
 export function modelProviderCategory(provider: ModelCatalogItem['provider']): ApiProviderCategory {
   if (provider === 'openai') return 'gpt'
   if (provider === 'anthropic') return 'claude'
-  return 'other'
+  if (provider === 'xai') return 'grok'
+  return provider
 }
 
 export function providerLabel(provider: ModelCatalogItem['provider']) {
   if (provider === 'openai') return 'OpenAI / GPT'
   if (provider === 'anthropic') return 'Anthropic / Claude'
-  return '其他'
+  if (provider === 'xai') return 'xAI / Grok'
+  return provider
 }
 
 export function capabilityLabel(value: ModelCatalogItem['capabilities'][number]) {
@@ -191,7 +198,7 @@ export function selectedCatalogItems(form: ApiServicePublishForm, catalogById: C
 }
 
 export function generatedTitle(form: ApiServicePublishForm, catalogById: CatalogById) {
-  const providerSummary = providerCategoryLabels[form.providerCategory]
+  const providerSummary = providerCategoryLabel(form.providerCategory)
   if (form.billingMode === 'fixed_package') return `${providerSummary} · ${sellingModeLabels.package}`
   if (form.distributionSystem === 'sub2api') return `${providerSummary} · API 美元额度`
   return `${providerSummary} · 其他 API 接入 自选额度`

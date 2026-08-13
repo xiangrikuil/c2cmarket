@@ -88,7 +88,10 @@ const perspective = computed<'buyer' | 'merchant'>(() => route.name === 'merchan
 const isMerchantView = computed(() => perspective.value === 'merchant')
 const { data: order, isLoading, error: orderError, refetch: refetchOrder } = useApiOrder(id, perspective)
 const { data: reviewCenter } = useReviewCenterRows()
-const ordinaryActionsPaused = computed(() => Boolean(order.value && isApiOrderDisputeActive(order.value.disputeStatus)))
+const ordinaryActionsPaused = computed(() => Boolean(order.value && (
+  isApiOrderDisputeActive(order.value.disputeStatus)
+  || order.value.catalogRiskHold?.status === 'active'
+)))
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
@@ -338,6 +341,7 @@ const showMerchantTimeout = computed(() => Boolean(order.value?.merchantConfirmO
 const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
+	if (order.value.catalogRiskHold?.status === 'active') return '关联模型目录被紧急阻断，付款、核款、交付、确认完成及自动超时均已暂停；仍可查看订单证据或发起纠纷。'
 	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请在下方纠纷区继续协商或等待处理。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
@@ -702,6 +706,14 @@ onBeforeUnmount(() => {
       <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
       <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
       <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}</AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.catalogRiskHold?.status === 'active'" variant="destructive">
+      <ShieldAlert />
+      <AlertTitle>目录风险暂停处理中</AlertTitle>
+      <AlertDescription>
+        {{ order.catalogRiskHold.reason }} 付款、核款、交付、确认完成和自动超时已暂停；订单证据与纠纷入口保持可用。
+      </AlertDescription>
     </Alert>
 
     <ApiOrderDisputePanel

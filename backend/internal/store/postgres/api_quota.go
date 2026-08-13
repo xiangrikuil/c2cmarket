@@ -518,6 +518,9 @@ func publishAPIQuotaBatchInTx(ctx context.Context, tx pgx.Tx, input apiquota.Bat
 	if input.ExpectedVersion > 0 && batch.Version != input.ExpectedVersion {
 		return apiquota.Batch{}, quotaVersionConflict()
 	}
+	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, batch.APIServiceID); appErr != nil {
+		return apiquota.Batch{}, appErr
+	}
 	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
 		return apiquota.Batch{}, appErr
 	}
@@ -697,6 +700,9 @@ func (s *Store) updateAPIQuotaBatchStatusInTx(ctx context.Context, tx pgx.Tx, in
 		return apiquota.Batch{}, quotaVersionConflict()
 	}
 	if action == "resume" {
+		if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, batch.APIServiceID); appErr != nil {
+			return apiquota.Batch{}, appErr
+		}
 		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
 			return apiquota.Batch{}, appErr
 		}
@@ -1576,6 +1582,9 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	}
 	orderContext, appErr := getAPIQuotaOrderContext(ctx, tx, input, now)
 	if appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
+	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, orderContext.APIServiceID); appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
 	if orderContext.OwnerUserID == input.BuyerUserID {

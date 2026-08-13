@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import type { ModelCatalogItem } from '@/lib/api'
 import type { ApiProviderCategory, ApiServicePublishForm } from './types'
 import { selectedModelIdSet, summarizeSelectedModelNames } from './modelSelection'
-import { modelProviderCategory, providerCategoryLabels, providerLabel } from './utils'
+import { modelProviderCategory, providerCategoryLabel, providerLabel } from './utils'
 
 const props = defineProps<{
   form: ApiServicePublishForm
@@ -53,7 +53,7 @@ const listClass = computed(() => expanded.value ? 'max-h-64 overflow-y-auto' : '
   >
     <div class="space-y-2 border-b border-border p-2.5">
       <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-        <Input v-model="keyword" :placeholder="`搜索 ${providerCategoryLabels[providerCategory]} 模型`" />
+        <Input v-model="keyword" :placeholder="`搜索 ${providerCategoryLabel(providerCategory)} 模型`" />
         <Badge variant="model">{{ selectedModelNames.length }} 个模型</Badge>
       </div>
       <div class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/45 px-3 py-2">

@@ -21,13 +21,7 @@ import { formatDailyWeeklyQuota } from '@/lib/quota'
 import {
   allProductPlanValue,
   getProductCategory,
-  getProductCategoryLabel,
-  getProductPlanOptions,
   isHighRiskGptCarpoolPlan,
-  normalizeProductCategory,
-  normalizeProductPlan,
-  productCategoryOptions,
-  type ProductCategoryKey,
 } from '@/lib/productCategories'
 import { adminAccountLabel, distributionMethodLabel, openingChannelLabels, paymentMethodLabels } from '@/components/carpool-publish/utils'
 import type { Carpool } from '@/lib/api'
@@ -51,20 +45,29 @@ const { data: myProfile } = useMyProfileQuery(import.meta.client)
 const { data: catalogCategories } = productCategoriesQuery
 const canModerateCarpools = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
-const selectedCategory = ref<ProductCategoryKey>(normalizeProductCategory(route.query.category))
-const selectedPlan = ref(normalizeProductPlan(selectedCategory.value, route.query.plan))
+const productCategoryOptions = computed(() => [
+  { key: 'all', label: '全部' },
+  ...(catalogCategories.value ?? []).map(category => ({ key: category.code, label: category.displayName })),
+])
+const selectedCategory = ref(normalizeCategoryQuery(route.query.category))
+const selectedPlan = ref(normalizePlanQuery(route.query.plan))
+const planOptions = computed(() => (productCatalogQuery.data.value ?? [])
+  .filter(item => selectedCategory.value !== 'all' && item.categoryCode === selectedCategory.value)
+  .map(item => ({ slug: item.slug, label: item.displayName, note: item.policyNote })))
+const selectedPlanMeta = computed(() => selectedPlan.value === allProductPlanValue ? null : planOptions.value.find(item => item.slug === selectedPlan.value) ?? null)
+const selectedCategoryLabel = computed(() => productCategoryOptions.value.find(item => item.key === selectedCategory.value)?.label ?? selectedCategory.value)
 
 watch(
   () => route.query,
   query => {
-    const category = normalizeProductCategory(query.category)
+    const category = normalizeCategoryQuery(query.category)
     selectedCategory.value = category
-    selectedPlan.value = normalizeProductPlan(category, query.plan)
+    selectedPlan.value = normalizePlanQuery(query.plan)
   },
 )
 
 watch([selectedCategory, selectedPlan], ([category, plan]) => {
-  const normalizedPlan = normalizeProductPlan(category, plan)
+  const normalizedPlan = plan === allProductPlanValue || planOptions.value.some(item => item.slug === plan) ? plan : allProductPlanValue
   if (normalizedPlan !== plan) {
     selectedPlan.value = normalizedPlan
     return
@@ -79,10 +82,13 @@ watch([selectedCategory, selectedPlan], ([category, plan]) => {
   })
 }, { immediate: true })
 
-const planOptions = computed(() => getProductPlanOptions(selectedCategory.value))
-const selectedPlanMeta = computed(() => selectedPlan.value === allProductPlanValue ? null : planOptions.value.find(item => item.slug === selectedPlan.value) ?? null)
+watch(productCategoryOptions, options => {
+  if (selectedCategory.value === 'all' || options.some(item => item.key === selectedCategory.value)) return
+  selectedCategory.value = 'all'
+  selectedPlan.value = allProductPlanValue
+})
 
-function selectCategory(category: ProductCategoryKey) {
+function selectCategory(category: string) {
   selectedCategory.value = category
   selectedPlan.value = allProductPlanValue
 }
@@ -138,7 +144,6 @@ prefetchQueriesOnServer(carpoolsQuery, productCategoriesQuery, productCatalogQue
 const availableCount = computed(() => rows.value.filter(row => listStatusForCarpool(row) === '可上车').length)
 const recentlyConfirmedCount = computed(() => rows.value.filter(row => row.confirmedWithin48h).length)
 const boundaryConfirmationCount = computed(() => rows.value.filter(row => isHighRiskGptCarpoolPlan(row.product)).length)
-const selectedCategoryLabel = computed(() => getProductCategoryLabel(selectedCategory.value))
 const categoryNotice = computed(() => {
   if (selectedCategory.value === 'gpt') {
     return 'GPT 分类会包含 Business、Plus、Pro 5x Web、Pro 20x Web；部分套餐申请前需要确认发布和使用边界。'
@@ -213,14 +218,13 @@ function listStatusForCarpool(row: CarpoolListSeatRow) {
   return '已满'
 }
 
-function categoryIconSrc(category: ProductCategoryKey) {
+function categoryIconSrc(category: string) {
   return getProductCategoryIconSrc(category, categoryIconByCode.value)
 }
 
-function categoryIconComponent(category: ProductCategoryKey) {
-  if (category === 'cursor') return Code2
-  if (category === 'perplexity') return Search
+function categoryIconComponent(category: string) {
   if (category === 'other') return PackageSearch
+  if (!['gpt', 'claude', 'grok'].includes(category)) return Code2
   return Sparkles
 }
 
@@ -232,8 +236,16 @@ function productIconComponent(product: string) {
   return categoryIconComponent(getProductCategory(product))
 }
 
-function categoryIconAlt(category: ProductCategoryKey) {
-  return `${getProductCategoryLabel(category)} 图标`
+function categoryIconAlt(category: string) {
+  return `${productCategoryOptions.value.find(item => item.key === category)?.label ?? category} 图标`
+}
+
+function normalizeCategoryQuery(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : 'all'
+}
+
+function normalizePlanQuery(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : allProductPlanValue
 }
 
 function productToneClass(product: string) {

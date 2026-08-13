@@ -741,7 +741,7 @@ function preview() {
                   :loading="contactMethodsQuery.isLoading.value"
                   :error="baseErrors.ownerContactMethods"
                 />
-                <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" @update:model-value="setProviderCategory" />
+                <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" :catalog="catalog" @update:model-value="setProviderCategory" />
                 <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个 API 服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>
                 <MerchantNoteSection :form="baseForm" :errors="baseErrors" />
               </template>

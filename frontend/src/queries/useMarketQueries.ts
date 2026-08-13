@@ -25,6 +25,7 @@ import {
   confirmApiOrderPayment,
   reportApiOrderPaymentIssue,
   reportLateApiOrderPayment,
+  resolveAdminApiOrderCatalogRiskHold,
   resolveLateApiOrderPayment,
   createApiOrderFromIntent,
   confirmEmailVerification,
@@ -1331,6 +1332,23 @@ export function useAdminApiOrder(id: Ref<string> | string) {
     queryFn: () => getAdminApiOrderById(valueOf(id)),
     enabled: computed(() => Boolean(valueOf(id))),
     refetchOnMount: 'always',
+  })
+}
+
+export function useResolveAdminApiOrderCatalogRiskHoldMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action, resolutionNote, version }: {
+      id: string
+      action: 'restore' | 'refund-pending' | 'open-dispute'
+      resolutionNote: string
+      version: number
+    }) => resolveAdminApiOrderCatalogRiskHold(id, action, resolutionNote, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['admin-api-orders', data.id], data)
+      queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
   })
 }
 

@@ -271,6 +271,55 @@ func (s *Service) AdminOrder(ctx context.Context, user auth.User, orderID string
 	return order, nil
 }
 
+func (s *Service) ResolveCatalogRiskHoldWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CatalogRiskHoldActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return idempotency.Completion{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	input.OrderID = strings.TrimSpace(input.OrderID)
+	input.AdminUserID = user.ID
+	input.Resolution = strings.TrimSpace(input.Resolution)
+	input.ResolutionNote = strings.TrimSpace(input.ResolutionNote)
+	if input.OrderID == "" || input.ExpectedVersion < 1 {
+		return idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Catalog risk hold input invalid", "订单和风险暂停版本不能为空。")
+	}
+	switch input.Resolution {
+	case CatalogRiskHoldRestored, CatalogRiskHoldRefundPending, CatalogRiskHoldDisputeOpened:
+	default:
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Catalog risk hold resolution invalid", "风险暂停处置动作无效。", "resolution", "invalid", "风险暂停处置动作无效。")
+	}
+	if len([]rune(input.ResolutionNote)) < 2 || len([]rune(input.ResolutionNote)) > 500 {
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Resolution note invalid", "处置说明需为 2 到 500 个字符。", "resolutionNote", "invalid_length", "处置说明需为 2 到 500 个字符。")
+	}
+	key = strings.TrimSpace(key)
+	if appErr := idempotency.ValidateKey(key); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, appErr := s.idempotency.Begin(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		if s.repo != nil && entry.ResourceType == resourceType && entry.ResourceID != "" {
+			order, replayErr := s.repo.GetAdminAPIOrder(ctx, entry.ResourceID, s.now())
+			if replayErr != nil {
+				return idempotency.Completion{}, replayErr
+			}
+			return buildCompletion(order)
+		}
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if s.repo == nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "风险暂停处置存储不可用。")
+	}
+	_, completion, appErr := s.repo.ResolveAPIOrderCatalogRiskHoldWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
 func (s *Service) SellerOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.GetAPIOrderForSeller(ctx, user.ID, orderID, s.now())

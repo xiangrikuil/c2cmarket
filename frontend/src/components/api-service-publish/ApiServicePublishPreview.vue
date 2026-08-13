@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
 import { sellingModeLabels, type ApiServicePublishForm, type CatalogById, type SellingMode } from './types'
-import { accountPoolLabel, apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules, warrantyLabel } from './utils'
+import { accountPoolLabel, apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabel, selectedCatalogItems, simplifiedApiQuotaRules, warrantyLabel } from './utils'
 
 const props = defineProps<{
   form: ApiServicePublishForm
@@ -32,7 +32,7 @@ const props = defineProps<{
 const isLimitedQuotaMode = computed(() => props.sellingMode === 'limited')
 const providerIconSrc = computed(() => getProductCategoryIconSrc(props.form.providerCategory, new Map()))
 const title = computed(() => isLimitedQuotaMode.value
-  ? `${providerCategoryLabels[props.form.providerCategory]} API · 限量额度包`
+  ? `${providerCategoryLabel(props.form.providerCategory)} API · 限量额度包`
   : generatedTitle(props.form, props.catalogById))
 const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待设置商家展示名' : '公开个人身份')
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))
@@ -76,7 +76,7 @@ const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
   delivery: distributionLabels[props.form.distributionSystem],
   models: selectedModels.value.map(item => item.name),
   category: props.form.providerCategory,
-  categoryLabel: providerCategoryLabels[props.form.providerCategory],
+  categoryLabel: providerCategoryLabel(props.form.providerCategory),
   iconSrc: providerIconSrc.value,
   cnyPerUsdAllowance: props.form.cnyPerUsdCredit ?? 0,
   minimumPurchaseCny: props.form.minimumPurchaseCny ?? 0,

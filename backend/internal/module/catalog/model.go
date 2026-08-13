@@ -7,13 +7,87 @@ import (
 	"c2c-market/backend/internal/module/idempotency"
 )
 
+const (
+	StatusActive     = "active"
+	StatusDeprecated = "deprecated"
+	StatusBlocked    = "blocked"
+
+	EffectiveStatusSourceSelf   = "self"
+	EffectiveStatusSourceParent = "parent"
+
+	ResourceProductCategory = "product_category"
+	ResourceProductPlan     = "product_plan"
+	ResourceAPIProvider     = "api_model_provider"
+	ResourceAPIModel        = "api_model_catalog"
+
+	LifecycleActionDeprecate  = "deprecate"
+	LifecycleActionBlock      = "block"
+	LifecycleActionReactivate = "reactivate"
+	LifecycleActionUnblock    = "unblock"
+)
+
+type Lifecycle struct {
+	CoreKey               string
+	Status                string
+	EffectiveStatus       string
+	EffectiveStatusSource string
+	StatusChangedAt       time.Time
+	StatusReason          string
+	StatusChangedBy       string
+	Version               int64
+	IdentityLocked        bool
+	IdentityLockReason    string
+}
+
+func (l Lifecycle) IsEffectiveActive() bool {
+	return l.EffectiveStatus == StatusActive
+}
+
+type LifecycleActionInput struct {
+	ResourceType    string
+	ResourceID      string
+	Action          string
+	Reason          string
+	TargetStatus    string
+	OperatorID      string
+	ExpectedVersion int64
+	RequestID       string
+}
+
+type LifecycleMutationResult struct {
+	ResourceType string
+	Category     *ProductCategory
+	Plan         *ProductPlan
+	Provider     *APIModelProvider
+	Model        *APIModelCatalog
+}
+
+func (r LifecycleMutationResult) ResourceID() string {
+	switch {
+	case r.Category != nil:
+		return r.Category.ID
+	case r.Plan != nil:
+		return r.Plan.ID
+	case r.Provider != nil:
+		return r.Provider.ID
+	case r.Model != nil:
+		return r.Model.ID
+	default:
+		return ""
+	}
+}
+
+type LifecycleCompletionBuilder func(LifecycleMutationResult) (idempotency.Completion, *domain.AppError)
+
 type ProductCategory struct {
+	Lifecycle
 	ID          string
 	Code        string
 	DisplayName string
 	IconDataURL string
 	SortOrder   int
-	Active      bool
+	// Active is a read-only compatibility projection of EffectiveStatus.
+	Active bool
 }
 
 type ProductCategoryInput struct {
@@ -21,7 +95,6 @@ type ProductCategoryInput struct {
 	DisplayName string
 	IconDataURL string
 	SortOrder   int
-	Active      bool
 }
 
 type ProductCategoryMutationInput struct {
@@ -31,6 +104,7 @@ type ProductCategoryMutationInput struct {
 }
 
 type ProductPlan struct {
+	Lifecycle
 	ID                   string
 	CategoryID           string
 	CategoryCode         string
@@ -49,11 +123,12 @@ type ProductPlan struct {
 	QuotaLabel           string
 	QuotaUnit            string
 	QuotaPeriod          string
-	Active               bool
 	AllowCustomVariant   bool
 	SortOrder            int
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+	// Active is a read-only compatibility projection of EffectiveStatus.
+	Active bool
 }
 
 type ProductPlanInput struct {
@@ -72,7 +147,6 @@ type ProductPlanInput struct {
 	QuotaLabel           string
 	QuotaUnit            string
 	QuotaPeriod          string
-	Active               bool
 	AllowCustomVariant   bool
 	SortOrder            int
 }
@@ -84,15 +158,16 @@ type ProductPlanMutationInput struct {
 }
 
 type APIModelCatalog struct {
+	Lifecycle
 	ID                         string
 	ProviderID                 string
 	ProviderCategory           string
 	ProviderCode               string
 	Provider                   string
+	ProviderStatus             string
 	ProviderActive             bool
 	ModelKey                   string
 	Capabilities               []string
-	Active                     bool
 	SortOrder                  int
 	CurrentPriceVersionID      string
 	CurrentPriceSourceURL      string
@@ -103,24 +178,27 @@ type APIModelCatalog struct {
 	OutputPricePerMillion      string
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
+	// Active is a read-only compatibility projection of EffectiveStatus.
+	Active bool
 }
 
 type APIModelProvider struct {
+	Lifecycle
 	ID               string
 	ProviderCategory string
 	Code             string
 	DisplayName      string
-	Active           bool
 	SortOrder        int
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	// Active is a read-only compatibility projection of EffectiveStatus.
+	Active bool
 }
 
 type APIModelProviderInput struct {
 	ProviderCategory string
 	Code             string
 	DisplayName      string
-	Active           bool
 	SortOrder        int
 }
 
@@ -139,7 +217,6 @@ type APIModelInput struct {
 	InputTokenPrice       string
 	CachedInputTokenPrice string
 	OutputTokenPrice      string
-	Active                bool
 	SortOrder             int
 }
 
@@ -203,7 +280,7 @@ type APIModelSyncItem struct {
 
 type APIModelSyncSelection struct {
 	Fingerprint                string
-	Status                     string
+	Active                     bool
 	ProviderID                 string
 	ProviderCode               string
 	ModelKey                   string
@@ -215,7 +292,7 @@ type APIModelSyncSelection struct {
 	OutputPricePerMillion      string
 	LocalModelID               string
 	LocalPriceVersionID        string
-	Active                     bool
+	Status                     string
 }
 
 type APIModelSyncApplyInput struct {
@@ -225,17 +302,6 @@ type APIModelSyncApplyInput struct {
 type APIModelSyncMutationInput struct {
 	OperatorID string
 	Items      []APIModelSyncSelection
-}
-
-type APIModelBulkStatusInput struct {
-	ModelIDs []string
-	Active   bool
-}
-
-type APIModelBulkStatusMutationInput struct {
-	OperatorID string
-	ModelIDs   []string
-	Active     bool
 }
 
 type APIModelBulkMutationResult struct {

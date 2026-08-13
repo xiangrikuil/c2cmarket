@@ -4,7 +4,6 @@ import type {
   CarpoolPublishForm,
   CarpoolWarrantyConfig,
   CarpoolWarrantyMode,
-  CatalogProviderCode,
   OpeningChannelOption,
   OpeningChannelCode,
   PaymentMethodCode,
@@ -12,12 +11,6 @@ import type {
   RegionOption,
 } from './types'
 import { formatQuotaAmount } from '@/lib/quota'
-
-export const providerLabels: Record<CatalogProviderCode, string> = {
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  other: '其他',
-}
 
 export const openingChannelLabels: Record<OpeningChannelCode, string> = {
   web: 'Web 官网',

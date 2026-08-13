@@ -1098,6 +1098,17 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		if appErr != nil {
 			return Service{}, appErr
 		}
+		if model.EffectiveStatus != "" && !model.IsEffectiveActive() {
+			return Service{}, domain.NewFieldError(
+				http.StatusUnprocessableEntity,
+				domain.CodeInvalidStateTransition,
+				"API model catalog unavailable",
+				"所选模型目录已退役或被阻断，不能用于新发布。",
+				"models",
+				"catalog_unavailable",
+				"请移除不可用模型后重新发布。",
+			)
+		}
 		multiplier := strings.TrimSpace(modelInput.MerchantMultiplier)
 		if multiplier == "" {
 			multiplier = "1.0000"

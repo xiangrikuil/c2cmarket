@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { toast } from 'vue-sonner'
 import { ArrowLeft, Clock3, FileCheck2, ShieldAlert, UsersRound } from 'lucide-vue-next'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import ShortId from '@/components/market/ShortId.vue'
@@ -23,12 +27,44 @@ import {
 import { formatOrderDateTime } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import { formatDecimal } from '@/lib/decimal'
-import { useAdminApiOrder } from '@/queries/useMarketQueries'
+import { useAdminApiOrder, useResolveAdminApiOrderCatalogRiskHoldMutation } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const router = useRouter()
 const id = computed(() => String(route.params.id ?? ''))
 const { data: order, isLoading, error, refetch } = useAdminApiOrder(id)
+const resolveRiskHoldMutation = useResolveAdminApiOrderCatalogRiskHoldMutation()
+const riskHoldDialogOpen = ref(false)
+const riskHoldAction = ref<'restore' | 'refund-pending' | 'open-dispute'>('restore')
+const riskHoldNote = ref('')
+const riskHoldActionLabel = computed(() => ({
+  restore: '恢复订单流程',
+  'refund-pending': '记录退款待处理',
+  'open-dispute': '转入纠纷处置',
+}[riskHoldAction.value]))
+
+function openRiskHoldDialog(action: typeof riskHoldAction.value) {
+  riskHoldAction.value = action
+  riskHoldNote.value = ''
+  riskHoldDialogOpen.value = true
+}
+
+async function resolveRiskHold() {
+  const hold = order.value?.catalogRiskHold
+  if (!order.value || !hold || hold.status !== 'active' || riskHoldNote.value.trim().length < 2) return
+  try {
+    await resolveRiskHoldMutation.mutateAsync({
+      id: order.value.id,
+      action: riskHoldAction.value,
+      resolutionNote: riskHoldNote.value.trim(),
+      version: hold.version,
+    })
+    riskHoldDialogOpen.value = false
+    toast.success('目录风险暂停处置结果已记录。')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '目录风险暂停处置失败。')
+  }
+}
 
 const timeline = computed(() => {
   if (!order.value) return []
@@ -60,6 +96,22 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
 </script>
 
 <template>
+  <Dialog v-model:open="riskHoldDialogOpen">
+    <DialogContent class="sm:max-w-lg">
+      <DialogHeader>
+        <DialogTitle>{{ riskHoldActionLabel }}</DialogTitle>
+        <DialogDescription>该动作只记录风险处置事实，不会自动退款、取消订单或改变站外资金关系。</DialogDescription>
+      </DialogHeader>
+      <div class="space-y-2">
+        <Label for="catalog-risk-hold-note">处置说明</Label>
+        <Textarea id="catalog-risk-hold-note" v-model="riskHoldNote" maxlength="500" placeholder="填写已核验的处置结果与后续安排" />
+      </div>
+      <DialogFooter>
+        <Button variant="outline" @click="riskHoldDialogOpen = false">取消</Button>
+        <Button :disabled="riskHoldNote.trim().length < 2 || resolveRiskHoldMutation.isPending.value" @click="resolveRiskHold">确认记录</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
   <SkeletonBlock v-if="isLoading" :lines="10" />
   <ErrorState v-else-if="error" :description="errorMessage" @retry="refetch()" />
   <EmptyState v-else-if="!order" title="未找到 API 订单" description="订单不存在或当前管理员无权查看。">
@@ -83,6 +135,19 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
       <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
       <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
       <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}<span v-if="order.disputeCaseId"> 纠纷编号 {{ order.disputeCaseId }}。</span></AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.catalogRiskHold" :class="order.catalogRiskHold.status === 'active' ? 'border-destructive/35 bg-destructive/5' : 'border-border bg-muted/20'">
+      <ShieldAlert :class="order.catalogRiskHold.status === 'active' ? 'text-destructive' : 'text-muted-foreground'" />
+      <AlertTitle>{{ order.catalogRiskHold.status === 'active' ? '目录风险暂停待处置' : '目录风险暂停已处置' }}</AlertTitle>
+      <AlertDescription class="space-y-3">
+        <p>{{ order.catalogRiskHold.reason }}<span v-if="order.catalogRiskHold.resolutionNote"> 处置说明：{{ order.catalogRiskHold.resolutionNote }}</span></p>
+        <div v-if="order.catalogRiskHold.status === 'active'" class="flex flex-wrap gap-2">
+          <Button size="sm" @click="openRiskHoldDialog('restore')">恢复订单流程</Button>
+          <Button size="sm" variant="outline" @click="openRiskHoldDialog('refund-pending')">退款待处理</Button>
+          <Button size="sm" variant="outline" @click="openRiskHoldDialog('open-dispute')">转入纠纷</Button>
+        </div>
+      </AlertDescription>
     </Alert>
 
     <div class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">

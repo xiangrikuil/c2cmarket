@@ -5,7 +5,7 @@ export const productCategoryIconAccept = 'image/png,image/webp'
 
 export type ProductCategoryIconMap = ReadonlyMap<string, string>
 
-const fallbackIconByCategory: Partial<Record<ProductCategoryKey, string>> = {
+const fallbackIconByCategory: Partial<Record<string, string>> = {
   gpt: '/chatgpt-mark.svg',
   claude: '/claude-mark.svg',
   gemini: '/gemini-mark.svg',

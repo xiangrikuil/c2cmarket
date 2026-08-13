@@ -495,6 +495,12 @@ preserving non-sensitive audit facts.
 business rows already reference those seed plans, PostgreSQL foreign keys are
 expected to block rollback instead of deleting referenced catalog data.
 
+Version 95 (`000095_dynamic_catalog_lifecycle`) replaces catalog `active`
+booleans with `active | deprecated | blocked` lifecycle state, adds immutable
+core identity markers, seeds Grok/xAI, and persists independent API-order
+catalog risk holds. Its down migration refuses rollback after blocked state or
+risk-hold data has been used.
+
 ## Docker Compose
 
 The repository root `compose.yaml` provides a PostgreSQL service and a one-shot

@@ -215,8 +215,7 @@ describe('个人、经营与管理工作区一致性', () => {
   it('公告和目录变更提供未保存或影响范围确认', () => {
     expect(announcementEditor).toContain('onBeforeRouteLeave')
     expect(announcementEditor).toContain('尚未保存')
-    expect(productPlans).toContain('已有交易记录不受影响')
-    expect(productPlans).toContain('已有申请继续使用快照')
-    expect(apiModels).toContain('已有订单仍使用快照')
+    expect(productPlans).toContain('历史正式订单仍按快照继续处理')
+    expect(apiModels).toContain('历史正式订单仍按快照继续处理')
   })
 })
