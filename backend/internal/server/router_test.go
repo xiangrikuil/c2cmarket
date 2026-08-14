@@ -21,6 +21,7 @@ import (
 	"c2c-market/backend/internal/health"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/auth"
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/platform/modelsdev"
 
@@ -396,6 +397,48 @@ func TestEmailRegistrationDisabled(t *testing.T) {
 			t.Fatalf("disabled email registration must not set session cookie: %+v", cookie)
 		}
 	}
+}
+
+func TestUsernameAvailability(t *testing.T) {
+	server := newTestServer(time.Now())
+	createSession(t, server, "taken_student", false)
+
+	for _, testCase := range []struct {
+		name      string
+		username  string
+		available bool
+	}{
+		{name: "existing username", username: "taken_student", available: false},
+		{name: "new username", username: "new_student", available: true},
+		{name: "reserved username", username: "admin", available: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/username-availability?username="+testCase.username, nil)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("username availability status %d body %s", response.Code, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("username availability must not be cached, got %q", response.Header().Get("Cache-Control"))
+			}
+			var payload usernameAvailabilityResponse
+			if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode username availability: %v", err)
+			}
+			if payload.Username != testCase.username || payload.Available != testCase.available {
+				t.Fatalf("username availability = %+v, want username=%q available=%t", payload, testCase.username, testCase.available)
+			}
+		})
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/v1/auth/username-availability?username=Not-Valid", nil)
+	invalidResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid username status %d body %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+	assertProblemCode(t, invalidResponse, domain.CodeUsernameInvalid)
 }
 
 func TestPublicResourceIDsAreUUIDs(t *testing.T) {
@@ -3817,6 +3860,9 @@ func createStudentSession(t *testing.T, server http.Handler, username string) te
 	var payload sessionResponse
 	if err := json.NewDecoder(confirmResponse.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode student session: %v", err)
+	}
+	if payload.Audience != auth.SessionAudienceNormal {
+		t.Fatalf("student registration audience=%q, want %q", payload.Audience, auth.SessionAudienceNormal)
 	}
 	if payload.User.StudentClaim == nil || payload.User.StudentClaim.InstitutionDomain != domainValue || payload.User.LinuxDo.Bound || len(payload.User.Capabilities) != 1 || payload.User.Capabilities[0] != "api_order.create" {
 		t.Fatalf("unexpected student identity projection: %+v", payload.User)

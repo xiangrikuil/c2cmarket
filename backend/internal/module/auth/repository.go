@@ -42,6 +42,11 @@ type StudentRegistrationRepository interface {
 	ConfirmStudentEmailRegistration(ctx context.Context, input EmailRegistrationConfirmInput, codeHash string, credential PasswordCredential, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, sessionAbsoluteExpiresAt, now time.Time) (User, *domain.AppError)
 }
 
+// UsernameAvailabilityRepository 将公开可用性查询与完整认证持久化契约隔离。
+type UsernameAvailabilityRepository interface {
+	UsernameAvailable(ctx context.Context, username string) (bool, *domain.AppError)
+}
+
 // StudentRegistrationAdminRepository owns the audited, optimistic and
 // idempotent administration boundary for the persistent registration policy.
 type StudentRegistrationAdminRepository interface {

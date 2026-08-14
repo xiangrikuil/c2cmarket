@@ -38,6 +38,7 @@ import type {
   SessionResponse,
   StudentRegistrationPublicConfig,
   User,
+  UsernameAvailability,
 } from '@/api/generated/openapi'
 
 type ProblemDetails = {
@@ -72,6 +73,7 @@ export type AccountGovernanceBusinessCenterResponse = AccountGovernanceBusinessC
 
 export type EmailRegistrationConfig = StudentRegistrationPublicConfig
 export type EmailRegistrationChallenge = EmailRegistrationStartResponse
+export type UsernameAvailabilityResult = UsernameAvailability
 
 export class BackendProblemError extends Error {
   status: number
@@ -393,6 +395,19 @@ export async function loginWithPassword(payload: PasswordLoginRequest) {
 export async function getEmailRegistrationConfig(): Promise<EmailRegistrationConfig> {
   if (!shouldUseRealBackend()) return mockEmailRegistrationConfig()
   return backendRequest<EmailRegistrationConfig>('/api/v1/auth/email-registration/config', {}, {
+    affectsSessionCache: false,
+  })
+}
+
+export async function checkUsernameAvailability(username: string): Promise<UsernameAvailabilityResult> {
+  if (!shouldUseRealBackend()) {
+    const currentUsername = getMockIdentity()?.username
+    const unavailable = new Set(['admin', 'orbit', 'student-buyer'])
+    if (currentUsername) unavailable.add(currentUsername)
+    return { username, available: !unavailable.has(username) }
+  }
+  const params = new URLSearchParams({ username })
+  return backendRequest<UsernameAvailabilityResult>(`/api/v1/auth/username-availability?${params.toString()}`, {}, {
     affectsSessionCache: false,
   })
 }

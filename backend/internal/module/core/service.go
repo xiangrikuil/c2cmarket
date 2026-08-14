@@ -316,6 +316,10 @@ func (s *Service) StudentRegistrationConfig(ctx context.Context) (authmodule.Stu
 	return s.authService.StudentRegistrationConfig(ctx)
 }
 
+func (s *Service) UsernameAvailable(ctx context.Context, username string) (bool, *domain.AppError) {
+	return s.authService.UsernameAvailable(ctx, username)
+}
+
 func (s *Service) AdminStudentRegistration(ctx context.Context, user authmodule.User) (authmodule.StudentRegistrationConfig, *domain.AppError) {
 	return s.authService.AdminStudentRegistration(ctx, user)
 }

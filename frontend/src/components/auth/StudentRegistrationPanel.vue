@@ -10,6 +10,7 @@ import InstitutionDirectoryDialog from '@/components/auth/InstitutionDirectoryDi
 import {
   BackendProblemError,
   backendErrorMessage,
+  checkUsernameAvailability,
   confirmEmailRegistration,
   startEmailRegistration,
   type BackendSession,
@@ -39,6 +40,7 @@ const emit = defineEmits<{
 
 type RegistrationStep = 'email' | 'account' | 'completed'
 type PendingAction = null | 'registration-start' | 'registration-confirm'
+type UsernameAvailabilityState = 'idle' | 'checking' | 'available' | 'unavailable' | 'error'
 
 const step = ref<RegistrationStep>('email')
 const pendingAction = ref<PendingAction>(null)
@@ -56,7 +58,9 @@ const directoryOpen = ref(false)
 const developmentCode = ref('')
 const requestingResend = ref(false)
 const resendCompleted = ref(false)
+const usernameAvailability = ref<UsernameAvailabilityState>('idle')
 let requestGeneration = 0
+let usernameAvailabilityGeneration = 0
 
 const institutions = computed(() => props.config?.institutions ?? [])
 const canonicalEmail = computed(() => email.value.trim().toLowerCase())
@@ -64,7 +68,18 @@ const emailDomain = computed(() => canonicalEmail.value.split('@')[1] ?? '')
 const matchedInstitution = computed(() => institutions.value.find(item => item.domain === emailDomain.value) ?? null)
 const emailError = computed(() => serverErrors.email || (touched.email ? validateEmail(email.value) : ''))
 const codeError = computed(() => serverErrors.code || (touched.code ? validateVerificationCode(code.value) : ''))
-const usernameError = computed(() => serverErrors.username || (touched.username ? validateUsername(username.value) : ''))
+const usernameError = computed(() => (
+  serverErrors.username
+  || (touched.username ? validateUsername(username.value) : '')
+  || (usernameAvailability.value === 'unavailable' ? '该用户名已被占用，请换一个。' : '')
+))
+const usernameDescriptionId = computed(() => (
+  usernameError.value
+    ? 'registration-username-error'
+    : usernameAvailability.value !== 'idle'
+      ? 'registration-username-status'
+      : undefined
+))
 const passwordError = computed(() => serverErrors.password || (touched.password ? validateNewPassword(password.value) : ''))
 const passwordConfirmError = computed(() => touched.passwordConfirm ? validatePasswordConfirmation(password.value, passwordConfirm.value) : '')
 const turnstileError = computed(() => touched.turnstile && !turnstileToken.value ? '请先完成人机验证。' : '')
@@ -85,16 +100,42 @@ watch(email, () => {
   panelError.value = ''
 })
 watch(code, () => delete serverErrors.code)
-watch(username, () => delete serverErrors.username)
+watch(username, () => {
+  usernameAvailabilityGeneration += 1
+  usernameAvailability.value = 'idle'
+  delete serverErrors.username
+})
 watch(password, () => delete serverErrors.password)
 
 onUnmounted(() => {
   requestGeneration += 1
+  usernameAvailabilityGeneration += 1
 })
 
 const clearServerErrors = () => {
   Object.keys(serverErrors).forEach(key => delete serverErrors[key])
   panelError.value = ''
+}
+
+const checkUsernameOnBlur = async () => {
+  touched.username = true
+  delete serverErrors.username
+  if (validateUsername(username.value)) {
+    usernameAvailability.value = 'idle'
+    return
+  }
+
+  const checkedUsername = username.value
+  const generation = ++usernameAvailabilityGeneration
+  usernameAvailability.value = 'checking'
+  try {
+    const result = await checkUsernameAvailability(checkedUsername)
+    if (generation !== usernameAvailabilityGeneration || checkedUsername !== username.value) return
+    usernameAvailability.value = result.available ? 'available' : 'unavailable'
+  } catch {
+    if (generation !== usernameAvailabilityGeneration || checkedUsername !== username.value) return
+    usernameAvailability.value = 'error'
+  }
 }
 
 const requestRegistrationCode = async () => {
@@ -151,7 +192,7 @@ const submitRegistration = async () => {
   touched.passwordConfirm = true
   const validationErrors = {
     code: validateVerificationCode(code.value),
-    username: validateUsername(username.value),
+    username: validateUsername(username.value) || (usernameAvailability.value === 'unavailable' ? '该用户名已被占用，请换一个。' : ''),
     password: validateNewPassword(password.value),
     passwordConfirm: validatePasswordConfirmation(password.value, passwordConfirm.value),
   }
@@ -190,6 +231,8 @@ const submitRegistration = async () => {
     Object.assign(serverErrors, mapped)
     if (error instanceof BackendProblemError && error.code === 'VERIFICATION_CODE_INVALID') {
       serverErrors.code = '验证码无效或已过期，请重新获取。'
+    } else if (error instanceof BackendProblemError && error.code === 'USERNAME_UNAVAILABLE') {
+      usernameAvailability.value = 'unavailable'
     } else if (hasUnmapped || !Object.keys(mapped).length) {
       panelError.value = backendErrorMessage(error, '注册确认失败，请稍后重试。')
     }
@@ -347,13 +390,22 @@ const changeEmail = (resend = false) => {
             v-model="username"
             autocomplete="username"
             class="h-11"
-            :class="usernameError ? 'border-destructive' : ''"
+            :class="usernameError ? 'border-destructive' : usernameAvailability === 'available' ? 'border-emerald-600' : ''"
             :aria-invalid="usernameError ? 'true' : undefined"
-            :aria-describedby="usernameError ? 'registration-username-error' : undefined"
+            :aria-describedby="usernameDescriptionId"
             placeholder="3-24 位小写字母、数字、_ 或 -"
-            @blur="touched.username = true"
+            @blur="checkUsernameOnBlur"
           />
           <p v-if="usernameError" id="registration-username-error" class="text-xs text-destructive">{{ usernameError }}</p>
+          <p v-else-if="usernameAvailability === 'checking'" id="registration-username-status" class="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+            <Loader2 class="h-3.5 w-3.5 animate-spin" />正在检查用户名
+          </p>
+          <p v-else-if="usernameAvailability === 'available'" id="registration-username-status" class="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400" aria-live="polite">
+            <CheckCircle2 class="h-3.5 w-3.5" />用户名可用
+          </p>
+          <p v-else-if="usernameAvailability === 'error'" id="registration-username-status" class="text-xs text-amber-700 dark:text-amber-300" aria-live="polite">
+            暂时无法检查用户名，提交时会再次确认。
+          </p>
         </div>
 
         <div class="space-y-2">

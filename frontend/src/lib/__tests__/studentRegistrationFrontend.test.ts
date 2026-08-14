@@ -69,6 +69,24 @@ test('registration page uses the two-step contract and resets one-time Turnstile
   assert.match(registrationSource, /pendingAction\.value === 'registration-start'\) pendingAction\.value = null/)
   assert.match(registrationSource, /if \(pendingAction\.value/)
   assert.match(registrationSource, /之前的验证码已失效/)
+  assert.match(registrationSource, /@blur="checkUsernameOnBlur"/)
+  assert.match(registrationSource, /type UsernameAvailabilityState = 'idle' \| 'checking' \| 'available' \| 'unavailable' \| 'error'/)
+  assert.match(registrationSource, /generation !== usernameAvailabilityGeneration \|\| checkedUsername !== username\.value/)
+  assert.match(registrationSource, /用户名可用/)
+  assert.match(registrationSource, /该用户名已被占用/)
+})
+
+test('real username availability check encodes the username and leaves session state untouched', async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ username: 'student_name', available: true }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const result = await client.checkUsernameAvailability('student_name')
+
+  assert.deepEqual(result, { username: 'student_name', available: true })
+  assert.equal(fetchMock.mock.calls.length, 1)
+  assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/username-availability?username=student_name')
 })
 
 test('real registration calls use exact payloads, cache the returned session, and never fall back to mock', async () => {

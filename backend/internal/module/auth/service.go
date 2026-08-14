@@ -1040,6 +1040,24 @@ func (s *Service) StudentRegistrationConfig(ctx context.Context) (StudentRegistr
 	return config, nil
 }
 
+func (s *Service) UsernameAvailable(ctx context.Context, username string) (bool, *domain.AppError) {
+	if appErr := ValidatePublicUsername(username); appErr != nil {
+		if appErr.Code == domain.CodeUsernameUnavailable {
+			return false, nil
+		}
+		return false, appErr
+	}
+	if repo, ok := s.repo.(UsernameAvailabilityRepository); ok {
+		return repo.UsernameAvailable(ctx, username)
+	}
+	if s.repo != nil {
+		return false, internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.usersByUsername[username] == "", nil
+}
+
 func (s *Service) AdminStudentRegistration(ctx context.Context, user User) (StudentRegistrationConfig, *domain.AppError) {
 	if appErr := RequireCapability(user, CapabilityAdminAccess); appErr != nil {
 		return StudentRegistrationConfig{}, appErr

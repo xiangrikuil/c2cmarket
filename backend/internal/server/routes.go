@@ -45,6 +45,7 @@ func (s *Server) routes() {
 		r.Post("/auth/password/reauthenticate", s.limitHandler("password_reauthenticate", 20, s.handlePasswordReauthenticate))
 		r.Post("/auth/password", s.limitHandler("password_set", 20, s.handleSetPassword))
 		r.Get("/auth/email-registration/config", s.handleEmailRegistrationConfig)
+		r.Get("/auth/username-availability", s.limitHandler("auth_username_availability", 60, s.handleUsernameAvailability))
 		r.Post("/auth/email-registration/start", s.limitPolicy(emailRegistrationStartRateLimit, s.handleStartEmailRegistration))
 		r.Post("/auth/email-registration/confirm", s.limitPolicy(emailRegistrationConfirmRateLimit, s.handleConfirmEmailRegistration))
 		r.Get("/auth/oauth/start", s.limitPolicy(oauthStartRateLimit, s.handleOAuthStart))

@@ -256,6 +256,11 @@ export type StudentRegistrationPublicConfig = {
     institutions: Array<StudentRegistrationInstitution>;
 };
 
+export type UsernameAvailability = {
+    username: string;
+    available: boolean;
+};
+
 export type MyProfile = {
     id: string;
     username: string;
@@ -5347,6 +5352,37 @@ export type GetStudentEmailRegistrationConfigResponses = {
 };
 
 export type GetStudentEmailRegistrationConfigResponse = GetStudentEmailRegistrationConfigResponses[keyof GetStudentEmailRegistrationConfigResponses];
+
+export type GetUsernameAvailabilityData = {
+    body?: never;
+    path?: never;
+    query: {
+        username: string;
+    };
+    url: '/api/v1/auth/username-availability';
+};
+
+export type GetUsernameAvailabilityErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type GetUsernameAvailabilityError = GetUsernameAvailabilityErrors[keyof GetUsernameAvailabilityErrors];
+
+export type GetUsernameAvailabilityResponses = {
+    /**
+     * Current username availability. Reserved usernames return `available: false`.
+     */
+    200: UsernameAvailability;
+};
+
+export type GetUsernameAvailabilityResponse = GetUsernameAvailabilityResponses[keyof GetUsernameAvailabilityResponses];
 
 export type StartEmailRegistrationData = {
     body: EmailRegistrationStartRequest;

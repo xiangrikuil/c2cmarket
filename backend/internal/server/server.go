@@ -209,6 +209,7 @@ type Service interface {
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
 	AuthenticateWithPassword(ctx context.Context, username, password string) (auth.AuthenticationResult, *domain.AppError)
 	StudentRegistrationConfig(ctx context.Context) (auth.StudentRegistrationConfig, *domain.AppError)
+	UsernameAvailable(ctx context.Context, username string) (bool, *domain.AppError)
 	AdminStudentRegistration(ctx context.Context, user auth.User) (auth.StudentRegistrationConfig, *domain.AppError)
 	UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentRegistrationSettingUpdate, build auth.StudentRegistrationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	AdminStudentInstitutionDomains(ctx context.Context, user auth.User) ([]auth.StudentInstitutionDomain, *domain.AppError)
