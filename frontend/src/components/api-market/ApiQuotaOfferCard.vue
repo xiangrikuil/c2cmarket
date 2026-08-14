@@ -5,6 +5,7 @@ import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
 import {
   getApiQuotaDeliveryModeLabel,
   getApiQuotaDistributionLabel,
@@ -54,7 +55,12 @@ const purchaseLabel = computed(() => {
   return `立即抢购 ¥${formatDecimal(props.offer.priceCny, 2, 2)}`
 })
 const sellerType = computed(() => props.offer.sellerIdentityType === 'merchant' ? '商户' : '个人卖家')
-const sellerInitial = computed(() => props.offer.sellerDisplayName.trim().slice(0, 1).toUpperCase() || '店')
+const sellerIdentity = computed(() => ({
+  merchant: props.offer.sellerDisplayName,
+  merchantIdentityMode: props.offer.sellerIdentityType === 'merchant' ? 'store_alias' as const : 'public_profile' as const,
+  merchantDisplayName: props.offer.sellerDisplayName,
+  merchantAvatarUrl: props.offer.merchantAvatarUrl,
+}))
 const stockLabel = computed(() => isRush.value
   ? `${props.offer.availableCopies} 份`
   : props.offer.saleMode === 'scheduled'
@@ -133,7 +139,7 @@ function formatAbsoluteTime(value: string) {
 
       <div class="api-product-card__merchant">
         <div class="flex min-w-0 items-center gap-2">
-          <span class="api-product-card__merchant-avatar" aria-hidden="true">{{ sellerInitial }}</span>
+          <ApiMerchantAvatar :service="sellerIdentity" class="api-product-card__merchant-avatar" />
           <div class="min-w-0 flex-1">
             <div class="truncate text-xs font-semibold" :title="offer.sellerDisplayName">{{ offer.sellerDisplayName }}</div>
             <div class="mt-0.5 text-[10px] text-muted-foreground">{{ sellerType }} · API 商家</div>

@@ -833,6 +833,7 @@ export function mapBackendPublicAPIQuotaOffer(item: GeneratedPublicApiQuotaOffer
     serviceTitle: item.serviceTitle,
     sellerDisplayName: item.sellerDisplayName,
     sellerIdentityType: item.sellerIdentityType,
+    merchantAvatarUrl: item.merchantAvatarUrl?.trim() || undefined,
     sellerLinuxDoBound: item.sellerLinuxDoBound,
     promptAuditEnabled: item.promptAuditEnabled,
     healthSummary: item.healthSummary,

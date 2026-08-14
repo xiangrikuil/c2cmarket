@@ -14349,6 +14349,10 @@ components:
             sellerIdentityType:
               type: string
               enum: [individual, merchant]
+            merchantAvatarUrl:
+              type: string
+              format: uri
+              description: Public merchant avatar selected from the linked store alias or public user identity.
             sellerLinuxDoBound:
               type: boolean
             declaredMaxConcurrency:

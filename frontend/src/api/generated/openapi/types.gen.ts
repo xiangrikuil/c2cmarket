@@ -2479,6 +2479,10 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     serviceTitle: string;
     sellerDisplayName: string;
     sellerIdentityType: 'individual' | 'merchant';
+    /**
+     * Public merchant avatar selected from the linked store alias or public user identity.
+     */
+    merchantAvatarUrl?: string;
     sellerLinuxDoBound: boolean;
     declaredMaxConcurrency: number;
     /**

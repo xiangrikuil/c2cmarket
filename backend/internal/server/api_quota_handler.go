@@ -160,6 +160,7 @@ type publicAPIQuotaOfferResponse struct {
 	ServiceTitle              string                          `json:"serviceTitle"`
 	SellerDisplayName         string                          `json:"sellerDisplayName"`
 	SellerIdentityType        string                          `json:"sellerIdentityType"`
+	MerchantAvatarURL         string                          `json:"merchantAvatarUrl,omitempty"`
 	SellerLinuxDOBound        bool                            `json:"sellerLinuxDoBound"`
 	DeclaredMaxConcurrency    int                             `json:"declaredMaxConcurrency"`
 	PromptAuditEnabled        *bool                           `json:"promptAuditEnabled"`
@@ -913,6 +914,7 @@ func toPublicAPIQuotaOfferResponseWithHealth(item apiquota.OfferCard, health api
 		apiQuotaOfferResponse: toAPIQuotaOfferResponse(item.Offer),
 		BatchStatus:           item.BatchStatus, ServiceTitle: item.ServiceTitle,
 		SellerDisplayName: item.SellerDisplayName, SellerIdentityType: item.SellerIdentityType,
+		MerchantAvatarURL:      item.MerchantAvatarURL,
 		SellerLinuxDOBound:     item.SellerLinuxDOBound,
 		DeclaredMaxConcurrency: item.DeclaredMaxConcurrency, PromptAuditEnabled: item.PromptAuditEnabled,
 		HealthSummary: toAPIServiceHealthSummaryResponse(health),

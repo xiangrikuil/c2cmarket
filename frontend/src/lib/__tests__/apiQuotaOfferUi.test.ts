@@ -68,6 +68,13 @@ describe('API 额度包市场视图', () => {
     assert.match(appShellSource, /isApiMarketViewActive\(child\.view\)/)
   })
 
+  test('市场列表省略重复页头并保留商家发布入口', () => {
+    assert.doesNotMatch(marketPageSource, /API 市场 \/ \{\{ viewMeta\.title \}\}/)
+    assert.doesNotMatch(marketPageSource, /额度来自卖家实际控制的站外中转系统/)
+    assert.match(marketPageSource, /v-if="canPublishCurrentView" class="flex justify-end"/)
+    assert.match(marketPageSource, /<RouterLink :to="viewMeta\.publishTo"/)
+  })
+
   test('市场入口进入可复用已有服务的固定场次发布向导', () => {
     assert.match(marketPageSource, /publishTo: '\/api-market\/quota\/new'/)
     assert.match(marketPageSource, /发布限量额度包/)
@@ -227,6 +234,8 @@ describe('API 额度包市场视图', () => {
     assert.equal(marketPageSource.match(/:category="quotaOfferCategory\(item\)"/g)?.length, 2)
     assert.equal(quotaOfferCardSource.match(/class="quota-offer-card/g)?.length, 1)
     assert.match(quotaOfferCardSource, /<ApiQuotaPolicyStrip[\s\S]*?:policy="offer\.quotaUsagePolicy"/)
+    assert.match(quotaOfferCardSource, /<ApiMerchantAvatar :service="sellerIdentity" class="api-product-card__merchant-avatar"/)
+    assert.match(quotaOfferCardSource, /merchantAvatarUrl: props\.offer\.merchantAvatarUrl/)
     assert.match(quotaPolicyStripSource, /\.api-quota-policy-strip dd \{[\s\S]*?overflow-wrap: anywhere;[\s\S]*?white-space: normal;/)
     assert.doesNotMatch(quotaPolicyStripSource, /text-overflow: ellipsis/)
     assert.match(

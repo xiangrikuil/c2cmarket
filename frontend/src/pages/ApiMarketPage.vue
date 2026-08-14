@@ -347,19 +347,16 @@ const freeServiceDisplayRows = computed(() => {
 const viewMeta = computed(() => ({
   limited: {
     title: '限量额度包',
-    description: '固定额度、固定份数，到期时间明确；可直接购买，也可按固定场次抢购。',
     publishLabel: '发布限量额度包',
     publishTo: '/api-market/quota/new',
   },
   packages: {
     title: '短期流量包',
-    description: '按精确模型购买固定套餐，商户提交交付后开始计算 1、3、7 或 30 天有效期。',
     publishLabel: '发布短期流量包',
     publishTo: '/api-market/new?mode=package',
   },
   free: {
     title: '自选额度',
-    description: '自选人民币购买金额，按服务单价换算可得美元额度。',
     publishLabel: '发布自选额度',
     publishTo: '/api-market/new?mode=free',
   },
@@ -637,16 +634,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="api-market-catalog space-y-5">
-    <header class="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end lg:justify-between">
-      <div>
-        <div class="flex items-center gap-2 text-sm font-medium text-primary"><Code2 class="h-4 w-4" />API 市场 / {{ viewMeta.title }}</div>
-        <h1 class="mt-2 text-2xl font-semibold tracking-normal md:text-3xl">{{ viewMeta.title }}</h1>
-        <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{{ viewMeta.description }} 额度来自卖家实际控制的站外中转系统，平台不代理 API 流量，也不验证上游余额。</p>
-      </div>
-      <RouterLink v-if="canPublishCurrentView" :to="viewMeta.publishTo" class="w-full sm:w-auto">
+    <div v-if="canPublishCurrentView" class="flex justify-end">
+      <RouterLink :to="viewMeta.publishTo" class="w-full sm:w-auto">
         <Button class="h-11 w-full gap-2 sm:h-9"><PackagePlus class="h-4 w-4" /><span class="hidden sm:inline">{{ viewMeta.publishLabel }}</span><span class="sm:hidden">发布</span></Button>
       </RouterLink>
-    </header>
+    </div>
 
     <Tabs :model-value="activeView" @update:model-value="setView">
       <TabsList class="api-market-view-tabs grid h-11 w-full grid-cols-3 lg:hidden">

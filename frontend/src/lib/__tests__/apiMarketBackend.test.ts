@@ -263,6 +263,7 @@ test('maps platform health for public quota offers without projecting seller TTF
   const { apiMarketBackend } = await loadAPIMarketModules()
   const source = {
     ...structuredClone(apiQuotaOffers[1]!),
+    merchantAvatarUrl: 'https://cdn.example.com/quota-seller.webp',
     healthSummary: {
       state: 'no_sample' as const,
       availabilityReason: 'unconfigured' as const,
@@ -296,6 +297,7 @@ test('maps platform health for public quota offers without projecting seller TTF
   assert.equal(mapped.usdAllowance, '100.000000')
   assert.equal(mapped.priceCny, '8.80')
   assert.equal(mapped.modelMultiplier, '1.0000')
+  assert.equal(mapped.merchantAvatarUrl, 'https://cdn.example.com/quota-seller.webp')
   assert.deepEqual(mapped.healthSummary, source.healthSummary)
   assert.equal(mapped.declaredTtftBand, undefined)
   assert.equal(mapped.declaredMaxConcurrency, 5)
