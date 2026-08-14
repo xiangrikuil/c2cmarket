@@ -36,6 +36,7 @@ const MyReportsAppealsPage = () => import('@/pages/MyReportsAppealsPage.vue')
 const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
 const LoginPage = () => import('@/pages/LoginPage.vue')
 const AccountAppealPage = () => import('@/pages/AccountAppealPage.vue')
+const RestrictedBusinessPage = () => import('@/pages/RestrictedBusinessPage.vue')
 const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
 const AdminPage = () => import('@/pages/AdminPage.vue')
 const AdminGrowthPage = () => import('@/pages/AdminGrowthPage.vue')
@@ -73,6 +74,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/search', name: 'search', component: SearchPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { standalone: true } },
     { path: '/account-appeal', name: 'account-appeal', component: AccountAppealPage, meta: { standalone: true } },
+    { path: '/restricted-business', name: 'restricted-business', component: RestrictedBusinessPage, meta: { standalone: true } },
     { path: '/forbidden', name: 'forbidden', component: ForbiddenPage },
     { path: '/auth/mock', redirect: '/login' },
     { path: '/official-prices', name: 'official-prices', component: OfficialPricesPage },

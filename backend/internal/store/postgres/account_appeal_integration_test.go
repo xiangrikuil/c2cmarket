@@ -53,13 +53,6 @@ func TestPostgresAccountAppealSessionIsExistingIdentityOnlyAndFixed(t *testing.T
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM user_permissions WHERE user_id = $1`, userID)
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM users WHERE id = $1`, userID)
 	})
-	if _, err := store.pool.Exec(ctx, `
-		UPDATE users
-		SET account_status = 'suspended', updated_at = $2, version = version + 1
-		WHERE id = $1
-	`, userID, current.Add(-30*time.Minute)); err != nil {
-		t.Fatalf("restrict account appeal fixture: %v", err)
-	}
 	ordinarySessionHash := "ordinary-session-" + uuid.NewString()
 	if appErr := store.CreateSession(
 		ctx,
@@ -71,6 +64,13 @@ func TestPostgresAccountAppealSessionIsExistingIdentityOnlyAndFixed(t *testing.T
 		current.Add(-20*time.Minute),
 	); appErr != nil {
 		t.Fatalf("seed ordinary session: %v", appErr)
+	}
+	if _, err := store.pool.Exec(ctx, `
+		UPDATE users
+		SET account_status = 'suspended', updated_at = $2, version = version + 1
+		WHERE id = $1
+	`, userID, current.Add(-30*time.Minute)); err != nil {
+		t.Fatalf("restrict account appeal fixture: %v", err)
 	}
 
 	before := readAccountAppealAuthSnapshot(t, ctx, store, userID, profile.Provider, profile.Subject)
@@ -309,6 +309,7 @@ func TestPostgresAdminStatusUsesAccountGovernanceAdvisoryLock(t *testing.T) {
 				Status:          auth.AccountStatusSuspended,
 				ExpectedVersion: 1,
 				Reason:          "验证账号治理共享锁",
+				IsIndefinite:    true,
 				RequestID:       "account-appeal-lock-" + suffix,
 			},
 			func(result auth.AdminUserMutationResult) (idempotency.Completion, *domain.AppError) {

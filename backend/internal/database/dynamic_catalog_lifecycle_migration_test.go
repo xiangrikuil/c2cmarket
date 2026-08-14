@@ -7,18 +7,18 @@ import (
 )
 
 func TestDynamicCatalogLifecycleMigrationUsesCurrentSchema(t *testing.T) {
-	up, err := os.ReadFile("../../migrations/000095_dynamic_catalog_lifecycle.up.sql")
+	up, err := os.ReadFile("../../migrations/000097_dynamic_catalog_lifecycle.up.sql")
 	if err != nil {
-		t.Fatalf("read migration 95 up: %v", err)
+		t.Fatalf("read migration 97 up: %v", err)
 	}
-	down, err := os.ReadFile("../../migrations/000095_dynamic_catalog_lifecycle.down.sql")
+	down, err := os.ReadFile("../../migrations/000097_dynamic_catalog_lifecycle.down.sql")
 	if err != nil {
-		t.Fatalf("read migration 95 down: %v", err)
+		t.Fatalf("read migration 97 down: %v", err)
 	}
 
 	upSQL := string(up)
 	if strings.Contains(upSQL, "model_key, display_name") || strings.Contains(upSQL, "display_name = EXCLUDED.display_name") {
-		t.Fatal("migration 95 must not use api_model_catalog.display_name removed by migration 81")
+		t.Fatal("migration 97 must not use api_model_catalog.display_name removed by migration 81")
 	}
 	if count := strings.Count(upSQL, "CREATE UNIQUE INDEX ux_api_order_catalog_risk_holds_active"); count != 1 {
 		t.Fatalf("active risk-hold index must be declared once, got %d", count)
@@ -31,13 +31,13 @@ func TestDynamicCatalogLifecycleMigrationUsesCurrentSchema(t *testing.T) {
 		"GROUP BY lower(btrim(code)) HAVING count(*) > 1",
 	} {
 		if !strings.Contains(upSQL, required) {
-			t.Fatalf("migration 95 up missing %q", required)
+			t.Fatalf("migration 97 up missing %q", required)
 		}
 	}
 	if !strings.Contains(string(down), "cannot roll back dynamic catalog lifecycle") {
-		t.Fatal("migration 95 down must refuse lossy rollback")
+		t.Fatal("migration 97 down must refuse lossy rollback")
 	}
 	if !strings.Contains(string(down), "SET provider_category = 'other' WHERE code = 'xai'") {
-		t.Fatal("migration 95 down must map xAI to the historical open provider category")
+		t.Fatal("migration 97 down must map xAI to the historical open provider category")
 	}
 }

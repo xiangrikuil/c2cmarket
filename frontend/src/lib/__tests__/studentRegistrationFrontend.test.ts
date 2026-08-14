@@ -16,6 +16,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 function studentSession() {
   return {
+		audience: 'normal',
     csrfToken: 'csrf-student',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {
@@ -33,6 +34,7 @@ function studentSession() {
 
 function adminSession() {
   return {
+		audience: 'normal',
     csrfToken: 'csrf-admin',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {

@@ -7,11 +7,11 @@ import (
 )
 
 func TestAPIOrderLaunchHardeningMigrationContract(t *testing.T) {
-	up, err := os.ReadFile("../../migrations/000094_api_order_launch_hardening.up.sql")
+	up, err := os.ReadFile("../../migrations/000096_api_order_launch_hardening.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	down, err := os.ReadFile("../../migrations/000094_api_order_launch_hardening.down.sql")
+	down, err := os.ReadFile("../../migrations/000096_api_order_launch_hardening.down.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

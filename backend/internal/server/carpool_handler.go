@@ -568,17 +568,17 @@ func (s *Server) handleCreateCarpoolApplication(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	applications, appErr := s.carpools.MyCarpoolApplications(r.Context(), user)
+	applications, appErr := s.carpoolContinuity.CarpoolApplicationsForActor(r.Context(), actor, carpool.JoinActorBuyer)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	memberships, appErr := s.carpools.MyCarpoolMemberships(r.Context(), user)
+	memberships, appErr := s.carpoolContinuity.CarpoolMembershipsForActor(r.Context(), actor, carpool.JoinActorBuyer)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -587,12 +587,12 @@ func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleMyCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	application, appErr := s.carpools.MyCarpoolApplication(r.Context(), user, chi.URLParam(r, "id"))
+	application, appErr := s.carpoolContinuity.CarpoolApplicationForActor(r.Context(), actor, chi.URLParam(r, "id"), carpool.JoinActorBuyer)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -666,12 +666,12 @@ func (s *Server) handleBuyerLeaveCarpoolMembership(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleMyCarpoolMemberships(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	memberships, appErr := s.carpools.MyCarpoolMemberships(r.Context(), user)
+	memberships, appErr := s.carpoolContinuity.CarpoolMembershipsForActor(r.Context(), actor, carpool.JoinActorBuyer)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -679,17 +679,17 @@ func (s *Server) handleMyCarpoolMemberships(w http.ResponseWriter, r *http.Reque
 	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships))
 }
 func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	applications, appErr := s.carpools.OwnerCarpoolApplications(r.Context(), user)
+	applications, appErr := s.carpoolContinuity.CarpoolApplicationsForActor(r.Context(), actor, carpool.JoinActorOwner)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	memberships, appErr := s.carpools.OwnerCarpoolMemberships(r.Context(), user)
+	memberships, appErr := s.carpoolContinuity.CarpoolMembershipsForActor(r.Context(), actor, carpool.JoinActorOwner)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -698,12 +698,12 @@ func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleOwnerCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	application, appErr := s.carpools.OwnerCarpoolApplication(r.Context(), user, chi.URLParam(r, "id"))
+	application, appErr := s.carpoolContinuity.CarpoolApplicationForActor(r.Context(), actor, chi.URLParam(r, "id"), carpool.JoinActorOwner)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -870,12 +870,12 @@ func (s *Server) handleOwnerRemoveCarpoolMembership(w http.ResponseWriter, r *ht
 }
 
 func (s *Server) handleOwnerCarpoolMemberships(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	memberships, appErr := s.carpools.OwnerCarpoolMemberships(r.Context(), user)
+	memberships, appErr := s.carpoolContinuity.CarpoolMembershipsForActor(r.Context(), actor, carpool.JoinActorOwner)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -941,12 +941,12 @@ func (s *Server) handleConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r *http.Request, actorRole string) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	if actorRole == carpool.JoinActorOwner && !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+	if actor.Audience == auth.SessionAudienceNormal && actorRole == carpool.JoinActorOwner && !requireActorCapability(w, r, actor, auth.CapabilityCarpoolPublish) {
 		return
 	}
 	body, _, appErr := decodeStrictJSON[emptyRequest](r)
@@ -965,9 +965,9 @@ func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r
 		routePrefix = "POST /api/v1/owner/carpool-memberships/{id}/confirm-complete"
 	}
 	routeKey := routePrefix + ":" + membershipID
-	completion, appErr := s.carpools.ConfirmCarpoolMembershipCompleteWithIdempotency(
+	completion, appErr := s.carpoolContinuity.ConfirmCarpoolMembershipCompleteForActorWithIdempotency(
 		r.Context(),
-		user,
+		actor,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
@@ -999,12 +999,12 @@ func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r
 }
 
 func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Request, actorRole, targetStatus string) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	if actorRole == carpool.JoinActorOwner && !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+	if actor.Audience == auth.SessionAudienceNormal && actorRole == carpool.JoinActorOwner && !requireActorCapability(w, r, actor, auth.CapabilityCarpoolPublish) {
 		return
 	}
 	body, req, appErr := decodeStrictJSON[membershipEndRequest](r)
@@ -1023,9 +1023,9 @@ func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Reque
 		routePrefix = "POST /api/v1/owner/carpool-memberships/{id}/remove"
 	}
 	routeKey := routePrefix + ":" + membershipID
-	completion, appErr := s.carpools.EndCarpoolMembershipWithIdempotency(
+	completion, appErr := s.carpoolContinuity.EndCarpoolMembershipForActorWithIdempotency(
 		r.Context(),
-		user,
+		actor,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),

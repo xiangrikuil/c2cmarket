@@ -13,6 +13,7 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apiquota"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/report"
 
@@ -218,6 +219,100 @@ func (s *Store) GetAPIOrderForBuyer(ctx context.Context, buyerUserID, orderID st
 	return apiorder.WithAfterSalesProjection(order, now), nil
 }
 
+func (s *Store) ListAPIOrdersForActor(ctx context.Context, actor auth.BusinessActor, participantRole string, now time.Time) ([]apiorder.Order, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == "seller" {
+			return s.ListAPIOrdersBySeller(ctx, actor.UserID, now)
+		}
+		return s.ListAPIOrdersByBuyer(ctx, actor.UserID, now)
+	}
+	where, args, ok := restrictedAPIOrderWhere(actor, participantRole, "")
+	if !ok {
+		return nil, apiOrderNotFound()
+	}
+	return s.listAPIOrders(ctx, where, args, now)
+}
+
+func (s *Store) GetAPIOrderForActor(ctx context.Context, actor auth.BusinessActor, orderID, participantRole string, now time.Time) (apiorder.Order, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == "seller" {
+			return s.GetAPIOrderForSeller(ctx, actor.UserID, orderID, now)
+		}
+		return s.GetAPIOrderForBuyer(ctx, actor.UserID, orderID, now)
+	}
+	return s.getRestrictedAPIOrderForActor(ctx, actor, orderID, participantRole, now)
+}
+
+func (s *Store) getRestrictedAPIOrderForActor(ctx context.Context, actor auth.BusinessActor, orderID, participantRole string, now time.Time) (apiorder.Order, *domain.AppError) {
+	if _, _, ok := restrictedAPIOrderWhere(actor, participantRole, orderID); !ok {
+		return apiorder.Order{}, apiOrderNotFound()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return apiorder.Order{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	if appErr := lockAccountGovernanceUser(ctx, tx, actor.UserID); appErr != nil {
+		return apiorder.Order{}, appErr
+	}
+	if err := lockAPIOrderCredentialLifecycleInTx(ctx, tx, orderID); err != nil {
+		return apiorder.Order{}, internalStoreError()
+	}
+	order, err := s.getAPIOrder(ctx, tx, orderID, false, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apiorder.Order{}, apiOrderNotFound()
+	}
+	if err != nil {
+		return apiorder.Order{}, internalStoreError()
+	}
+	if appErr := authorizeRestrictedAPIOrderInTx(ctx, tx, actor, order, participantRole); appErr != nil {
+		return apiorder.Order{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return apiorder.Order{}, internalStoreError()
+	}
+	return apiorder.WithAfterSalesProjection(order, now), nil
+}
+
+func restrictedAPIOrderWhere(actor auth.BusinessActor, participantRole, orderID string) (string, []any, bool) {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || actor.UserID == "" || actor.GovernanceActionID == "" || actor.GovernanceVersion < 1 || actor.RestrictionEffectiveAt.IsZero() {
+		return "", nil, false
+	}
+	participantColumn := "buyer_user_id"
+	if participantRole == "seller" {
+		participantColumn = "seller_user_id"
+	} else if participantRole != "buyer" {
+		return "", nil, false
+	}
+	where := `WHERE ` + participantColumn + ` = $1
+		AND created_at <= $4
+		AND EXISTS (
+			SELECT 1
+			FROM account_governance_resource_dispositions disposition
+			JOIN account_governance_disposition_actions link ON link.disposition_id = disposition.id
+			JOIN account_governance_actions action ON action.id = link.governance_action_id
+			JOIN users user_account ON user_account.id = action.target_user_id
+			WHERE disposition.resource_type = 'api_order'
+			  AND disposition.resource_id = api_orders.id
+			  AND disposition.result = 'preserved'
+			  AND link.governance_action_id = $2
+			  AND action.target_user_id = $1
+			  AND action.governance_version = $3
+			  AND action.effective_at = $4
+			  AND action.status = 'effective'
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = action.id
+			  AND user_account.governance_version = action.governance_version
+		)`
+	args := []any{actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt}
+	if strings.TrimSpace(orderID) != "" {
+		where += ` AND id = $5`
+		args = append(args, orderID)
+	}
+	return where, args, true
+}
+
 func (s *Store) ReadAPIOrderPaymentInstructions(ctx context.Context, buyerUserID, orderID, requestID string, now time.Time) (apiorder.PaymentInstructionsView, *domain.AppError) {
 	// 付款入口返回状态冲突时，已发生的超时转换仍需保留在独立事务中。
 	if appErr := s.materializeExpiredAPIOrder(ctx, s.pool, orderID, now); appErr != nil {
@@ -361,6 +456,9 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	}
 	if err != nil {
 		return apiorder.Order{}, internalStoreError()
+	}
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, intent.BuyerUserID, intent.OwnerUserID); appErr != nil {
+		return apiorder.Order{}, appErr
 	}
 	if appErr := ensureNoAPIOrderForIntent(ctx, tx, intent.ID); appErr != nil {
 		return apiorder.Order{}, appErr
@@ -508,12 +606,39 @@ func ensureNoAPIOrderForIntent(ctx context.Context, q queryer, intentID string) 
 }
 
 func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorder.ActionInput, now time.Time, action string) (apiorder.Order, *domain.AppError) {
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.ActorUserID); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+	}
 	order, err := s.getAPIOrder(ctx, tx, input.OrderID, true, false)
 	if errors.Is(err, pgx.ErrNoRows) || !storeCanActorAccessAPIOrder(order, input.ActorUserID, action) {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
 	if err != nil {
 		return apiorder.Order{}, internalStoreError()
+	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if !restrictedAPIOrderActionAllowed(action, input.ParticipantRole) {
+			return apiorder.Order{}, apiOrderNotFound()
+		}
+		actor := auth.BusinessActor{
+			UserID:                 input.ActorUserID,
+			Audience:               input.ActorAudience,
+			GovernanceActionID:     input.GovernanceActionID,
+			GovernanceVersion:      input.GovernanceVersion,
+			RestrictionEffectiveAt: input.RestrictionEffectiveAt,
+		}
+		if appErr := authorizeRestrictedAPIOrderInTx(ctx, tx, actor, order, input.ParticipantRole); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+	} else if input.ActorAudience != "" && input.ActorAudience != auth.SessionAudienceNormal {
+		return apiorder.Order{}, apiOrderNotFound()
+	}
+	if action == "submit_payment" {
+		if appErr := ensureActiveBusinessUsersInTx(ctx, tx, order.BuyerUserID, order.SellerUserID); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
 	}
 	if input.ExpectedVersion > 0 && order.Version != input.ExpectedVersion {
 		return apiorder.Order{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
@@ -636,6 +761,58 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		}
 	}
 	return apiorder.WithAfterSalesProjection(order, now), nil
+}
+
+func restrictedAPIOrderActionAllowed(action, participantRole string) bool {
+	switch participantRole {
+	case "buyer":
+		return action == "confirm_complete" || action == "open_dispute"
+	case "seller":
+		return action == "confirm_payment" || action == "report_payment_issue" || action == "submit_delivery" || action == "open_dispute"
+	default:
+		return false
+	}
+}
+
+func authorizeRestrictedAPIOrderInTx(ctx context.Context, tx pgx.Tx, actor auth.BusinessActor, order apiorder.Order, participantRole string) *domain.AppError {
+	if actor.UserID == "" || actor.GovernanceActionID == "" || actor.GovernanceVersion < 1 || actor.RestrictionEffectiveAt.IsZero() || order.CreatedAt.After(actor.RestrictionEffectiveAt) {
+		return apiOrderNotFound()
+	}
+	if participantRole == "buyer" && order.BuyerUserID != actor.UserID {
+		return apiOrderNotFound()
+	}
+	if participantRole == "seller" && order.SellerUserID != actor.UserID {
+		return apiOrderNotFound()
+	}
+	if participantRole != "buyer" && participantRole != "seller" {
+		return apiOrderNotFound()
+	}
+	var authorized bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users user_account
+			JOIN account_governance_actions action ON action.id = user_account.current_governance_action_id
+			JOIN account_governance_disposition_actions link ON link.governance_action_id = action.id
+			JOIN account_governance_resource_dispositions disposition ON disposition.id = link.disposition_id
+			WHERE user_account.id = $1
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = $2
+			  AND user_account.governance_version = $3
+			  AND action.status = 'effective'
+			  AND action.effective_at = $4
+			  AND disposition.resource_type = 'api_order'
+			  AND disposition.resource_id = $5
+			  AND disposition.result = 'preserved'
+		)
+	`, actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt, order.ID).Scan(&authorized); err != nil {
+		return internalStoreError()
+	}
+	if !authorized {
+		return apiOrderNotFound()
+	}
+	return nil
 }
 
 func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) *domain.AppError {

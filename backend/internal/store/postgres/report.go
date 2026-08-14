@@ -10,6 +10,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
@@ -180,6 +181,11 @@ func (s *Store) SubmitInfoSupplementWithIdempotency(ctx context.Context, entry i
 	if appErr != nil {
 		return report.MutationResult{}, idempotency.Completion{}, appErr
 	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.SubmittingUserID); appErr != nil {
+			return report.MutationResult{}, idempotency.Completion{}, appErr
+		}
+	}
 	result, request, appErr := submitInfoSupplementInTx(ctx, tx, input, now)
 	if appErr != nil {
 		return report.MutationResult{}, idempotency.Completion{}, appErr
@@ -344,6 +350,22 @@ func (s *Store) ListDisputesByUser(ctx context.Context, userID string) ([]report
 	return scanDisputes(rows)
 }
 
+func (s *Store) ListDisputesForActor(ctx context.Context, actor auth.BusinessActor) ([]report.DisputeCase, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.ListDisputesByUser(ctx, actor.UserID)
+	}
+	where, args, ok := restrictedDisputeWhere(actor, "")
+	if !ok {
+		return nil, disputeNotFound()
+	}
+	rows, err := s.pool.Query(ctx, disputeSelectSQL+where+` ORDER BY d.updated_at DESC`, args...)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanDisputes(rows)
+}
+
 func (s *Store) GetAdminDispute(ctx context.Context, id string) (report.DisputeCase, *domain.AppError) {
 	item, err := scanDispute(ctx, s.pool, disputeSelectSQL+` WHERE d.id = $1`, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -379,6 +401,102 @@ func (s *Store) GetDisputeForParticipant(ctx context.Context, id, userID string)
 	return item, nil
 }
 
+func (s *Store) GetDisputeForActor(ctx context.Context, actor auth.BusinessActor, id string) (report.DisputeCase, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.GetDisputeForParticipant(ctx, id, actor.UserID)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	if appErr := lockAccountGovernanceUser(ctx, tx, actor.UserID); appErr != nil {
+		return report.DisputeCase{}, appErr
+	}
+	item, err := scanDispute(ctx, tx, disputeSelectSQL+` WHERE d.id = $1 FOR UPDATE OF d`, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return report.DisputeCase{}, disputeNotFound()
+	}
+	if err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
+	if appErr := authorizeRestrictedDisputeInTx(ctx, tx, actor, item); appErr != nil {
+		return report.DisputeCase{}, appErr
+	}
+	if appErr := loadAPIOrderDisputeNegotiation(ctx, tx, &item); appErr != nil {
+		return report.DisputeCase{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
+	return item, nil
+}
+
+func restrictedDisputeWhere(actor auth.BusinessActor, disputeID string) (string, []any, bool) {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || actor.UserID == "" || actor.GovernanceActionID == "" || actor.GovernanceVersion < 1 || actor.RestrictionEffectiveAt.IsZero() {
+		return "", nil, false
+	}
+	where := ` WHERE (d.primary_user_id = $1 OR d.counterparty_user_id = $1 OR d.subject_user_id = $1)
+		AND d.created_at <= $4
+		AND EXISTS (
+			SELECT 1
+			FROM account_governance_resource_dispositions disposition
+			JOIN account_governance_disposition_actions link ON link.disposition_id = disposition.id
+			JOIN account_governance_actions action ON action.id = link.governance_action_id
+			JOIN users user_account ON user_account.id = action.target_user_id
+			WHERE disposition.resource_type = d.target_type
+			  AND disposition.resource_id::text = d.target_id
+			  AND disposition.result = 'preserved'
+			  AND link.governance_action_id = $2
+			  AND action.target_user_id = $1
+			  AND action.governance_version = $3
+			  AND action.effective_at = $4
+			  AND action.status = 'effective'
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = action.id
+			  AND user_account.governance_version = action.governance_version
+		)`
+	args := []any{actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt}
+	if strings.TrimSpace(disputeID) != "" {
+		where += ` AND d.id = $5`
+		args = append(args, disputeID)
+	}
+	return where, args, true
+}
+
+func authorizeRestrictedDisputeInTx(ctx context.Context, tx pgx.Tx, actor auth.BusinessActor, item report.DisputeCase) *domain.AppError {
+	if !isStoredDisputeParticipant(item, actor.UserID) || item.CreatedAt.After(actor.RestrictionEffectiveAt) {
+		return disputeNotFound()
+	}
+	var authorized bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users user_account
+			JOIN account_governance_actions action ON action.id = user_account.current_governance_action_id
+			JOIN account_governance_disposition_actions link ON link.governance_action_id = action.id
+			JOIN account_governance_resource_dispositions disposition ON disposition.id = link.disposition_id
+			WHERE user_account.id = $1
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = $2
+			  AND user_account.governance_version = $3
+			  AND action.status = 'effective'
+			  AND action.effective_at = $4
+			  AND disposition.resource_type = $5
+			  AND disposition.resource_id = $6
+			  AND disposition.result = 'preserved'
+		)
+	`, actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt, item.TargetType, item.TargetID).Scan(&authorized); err != nil {
+		return internalStoreError()
+	}
+	if !authorized {
+		return disputeNotFound()
+	}
+	return nil
+}
+
 func (s *Store) UpdateDisputeParticipantWithIdempotency(ctx context.Context, entry idempotency.Entry, input report.DisputeParticipantActionInput, now time.Time, buildCompletion report.DisputeParticipantCompletionBuilder) (report.DisputeCase, idempotency.Completion, *domain.AppError) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -390,6 +508,11 @@ func (s *Store) UpdateDisputeParticipantWithIdempotency(ctx context.Context, ent
 	if appErr != nil {
 		return report.DisputeCase{}, idempotency.Completion{}, appErr
 	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.ActorUserID); appErr != nil {
+			return report.DisputeCase{}, idempotency.Completion{}, appErr
+		}
+	}
 	item, err := scanDispute(ctx, tx, disputeSelectSQL+`
 		WHERE d.id = $1
 		  AND (d.primary_user_id = $2 OR d.counterparty_user_id = $2 OR d.subject_user_id = $2)
@@ -400,6 +523,14 @@ func (s *Store) UpdateDisputeParticipantWithIdempotency(ctx context.Context, ent
 	}
 	if err != nil {
 		return report.DisputeCase{}, idempotency.Completion{}, internalStoreError()
+	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		actor := auth.BusinessActor{UserID: input.ActorUserID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+		if appErr := authorizeRestrictedDisputeInTx(ctx, tx, actor, item); appErr != nil {
+			return report.DisputeCase{}, idempotency.Completion{}, appErr
+		}
+	} else if input.ActorAudience != "" && input.ActorAudience != auth.SessionAudienceNormal {
+		return report.DisputeCase{}, idempotency.Completion{}, disputeNotFound()
 	}
 	if item.TargetType != report.TargetAPIOrder {
 		return report.DisputeCase{}, idempotency.Completion{}, disputeNotFound()
@@ -1097,6 +1228,14 @@ func submitInfoSupplementInTx(ctx context.Context, tx pgx.Tx, input report.Suppl
 		if err != nil {
 			return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
 		}
+		if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+			actor := auth.BusinessActor{UserID: input.SubmittingUserID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+			if appErr := authorizeRestrictedDisputeInTx(ctx, tx, actor, current); appErr != nil {
+				return report.MutationResult{}, report.InfoRequest{}, appErr
+			}
+		} else if input.ActorAudience != "" && input.ActorAudience != auth.SessionAudienceNormal {
+			return report.MutationResult{}, report.InfoRequest{}, disputeNotFound()
+		}
 		result.Dispute = &current
 	default:
 		return report.MutationResult{}, report.InfoRequest{}, infoRequestNotFound()
@@ -1114,9 +1253,12 @@ func submitInfoSupplementInTx(ctx context.Context, tx pgx.Tx, input report.Suppl
 		  AND COALESCE(mir.report_id::text, mir.dispute_case_id::text) = $3
 		  AND mir.requested_from_user_id = $4
 		  AND mir.status = 'open'
-		  AND requested_user.account_status = 'active'
+		  AND (
+		    requested_user.account_status = 'active'
+		    OR ($5 = 'restricted_business' AND requested_user.account_status IN ('suspended', 'banned') AND requested_user.security_locked_at IS NULL)
+		  )
 		FOR UPDATE OF mir
-	`, input.InfoRequestID, input.EntityType, input.EntityID, input.SubmittingUserID).Scan(
+	`, input.InfoRequestID, input.EntityType, input.EntityID, input.SubmittingUserID, input.ActorAudience).Scan(
 		&request.ID, &request.EntityType, &request.EntityID, &request.RequestedFromID, &request.RequestedByAdminID,
 		&request.InternalReason, &request.Status, &request.RequestedAt, &request.AnsweredAt, &request.CancelledAt,
 	)

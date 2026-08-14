@@ -10,7 +10,7 @@ Author: Codex
 
 - Trigger: changes to limited API quota batches, offers, sale rounds, inventory units, quota orders, merchant contact snapshots, after-sales eligibility, pre-imported delivery credentials, public offer projections, or their OpenAPI routes.
 - This contract is separate from the legacy Sub2API free-amount purchase path. Both reuse `api_services` and `api_orders`, but only limited offers use `purchase_kind='limited_quota_offer'` and authoritative inventory units.
-- Primary owners: `internal/module/apiquota`, `internal/store/postgres/api_quota.go`, `internal/server/api_quota_handler.go`, migrations `000054` through `000056` and `000094`, and `docs/openapi/c2c-market-api-v1.yaml`.
+- Primary owners: `internal/module/apiquota`, `internal/store/postgres/api_quota.go`, `internal/server/api_quota_handler.go`, migrations `000054` through `000056` and `000096`, and `docs/openapi/c2c-market-api-v1.yaml`.
 
 ### 2. Signatures
 

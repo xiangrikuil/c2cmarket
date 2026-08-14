@@ -92,3 +92,14 @@ func mutationCompletionForSupplementTest(result MutationResult) (idempotency.Com
 	}
 	return idempotency.Completion{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{"ok":true}`), ResourceType: "moderation_case", ResourceID: resourceID}, nil
 }
+
+func TestWithSupplementBusinessActorPreservesDisplayIdentity(t *testing.T) {
+	actor := auth.BusinessActor{
+		UserID: "30000000-0000-4000-8000-000000000019", Username: "buyer-19", DisplayName: "Buyer Nineteen",
+		Audience: auth.SessionAudienceNormal,
+	}
+	input := WithSupplementBusinessActor(SupplementInput{}, actor)
+	if input.SubmittingUserID != actor.UserID || input.SubmittingUsername != actor.Username || input.SubmittingName != actor.DisplayName {
+		t.Fatalf("supplement display identity lost: %+v", input)
+	}
+}

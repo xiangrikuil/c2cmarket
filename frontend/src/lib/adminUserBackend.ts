@@ -116,11 +116,22 @@ export async function backendUpdateAdminUserStatus(input: {
   version: number
   status: AdminUserStatusRequest['status']
   reason: string
+	publicReason?: string
+	internalNote?: string
+	expiresAt?: string
+	isIndefinite?: boolean
 }) {
   await ensureBackendSession('admin', true)
   return backendMutation<AdminUserDetail>(
     `/api/v1/admin/users/${encodeURIComponent(input.userId)}/status`,
-    { status: input.status, reason: input.reason.trim() } satisfies AdminUserStatusRequest,
+		{
+			status: input.status,
+			reason: input.reason.trim(),
+			publicReason: input.publicReason?.trim() || undefined,
+			internalNote: input.internalNote?.trim() || undefined,
+			expiresAt: input.expiresAt || undefined,
+			isIndefinite: input.isIndefinite || undefined,
+		} satisfies AdminUserStatusRequest,
     { ifMatch: input.version, idempotencyPrefix: 'admin-user-status' },
   )
 }

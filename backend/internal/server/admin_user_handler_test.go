@@ -66,7 +66,7 @@ func TestAdminUserDetailAndGovernanceRoutes(t *testing.T) {
 	if detail.User.ID != memberSession.userID || detail.Sessions.ActiveCount != 1 || detail.EmailVerified || detail.BackupPasswordConfigured {
 		t.Fatalf("unexpected detail: %+v", detail)
 	}
-	if len(detail.AvailableActions) != 4 || detail.ImpactPreview.ActiveSessions != 1 || !detail.AccountCapabilities.CanLogin || !detail.AccountCapabilities.CanAccessHistoricalTransactions {
+	if len(detail.AvailableActions) != 3 || detail.ImpactPreview.ActiveSessions != 1 || !detail.AccountCapabilities.CanLogin || !detail.AccountCapabilities.CanAccessHistoricalTransactions {
 		t.Fatalf("missing governance contract: %+v", detail)
 	}
 	for _, forbidden := range []string{"passwordHash", "providerSubject", "sessionToken", "csrfToken", "ipAddress", "device"} {
@@ -94,7 +94,7 @@ func TestAdminUserDetailAndGovernanceRoutes(t *testing.T) {
 	}
 
 	path := "/api/v1/admin/users/" + memberSession.userID + "/status"
-	body := `{"status":"suspended","reason":"异常登录核查"}`
+	body := `{"status":"suspended","reason":"异常登录核查","publicReason":"账号正在接受安全核查","isIndefinite":true}`
 	update := newJSONRequest(http.MethodPost, path, body)
 	addAuth(update, adminSession, "suspend-member")
 	update.Header.Set("If-Match", `"1"`)
@@ -149,7 +149,7 @@ func TestAdminAuditLogRouteReadsGlobalSafeProjection(t *testing.T) {
 	adminSession := createSession(t, server, "audit-route-admin", true)
 	memberSession := createSession(t, server, "audit-route-member", false)
 
-	update := newJSONRequest(http.MethodPost, "/api/v1/admin/users/"+memberSession.userID+"/status", `{"status":"suspended","reason":"审计路由核查"}`)
+	update := newJSONRequest(http.MethodPost, "/api/v1/admin/users/"+memberSession.userID+"/status", `{"status":"suspended","reason":"审计路由核查","isIndefinite":true}`)
 	addAuth(update, adminSession, "audit-route-update")
 	update.Header.Set("If-Match", `"1"`)
 	updateResponse := httptest.NewRecorder()
@@ -197,7 +197,7 @@ func TestAdminAuditLogRouteReadsGlobalSafeProjection(t *testing.T) {
 	}
 }
 
-func TestAdminUserPermissionRouteGrantsAdministratorAccess(t *testing.T) {
+func TestAdminUserPermissionRouteRequiresRecentReauthentication(t *testing.T) {
 	server := newTestServer(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC))
 	adminSession := createSession(t, server, "permission-route-admin", true)
 	memberSession := createSession(t, server, "permission-route-member", false)
@@ -206,16 +206,10 @@ func TestAdminUserPermissionRouteGrantsAdministratorAccess(t *testing.T) {
 	request.Header.Set("If-Match", `"1"`)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"2"` {
-		t.Fatalf("grant permission status %d etag %q body %s", response.Code, response.Header().Get("ETag"), response.Body.String())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("grant permission without reauthentication status %d body %s", response.Code, response.Body.String())
 	}
-	var detail adminUserDetailResponse
-	if err := json.NewDecoder(response.Body).Decode(&detail); err != nil {
-		t.Fatalf("decode permission response: %v", err)
-	}
-	if !detail.User.IsAdmin || detail.User.Version != 2 || len(detail.RecentAuditEntries) != 1 {
-		t.Fatalf("unexpected permission detail: %+v", detail)
-	}
+	assertProblemCode(t, response, domain.CodeRecentReauthenticationRequired)
 }
 
 func TestAdminUserPermissionRouteRequiresExplicitPermissionValue(t *testing.T) {

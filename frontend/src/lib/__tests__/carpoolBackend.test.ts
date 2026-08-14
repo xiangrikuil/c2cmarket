@@ -14,6 +14,7 @@ function jsonResponse(body: unknown) {
 
 function backendSession() {
   return {
+		audience: 'normal',
     csrfToken: 'csrf-carpool',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {
@@ -272,6 +273,7 @@ test('contact reveal analytics fires only after authoritative disclosure succeed
     const path = String(input)
     if (path.endsWith('/api/v1/auth/session')) {
       return jsonResponse({
+			audience: 'normal',
         csrfToken: 'csrf-token',
         expiresAt: '2999-01-01T00:00:00Z',
         user: {

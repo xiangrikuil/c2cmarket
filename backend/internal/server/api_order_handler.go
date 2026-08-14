@@ -218,12 +218,12 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	orders, appErr := s.app.MyAPIOrders(r.Context(), user)
+	orders, appErr := s.apiOrderContinuity.APIOrdersForActor(r.Context(), actor, "buyer")
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -365,12 +365,12 @@ func invalidAdminAPIOrderQuery(field, detail string) *domain.AppError {
 }
 
 func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	order, appErr := s.app.MyAPIOrder(r.Context(), user, chi.URLParam(r, "id"))
+	order, appErr := s.apiOrderContinuity.APIOrderForActor(r.Context(), actor, chi.URLParam(r, "id"), "buyer")
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -418,14 +418,14 @@ func (s *Server) handleCancelAPIOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfirmAPIOrderComplete(w http.ResponseWriter, r *http.Request) {
-	s.handleBuyerAPIOrderAction(w, r, "confirm-complete", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.ConfirmAPIOrderCompleteWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
+	s.handleContinuousAPIOrderAction(w, r, "buyer", "confirm-complete", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.apiOrderContinuity.ConfirmAPIOrderCompleteForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
 	})
 }
 
 func (s *Server) handleOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
-	s.handleBuyerAPIOrderAction(w, r, "dispute", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.OpenAPIOrderDisputeWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
+	s.handleContinuousAPIOrderAction(w, r, "buyer", "dispute", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.apiOrderContinuity.OpenAPIOrderDisputeForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
 	})
 }
 
@@ -433,6 +433,39 @@ func (s *Server) handleReportLateAPIOrderPayment(w http.ResponseWriter, r *http.
 	s.handleBuyerAPIOrderAction(w, r, "report-late-payment", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
 		return s.app.ReportLateAPIOrderPaymentWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
 	})
+}
+
+func (s *Server) handleContinuousAPIOrderAction(w http.ResponseWriter, r *http.Request, participantRole, action string, run func(context.Context, auth.BusinessActor, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
+	actor, appErr := s.requireBusinessActor(r, true, true)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, input, appErr := s.decodeAPIOrderAction(r, action)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	input.OrderID = chi.URLParam(r, "id")
+	input.ParticipantRole = participantRole
+	input.ExpectedVersion = version
+	input.RequestID = requestIDFrom(r)
+	prefix := "/me/"
+	if participantRole == "seller" {
+		prefix = "/owner/"
+	}
+	routeKey := "POST /api/v1" + prefix + "api-orders/{id}/" + action
+	completion, appErr := run(r.Context(), actor, routeKey, r.Header.Get("Idempotency-Key"), body, input)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleBuyerAPIOrderAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
@@ -464,15 +497,15 @@ func (s *Server) handleBuyerAPIOrderAction(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+	if actor.Audience == auth.SessionAudienceNormal && !requireActorCapability(w, r, actor, auth.CapabilityAPIServicePublish) {
 		return
 	}
-	orders, appErr := s.app.OwnerAPIOrders(r.Context(), user)
+	orders, appErr := s.apiOrderContinuity.APIOrdersForActor(r.Context(), actor, "seller")
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -481,15 +514,15 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(w, r)
+	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+	if actor.Audience == auth.SessionAudienceNormal && !requireActorCapability(w, r, actor, auth.CapabilityAPIServicePublish) {
 		return
 	}
-	order, appErr := s.app.OwnerAPIOrder(r.Context(), user, chi.URLParam(r, "id"))
+	order, appErr := s.apiOrderContinuity.APIOrderForActor(r.Context(), actor, chi.URLParam(r, "id"), "seller")
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -500,26 +533,26 @@ func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfirmAPIOrderPayment(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIOrderAction(w, r, "confirm-payment", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.ConfirmAPIOrderPaymentWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+	s.handleContinuousAPIOrderAction(w, r, "seller", "confirm-payment", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.apiOrderContinuity.ConfirmAPIOrderPaymentForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
 func (s *Server) handleReportAPIOrderPaymentIssue(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIOrderAction(w, r, "report-payment-issue", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.ReportAPIOrderPaymentIssueWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+	s.handleContinuousAPIOrderAction(w, r, "seller", "report-payment-issue", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.apiOrderContinuity.ReportAPIOrderPaymentIssueForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
 func (s *Server) handleSubmitAPIOrderDelivery(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIOrderAction(w, r, "submit-delivery", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.SubmitAPIOrderDeliveryWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+	s.handleContinuousAPIOrderAction(w, r, "seller", "submit-delivery", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.apiOrderContinuity.SubmitAPIOrderDeliveryForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
 func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
-	s.handleOwnerAPIOrderAction(w, r, "dispute", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.app.OpenOwnerAPIOrderDisputeWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+	s.handleContinuousAPIOrderAction(w, r, "seller", "dispute", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.apiOrderContinuity.OpenAPIOrderDisputeForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 

@@ -4,7 +4,10 @@ import { afterEach, test, vi } from 'vitest'
 type BackendClientModule = typeof import('../backendClient')
 
 function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
+  const normalized = body && typeof body === 'object' && 'user' in body && 'csrfToken' in body && !('audience' in body)
+    ? Object.assign(body, { audience: 'normal' })
+    : body
+  return new Response(JSON.stringify(normalized), {
     status,
     headers: { 'content-type': 'application/json' },
   })
@@ -639,6 +642,78 @@ test('restricted-account appeal verification starts only the dedicated OAuth flo
 
   assert.equal(response.authorizationUrl.includes('state=appeal'), true)
   assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/account-appeal/start')
+})
+
+test('restricted password login does not populate the normal session cache', async () => {
+  const restrictedSession = {
+    audience: 'restricted_business' as const,
+    csrfToken: 'restricted-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'restricted-user',
+      analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+      username: 'restricted',
+      displayName: 'Restricted',
+      isAdmin: false,
+      permissions: [],
+      capabilities: [],
+      studentClaim: null,
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const normalSession = {
+    ...restrictedSession,
+    audience: 'normal' as const,
+    csrfToken: 'normal-csrf',
+    user: { ...restrictedSession.user, id: 'normal-user', username: 'normal', displayName: 'Normal' },
+  }
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(restrictedSession))
+    .mockResolvedValueOnce(jsonResponse(normalSession))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  assert.deepEqual(await client.loginWithPassword({ username: 'restricted', password: 'Password1!', turnstileToken: 'token' }), restrictedSession)
+  assert.equal(client.getBackendCSRFToken(), null)
+  assert.deepEqual(await client.getCurrentBackendSession(), normalSession)
+  assert.deepEqual(fetchMock.mock.calls.map(call => call[0]), [
+    '/api/v1/auth/password/login',
+    '/api/v1/auth/session',
+  ])
+})
+
+test('administrator OAuth reauthentication start preserves the normal session cache', async () => {
+  const normalSession = {
+    audience: 'normal' as const,
+    csrfToken: 'normal-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'admin-user',
+      analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+      username: 'admin',
+      displayName: 'Admin',
+      isAdmin: true,
+      permissions: ['admin'],
+      capabilities: ['admin.access'],
+      studentClaim: null,
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(normalSession))
+    .mockResolvedValueOnce(jsonResponse({ authorizationUrl: 'https://connect.linux.do/oauth2/authorize?state=reauth' }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getCurrentBackendSession()
+  const response = await client.startAdminGrantReauthentication('/admin/users?page=2')
+  assert.equal(response.authorizationUrl.includes('state=reauth'), true)
+  assert.deepEqual(await client.getCurrentBackendSession(), normalSession)
+  const startURL = new URL(fetchMock.mock.calls[1]?.[0] as string, 'https://example.test')
+  assert.equal(startURL.pathname, '/api/v1/auth/oauth/start')
+  assert.equal(startURL.searchParams.get('purpose'), 'grant_admin_reauth')
+  assert.equal(startURL.searchParams.get('returnTo'), '/admin/users?page=2')
+  assert.equal(fetchMock.mock.calls.length, 2)
 })
 
 test('cached sessions identify with the opaque analytics ID and logout clears it', async () => {

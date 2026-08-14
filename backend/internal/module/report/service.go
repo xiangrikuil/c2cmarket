@@ -228,6 +228,16 @@ func (s *Service) MyDisputes(ctx context.Context, user auth.User) ([]DisputeCase
 	return items, nil
 }
 
+func (s *Service) DisputesForActor(ctx context.Context, actor auth.BusinessActor) ([]DisputeCase, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.MyDisputes(ctx, auth.User{ID: actor.UserID})
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return nil, disputeNotFound()
+	}
+	return s.repo.ListDisputesForActor(ctx, actor)
+}
+
 func (s *Service) MyDispute(ctx context.Context, user auth.User, id string) (DisputeCase, *domain.AppError) {
 	if strings.TrimSpace(user.ID) == "" {
 		return DisputeCase{}, sessionRequired()
@@ -255,11 +265,39 @@ func (s *Service) MyDispute(ctx context.Context, user auth.User, id string) (Dis
 	return s.disputeDetailMemory(item), nil
 }
 
+func (s *Service) DisputeForActor(ctx context.Context, actor auth.BusinessActor, id string) (DisputeCase, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.MyDispute(ctx, auth.User{ID: actor.UserID}, id)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return DisputeCase{}, disputeNotFound()
+	}
+	return s.repo.GetDisputeForActor(ctx, actor, strings.TrimSpace(id))
+}
+
+func (s *Service) DisputeParticipantActionForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input DisputeParticipantActionInput, buildCompletion DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.DisputeParticipantActionWithIdempotency(ctx, auth.User{ID: actor.UserID, Status: auth.AccountStatusActive}, routeKey, key, requestHash, WithBusinessActor(input, actor), buildCompletion)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return idempotency.Completion{}, disputeNotFound()
+	}
+	input = WithBusinessActor(input, actor)
+	return s.disputeParticipantAction(ctx, actor.UserID, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) DisputeParticipantActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input DisputeParticipantActionInput, buildCompletion DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	if strings.TrimSpace(user.ID) == "" || (user.Status != "" && user.Status != auth.AccountStatusActive) {
 		return idempotency.Completion{}, sessionRequired()
 	}
 	input.ActorUserID = user.ID
+	if input.ActorAudience == "" {
+		input.ActorAudience = auth.SessionAudienceNormal
+	}
+	return s.disputeParticipantAction(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) disputeParticipantAction(ctx context.Context, userID, routeKey, key, requestHash string, input DisputeParticipantActionInput, buildCompletion DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.DisputeID = strings.TrimSpace(input.DisputeID)
 	input.Action = strings.TrimSpace(input.Action)
 	input.Body = strings.TrimSpace(input.Body)
@@ -277,11 +315,17 @@ func (s *Service) DisputeParticipantActionWithIdempotency(ctx context.Context, u
 			return idempotency.Completion{}, appErr
 		}
 	}
-	entry, appErr := s.begin(ctx, user.ID, routeKey, key, requestHash)
+	entry, appErr := s.begin(ctx, userID, routeKey, key, requestHash)
 	if appErr != nil {
 		return idempotency.Completion{}, appErr
 	}
 	if entry.State == "completed" {
+		if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+			actor := auth.BusinessActor{UserID: userID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+			if _, appErr := s.repo.GetDisputeForActor(ctx, actor, input.DisputeID); appErr != nil {
+				return idempotency.Completion{}, appErr
+			}
+		}
 		return idempotency.CompletionFromEntry(entry), nil
 	}
 	if s.repo != nil {
@@ -710,6 +754,9 @@ func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user 
 		return idempotency.Completion{}, sessionRequired()
 	}
 	input.SubmittingUserID = user.ID
+	if input.ActorAudience == "" {
+		input.ActorAudience = auth.SessionAudienceNormal
+	}
 	input.SubmittingUsername = user.Username
 	input.SubmittingName = displayName(user)
 	input.EntityType = normalize(input.EntityType)
@@ -753,6 +800,41 @@ func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user 
 	}
 	completion, appErr := buildCompletion(result)
 	return s.complete(ctx, entry, completion, appErr)
+}
+
+func (s *Service) SubmitInfoSupplementForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input SupplementInput, buildCompletion SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.SubmitInfoSupplementWithIdempotency(ctx, auth.User{
+			ID: actor.UserID, Username: actor.Username, DisplayName: actor.DisplayName, Status: auth.AccountStatusActive,
+		}, routeKey, key, requestHash, WithSupplementBusinessActor(input, actor), buildCompletion)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil || input.EntityType != InfoRequestEntityDispute {
+		return idempotency.Completion{}, disputeNotFound()
+	}
+	input = WithSupplementBusinessActor(input, actor)
+	input.EntityType = normalize(input.EntityType)
+	input.EntityID = strings.TrimSpace(input.EntityID)
+	input.InfoRequestID = strings.TrimSpace(input.InfoRequestID)
+	input.Body = strings.TrimSpace(input.Body)
+	if appErr := validateSupplement(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, appErr := s.begin(ctx, actor.UserID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		if _, appErr := s.repo.GetDisputeForActor(ctx, actor, input.EntityID); appErr != nil {
+			return idempotency.Completion{}, appErr
+		}
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	_, completion, appErr := s.repo.SubmitInfoSupplementWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
 }
 
 func (s *Service) CreateAppealWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CreateAppealInput, buildCompletion AppealCompletionBuilder) (idempotency.Completion, *domain.AppError) {

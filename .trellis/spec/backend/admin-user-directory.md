@@ -172,3 +172,81 @@ if (shouldUseRealBackend() && section === 'logs') {
   return backendAdminAuditLogRowsPage(filters, page)
 }
 ```
+
+## Scenario: Versioned Account Governance And Purpose-Bound Administrator Reauthentication
+
+Date: 2026-08-13
+Author: Codex
+
+### 1. Scope / Trigger
+
+- Trigger: changing account status, suspension duration, administrator permission, account restoration, or administrator reauthentication.
+- Goal: serialize governance, invalidate stale sessions/tasks, restore only account eligibility, and require a one-use ten-minute proof before granting administrator authority.
+
+### 2. Signatures
+
+```go
+type AdminUserStatusInput struct {
+    Status string
+    ExpiresAt *time.Time
+    IsIndefinite bool
+    ReasonCode, PublicReason, InternalNote string
+}
+
+CreateAdminReauthenticationGrant(ctx, sessionHash, "grant_admin", method, verifiedAt, expiresAt)
+StartAdminReauthenticationOAuth(ctx, sessionHash, stateHash, "grant_admin_reauth", expiresAt, now)
+```
+
+```text
+finite suspension:  expiresAt != null && isIndefinite=false
+long suspension:    expiresAt == null && isIndefinite=true
+reauth lifetime:    verifiedAt + 10 minutes
+```
+
+### 3. Contracts
+
+- Each status mutation supersedes the previous effective action, increments `governance_version`, and points the user projection at the new immutable action. Generic status mutation supports active/suspended/banned; archived rows remain readable but are not created or restored through this endpoint.
+- Leaving active atomically removes administrator permission, revokes normal/restricted sessions and unconsumed reauthentication grants, and writes audit/notification facts. Restoration returns an ordinary active account only; it does not restore administrator authority or sessions.
+- A finite suspension creates an expiry job bound to the exact action ID, governance version, and expected expiry. The worker restores only when every value still matches and there is no security lock; later suspension, extension, ban, or version change marks the old job `noop_superseded` once.
+- Administrator grant requires the current active administrator's normal session plus a purpose `grant_admin` proof. Password and dedicated linux.do OAuth are valid methods; OAuth subject must match the existing binding and does not create a login session or alter bindings.
+- Target version/eligibility checks happen before grant consumption in the same transaction. A successful grant consumes exactly one proof; failure leaves it retryable until expiry.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Suspension has neither or both expiry modes | `422 VALIDATION_FAILED` |
+| Old expiry job sees a different action/version/expiry or security lock | `noop_superseded`; no restore/notification |
+| Administrator grant lacks valid purpose-bound proof | `403 RECENT_REAUTHENTICATION_REQUIRED` |
+| OAuth subject differs from current administrator binding | Same generic reauthentication error; state remains unconsumed |
+| Target version/eligibility fails | Existing proof remains unconsumed |
+| Grant succeeds, then proof is reused | `403 RECENT_REAUTHENTICATION_REQUIRED` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a ten-minute suspension restores once, revokes its restricted session, emits one notification, and leaves `admin=false`.
+- Base: the administrator extends or replaces the suspension before expiry; the old job completes as `noop_superseded`.
+- Good: an OAuth-only administrator verifies the already-bound linux.do subject and grants one target once.
+- Bad: restore a snapshot of the user's old administrator flag or upgrade a restricted cookie.
+- Bad: consume reauthentication before detecting a stale target version.
+
+### 6. Tests Required
+
+- Unit and PostgreSQL tests assert suspension shape, exact-action/version restore, later-governance no-op, rerun idempotency, one notification, no administrator restoration, and restricted-session revocation.
+- Password/OAuth tests assert purpose, session, administrator eligibility, existing subject binding, no auth mutation, state/grant one-time use, failure non-consumption, and invalidation after session/permission/status change.
+- Existing PostgreSQL last-administrator and student-only grant tests remain mandatory.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE users SET account_status = 'active'
+WHERE account_status = 'suspended' AND expires_at <= now();
+```
+
+#### Correct
+
+Lock the expiry job and user, compare the current action ID, governance version,
+expected expiry, status, action status, and security lock, then restore or record
+`noop_superseded` atomically.
