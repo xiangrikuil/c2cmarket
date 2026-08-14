@@ -157,6 +157,31 @@ func TestMetricsExposeBoundedRuntimeSnapshots(t *testing.T) {
 	}
 }
 
+func TestRecordPasswordResetDeliveryUsesBoundedOutcomeLabels(t *testing.T) {
+	metrics := New(Sources{})
+	metrics.RecordPasswordResetDelivery("sent")
+	metrics.RecordPasswordResetDelivery("failed")
+	metrics.RecordPasswordResetDelivery("provider-secret-error")
+
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d body %s", response.Code, response.Body.String())
+	}
+	for _, expected := range []string{
+		`c2c_market_auth_password_reset_email_total{outcome="sent"} 1`,
+		`c2c_market_auth_password_reset_email_total{outcome="failed"} 2`,
+	} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Errorf("metrics output is missing %q", expected)
+		}
+	}
+	if strings.Contains(response.Body.String(), "provider-secret-error") {
+		t.Fatal("unbounded password reset delivery outcome leaked into metrics")
+	}
+}
+
 func TestRecordProblemEmitsBoundedRedactedSecurityFailureTelemetryOnce(t *testing.T) {
 	var failureLogs bytes.Buffer
 	metrics := New(Sources{FailureLogger: log.New(&failureLogs, "", 0)})
@@ -270,6 +295,7 @@ func TestSecurityFailureRouteKeyNeverUsesRawResourcePath(t *testing.T) {
 		{path: "/api/v1/owner/api-services/private-service-id", want: "owner_api"},
 		{path: "/api/v1/me/disputes/private-dispute-id", want: "member_api"},
 		{path: "/api/v1/api-services/private-service-id", want: "public_api"},
+		{path: "/api/v1/auth/password-reset/confirm", want: "auth_password_reset"},
 		{path: "/outside/private-value", want: "other"},
 	}
 	for _, test := range tests {

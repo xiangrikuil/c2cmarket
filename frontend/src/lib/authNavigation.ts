@@ -29,6 +29,13 @@ export function loginRoute(returnTo: unknown): RouteLocationRaw {
   }
 }
 
+export function passwordResetRoute(returnTo: unknown): RouteLocationRaw {
+  return {
+    path: '/password-reset',
+    query: { returnTo: normalizeReturnTo(returnTo) },
+  }
+}
+
 export function createLoginRedirectCoordinator(
   redirect: (location: RouteLocationRaw) => void | Promise<void>,
 ) {
@@ -43,4 +50,3 @@ export function createLoginRedirectCoordinator(
     return pending
   }
 }
-

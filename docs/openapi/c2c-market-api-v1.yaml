@@ -291,6 +291,55 @@ paths:
           $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/password-reset/start:
+    post:
+      operationId: startPasswordReset
+      tags: [Auth]
+      security: []
+      summary: Request a student-email password reset code.
+      description: |
+        Requires a fresh Turnstile token with action `password_reset`. The response is intentionally generic and does not reveal whether the canonical email belongs to an eligible student account. Only immutable student-email claims for active, suspended, or banned accounts are eligible; archived or security-locked accounts and accounts without a student-email claim receive the same accepted response without delivery.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetStartRequest"
+      responses:
+        "202":
+          description: Request accepted regardless of account existence or eligibility.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordResetStartResponse"
+        "403":
+          description: Turnstile verification failed.
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/password-reset/confirm:
+    post:
+      operationId: confirmPasswordReset
+      tags: [Auth]
+      security: []
+      summary: Confirm a student-email password reset.
+      description: |
+        Validates the latest purpose-bound, single-use reset code and atomically replaces the Argon2id password, consumes the challenge, revokes normal and restricted-business sessions, increments the user version, and records a non-sensitive domain event. It does not change account governance state, create a session, or revoke account-appeal sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetConfirmRequest"
+      responses:
+        "204":
+          description: Password replaced and eligible sessions revoked. No session is created.
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/auth/email-registration/config:
     get:
       operationId: getStudentEmailRegistrationConfig
@@ -304,6 +353,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StudentRegistrationPublicConfig"
+  /api/v1/auth/username-availability:
+    get:
+      operationId: getUsernameAvailability
+      tags: [Auth]
+      security: []
+      summary: Check whether a valid public username is currently available.
+      description: This result is advisory. Account creation still enforces the database uniqueness constraint.
+      parameters:
+        - in: query
+          name: username
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z0-9_-]{3,24}$'
+      responses:
+        "200":
+          description: "Current username availability. Reserved usernames return `available: false`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsernameAvailability"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/auth/email-registration/start:
     post:
       operationId: startEmailRegistration
@@ -9439,6 +9513,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StudentRegistrationInstitution"
+    UsernameAvailability:
+      type: object
+      additionalProperties: false
+      required: [username, available]
+      properties:
+        username:
+          type: string
+        available:
+          type: boolean
     MyProfile:
       type: object
       required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, capabilities, linuxDoBinding, badges, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
@@ -10831,6 +10914,43 @@ components:
           type: string
           minLength: 1
           maxLength: 2048
+    PasswordResetStartRequest:
+      type: object
+      additionalProperties: false
+      required: [email, turnstileToken]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        turnstileToken:
+          type: string
+          minLength: 1
+          maxLength: 2048
+    PasswordResetStartResponse:
+      type: object
+      additionalProperties: false
+      required: [accepted]
+      properties:
+        accepted:
+          type: boolean
+          const: true
+    PasswordResetConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [email, code, newPassword]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+        newPassword:
+          type: string
+          minLength: 8
+          maxLength: 32
     SetPasswordRequest:
       type: object
       additionalProperties: false
@@ -11721,7 +11841,7 @@ components:
           format: uuid
         providerCode:
           type: string
-          enum: [openai, anthropic, google, perplexity]
+          enum: [openai, anthropic, xai]
         modelKey:
           type: string
           minLength: 1
@@ -14229,6 +14349,10 @@ components:
             sellerIdentityType:
               type: string
               enum: [individual, merchant]
+            merchantAvatarUrl:
+              type: string
+              format: uri
+              description: Public merchant avatar selected from the linked store alias or public user identity.
             sellerLinuxDoBound:
               type: boolean
             declaredMaxConcurrency:

@@ -7,7 +7,7 @@ import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSet
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
 import ContactMethodCard from '@/components/contact-payment/ContactMethodCard.vue'
-import PasswordVisibilityInput from '@/components/personal-center/PasswordVisibilityInput.vue'
+import PasswordVisibilityInput from '@/components/auth/PasswordInput.vue'
 import PersonalCenterDashboard from '@/components/personal-center/PersonalCenterDashboard.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'

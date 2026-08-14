@@ -1259,6 +1259,7 @@ var validRiskNoticeCodes = map[string]bool{
 var validAPIModelProviderCategories = map[string]bool{
 	"gpt":        true,
 	"claude":     true,
+	"grok":       true,
 	"cursor":     true,
 	"gemini":     true,
 	"perplexity": true,

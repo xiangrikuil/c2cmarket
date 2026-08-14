@@ -44,6 +44,8 @@ Replace every `CHANGE_ME` value before production use:
 - `NUXT_PUBLIC_SITE_URL`
 - `NUXT_PUBLIC_API_BASE_URL`
 - `NUXT_API_BASE_URL`
+- Backend Sentry fields: `SENTRY_ENABLED`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`, `SENTRY_TRACES_SAMPLE_RATE`
+- Frontend Sentry fields: `NUXT_PUBLIC_SENTRY_ENABLED`, `NUXT_PUBLIC_SENTRY_DSN`, `NUXT_PUBLIC_SENTRY_ENVIRONMENT`, `NUXT_PUBLIC_SENTRY_RELEASE`, `NUXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE`
 - Optional Umami tracker fields: `NUXT_PUBLIC_UMAMI_ENABLED`, `NUXT_PUBLIC_UMAMI_SCRIPT_URL`, `NUXT_PUBLIC_UMAMI_WEBSITE_ID`, `NUXT_PUBLIC_UMAMI_DOMAINS`, `NUXT_PUBLIC_UMAMI_HOST_URL`
 
 Production must keep:
@@ -55,7 +57,21 @@ OAUTH_PROVIDER_MODE=oauth2
 EMAIL_PROVIDER=aliyun_directmail
 EMAIL_VERIFICATION_PEPPER=<distinct 32-byte minimum secret>
 NUXT_PUBLIC_API_MODE=real
+SENTRY_ENABLED=true
+NUXT_PUBLIC_SENTRY_ENABLED=true
 ```
+
+Sentry DSNs are public client identifiers and are present in the checked-in deployment
+examples. Keep `SENTRY_AUTH_TOKEN` out of every `.env` file and out of Git; provide it only
+to the trusted frontend build environment when source maps should be uploaded. The token
+must have release and artifact upload access for organization `c2cmarket` and project
+`javascript-nuxt`. Set both frontend and backend release fields to the deployed Git commit
+when the build environment cannot provide `SENTRY_RELEASE` automatically.
+
+Local development keeps both Sentry SDKs disabled. Staging and production use distinct
+`environment` values, 5% frontend tracing, and 10% backend tracing. Session Replay and
+default PII collection remain disabled. Do not enable request body, Cookie, authorization
+header, CSRF, contact, or delivery-credential collection when changing this configuration.
 
 `OAUTH_PROVIDER_MODE=fake` is only for local automated smoke. `/api/v1/auth/dev-session` is only for development/test.
 `EMAIL_PROVIDER=development` is only for local development/test. It exposes `devCode` for automation and must not be used in production.
@@ -228,9 +244,9 @@ curl -fsS http://127.0.0.1:${BACKEND_PORT:-8080}/version
 ```
 
 `/readyz` must report PostgreSQL readiness and `schemaDirty=false`.
-The expected schema version in the current backend is `97`.
+The expected schema version in the current backend is `98`.
 `/version` must report the release version, full resolved Git commit, commit
-time, and `expectedMigrationVersion=97`; the first three values must match the
+time, and `expectedMigrationVersion=98`; the first three values must match the
 image labels inspected above.
 
 After a successful empty-database Bootstrap, clear both Bootstrap variables,
@@ -325,8 +341,17 @@ NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_PUBLIC_SENTRY_ENABLED=true \
+NUXT_PUBLIC_SENTRY_ENVIRONMENT=production \
+SENTRY_RELEASE="$(git rev-parse HEAD)" \
 pnpm --dir frontend build
 ```
+
+Set `SENTRY_AUTH_TOKEN` in the build environment to upload hidden source maps and delete
+them from the public output afterward. A build without that token still succeeds and does
+not generate or upload client source maps.
+For staging, build with `NUXT_PUBLIC_SENTRY_ENVIRONMENT=staging`; do not reuse a production
+client bundle if Sentry environment separation is required.
 
 The build uses Nitro's `cloudflare_module` preset and must produce
 `frontend/.output/server/index.mjs` and
@@ -450,6 +475,8 @@ empty tables and indexes only; it cannot restore deleted demand rows.
 - Backend does not start: check `APP_ENV`, OAuth env keys, contact crypto env keys, DirectMail env keys, and `DATABASE_URL`.
 - Email verification startup/config errors: check `EMAIL_PROVIDER=aliyun_directmail`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `MAIL_FROM_ADDRESS`.
 - Production backend rejects startup: check `FRONTEND_ORIGIN` / `ALLOWED_ORIGINS`.
+- Sentry has no backend events: check `SENTRY_ENABLED`, `SENTRY_DSN`, and container environment propagation; expected business 4xx responses are intentionally not reported.
+- Sentry has minified frontend stacks: set `SENTRY_AUTH_TOKEN` only in the frontend build environment and confirm the release matches `NUXT_PUBLIC_SENTRY_RELEASE`.
 - `/readyz` fails: check PostgreSQL container health, `schema_migrations`, and migration dirty state.
 - Login fails before redirect: check `OAUTH_REDIRECT_URL` matches the provider app configuration and public backend URL.
 - Browser requests fail with `CSRF_TOKEN_INVALID` before handler logic: check request `Origin` is in `ALLOWED_ORIGINS`.

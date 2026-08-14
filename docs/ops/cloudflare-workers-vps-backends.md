@@ -130,6 +130,9 @@ NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_PUBLIC_SENTRY_ENABLED=true \
+NUXT_PUBLIC_SENTRY_ENVIRONMENT=production \
+SENTRY_RELEASE="$(git rev-parse HEAD)" \
 pnpm --dir frontend build
 
 pnpm --dir frontend exec wrangler deploy --dry-run --config ../wrangler.jsonc
@@ -139,6 +142,11 @@ pnpm --dir frontend exec wrangler deploy --config ../wrangler.jsonc
 Staging 发布使用 `wrangler.staging.jsonc`。两个配置内的 Nuxt runtime vars
 必须与各自站点和 API hostname 一致。生产公开页可以被抓取；staging、
 preview 和 `workers.dev` 的 `/robots.txt` 必须全站禁止抓取。
+
+Sentry 前端 DSN 和环境名由两个 Wrangler 配置分别注入。`SENTRY_AUTH_TOKEN`
+只放在可信构建环境，用于向 `c2cmarket/javascript-nuxt` 上传 source map，不能写入
+Wrangler 配置或仓库。Staging 构建时将 `NUXT_PUBLIC_SENTRY_ENVIRONMENT` 改为
+`staging`；前端采样率为 5%，Session Replay 和默认 PII 采集保持关闭。
 
 Staging 的两个 Access application 保持不变：
 

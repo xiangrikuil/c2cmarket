@@ -25,6 +25,7 @@ test('resolves uploaded and fallback category icons consistently', () => {
 
   assert.equal(getProductCategoryIconSrc('gpt', categoryIcons), 'data:image/png;base64,目录图标')
   assert.equal(getProductCategoryIconSrc('claude', categoryIcons), '/claude-mark.svg')
+  assert.equal(getProductCategoryIconSrc('grok', categoryIcons), '/grok-mark.svg')
   assert.equal(getProductIconSrc('OpenAI GPT-4.1', categoryIcons), 'data:image/png;base64,目录图标')
   assert.equal(getProductIconSrc('未知产品', categoryIcons), null)
 })

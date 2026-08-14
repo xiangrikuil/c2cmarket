@@ -696,6 +696,7 @@ export type PublicApiQuotaOffer = ApiQuotaOffer & {
   serviceTitle: string
   sellerDisplayName: string
   sellerIdentityType: 'individual' | 'merchant'
+  merchantAvatarUrl?: string
   sellerLinuxDoBound: boolean
   promptAuditEnabled?: boolean | null
   healthSummary?: ApiServiceHealthSummary

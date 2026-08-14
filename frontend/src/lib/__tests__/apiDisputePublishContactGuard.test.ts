@@ -17,16 +17,17 @@ function sourceBetween(source: string, startMarker: string, endMarker: string) {
 }
 
 describe('API 纠纷发布与身份联系方式约束', () => {
-  it('购买和拼车交易复用账号绑定的 linux.do 联系方式', () => {
+  it('API 购买使用买家联系方式，拼车继续使用账号绑定的 linux.do 联系方式', () => {
     expect(sourceBetween(apiMarketBackendSource, 'export async function backendCreateAPIQuotaOrder', 'export async function backendOwnerAPIQuotaBatches'))
-      .toContain('backendBoundLinuxDoContactMethod()')
+      .toContain('backendBuyerContactMethod()')
     expect(sourceBetween(apiMarketBackendSource, 'export async function backendCreateAPIPurchaseIntent', 'export async function backendCreateAPIOrderFromIntent'))
-      .toContain('backendBoundLinuxDoContactMethod()')
+      .toContain('backendBuyerContactMethod()')
     expect(sourceBetween(carpoolBackendSource, 'export async function backendSubmitCarpool', 'export async function backendUpdateOwnerCarpool'))
       .toContain('backendBoundLinuxDoContactMethod()')
     expect(sourceBetween(carpoolBackendSource, 'export async function backendCreateCarpoolApplication', 'async function ownerApplication'))
       .toContain('backendBoundLinuxDoContactMethod()')
     expect(apiMarketBackendSource).toContain("methods.find(method => method.enabled && method.type === 'linuxdo')")
+    expect(apiMarketBackendSource).toContain("method.usageScopes.includes('buyer')")
   })
 
   it('两个发布入口都会提前读取活动纠纷并禁止最终提交', () => {

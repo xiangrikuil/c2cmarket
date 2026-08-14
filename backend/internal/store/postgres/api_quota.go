@@ -2124,6 +2124,12 @@ var publicAPIQuotaOffersQuery = `
 	            THEN COALESCE(mp.display_name, u.display_name)
 	            ELSE u.display_name END,
 	       CASE WHEN s.merchant_identity_mode = 'store_alias' THEN 'merchant' ELSE 'individual' END,
+	       COALESCE(CASE WHEN s.merchant_identity_mode = 'store_alias'
+	            THEN mp.avatar_url
+	            ELSE CASE WHEN u.avatar_mode = 'custom_url'
+	                 THEN u.custom_avatar_url
+	                 ELSE COALESCE(l.avatar_url, u.avatar_url) END
+	       END, ''),
 	       EXISTS (SELECT 1 FROM linux_do_bindings ldb WHERE ldb.user_id = s.owner_user_id),
 		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0), s.performance_confirmed_at,
 		       s.prompt_audit_enabled,
@@ -2136,6 +2142,7 @@ var publicAPIQuotaOffersQuery = `
 	JOIN api_services s ON s.id = o.api_service_id AND s.owner_user_id = o.owner_user_id
 	JOIN users u ON u.id = o.owner_user_id
 	LEFT JOIN merchant_profiles mp ON mp.id = s.merchant_profile_id AND mp.owner_user_id = s.owner_user_id
+	LEFT JOIN linux_do_bindings l ON l.user_id = s.owner_user_id
 	LEFT JOIN LATERAL (
 		SELECT r.id, r.system_slot_key, r.name, r.starts_at, r.ends_at, r.status, r.fulfillment_confirmed_at
 		FROM api_quota_sale_rounds r
@@ -2303,7 +2310,7 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 		&card.DeliveryMode, &card.DeliveryETAMinutes, &card.SaleMode, &card.Status,
 		&card.SortOrder, &card.PublishedAt, &card.CreatedAt, &card.UpdatedAt, &card.Version,
 		&card.BatchStatus, &card.ServiceTitle, &card.ServiceOrderable,
-		&card.SellerDisplayName, &card.SellerIdentityType, &card.SellerLinuxDOBound,
+		&card.SellerDisplayName, &card.SellerIdentityType, &card.MerchantAvatarURL, &card.SellerLinuxDOBound,
 		&card.DeclaredTTFTBand, &card.DeclaredMaxConcurrency, &card.PerformanceConfirmedAt,
 		&card.PromptAuditEnabled,
 		&card.SaleCutoffAt, &card.ExpiresAt,

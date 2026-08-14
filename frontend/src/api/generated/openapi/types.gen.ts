@@ -256,6 +256,11 @@ export type StudentRegistrationPublicConfig = {
     institutions: Array<StudentRegistrationInstitution>;
 };
 
+export type UsernameAvailability = {
+    username: string;
+    available: boolean;
+};
+
 export type MyProfile = {
     id: string;
     username: string;
@@ -771,6 +776,21 @@ export type PasswordLoginRequest = {
     turnstileToken: string;
 };
 
+export type PasswordResetStartRequest = {
+    email: string;
+    turnstileToken: string;
+};
+
+export type PasswordResetStartResponse = {
+    accepted: true;
+};
+
+export type PasswordResetConfirmRequest = {
+    email: string;
+    code: string;
+    newPassword: string;
+};
+
 export type SetPasswordRequest = {
     /**
      * Required only when the account already has a backup password.
@@ -1155,7 +1175,7 @@ export type ApiModelSyncSelection = {
     fingerprint: string;
     status: 'new' | 'price_changed';
     providerId: string;
-    providerCode: 'openai' | 'anthropic' | 'google' | 'perplexity';
+    providerCode: 'openai' | 'anthropic' | 'xai';
     modelKey: string;
     capabilities: Array<'text' | 'vision' | 'reasoning'>;
     sourceUrl: 'https://models.dev/api.json';
@@ -2459,6 +2479,10 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     serviceTitle: string;
     sellerDisplayName: string;
     sellerIdentityType: 'individual' | 'merchant';
+    /**
+     * Public merchant avatar selected from the linked store alias or public user identity.
+     */
+    merchantAvatarUrl?: string;
     sellerLinuxDoBound: boolean;
     declaredMaxConcurrency: number;
     /**
@@ -5255,6 +5279,68 @@ export type SetBackupPasswordResponses = {
 
 export type SetBackupPasswordResponse = SetBackupPasswordResponses[keyof SetBackupPasswordResponses];
 
+export type StartPasswordResetData = {
+    body: PasswordResetStartRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-reset/start';
+};
+
+export type StartPasswordResetErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type StartPasswordResetError = StartPasswordResetErrors[keyof StartPasswordResetErrors];
+
+export type StartPasswordResetResponses = {
+    /**
+     * Request accepted regardless of account existence or eligibility.
+     */
+    202: PasswordResetStartResponse;
+};
+
+export type StartPasswordResetResponse = StartPasswordResetResponses[keyof StartPasswordResetResponses];
+
+export type ConfirmPasswordResetData = {
+    body: PasswordResetConfirmRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-reset/confirm';
+};
+
+export type ConfirmPasswordResetErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ConfirmPasswordResetError = ConfirmPasswordResetErrors[keyof ConfirmPasswordResetErrors];
+
+export type ConfirmPasswordResetResponses = {
+    /**
+     * Password replaced and eligible sessions revoked. No session is created.
+     */
+    204: void;
+};
+
+export type ConfirmPasswordResetResponse = ConfirmPasswordResetResponses[keyof ConfirmPasswordResetResponses];
+
 export type GetStudentEmailRegistrationConfigData = {
     body?: never;
     path?: never;
@@ -5270,6 +5356,37 @@ export type GetStudentEmailRegistrationConfigResponses = {
 };
 
 export type GetStudentEmailRegistrationConfigResponse = GetStudentEmailRegistrationConfigResponses[keyof GetStudentEmailRegistrationConfigResponses];
+
+export type GetUsernameAvailabilityData = {
+    body?: never;
+    path?: never;
+    query: {
+        username: string;
+    };
+    url: '/api/v1/auth/username-availability';
+};
+
+export type GetUsernameAvailabilityErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type GetUsernameAvailabilityError = GetUsernameAvailabilityErrors[keyof GetUsernameAvailabilityErrors];
+
+export type GetUsernameAvailabilityResponses = {
+    /**
+     * Current username availability. Reserved usernames return `available: false`.
+     */
+    200: UsernameAvailability;
+};
+
+export type GetUsernameAvailabilityResponse = GetUsernameAvailabilityResponses[keyof GetUsernameAvailabilityResponses];
 
 export type StartEmailRegistrationData = {
     body: EmailRegistrationStartRequest;

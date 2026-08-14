@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const passwordInputSource = readFileSync(new URL('../../components/personal-center/PasswordVisibilityInput.vue', import.meta.url), 'utf8')
+const passwordInputSource = readFileSync(new URL('../../components/auth/PasswordInput.vue', import.meta.url), 'utf8')
 const myCenterSource = readFileSync(new URL('../../pages/MyCenterPage.vue', import.meta.url), 'utf8')
 
 describe('备用密码显隐控件', () => {

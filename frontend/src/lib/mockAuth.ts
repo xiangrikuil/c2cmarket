@@ -52,9 +52,16 @@ type MockRegistrationChallenge = {
   expiresAt: string
 }
 
+type MockPasswordResetChallenge = {
+  email: string
+  code: string
+  expiresAt: string
+}
+
 const storageKey = 'c2cmarket.mock-auth.v1'
 let memoryState: StoredMockAuth = { persona: 'linuxdo' }
 let registrationChallenge: MockRegistrationChallenge | null = null
+let passwordResetChallenge: MockPasswordResetChallenge | null = null
 let recentlyReauthenticated = false
 let mockRegistrationSetting = { enabled: false, version: 1, updatedAt: undefined as string | undefined }
 let mockInstitutionDomains = [{
@@ -249,6 +256,37 @@ export function confirmMockEmailRegistration(input: {
   registrationChallenge = null
   writeState({ persona: 'student', studentUsername: input.username, studentEmail: email })
   return requireMockIdentity()
+}
+
+export function startMockPasswordReset(email: string, turnstileToken: string) {
+  const normalizedEmail = email.trim().toLowerCase()
+  if (!turnstileToken.trim()) throw new Error('请先完成人机验证。')
+  const state = readState()
+  if (state.studentEmail?.toLowerCase() !== normalizedEmail) {
+    passwordResetChallenge = null
+    return { accepted: true as const }
+  }
+  passwordResetChallenge = {
+    email: normalizedEmail,
+    code: '123456',
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  }
+  return { accepted: true as const }
+}
+
+export function confirmMockPasswordReset(input: { email: string, code: string, newPassword: string }) {
+  const normalizedEmail = input.email.trim().toLowerCase()
+  const validChallenge = passwordResetChallenge
+    && passwordResetChallenge.email === normalizedEmail
+    && passwordResetChallenge.code === input.code.trim()
+    && Date.parse(passwordResetChallenge.expiresAt) > Date.now()
+  if (!validChallenge) {
+    throw new MockAuthProblem(422, 'VERIFICATION_CODE_INVALID', '验证码无效或已过期。')
+  }
+  const passwordError = getBackupPasswordValidationMessage(input.newPassword)
+  if (passwordError) throw new MockAuthProblem(422, 'PASSWORD_INVALID', passwordError)
+  passwordResetChallenge = null
+  setMockPersona('anonymous')
 }
 
 export function loginMockWithPassword(identifier: string, password: string) {

@@ -70,6 +70,7 @@ type ServerOptions struct {
 	Metrics            *observability.Metrics
 	MetricsBearerToken string
 	TurnstileVerifier  turnstile.Verifier
+	SentryEnabled      bool
 }
 
 type OAuthOptions struct {
@@ -209,6 +210,7 @@ type Service interface {
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
 	AuthenticateWithPassword(ctx context.Context, username, password string) (auth.AuthenticationResult, *domain.AppError)
 	StudentRegistrationConfig(ctx context.Context) (auth.StudentRegistrationConfig, *domain.AppError)
+	UsernameAvailable(ctx context.Context, username string) (bool, *domain.AppError)
 	AdminStudentRegistration(ctx context.Context, user auth.User) (auth.StudentRegistrationConfig, *domain.AppError)
 	UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentRegistrationSettingUpdate, build auth.StudentRegistrationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	AdminStudentInstitutionDomains(ctx context.Context, user auth.User) ([]auth.StudentInstitutionDomain, *domain.AppError)
@@ -216,6 +218,8 @@ type Service interface {
 	UpdateStudentInstitutionDomainWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentInstitutionDomainUpdateInput, build auth.StudentInstitutionDomainCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
+	StartPasswordReset(ctx context.Context, input auth.PasswordResetStartInput) (auth.PasswordResetStartResult, *domain.AppError)
+	ConfirmPasswordReset(ctx context.Context, input auth.PasswordResetConfirmInput) *domain.AppError
 	ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError
 	ReauthenticatePasswordForPurpose(ctx context.Context, sessionID, csrfToken, password, purpose string) *domain.AppError
 	StartAdminReauthenticationOAuth(ctx context.Context, sessionID string) (string, *domain.AppError)
@@ -635,19 +639,21 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		turnstile:          option.TurnstileVerifier,
 	}
 	server.routes()
-	return middleware.WithRequestID(
-		middleware.WithClientIP(
-			server.clientIPResolver,
-			middleware.WithRequestLogging(
-				log.Default(),
-				middleware.WithSecurityHeaders(
-					middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
-						AllowedOrigins: server.allowedOrigins,
-						Production:     option.AppEnv == config.EnvProduction,
-					}),
-					middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
-				),
+	handler := middleware.WithClientIP(
+		server.clientIPResolver,
+		middleware.WithRequestLogging(
+			log.Default(),
+			middleware.WithSecurityHeaders(
+				middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
+					AllowedOrigins: server.allowedOrigins,
+					Production:     option.AppEnv == config.EnvProduction,
+				}),
+				middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
 			),
 		),
 	)
+	if option.SentryEnabled {
+		handler = observability.WithSentry(handler)
+	}
+	return middleware.WithRequestID(handler)
 }

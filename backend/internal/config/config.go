@@ -54,6 +54,7 @@ type Config struct {
 	MetricsBearerToken      string
 	TurnstileSecret         string
 	TurnstileHostnames      []string
+	Sentry                  SentryConfig
 }
 
 type SMTPConfig struct {
@@ -85,6 +86,14 @@ type APIHealthConfig struct {
 	Retention     time.Duration
 }
 
+type SentryConfig struct {
+	Enabled          bool
+	DSN              string
+	Environment      string
+	Release          string
+	TracesSampleRate float64
+}
+
 const (
 	localContactEncryptionKey    = "c2cmarket-local-contact-encryption-key-v1"
 	localContactFingerprintKey   = "c2cmarket-local-contact-fingerprint-key-v1"
@@ -109,12 +118,17 @@ const (
 
 func Load() (Config, error) {
 	cfg := Config{
-		Port:                    strings.TrimSpace(os.Getenv("PORT")),
-		AppEnv:                  strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
-		DatabaseURL:             strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		MetricsBearerToken:      strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")),
-		TurnstileSecret:         strings.TrimSpace(os.Getenv("TURNSTILE_SECRET")),
-		TurnstileHostnames:      parseTurnstileHostnames(os.Getenv("TURNSTILE_HOSTNAMES")),
+		Port:               strings.TrimSpace(os.Getenv("PORT")),
+		AppEnv:             strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
+		DatabaseURL:        strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		MetricsBearerToken: strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")),
+		TurnstileSecret:    strings.TrimSpace(os.Getenv("TURNSTILE_SECRET")),
+		TurnstileHostnames: parseTurnstileHostnames(os.Getenv("TURNSTILE_HOSTNAMES")),
+		Sentry: SentryConfig{
+			DSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
+			Environment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
+			Release:     strings.TrimSpace(os.Getenv("SENTRY_RELEASE")),
+		},
 		FrontendOrigin:          strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")),
 		AllowedOrigins:          parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS")),
 		OAuthProviderMode:       strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
@@ -251,6 +265,36 @@ func Load() (Config, error) {
 	}
 	if cfg.AppEnv == "" {
 		cfg.AppEnv = EnvDevelopment
+	}
+	cfg.Sentry.Enabled, err = parseBoolEnv(
+		"SENTRY_ENABLED",
+		os.Getenv("SENTRY_ENABLED"),
+		cfg.AppEnv == EnvProduction && cfg.Sentry.DSN != "",
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Sentry.TracesSampleRate, err = parseFloatEnv(
+		"SENTRY_TRACES_SAMPLE_RATE",
+		os.Getenv("SENTRY_TRACES_SAMPLE_RATE"),
+		0.1,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.Sentry.TracesSampleRate < 0 || cfg.Sentry.TracesSampleRate > 1 {
+		return Config{}, fmt.Errorf("SENTRY_TRACES_SAMPLE_RATE must be between 0 and 1")
+	}
+	if cfg.Sentry.Environment == "" {
+		cfg.Sentry.Environment = cfg.AppEnv
+	}
+	if cfg.Sentry.DSN != "" {
+		if err := validateSentryDSN(cfg.Sentry.DSN); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.Sentry.Enabled && cfg.Sentry.DSN == "" {
+		return Config{}, fmt.Errorf("SENTRY_DSN is required when SENTRY_ENABLED=true")
 	}
 	if len(cfg.TurnstileHostnames) == 0 && cfg.AppEnv != EnvProduction {
 		cfg.TurnstileHostnames = []string{"localhost", "127.0.0.1"}
@@ -603,6 +647,32 @@ func parseIntEnv(name, raw string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be an integer", name)
 	}
 	return parsed, nil
+}
+
+func parseFloatEnv(name, raw string, fallback float64) (float64, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", name)
+	}
+	return parsed, nil
+}
+
+func validateSentryDSN(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User == nil {
+		return fmt.Errorf("SENTRY_DSN must be an absolute HTTP(S) Sentry DSN")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("SENTRY_DSN must use http or https")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("SENTRY_DSN must not include a query or fragment")
+	}
+	return nil
 }
 
 func parseAllowedOrigins(values ...string) []string {

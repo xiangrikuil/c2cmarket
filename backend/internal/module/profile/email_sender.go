@@ -42,6 +42,10 @@ func (DevelopmentEmailSender) SendVerificationCode(context.Context, string, stri
 	return nil
 }
 
+func (DevelopmentEmailSender) SendPasswordResetCode(context.Context, string, string, time.Time) *domain.AppError {
+	return nil
+}
+
 func (DevelopmentEmailSender) SendRegistrationSuccess(context.Context, string, string, string, time.Time) *domain.AppError {
 	return nil
 }
@@ -156,6 +160,24 @@ func (s *SMTPEmailSender) SendVerificationCode(ctx context.Context, toEmail, cod
 		To:       toEmail,
 		Subject:  "C2CMarket 邮箱验证码",
 		TextBody: verificationTextBody(code, expiresAt),
+		HTMLBody: htmlBody,
+	})
+}
+
+func (s *SMTPEmailSender) SendPasswordResetCode(ctx context.Context, toEmail, code string, expiresAt time.Time) *domain.AppError {
+	if s == nil {
+		return emailUnavailableError()
+	}
+	htmlBody, err := s.templates.renderPasswordReset(verificationTemplateData{
+		Code: strings.TrimSpace(code),
+	})
+	if err != nil {
+		return emailUnavailableError()
+	}
+	return s.send(ctx, emailMessage{
+		To:       toEmail,
+		Subject:  "C2CMarket 密码重置验证码",
+		TextBody: passwordResetTextBody(code, expiresAt),
 		HTMLBody: htmlBody,
 	})
 }
@@ -389,6 +411,7 @@ func randomHex(size int) string {
 
 type emailTemplates struct {
 	verification       *template.Template
+	passwordReset      *template.Template
 	registration       *template.Template
 	carpoolApplication *template.Template
 	carpoolAcceptance  *template.Template
@@ -397,6 +420,10 @@ type emailTemplates struct {
 
 func newEmailTemplates() (*emailTemplates, error) {
 	verification, err := template.New("verification").Parse(verificationHTMLTemplate)
+	if err != nil {
+		return nil, err
+	}
+	passwordReset, err := template.New("password-reset").Parse(passwordResetHTMLTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +445,7 @@ func newEmailTemplates() (*emailTemplates, error) {
 	}
 	return &emailTemplates{
 		verification:       verification,
+		passwordReset:      passwordReset,
 		registration:       registration,
 		carpoolApplication: carpoolApplication,
 		carpoolAcceptance:  carpoolAcceptance,
@@ -465,6 +493,12 @@ func (t *emailTemplates) renderVerification(data verificationTemplateData) (stri
 	return buf.String(), err
 }
 
+func (t *emailTemplates) renderPasswordReset(data verificationTemplateData) (string, error) {
+	var buf bytes.Buffer
+	err := t.passwordReset.Execute(&buf, data)
+	return buf.String(), err
+}
+
 func (t *emailTemplates) renderRegistration(data registrationTemplateData) (string, error) {
 	var buf bytes.Buffer
 	err := t.registration.Execute(&buf, data)
@@ -491,6 +525,10 @@ func (t *emailTemplates) renderAPIOrder(data apiOrderTemplateData) (string, erro
 
 func verificationTextBody(code string, _ time.Time) string {
 	return fmt.Sprintf("你正在进行 C2CMarket 邮箱验证，本次验证码为：\n\n%s\n\n验证码在 15 分钟内有效，请勿将验证码告知他人。C2CMarket 工作人员不会向你索要验证码。\n\n若非本人操作，请忽略本邮件。%s", strings.TrimSpace(code), systemEmailFooterText)
+}
+
+func passwordResetTextBody(code string, _ time.Time) string {
+	return fmt.Sprintf("你正在重置 C2CMarket 学生账号密码，本次验证码为：\n\n%s\n\n验证码在 15 分钟内有效，请勿将验证码告知他人。C2CMarket 工作人员不会向你索要验证码。\n\n若非本人操作，请忽略本邮件，账号密码不会因此改变。%s", strings.TrimSpace(code), systemEmailFooterText)
 }
 
 func registrationTextBody(username, displayName string, registeredAt time.Time, profileURL string) string {
@@ -593,6 +631,8 @@ const systemEmailFooterText = "\n\n此邮件由系统自动发送，请勿直接
 const systemEmailFooterHTML = `<p style="margin-top:24px;color:#64748b;font-size:12px">此邮件由系统自动发送，请勿直接回复。</p>`
 
 const verificationHTMLTemplate = `<p>你正在进行 C2CMarket 邮箱验证，本次验证码为：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">{{.Code}}</p><p>验证码在 <strong>15 分钟内有效</strong>，请勿将验证码告知他人。C2CMarket 工作人员不会向你索要验证码。</p><p>若非本人操作，请忽略本邮件。</p>` + systemEmailFooterHTML
+
+const passwordResetHTMLTemplate = `<p>你正在重置 C2CMarket 学生账号密码，本次验证码为：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">{{.Code}}</p><p>验证码在 <strong>15 分钟内有效</strong>，请勿将验证码告知他人。C2CMarket 工作人员不会向你索要验证码。</p><p>若非本人操作，请忽略本邮件，账号密码不会因此改变。</p>` + systemEmailFooterHTML
 
 const registrationHTMLTemplate = `<p>你好，{{if .DisplayName}}{{.DisplayName}}{{else}}C2CMarket 用户{{end}}：</p><p>你的 C2CMarket 账号已注册成功。</p>{{if .Username}}<p>账号：@{{.Username}}</p>{{end}}<p>注册时间：{{.RegisteredAt}}</p><p>你现在可以前往个人中心，完善资料与常用联系方式。</p><p><a href="{{.ProfileURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">前往个人中心</a></p><p>若非本人操作，请及时检查账号状态。</p>` + systemEmailFooterHTML
 

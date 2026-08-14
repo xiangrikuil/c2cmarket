@@ -104,6 +104,7 @@ versions:
 | `000095_account_governance_business_disposition` | durable governance disposition jobs, unique cross-action resource outcomes, structured governance cancellation facts, and non-restoring sales-stop links |
 | `000096_api_order_launch_hardening` | immutable merchant-confirm and delivery deadlines, constrained late-payment recovery, buyer pending-order capacity, and rush-round fulfillment confirmation |
 | `000097_dynamic_catalog_lifecycle` | three-state catalog lifecycle, Grok/xAI seed data, immutable core identity, and API-order catalog risk holds |
+| `000098_password_reset` | purpose-isolated active password-reset challenge uniqueness for immutable student-email recovery |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product

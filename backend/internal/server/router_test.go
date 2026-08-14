@@ -21,6 +21,7 @@ import (
 	"c2c-market/backend/internal/health"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/auth"
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/platform/modelsdev"
 
@@ -396,6 +397,48 @@ func TestEmailRegistrationDisabled(t *testing.T) {
 			t.Fatalf("disabled email registration must not set session cookie: %+v", cookie)
 		}
 	}
+}
+
+func TestUsernameAvailability(t *testing.T) {
+	server := newTestServer(time.Now())
+	createSession(t, server, "taken_student", false)
+
+	for _, testCase := range []struct {
+		name      string
+		username  string
+		available bool
+	}{
+		{name: "existing username", username: "taken_student", available: false},
+		{name: "new username", username: "new_student", available: true},
+		{name: "reserved username", username: "admin", available: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/username-availability?username="+testCase.username, nil)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("username availability status %d body %s", response.Code, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("username availability must not be cached, got %q", response.Header().Get("Cache-Control"))
+			}
+			var payload usernameAvailabilityResponse
+			if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode username availability: %v", err)
+			}
+			if payload.Username != testCase.username || payload.Available != testCase.available {
+				t.Fatalf("username availability = %+v, want username=%q available=%t", payload, testCase.username, testCase.available)
+			}
+		})
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/v1/auth/username-availability?username=Not-Valid", nil)
+	invalidResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid username status %d body %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+	assertProblemCode(t, invalidResponse, domain.CodeUsernameInvalid)
 }
 
 func TestPublicResourceIDsAreUUIDs(t *testing.T) {
@@ -817,6 +860,16 @@ func TestAdminAPIModelModelsDevSyncAndLifecycle(t *testing.T) {
 				},
 			},
 		},
+		"xai": {
+			ID: "xai", Name: "xAI",
+			Models: map[string]modelsdev.Model{
+				"grok-sync-test": {
+					ID: "grok-sync-test", LastUpdated: "2026-08-08", Reasoning: true,
+					Modalities: modelsdev.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+					Cost:       &modelsdev.Cost{Input: "2", CacheRead: "0.3", Output: "6"},
+				},
+			},
+		},
 	}})
 	server := NewServer(service)
 	adminSession := createSession(t, server, "admin-models-dev-sync", true)
@@ -833,14 +886,59 @@ func TestAdminAPIModelModelsDevSyncAndLifecycle(t *testing.T) {
 		t.Fatalf("decode providers: %v", err)
 	}
 	providerID := ""
+	xaiProviderID := ""
 	for _, provider := range providers.Items {
 		if provider.Code == "openai" {
 			providerID = provider.ID
+		}
+		if provider.Code == "xai" {
+			xaiProviderID = provider.ID
+		}
+	}
+	if providerID == "" || xaiProviderID == "" {
+		t.Fatal("expected seeded openai and xai providers")
+	}
+
+	xaiPreviewBody := `{"providerIds":["` + xaiProviderID + `"]}`
+	xaiPreviewRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/preview", xaiPreviewBody)
+	addCookie(xaiPreviewRequest, adminSession.cookie)
+	xaiPreviewRecorder := httptest.NewRecorder()
+	server.ServeHTTP(xaiPreviewRecorder, xaiPreviewRequest)
+	if xaiPreviewRecorder.Code != http.StatusOK {
+		t.Fatalf("xAI preview status %d body %s", xaiPreviewRecorder.Code, xaiPreviewRecorder.Body.String())
+	}
+	var xaiPreview apiModelSyncPreviewResponse
+	if err := json.NewDecoder(xaiPreviewRecorder.Body).Decode(&xaiPreview); err != nil {
+		t.Fatalf("decode xAI preview: %v", err)
+	}
+	var xaiCandidate apiModelSyncItemResponse
+	for _, item := range xaiPreview.Items {
+		if item.ModelKey == "grok-sync-test" {
+			xaiCandidate = item
 			break
 		}
 	}
-	if providerID == "" {
-		t.Fatal("expected seeded openai provider")
+	if xaiCandidate.Status != "new" || xaiCandidate.ProviderCode != "xai" || xaiCandidate.Fingerprint == "" {
+		t.Fatalf("unexpected xAI preview candidate=%+v", xaiCandidate)
+	}
+	xaiApplyBodyBytes, err := json.Marshal(apiModelSyncApplyRequest{Items: []apiModelSyncSelectionRequest{{
+		Fingerprint: xaiCandidate.Fingerprint, Status: xaiCandidate.Status,
+		ProviderID: xaiCandidate.ProviderID, ProviderCode: xaiCandidate.ProviderCode,
+		ModelKey: xaiCandidate.ModelKey, Capabilities: xaiCandidate.Capabilities,
+		SourceURL: xaiCandidate.SourceURL, SourceVersion: xaiCandidate.SourceVersion,
+		InputPricePerMillion:       xaiCandidate.InputPricePerMillion,
+		CachedInputPricePerMillion: xaiCandidate.CachedInputPricePerMillion,
+		OutputPricePerMillion:      xaiCandidate.OutputPricePerMillion, Active: false,
+	}}})
+	if err != nil {
+		t.Fatalf("marshal xAI apply request: %v", err)
+	}
+	xaiApplyRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", string(xaiApplyBodyBytes))
+	addAuth(xaiApplyRequest, adminSession, "models-dev-apply-xai")
+	xaiApplyResponse := httptest.NewRecorder()
+	server.ServeHTTP(xaiApplyResponse, xaiApplyRequest)
+	if xaiApplyResponse.Code != http.StatusOK || !strings.Contains(xaiApplyResponse.Body.String(), `"created":1`) {
+		t.Fatalf("xAI apply status %d body %s", xaiApplyResponse.Code, xaiApplyResponse.Body.String())
 	}
 
 	previewBody := `{"providerIds":["` + providerID + `"]}`
@@ -987,6 +1085,13 @@ func TestAdminAPIModelValidationAndAuth(t *testing.T) {
 	adminSession := createSession(t, server, "admin-api-model-validation", true)
 	userSession := createSession(t, server, "user-api-model-validation", false)
 	provider := createAdminAPIModelProvider(t, server, adminSession, "validation-openai", "api-model-validation-provider-create")
+	grokProviderRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-model-providers", apiModelProviderPayload("grok", "validation-xai", "xAI Validation", true))
+	addAuth(grokProviderRequest, adminSession, "api-model-validation-grok-provider-create")
+	grokProviderResponse := httptest.NewRecorder()
+	server.ServeHTTP(grokProviderResponse, grokProviderRequest)
+	if grokProviderResponse.Code != http.StatusCreated || !strings.Contains(grokProviderResponse.Body.String(), `"providerCategory":"grok"`) {
+		t.Fatalf("create Grok provider status %d body %s", grokProviderResponse.Code, grokProviderResponse.Body.String())
+	}
 
 	nonAdminList := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-models", nil)
 	addCookie(nonAdminList, userSession.cookie)
@@ -3817,6 +3922,9 @@ func createStudentSession(t *testing.T, server http.Handler, username string) te
 	var payload sessionResponse
 	if err := json.NewDecoder(confirmResponse.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode student session: %v", err)
+	}
+	if payload.Audience != auth.SessionAudienceNormal {
+		t.Fatalf("student registration audience=%q, want %q", payload.Audience, auth.SessionAudienceNormal)
 	}
 	if payload.User.StudentClaim == nil || payload.User.StudentClaim.InstitutionDomain != domainValue || payload.User.LinuxDo.Bound || len(payload.User.Capabilities) != 1 || payload.User.Capabilities[0] != "api_order.create" {
 		t.Fatalf("unexpected student identity projection: %+v", payload.User)

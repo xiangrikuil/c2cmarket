@@ -12,7 +12,7 @@ const minimalTheme = source('../../theme/minimal-modern.css')
 const aquaTheme = source('../../theme/aqua-console.css')
 const appThemes = source('../../theme/appThemes.ts')
 const styles = source('../../styles.css')
-const login = source('../../pages/LoginPage.vue')
+const login = source('../../components/auth/LoginPanel.vue')
 const logo = source('../../../public/c2cmarket-logo-mark.svg')
 
 describe('深蓝紫主题与基础控件一致性', () => {

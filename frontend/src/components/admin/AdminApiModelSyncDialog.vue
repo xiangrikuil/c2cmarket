@@ -38,7 +38,7 @@ const emit = defineEmits<{
   applied: [result: ApiModelBulkMutationResult]
 }>()
 
-const supportedProviderCodes = new Set<ModelsDevProviderCode>(['openai', 'anthropic'])
+const supportedProviderCodes = new Set<ModelsDevProviderCode>(['openai', 'anthropic', 'xai'])
 const statusTabs: Array<{ value: ApiModelSyncStatus, label: string }> = [
   { value: 'new', label: '新增' },
   { value: 'price_changed', label: '价格变化' },

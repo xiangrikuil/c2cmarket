@@ -35,6 +35,7 @@ const MyFeedbackPage = () => import('@/pages/MyFeedbackPage.vue')
 const MyReportsAppealsPage = () => import('@/pages/MyReportsAppealsPage.vue')
 const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
 const LoginPage = () => import('@/pages/LoginPage.vue')
+const PasswordResetPage = () => import('@/pages/PasswordResetPage.vue')
 const AccountAppealPage = () => import('@/pages/AccountAppealPage.vue')
 const RestrictedBusinessPage = () => import('@/pages/RestrictedBusinessPage.vue')
 const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
@@ -73,6 +74,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/', name: 'home', component: HomePage },
     { path: '/search', name: 'search', component: SearchPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { standalone: true } },
+    { path: '/password-reset', name: 'password-reset', component: PasswordResetPage, meta: { standalone: true } },
     { path: '/account-appeal', name: 'account-appeal', component: AccountAppealPage, meta: { standalone: true } },
     { path: '/restricted-business', name: 'restricted-business', component: RestrictedBusinessPage, meta: { standalone: true } },
     { path: '/forbidden', name: 'forbidden', component: ForbiddenPage },

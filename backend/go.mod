@@ -3,6 +3,7 @@ module c2c-market/backend
 go 1.26.6
 
 require (
+	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0

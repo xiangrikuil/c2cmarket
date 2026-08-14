@@ -90,3 +90,21 @@ test('models.dev Mock 识别价格来源变化和来源缺失，不自动改写�
   const after = await backend.getAdminAPIModels()
   assert.deepEqual(after, before)
 })
+
+test('models.dev Mock 可预览并导入 xAI Grok 模型', async () => {
+  const backend = await loadMockBackend()
+  const providers = await backend.getAdminAPIModelProviders()
+  const xai = providers.find(provider => provider.code === 'xai')
+  assert.ok(xai)
+
+  const preview = await backend.previewAPIModelsDevSync([xai.id])
+  const candidate = preview.items.find(item => item.modelKey === 'grok-4.5')
+  assert.equal(candidate?.providerCode, 'xai')
+  assert.equal(candidate?.status, 'new')
+
+  const applied = await backend.applyAPIModelsDevSync([selectionFrom(candidate!)])
+  assert.equal(applied.created, 1)
+  const imported = (await backend.getAdminAPIModels()).find(model => model.modelKey === 'grok-4.5')
+  assert.equal(imported?.providerCategory, 'grok')
+  assert.equal(imported?.active, false)
+})

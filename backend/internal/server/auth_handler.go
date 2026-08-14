@@ -77,6 +77,11 @@ type emailRegistrationConfigResponse struct {
 	Institutions []emailRegistrationInstitutionResponse `json:"institutions"`
 }
 
+type usernameAvailabilityResponse struct {
+	Username  string `json:"username"`
+	Available bool   `json:"available"`
+}
+
 type emailRegistrationInstitutionResponse struct {
 	Domain          string `json:"domain"`
 	InstitutionName string `json:"institutionName"`
@@ -327,6 +332,17 @@ func (s *Server) handleEmailRegistrationConfig(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, emailRegistrationConfigResponse{Enabled: config.Enabled, Institutions: institutions})
 }
 
+func (s *Server) handleUsernameAvailability(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	username := r.URL.Query().Get("username")
+	available, appErr := s.app.UsernameAvailable(r.Context(), username)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, usernameAvailabilityResponse{Username: username, Available: available})
+}
+
 func (s *Server) handleStartEmailRegistration(w http.ResponseWriter, r *http.Request) {
 	req, appErr := decodeStrictJSONOnly[emailRegistrationStartRequest](r)
 	if appErr != nil {
@@ -375,6 +391,7 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 	s.setSessionCookie(w, session)
 	writeJSON(w, http.StatusOK, sessionResponse{
 		User:      toUserDTO(user),
+		Audience:  auth.SessionAudienceNormal,
 		CSRFToken: session.CSRFToken,
 		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
 	})

@@ -7,6 +7,7 @@ import {
   createLoginRedirectCoordinator,
   loginRoute,
   normalizeReturnTo,
+  passwordResetRoute,
 } from '@/lib/authNavigation'
 
 describe('authentication navigation', () => {
@@ -16,6 +17,10 @@ describe('authentication navigation', () => {
     expect(normalizeReturnTo(returnTo)).toBe(returnTo)
     expect(loginRoute(returnTo)).toEqual({
       path: '/login',
+      query: { returnTo },
+    })
+    expect(passwordResetRoute(returnTo)).toEqual({
+      path: '/password-reset',
       query: { returnTo },
     })
   })
@@ -100,6 +105,7 @@ describe('route authentication contract', () => {
       '/api-market/:id',
       '/announcements/:slug',
       '/u/:username',
+      '/password-reset',
     ]) {
       expect(authAccessFromMeta(routeByPath.get(path)?.meta ?? {}), path).toBeNull()
     }

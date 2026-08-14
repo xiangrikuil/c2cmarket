@@ -30,7 +30,7 @@ func TestCORSPreflightAllowsAccountAppealCSRFHeader(t *testing.T) {
 		t.Fatalf("allow origin = %q", got)
 	}
 	allowedHeaders := strings.ToLower(response.Header().Get("Access-Control-Allow-Headers"))
-	for _, header := range []string{"content-type", "x-account-appeal-csrf", "idempotency-key"} {
+	for _, header := range []string{"content-type", "x-account-appeal-csrf", "idempotency-key", "sentry-trace", "baggage"} {
 		if !strings.Contains(allowedHeaders, header) {
 			t.Fatalf("preflight does not allow %s: %q", header, allowedHeaders)
 		}

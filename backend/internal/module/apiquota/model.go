@@ -160,6 +160,7 @@ type OfferCard struct {
 	ServiceOrderable          bool
 	SellerDisplayName         string
 	SellerIdentityType        string
+	MerchantAvatarURL         string
 	SellerLinuxDOBound        bool
 	DeclaredTTFTBand          string
 	DeclaredMaxConcurrency    int

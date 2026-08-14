@@ -52,6 +52,7 @@ test('growth dashboard remains admin-only, query-backed, and complete across sta
 test('browser analytics consumes OAuth outcomes once without leaking route data', () => {
   const plugin = source('../../plugins/browser.client.ts')
   const login = source('../../pages/LoginPage.vue')
+  const loginPanel = source('../../components/auth/LoginPanel.vue')
   const backendClient = source('../backendClient.ts')
 
   assert.match(plugin, /captureRegistrationAttribution\(\)/)
@@ -61,8 +62,8 @@ test('browser analytics consumes OAuth outcomes once without leaking route data'
   assert.match(plugin, /delete query\.authOutcome/)
   assert.match(plugin, /lastTrackedPath = route\.path/)
   assert.match(login, /trackAnalytics\('login_page_view'/)
-  assert.match(login, /trackAnalytics\('oauth_login_start'/)
-  assert.match(login, /trackAnalytics\('login_success'/)
+  assert.match(loginPanel, /trackAnalytics\('oauth_login_start'/)
+  assert.match(loginPanel, /trackAnalytics\('login_success'/)
   assert.match(backendClient, /identifyAnalyticsUser\(session\.user\.analyticsUserId\)/)
   assert.match(backendClient, /clearAnalyticsIdentity\(\)/)
   assert.doesNotMatch(plugin, /route\.fullPath[^\n]*trackAnalytics/)

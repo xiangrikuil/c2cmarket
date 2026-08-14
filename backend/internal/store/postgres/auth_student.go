@@ -19,6 +19,19 @@ import (
 
 const studentRegistrationSettingTargetID = "00000000-0000-0000-0000-000000000091"
 
+func (s *Store) UsernameAvailable(ctx context.Context, username string) (bool, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return false, internalStoreError()
+	}
+	var available bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT NOT EXISTS(SELECT 1 FROM users WHERE username = $1)
+	`, username).Scan(&available); err != nil {
+		return false, internalStoreError()
+	}
+	return available, nil
+}
+
 func (s *Store) StudentRegistrationConfig(ctx context.Context) (auth.StudentRegistrationConfig, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return auth.StudentRegistrationConfig{}, internalStoreError()

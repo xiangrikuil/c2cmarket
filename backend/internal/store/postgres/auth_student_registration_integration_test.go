@@ -32,6 +32,13 @@ func (*postgresStudentRegistrationSender) SendRegistrationSuccess(context.Contex
 	return nil
 }
 
+func (sender *postgresStudentRegistrationSender) SendPasswordResetCode(_ context.Context, email, code string, _ time.Time) *domain.AppError {
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	sender.codes[email] = code
+	return nil
+}
+
 func (*postgresStudentRegistrationSender) ExposeDevCode() bool { return true }
 
 func TestPostgresStudentRegistrationLifecycleAndConcurrencyAreAtomic(t *testing.T) {

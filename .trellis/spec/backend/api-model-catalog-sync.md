@@ -2,6 +2,7 @@
 
 Date: 2026-08-08
 Author: Codex
+Updated: 2026-08-14
 
 ## Scenario: Administrator-Reviewed models.dev Catalog Sync
 
@@ -39,7 +40,8 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 ### 3. Contracts
 
 - The backend fetches only the source-code constant `https://models.dev/api.json` endpoint through a dedicated bounded HTTPS client. Because neither administrators nor request payloads can change its host or path, this fixed-source client uses the standard TLS transport so system and transparent proxies can route synthetic DNS addresses; user-configurable destinations must continue through `internal/platform/outboundhttp`. The client timeout is 15 seconds, the decoded body is limited to 16 MiB, redirects are rejected, and trailing JSON is invalid.
-- The first supported provider allowlist is `openai`, `anthropic`, `google`, and `perplexity`. Requests carry local provider IDs; the backend resolves and validates their provider codes.
+- The supported provider allowlist is `openai`, `anthropic`, and `xai`. Requests carry local provider IDs; the backend resolves and validates their provider codes. xAI uses the exact models.dev provider key `xai` and projects to the local `grok` provider category.
+- The allowlist limits reviewed models.dev ingestion, not local catalog extensibility. Administrators may still create provider and model rows through the dedicated CRUD endpoints; unsupported upstream providers are never imported implicitly.
 - Keep the exact models.dev model `id` as `modelKey`, including lowercase punctuation such as `gpt-4.1-mini`. Do not derive it from a display name and do not append `/v1` or any other suffix.
 - Import candidates must accept text input and produce text output. Embedding, image-output, audio, Realtime, moderation, and video models are excluded from the supported candidate set.
 - Map `cost.input`, `cost.cache_read`, and `cost.output` to the existing per-million-token price columns. Map text, image-input/attachment, and reasoning metadata to `text`, `vision`, and `reasoning` in the catalog's canonical capability order.
@@ -73,7 +75,7 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 
 ### 5. Good / Base / Bad Cases
 
-- Good: preview four official providers, import selected new models as inactive, explicitly activate one new model, confirm selected price changes, and retain the existing active state of updated models.
+- Good: preview OpenAI, Anthropic, and xAI, import selected new GPT/Claude/Grok models as inactive, explicitly activate one new model, confirm selected price changes, and retain the existing active state of updated models.
 - Good: a stale apply receives `412`, refreshes the preview in place, clears stale activation choices, and waits for the administrator to review and submit again.
 - Base: close or cancel preview, receive `source_missing`, or receive an unchanged catalog. Local models, price versions, and activation remain untouched.
 - Bad: write during preview, import all providers, normalize `gpt-4.1-mini` into a display label, auto-enable new rows, update only the first valid row of a conflicting batch, automatically replay a stale selection after `412`, or let the 920px comparison table widen a 390px dialog.
@@ -81,9 +83,9 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 ### 6. Tests Required
 
 - models.dev client tests assert fixed-source redirect rejection, valid public response shape, HTTP failure, malformed/trailing JSON, response-size limit, and client timeout classification.
-- Server tests assert preview status counts, exact model keys, unavailable/source-missing records, tampered fingerprint rejection, atomic create plus price update, default inactive state, existing active-state preservation, idempotency replay, bulk activation, public visibility, and external-source Problem Details.
+- Server tests assert preview status counts, exact model keys, xAI/Grok candidate ingestion, unavailable/source-missing records, tampered fingerprint rejection, atomic create plus price update, default inactive state, existing active-state preservation, idempotency replay, bulk activation, public visibility, and external-source Problem Details.
 - PostgreSQL coverage must assert row locking, old price-version closure, new current version creation, whole-batch rollback, stale version conflict, and idempotency completion in the business transaction.
-- Frontend adapter tests assert preview has no writes, new imports remain hidden until explicitly reactivated, price updates preserve lifecycle, stale/tampered selections fail, and lifecycle commands refresh public/admin queries.
+- Frontend adapter tests assert preview has no writes, xAI is selectable, Grok candidates remain inactive after import until explicitly reactivated, price updates preserve lifecycle, stale/tampered selections fail, and lifecycle commands refresh public/admin queries.
 - Frontend dialog tests assert `VERSION_CONFLICT` triggers one preview refresh, resets stale selections and activation choices, surfaces a re-review warning, and does not invoke apply again.
 - Run `go test ./...`, frontend Vitest, Nuxt typecheck/build, OpenAPI route/type drift checks, and browser QA at desktop and mobile widths.
 - Browser QA must inspect all five preview tabs, initial selection defaults, the activation switch, price comparison, apply result, batch status, horizontal table scrolling, reachable dialog footer, and absence of console errors.
