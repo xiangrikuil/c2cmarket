@@ -116,6 +116,7 @@ export default defineNuxtConfig({
     exclude: [
       '/search/**',
       '/login',
+      '/password-reset',
       '/auth/**',
       '/my/**',
       '/merchant/**',
@@ -134,6 +135,7 @@ export default defineNuxtConfig({
     '/u/**': privateRouteRule,
     '/search/**': privateRouteRule,
     '/login': privateRouteRule,
+    '/password-reset': privateRouteRule,
     '/auth/**': privateRouteRule,
     '/my/**': privateRouteRule,
     '/merchant/**': privateRouteRule,

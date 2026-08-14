@@ -11,6 +11,7 @@ import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 import {
   MockAuthProblem,
   confirmMockEmailRegistration,
+  confirmMockPasswordReset,
   getMockIdentity,
   linkMockLinuxDo,
   loginMockWithPassword,
@@ -19,6 +20,7 @@ import {
   requireMockIdentity,
   setMockPersona,
   startMockEmailRegistration,
+  startMockPasswordReset,
   type MockIdentity,
   type MockPersona,
 } from '@/lib/mockAuth'
@@ -30,6 +32,9 @@ import type {
   EmailRegistrationStartResponse,
   OAuthStartResponse,
   PasswordLoginRequest,
+  PasswordResetConfirmRequest,
+  PasswordResetStartRequest,
+  PasswordResetStartResponse,
   SessionResponse,
   StudentRegistrationPublicConfig,
   User,
@@ -53,7 +58,13 @@ export type DevPersonaSession = BackendSession & {
   persona: DevPersona
 }
 
-export type { OAuthStartResponse, PasswordLoginRequest }
+export type {
+  OAuthStartResponse,
+  PasswordLoginRequest,
+  PasswordResetConfirmRequest,
+  PasswordResetStartRequest,
+  PasswordResetStartResponse,
+}
 
 export type AccountAppealSession = AccountAppealSessionResponse
 export type AccountGovernanceAppeal = AccountGovernanceAppealResponse
@@ -420,6 +431,41 @@ export async function confirmEmailRegistration(
   const session = await backendJSON<BackendSession>('/api/v1/auth/email-registration/confirm', request)
   clearRegistrationAttribution()
   return replaceBackendSession(session)
+}
+
+export async function startPasswordReset(
+  payload: PasswordResetStartRequest,
+): Promise<PasswordResetStartResponse> {
+  if (!shouldUseRealBackend()) {
+    try {
+      return startMockPasswordReset(payload.email, payload.turnstileToken)
+    } catch (error) {
+      return backendProblemFromMock(error)
+    }
+  }
+  return backendRequest<PasswordResetStartResponse>('/api/v1/auth/password-reset/start', {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  }, { affectsSessionCache: false })
+}
+
+export async function confirmPasswordReset(payload: PasswordResetConfirmRequest): Promise<void> {
+  if (!shouldUseRealBackend()) {
+    try {
+      confirmMockPasswordReset(payload)
+      clearBackendSessionCache()
+      return
+    } catch (error) {
+      return backendProblemFromMock(error)
+    }
+  }
+  await backendRequest<void>('/api/v1/auth/password-reset/confirm', {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  }, { affectsSessionCache: false })
+  clearBackendSessionCache()
 }
 
 export async function reauthenticatePassword(password: string, purpose?: 'grant_admin'): Promise<void> {

@@ -5,7 +5,7 @@ import type { Appeal, SelfDispute, SelfReport } from '@/api/generated/openapi'
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const pageSource = source('../../pages/AccountAppealPage.vue')
-const loginSource = source('../../pages/LoginPage.vue')
+const loginPanelSource = source('../../components/auth/LoginPanel.vue')
 const clientSource = source('../backendClient.ts')
 const seoSource = source('../../seo/routeSeo.ts')
 
@@ -16,7 +16,7 @@ describe('restricted-account appeal frontend', () => {
     expect(route?.name).toBe('account-appeal')
     expect(route?.meta).toEqual({ standalone: true })
     expect(route?.meta?.auth).toBeUndefined()
-    expect(loginSource).toContain('to="/account-appeal"')
+    expect(loginPanelSource).toContain('to="/account-appeal"')
     expect(seoSource).toContain("'/account-appeal'")
   })
 

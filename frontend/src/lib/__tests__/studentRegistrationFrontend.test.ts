@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { afterEach, test, vi } from 'vitest'
 
 const loginSource = readFileSync(new URL('../../pages/LoginPage.vue', import.meta.url), 'utf8')
+const registrationSource = readFileSync(new URL('../../components/auth/StudentRegistrationPanel.vue', import.meta.url), 'utf8')
 const myCenterSource = readFileSync(new URL('../../pages/MyCenterPage.vue', import.meta.url), 'utf8')
 const adminPageSource = readFileSync(new URL('../../pages/AdminStudentRegistrationPage.vue', import.meta.url), 'utf8')
 const adminBackendSource = readFileSync(new URL('../studentRegistrationAdminBackend.ts', import.meta.url), 'utf8')
@@ -57,16 +58,17 @@ afterEach(() => {
 })
 
 test('registration page uses the two-step contract and resets one-time Turnstile after every start attempt', () => {
-  assert.match(loginSource, /registrationStep = ref<'start' \| 'confirm'>\('start'\)/)
-  assert.match(loginSource, /startEmailRegistration\(\{[\s\S]*email,[\s\S]*turnstileToken: registrationTurnstileToken\.value/)
-  assert.match(loginSource, /finally \{[\s\S]*registrationTurnstileToken\.value = ''[\s\S]*registrationTurnstileWidget\.value\?\.reset\(\)/)
-  assert.match(loginSource, /action="student_signup"/)
-  assert.match(loginSource, /const usernameValue = registrationUsername\.value\n/)
-  assert.doesNotMatch(loginSource, /const usernameValue = registrationUsername\.value\.trim\(\)/)
-  assert.match(loginSource, /\^\[a-z0-9_-\]\{3,24\}\$/)
-  assert.match(loginSource, /\^\\d\{6\}\$/)
-  assert.match(loginSource, /confirmEmailRegistration\(\{[\s\S]*email: registrationEmail\.value,[\s\S]*code:[\s\S]*username: usernameValue,[\s\S]*password:/)
-  assert.match(loginSource, /学校邮箱注册暂未开放/)
+  assert.match(loginSource, /type AuthMode = 'login' \| 'student-register'/)
+  assert.match(registrationSource, /type RegistrationStep = 'email' \| 'account' \| 'completed'/)
+  assert.match(registrationSource, /startEmailRegistration\(\{[\s\S]*email: submittedEmail,[\s\S]*turnstileToken: turnstileToken\.value/)
+  assert.match(registrationSource, /finally \{[\s\S]*turnstileToken\.value = ''[\s\S]*turnstileWidget\.value\?\.reset\(\)/)
+  assert.match(registrationSource, /action="student_signup"/)
+  assert.match(registrationSource, /confirmEmailRegistration\(\{[\s\S]*email: canonicalEmail\.value,[\s\S]*code:[\s\S]*username: username\.value,[\s\S]*password:/)
+  assert.match(registrationSource, /学生注册暂未开放/)
+  assert.match(registrationSource, /requestGeneration/)
+  assert.match(registrationSource, /pendingAction\.value === 'registration-start'\) pendingAction\.value = null/)
+  assert.match(registrationSource, /if \(pendingAction\.value/)
+  assert.match(registrationSource, /之前的验证码已失效/)
 })
 
 test('real registration calls use exact payloads, cache the returned session, and never fall back to mock', async () => {
@@ -135,6 +137,79 @@ test('mock registration rechecks the persistent switch during confirmation', asy
     }),
     (error: unknown) => error instanceof client.BackendProblemError && error.code === 'EMAIL_REGISTRATION_DISABLED',
   )
+})
+
+test('real password reset uses generic start and no-session confirm contracts', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({ accepted: true }, 202))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const accepted = await client.startPasswordReset({
+    email: 'student@example.edu',
+    turnstileToken: 'turnstile-reset',
+  })
+  await client.confirmPasswordReset({
+    email: 'student@example.edu',
+    code: '123456',
+    newPassword: 'Changed-password-2!',
+  })
+
+  assert.deepEqual(accepted, { accepted: true })
+  assert.equal(fetchMock.mock.calls.length, 2)
+  assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/password-reset/start')
+  assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/auth/password-reset/confirm')
+  assert.deepEqual(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)), {
+    email: 'student@example.edu',
+    turnstileToken: 'turnstile-reset',
+  })
+  assert.deepEqual(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)), {
+    email: 'student@example.edu',
+    code: '123456',
+    newPassword: 'Changed-password-2!',
+  })
+})
+
+test('mock password reset is generic for unknown email and revokes the eligible student session', async () => {
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'mock' })
+  await client.createMockPersonaSession('admin')
+  const admin = await import('../studentRegistrationAdminBackend')
+  const setting = await admin.getAdminStudentRegistrationSetting()
+  if (!setting.enabled) {
+    await admin.updateAdminStudentRegistrationSetting({ enabled: true, expectedVersion: setting.version, reason: '密码重置测试' })
+  }
+  const challenge = await client.startEmailRegistration({ email: 'student@example.edu', turnstileToken: 'turnstile-register' })
+  await client.confirmEmailRegistration({
+    email: challenge.email,
+    code: challenge.devCode ?? '123456',
+    username: 'student_reset',
+    password: 'Strong-password-1!',
+  })
+
+  assert.deepEqual(await client.startPasswordReset({ email: 'unknown@example.edu', turnstileToken: 'turnstile-unknown' }), { accepted: true })
+  assert.deepEqual(await client.startPasswordReset({ email: 'student@example.edu', turnstileToken: 'turnstile-reset' }), { accepted: true })
+  await client.confirmPasswordReset({ email: 'student@example.edu', code: '123456', newPassword: 'Changed-password-2!' })
+  await assert.rejects(
+    () => client.getCurrentBackendSession(),
+    (error: unknown) => error instanceof client.BackendProblemError && error.code === 'SESSION_EXPIRED',
+  )
+})
+
+test('password reset page guards re-entry, isolates stale responses, and completes before returning to login', () => {
+  const resetSource = readFileSync(new URL('../../pages/PasswordResetPage.vue', import.meta.url), 'utf8')
+
+  assert.match(resetSource, /type ResetStep = 'request' \| 'confirm' \| 'completed'/)
+  assert.match(resetSource, /if \(pendingAction\.value \|\| step\.value !== 'request'\) return/)
+  assert.match(resetSource, /if \(pendingAction\.value \|\| step\.value !== 'confirm'\) return/)
+  assert.match(resetSource, /requestGeneration \+= 1/)
+  assert.match(resetSource, /pendingAction\.value === 'reset-start'\) pendingAction\.value = null/)
+  assert.match(resetSource, /generation !== requestGeneration \|\| submittedEmail !== canonicalEmail\.value/)
+  assert.match(resetSource, /step\.value = 'completed'/)
+  assert.match(resetSource, /<RouterLink :to="loginDestination">返回登录<\/RouterLink>/)
+  assert.doesNotMatch(resetSource, /getCurrentBackendSession|cacheBackendSession/)
 })
 
 test('student registration administration is reasoned, optimistic, immutable-domain UI', async () => {

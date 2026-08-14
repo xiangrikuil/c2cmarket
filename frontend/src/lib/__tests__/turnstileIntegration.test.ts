@@ -18,16 +18,36 @@ describe('Turnstile authentication integration', () => {
   })
 
   it('requires a password-login token and resets the widget after every submission attempt', () => {
-    const login = source('../../pages/LoginPage.vue')
+    const login = source('../../components/auth/LoginPanel.vue')
     const client = source('../backendClient.ts')
 
     expect(client).toMatch(/PasswordLoginRequest[\s\S]*turnstileToken: string/)
     expect(login).toContain("action=\"password_login\"")
-    expect(login).toContain("@update:token=\"turnstileToken = $event\"")
-    expect(login).toContain("if (!turnstileToken.value)")
+    expect(login).toContain("@update:token=\"turnstileToken = $event; touched.turnstile = true\"")
+    expect(login).toContain("turnstile: turnstileToken.value ? ''")
     expect(login).toContain('turnstileToken: turnstileToken.value')
-    expect(login).toContain(':disabled="passwordLoading || !turnstileToken"')
+    expect(login).toContain(':disabled="pendingAction !== null"')
     expect(login).toMatch(/finally \{[\s\S]*turnstileWidget\.value\?\.reset\(\)/)
+  })
+
+  it('uses a distinct password-reset action and clears the token after every start attempt', () => {
+    const reset = source('../../pages/PasswordResetPage.vue')
+
+    expect(reset).toContain('action="password_reset"')
+    expect(reset).toContain('turnstileToken: turnstileToken.value')
+    expect(reset).toMatch(/finally \{[\s\S]*turnstileToken\.value = ''[\s\S]*turnstileWidget\.value\?\.reset\(\)/)
+  })
+
+  it('prevents abandoned start requests from clearing a fresh email challenge token', () => {
+    for (const relativePath of [
+      '../../components/auth/StudentRegistrationPanel.vue',
+      '../../pages/PasswordResetPage.vue',
+    ]) {
+      const form = source(relativePath)
+
+      expect(form).toMatch(/watch\(email, \(\) => \{[\s\S]*requestGeneration \+= 1[\s\S]*turnstileToken\.value = ''[\s\S]*turnstileWidget\.value\?\.reset\(\)/)
+      expect(form).toMatch(/finally \{\s*if \(generation === requestGeneration\) \{[\s\S]*turnstileToken\.value = ''[\s\S]*turnstileWidget\.value\?\.reset\(\)/)
+    }
   })
 
   it('keeps the site key public and requires it for production builds', () => {

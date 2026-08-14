@@ -4,14 +4,19 @@ import { Eye, EyeOff } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-const props = defineProps<{
+withDefaults(defineProps<{
   id: string
   modelValue: string
   label: string
   autocomplete: 'current-password' | 'new-password'
   invalid?: boolean
   describedBy?: string
-}>()
+  placeholder?: string
+}>(), {
+  invalid: false,
+  describedBy: undefined,
+  placeholder: '',
+})
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
@@ -32,6 +37,7 @@ const passwordVisible = ref(false)
       :autocomplete="autocomplete"
       :aria-invalid="invalid ? 'true' : undefined"
       :aria-describedby="describedBy"
+      :placeholder="placeholder"
       @update:model-value="value => emit('update:modelValue', String(value))"
       @blur="emit('blur', $event)"
     />
