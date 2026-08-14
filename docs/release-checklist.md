@@ -11,7 +11,7 @@ assumption or a previous release.
 - [ ] Release ref resolves to the approved full Git SHA.
 - [ ] Worktree is clean; no staged, unstaged, or untracked release input.
 - [ ] CI `release-gate` passed for that exact SHA.
-- [ ] Backend uses Go `1.26.5`; frontend uses Node 24 and pnpm 10.
+- [ ] Backend uses Go `1.26.6`; frontend uses Node 24 and pnpm 10.
 - [ ] Source archive checksum, backend image digest, OCI labels, and SBOM are recorded.
 - [ ] Gitleaks, Trivy filesystem/image, govulncheck, frontend high audit, tests,
       race, OpenAPI, migration, header, and Compose checks passed.

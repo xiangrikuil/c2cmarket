@@ -53,6 +53,9 @@ DROP INDEX IF EXISTS ux_product_categories_core_key;
 DROP INDEX IF EXISTS ux_api_model_providers_code_lower;
 DROP INDEX IF EXISTS ux_product_categories_code_lower;
 
+ALTER TABLE product_categories DROP CONSTRAINT ck_product_categories_code;
+ALTER TABLE api_model_providers DROP CONSTRAINT ck_api_model_providers_code;
+
 ALTER TABLE product_categories ADD COLUMN active boolean NOT NULL DEFAULT true;
 ALTER TABLE product_plans ADD COLUMN active boolean NOT NULL DEFAULT true;
 ALTER TABLE api_model_providers ADD COLUMN active boolean NOT NULL DEFAULT true;

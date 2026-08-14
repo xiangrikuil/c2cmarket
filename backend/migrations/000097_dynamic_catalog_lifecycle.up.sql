@@ -204,7 +204,7 @@ INSERT INTO product_plans (
   core_key, status
 )
 SELECT
-  '00000000-0000-0000-0000-000000000501', category.id, 'xai', 'grok-premium',
+  '00000000-0000-0000-0000-000000000601', category.id, 'xai', 'grok-premium',
   'Grok Premium', '社区 Grok 订阅拼车品类。', 'allowed', 'owner_managed_access',
   'unknown', 'elevated', false, '需说明成员、席位或站外访问安排。',
   true, false, 60, '额度', 'USD', 'monthly', 'grok', 'active'

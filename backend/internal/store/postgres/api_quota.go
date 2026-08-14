@@ -535,7 +535,7 @@ func publishAPIQuotaBatchInTx(ctx context.Context, tx pgx.Tx, input apiquota.Bat
 		SELECT billing_mode = 'metered_usd_quota'
 		   AND accepting_orders = true
 		   AND available_usd_allowance > 0
-		   AND quota_expires_at > $2 + interval '24 hours'
+		   AND quota_expires_at > $2::timestamptz + interval '24 hours'
 		FROM api_services
 		WHERE id = $1
 	`, batch.APIServiceID, now).Scan(&flexibleQuotaSaleOpen); err != nil {
@@ -1227,7 +1227,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 		SELECT billing_mode = 'metered_usd_quota'
 		   AND accepting_orders = true
 		   AND available_usd_allowance > 0
-		   AND quota_expires_at > $2 + interval '24 hours'
+		   AND quota_expires_at > $2::timestamptz + interval '24 hours'
 		FROM api_services
 		WHERE id = $1
 	`, publication.Batch.APIServiceID, now).Scan(&flexibleQuotaSaleOpen); err != nil {

@@ -23,7 +23,7 @@
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/community-linux.do-1D4ED8?logo=discourse&logoColor=white" alt="linux.do community"></a>
-  <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
+  <img src="https://img.shields.io/badge/Go-1.26.6-00ADD8?logo=go&logoColor=white" alt="Go 1.26.6">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
 
@@ -60,7 +60,7 @@ The platform does not process payments, provide escrow or fulfillment guarantees
 | Layer | Technology |
 | --- | --- |
 | Frontend | Nuxt 4, Vue 3, TypeScript, Pinia, TanStack Query, Tailwind CSS |
-| Backend | Go 1.26.5, chi, pgx |
+| Backend | Go 1.26.6, chi, pgx |
 | Database | PostgreSQL 18, versioned SQL migrations |
 | Deployment | Docker Compose, Cloudflare Workers, VPS/Caddy, GHCR |
 | Integrations | linux.do OAuth 2.0, Alibaba Cloud DirectMail SMTP, optional Umami |
@@ -72,7 +72,7 @@ The platform does not process payments, provide escrow or fulfillment guarantees
 - Docker and Docker Compose
 - Node.js `>=24.11 <25`
 - pnpm `>=10 <11`
-- Go 1.26.5 when running the backend outside Docker
+- Go 1.26.6 when running the backend outside Docker
 
 ### 1. Clone and configure
 

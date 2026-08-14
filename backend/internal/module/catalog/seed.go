@@ -65,7 +65,7 @@ func SeedProductPlans(now time.Time) []ProductPlan {
 		},
 		{
 			Lifecycle:            activeLifecycle("grok"),
-			ID:                   "00000000-0000-0000-0000-000000000501",
+			ID:                   "00000000-0000-0000-0000-000000000601",
 			CategoryID:           "00000000-0000-0000-0000-000000000106",
 			CategoryCode:         "grok",
 			ProviderCode:         "xai",
