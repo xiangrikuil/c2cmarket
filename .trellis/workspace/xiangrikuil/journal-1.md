@@ -1725,3 +1725,25 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 56: 修复 PR 36 CI 并中文化摘要
+
+**Date**: 2026-08-14
+**Task**: 修复 PR 36 CI 并中文化摘要
+**Package**: frontend
+**Branch**: `codex/login-student-registration-redesign`
+
+### Summary
+
+同步 migration 98 活动契约文档，更新 PR 中文摘要，并确认 GitHub Actions release-gate 全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2c9afc0` | (see git log) |
+
+### Status
+
+[OK] **Completed**
