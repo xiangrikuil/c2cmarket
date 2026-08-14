@@ -20,7 +20,7 @@ import (
 )
 
 var modelsDevProviderAllowlist = map[string]bool{
-	"openai": true, "anthropic": true,
+	"openai": true, "anthropic": true, "xai": true,
 }
 
 var unsupportedModelsDevKeyParts = []string{

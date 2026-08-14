@@ -11841,7 +11841,7 @@ components:
           format: uuid
         providerCode:
           type: string
-          enum: [openai, anthropic, google, perplexity]
+          enum: [openai, anthropic, xai]
         modelKey:
           type: string
           minLength: 1

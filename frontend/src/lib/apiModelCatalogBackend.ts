@@ -255,6 +255,7 @@ const mockModelsDevModels: MockModelsDevModel[] = [
   { providerCode: 'openai', modelKey: 'gpt-audio-preview', capabilities: ['text'], inputPricePerMillion: '', cachedInputPricePerMillion: '', outputPricePerMillion: '', sourceVersion: '', unavailableReason: '当前目录不支持音频模型计价。' },
   { providerCode: 'anthropic', modelKey: 'claude-sonnet', capabilities: ['text', 'vision'], inputPricePerMillion: '3.000000', cachedInputPricePerMillion: '', outputPricePerMillion: '15.000000', sourceVersion: 'models.dev:2026-08-08' },
   { providerCode: 'anthropic', modelKey: 'claude-3-5-haiku', capabilities: ['text', 'vision'], inputPricePerMillion: '0.800000', cachedInputPricePerMillion: '0.080000', outputPricePerMillion: '4.000000', sourceVersion: 'models.dev:2026-08-08' },
+  { providerCode: 'xai', modelKey: 'grok-4.5', capabilities: ['text', 'vision', 'reasoning'], inputPricePerMillion: '2.000000', cachedInputPricePerMillion: '0.300000', outputPricePerMillion: '6.000000', sourceVersion: 'models.dev:2026-08-14' },
 ]
 
 function buildMockModelsDevPreview(providerIds: string[]): ApiModelSyncPreview {
@@ -412,7 +413,7 @@ function mockPriceChanged(local: AdminApiModel, external: MockModelsDevModel) {
 }
 
 function isModelsDevProviderCode(value: string): value is ModelsDevProviderCode {
-  return value === 'openai' || value === 'anthropic'
+  return value === 'openai' || value === 'anthropic' || value === 'xai'
 }
 
 function mockFingerprint(value: string) {

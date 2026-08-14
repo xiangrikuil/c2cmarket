@@ -85,7 +85,7 @@ export type ApiModelInput = {
   sortOrder: number
 }
 
-export type ModelsDevProviderCode = 'openai' | 'anthropic'
+export type ModelsDevProviderCode = 'openai' | 'anthropic' | 'xai'
 export type ApiModelSyncStatus = GeneratedApiModelSyncStatus
 export type ApiModelSyncItem = GeneratedApiModelSyncItem
 export type ApiModelSyncPreview = GeneratedApiModelSyncPreview

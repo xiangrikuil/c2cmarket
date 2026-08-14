@@ -1175,7 +1175,7 @@ export type ApiModelSyncSelection = {
     fingerprint: string;
     status: 'new' | 'price_changed';
     providerId: string;
-    providerCode: 'openai' | 'anthropic' | 'google' | 'perplexity';
+    providerCode: 'openai' | 'anthropic' | 'xai';
     modelKey: string;
     capabilities: Array<'text' | 'vision' | 'reasoning'>;
     sourceUrl: 'https://models.dev/api.json';
