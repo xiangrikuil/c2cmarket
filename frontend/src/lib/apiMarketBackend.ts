@@ -911,7 +911,7 @@ export async function backendCreateAPIQuotaOrder(payload: CreateApiQuotaOrderPay
   const selectedAccessMode = service.deliveryModes[0]
   if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
   if (!selectedAccessMode) throw new Error('商户尚未配置可用接入方式。')
-	const contact = await backendBoundLinuxDoContactMethod()
+  const contact = await backendBuyerContactMethod()
   const response = await backendMutation<BackendAPIOrder>(`/api/v1/api-quota-offers/${payload.offerId}/orders`, {
     ...(payload.saleRoundId ? { saleRoundId: payload.saleRoundId } : {}),
     buyerContactMethodId: contact.id,
@@ -1556,10 +1556,29 @@ export async function backendBoundLinuxDoContactMethod(): Promise<UserContactMet
 	return contact
 }
 
+export function selectBuyerContactMethod(methods: UserContactMethod[]): UserContactMethod {
+  const eligible = methods.filter(method => (
+    method.enabled
+    && method.usageScopes.includes('buyer')
+    && (method.type !== 'email' || method.verified)
+  ))
+  const contact = eligible.find(method => method.isDefault)
+    ?? eligible.find(method => method.type === 'linuxdo')
+    ?? eligible[0]
+  if (!contact) {
+    throw new Error('请先在个人中心配置可用于买家交易的联系方式（如微信或已验证邮箱）。')
+  }
+  return contact
+}
+
+export async function backendBuyerContactMethod(): Promise<UserContactMethod> {
+  return selectBuyerContactMethod(await backendMyContactMethods())
+}
+
 export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
   await ensureBackendSession('buyer', false)
   const service = await backendAPIServiceById(payload.serviceId)
-	const contact = await backendBoundLinuxDoContactMethod()
+  const contact = await backendBuyerContactMethod()
   const requestedCnyAmount = normalizeDecimal(String(payload.purchaseAmountCny), 2)
   const requestedUsdAllowance = service.billingMode === 'fixed_package'
     ? ''
