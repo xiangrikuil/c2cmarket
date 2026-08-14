@@ -272,6 +272,7 @@ export type BackendAPIOrder = {
   status: string
 	disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
   selectedPackageId?: string
@@ -309,10 +310,14 @@ export type BackendAPIOrder = {
   paymentExpiresAt: string
   paymentSummary?: string
   paymentSubmittedAt?: string | null
+  merchantConfirmDueAt?: string | null
+  merchantConfirmOverdue: boolean
   paymentIssueReason?: string
   paymentIssueNote?: string
   paymentIssueReportedAt?: string | null
   paidConfirmedAt?: string | null
+  deliveryDueAt?: string | null
+  deliveryOverdue: boolean
   deliveryNote?: string
   deliverySubmittedAt?: string | null
   deliveryReviewExpiresAt?: string | null
@@ -321,12 +326,30 @@ export type BackendAPIOrder = {
   completedAt?: string | null
   cancelledAt?: string | null
   cancelReason?: string
+	latePaymentStatus?: string
+	latePaymentReportedAt?: string | null
+	latePaymentNote?: string
+	latePaymentResolvedAt?: string | null
+	canReportLatePayment: boolean
 	afterSalesExpiresAt?: string | null
 	canOpenDispute: boolean
 	disputeEligibilityReason: string
   version: number
   createdAt: string
   updatedAt: string
+}
+
+export type ApiOrderCatalogRiskHold = {
+  id: string
+  sourceType: 'api_model_provider' | 'api_model_catalog'
+  sourceId: string
+  status: 'active' | 'restored' | 'refund_pending' | 'dispute_opened'
+  reason: string
+  createdAt: string
+  resolvedBy?: string
+  resolvedAt?: string | null
+  resolutionNote?: string
+  version: number
 }
 
 type BackendAPIOrderPaymentInstructions = {
@@ -771,6 +794,7 @@ function mapAPIQuotaRound(item: ApiQuotaRound): ApiQuotaRound {
     id: item.id,
     batchId: item.batchId,
     systemSlotKey: item.systemSlotKey,
+    fulfillmentConfirmedAt: item.fulfillmentConfirmedAt,
     name: item.name,
     startsAt: item.startsAt,
     endsAt: item.endsAt,
@@ -970,6 +994,14 @@ export async function backendCreateAPIQuotaRound(payload: CreateApiQuotaRoundPay
     endsAt: payload.endsAt,
     offers: payload.offers,
   }, { idempotencyPrefix: 'api-quota-round-create' })
+  return mapAPIQuotaRound(response)
+}
+
+export async function backendConfirmAPIQuotaRoundFulfillment(roundId: string, version: number) {
+  const response = await backendMutation<ApiQuotaRound>(`/api/v1/owner/api-quota-rounds/${roundId}/confirm-fulfillment`, {}, {
+    idempotencyPrefix: 'api-quota-round-confirm-fulfillment',
+    ifMatch: version,
+  })
   return mapAPIQuotaRound(response)
 }
 
@@ -1410,6 +1442,11 @@ function apiOrderCompletionSource(value?: string): ApiOrderCompletionSource | un
   return undefined
 }
 
+function apiOrderLatePaymentStatus(value?: string): ApiOrder['latePaymentStatus'] {
+  if (value === 'reported' || value === 'not_received' || value === 'received_refund_pending') return value
+  return undefined
+}
+
 export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiOrderDetail {
   if (order.currency !== 'CNY') throw new Error(`Unsupported API order currency: ${order.currency}`)
   if (!order.buyerUserId || !order.sellerUserId) throw new Error('Admin API order response is missing participant IDs')
@@ -1423,6 +1460,7 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     status: apiOrderStatus(order.status),
 		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     disputeCaseId: order.disputeCaseId,
+    catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitleSnapshot,
     billingModeSnapshot: order.billingModeSnapshot,
     selectedPackageId: order.selectedPackageId,
@@ -1434,10 +1472,14 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     selectedPaymentMethod: apiOrderPaymentMethod(order.selectedPaymentMethod),
     paymentExpiresAt: order.paymentExpiresAt,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
+    merchantConfirmDueAt: order.merchantConfirmDueAt ?? undefined,
+    merchantConfirmOverdue: order.merchantConfirmOverdue,
     paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
+    deliveryDueAt: order.deliveryDueAt ?? undefined,
+    deliveryOverdue: order.deliveryOverdue,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
@@ -1445,6 +1487,11 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
     cancelReason: order.cancelReason,
+		latePaymentStatus: apiOrderLatePaymentStatus(order.latePaymentStatus),
+		latePaymentReportedAt: order.latePaymentReportedAt ?? undefined,
+		latePaymentNote: order.latePaymentNote,
+		latePaymentResolvedAt: order.latePaymentResolvedAt ?? undefined,
+		canReportLatePayment: order.canReportLatePayment,
 		afterSalesExpiresAt: order.afterSalesExpiresAt ?? undefined,
 		canOpenDispute: order.canOpenDispute,
 		disputeEligibilityReason: order.disputeEligibilityReason,
@@ -1458,6 +1505,20 @@ export async function backendAdminAPIOrder(id: string): Promise<AdminApiOrderDet
   await ensureBackendSession('admin', true)
   const order = await backendRequest<BackendAPIOrder>(`/api/v1/admin/api-orders/${encodeURIComponent(id)}`)
   return mapBackendAdminAPIOrderDetail(order)
+}
+
+export async function backendResolveAdminAPIOrderCatalogRiskHold(
+  id: string,
+  action: 'restore' | 'refund-pending' | 'open-dispute',
+  resolutionNote: string,
+  version: number,
+): Promise<AdminApiOrderDetail> {
+  const response = await backendMutation<BackendAPIOrder>(
+    `/api/v1/admin/api-orders/${encodeURIComponent(id)}/catalog-risk-hold/${action}`,
+    { resolutionNote },
+    { idempotencyPrefix: `admin-api-order-catalog-risk-${action}`, ifMatch: version },
+  )
+  return mapBackendAdminAPIOrderDetail(response)
 }
 
 export async function backendAPIIntentById(id: string) {
@@ -1715,6 +1776,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     status: apiOrderStatus(order.status),
     disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     disputeCaseId: order.disputeCaseId,
+    catalogRiskHold: order.catalogRiskHold,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
     amountDecimal: order.amount,
@@ -1725,10 +1787,14 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     buyerNote: intent.buyerNote,
     paymentSummary: order.paymentSummary,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
+    merchantConfirmDueAt: order.merchantConfirmDueAt ?? undefined,
+    merchantConfirmOverdue: order.merchantConfirmOverdue,
     paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
+    deliveryDueAt: order.deliveryDueAt ?? undefined,
+    deliveryOverdue: order.deliveryOverdue,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
@@ -1737,6 +1803,11 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
     cancelReason: order.cancelReason,
+		latePaymentStatus: apiOrderLatePaymentStatus(order.latePaymentStatus),
+		latePaymentReportedAt: order.latePaymentReportedAt ?? undefined,
+		latePaymentNote: order.latePaymentNote,
+		latePaymentResolvedAt: order.latePaymentResolvedAt ?? undefined,
+		canReportLatePayment: order.canReportLatePayment,
 		afterSalesExpiresAt: order.afterSalesExpiresAt ?? undefined,
 		canOpenDispute: order.canOpenDispute,
 		disputeEligibilityReason: order.disputeEligibilityReason,
@@ -1843,6 +1914,14 @@ export async function backendCancelAPIOrder(id: string, reason: string, version:
   return mapBackendAPIOrder(response, 'buyer')
 }
 
+export async function backendReportLateAPIOrderPayment(id: string, note: string, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/me/api-orders/${id}/report-late-payment`, { note }, {
+    idempotencyPrefix: 'api-order-report-late-payment',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'buyer')
+}
+
 export async function backendConfirmAPIOrderComplete(id: string, version: number) {
   const response = await backendMutation<BackendAPIOrder>(`/api/v1/me/api-orders/${id}/confirm-complete`, {}, {
     idempotencyPrefix: 'api-order-confirm-complete',
@@ -1875,6 +1954,14 @@ export async function backendConfirmAPIOrderPayment(id: string, version: number)
 export async function backendReportAPIOrderPaymentIssue(id: string, reason: ApiOrderPaymentIssueReason, note: string, version: number) {
   const response = await backendMutation<BackendAPIOrder>(`/api/v1/owner/api-orders/${id}/report-payment-issue`, { reason, note }, {
     idempotencyPrefix: 'api-order-report-payment-issue',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'merchant')
+}
+
+export async function backendResolveLateAPIOrderPayment(id: string, status: 'not_received' | 'received_refund_pending', note: string, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/owner/api-orders/${id}/resolve-late-payment`, { status, note }, {
+    idempotencyPrefix: 'api-order-resolve-late-payment',
     ifMatch: version,
   })
   return mapBackendAPIOrder(response, 'merchant')

@@ -42,15 +42,16 @@ const (
 	SystemSlotStateActive             = "active"
 	SystemSlotStateEnded              = "ended"
 
-	OrderabilityOrderable          = "orderable"
-	OrderabilityServiceUnavailable = "service_unavailable"
-	OrderabilityBatchPaused        = "batch_paused"
-	OrderabilityOfferPaused        = "offer_paused"
-	OrderabilityNotStarted         = "not_started"
-	OrderabilityRoundEnded         = "round_ended"
-	OrderabilitySoldOut            = "sold_out"
-	OrderabilityBatchExpired       = "batch_expired"
-	OrderabilityCredentialShortage = "credential_unavailable"
+	OrderabilityOrderable           = "orderable"
+	OrderabilityServiceUnavailable  = "service_unavailable"
+	OrderabilityBatchPaused         = "batch_paused"
+	OrderabilityOfferPaused         = "offer_paused"
+	OrderabilityNotStarted          = "not_started"
+	OrderabilityRoundEnded          = "round_ended"
+	OrderabilitySoldOut             = "sold_out"
+	OrderabilityBatchExpired        = "batch_expired"
+	OrderabilityCredentialShortage  = "credential_unavailable"
+	OrderabilityConfirmationMissing = "fulfillment_confirmation_required"
 
 	PublicOfferSortUpdatedDesc   = "updated_desc"
 	PublicOfferSortUnitPriceAsc  = "unit_price_asc"
@@ -108,19 +109,20 @@ type Offer struct {
 }
 
 type SaleRound struct {
-	ID            string
-	BatchID       string
-	APIServiceID  string
-	OwnerUserID   string
-	SystemSlotKey string
-	Name          string
-	StartsAt      time.Time
-	EndsAt        time.Time
-	Status        string
-	Allocations   []Allocation
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	Version       int64
+	ID                     string
+	BatchID                string
+	APIServiceID           string
+	OwnerUserID            string
+	SystemSlotKey          string
+	Name                   string
+	StartsAt               time.Time
+	EndsAt                 time.Time
+	Status                 string
+	FulfillmentConfirmedAt *time.Time
+	Allocations            []Allocation
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	Version                int64
 }
 
 type SystemSaleSlot struct {
@@ -231,6 +233,13 @@ type CreateOrderInput struct {
 
 type BatchActionInput struct {
 	BatchID         string
+	OwnerUserID     string
+	ExpectedVersion int64
+	RequestID       string
+}
+
+type SaleRoundActionInput struct {
+	SaleRoundID     string
 	OwnerUserID     string
 	ExpectedVersion int64
 	RequestID       string

@@ -20,7 +20,7 @@ import (
 )
 
 var modelsDevProviderAllowlist = map[string]bool{
-	"openai": true, "anthropic": true, "google": true, "perplexity": true,
+	"openai": true, "anthropic": true,
 }
 
 var unsupportedModelsDevKeyParts = []string{
@@ -90,49 +90,6 @@ func (s *Service) ApplyAPIModelSyncWithIdempotency(ctx context.Context, user aut
 		return completion, nil
 	}
 	result, appErr := s.applyAPIModelSyncInMemory(mutation)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	completion, appErr := buildCompletion(result)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
-		return idempotency.Completion{}, appErr
-	}
-	return completion, nil
-}
-
-func (s *Service) SetAPIModelsActiveWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input APIModelBulkStatusInput, buildCompletion APIModelSyncCompletionBuilder) (idempotency.Completion, *domain.AppError) {
-	if appErr := requireAdmin(user); appErr != nil {
-		return idempotency.Completion{}, appErr
-	}
-	modelIDs, appErr := normalizeBulkModelIDs(input.ModelIDs)
-	if appErr != nil {
-		return idempotency.Completion{}, appErr
-	}
-	if s.idempotency == nil || buildCompletion == nil {
-		return idempotency.Completion{}, internalCatalogError()
-	}
-	entry, appErr := s.idempotency.Begin(ctx, user.ID, routeKey, strings.TrimSpace(key), requestHash)
-	if appErr != nil {
-		return idempotency.Completion{}, appErr
-	}
-	if entry.State == "completed" {
-		return idempotency.CompletionFromEntry(entry), nil
-	}
-	mutation := APIModelBulkStatusMutationInput{OperatorID: user.ID, ModelIDs: modelIDs, Active: input.Active}
-	if s.repo != nil {
-		_, completion, appErr := s.repo.AdminSetAPIModelsActiveWithIdempotency(ctx, *entry, mutation, s.now().UTC(), buildCompletion)
-		if appErr != nil {
-			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
-		}
-		return completion, nil
-	}
-	result, appErr := s.setAPIModelsActiveInMemory(mutation)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
@@ -355,7 +312,7 @@ func normalizeAPIModelSyncSelections(items []APIModelSyncSelection) ([]APIModelS
 			ProviderID: item.ProviderID, ModelKey: item.ModelKey, Capabilities: item.Capabilities,
 			SourceURL: item.SourceURL, SourceVersion: item.SourceVersion,
 			InputTokenPrice: item.InputPricePerMillion, CachedInputTokenPrice: item.CachedInputPricePerMillion,
-			OutputTokenPrice: item.OutputPricePerMillion, Active: item.Active,
+			OutputTokenPrice: item.OutputPricePerMillion,
 		})
 		if appErr != nil {
 			return nil, appErr
@@ -379,25 +336,6 @@ func normalizeAPIModelSyncSelections(items []APIModelSyncSelection) ([]APIModelS
 		normalized = append(normalized, item)
 	}
 	return normalized, nil
-}
-
-func normalizeBulkModelIDs(values []string) ([]string, *domain.AppError) {
-	if len(values) == 0 || len(values) > 200 {
-		return nil, fieldError(http.StatusUnprocessableEntity, "modelIds", "请选择 1 到 200 个模型。")
-	}
-	result := make([]string, 0, len(values))
-	seen := make(map[string]bool, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if _, err := uuid.Parse(value); err != nil {
-			return nil, fieldError(http.StatusUnprocessableEntity, "modelIds", "模型 ID 格式不正确。")
-		}
-		if !seen[value] {
-			seen[value] = true
-			result = append(result, value)
-		}
-	}
-	return result, nil
 }
 
 func (s *Service) applyAPIModelSyncInMemory(input APIModelSyncMutationInput) (APIModelBulkMutationResult, *domain.AppError) {
@@ -424,8 +362,12 @@ func (s *Service) applyAPIModelSyncInMemory(input APIModelSyncMutationInput) (AP
 	nextSort := s.nextAPIModelSortOrderLocked()
 	for _, item := range input.Items {
 		if item.Status == APIModelSyncStatusNew {
+			lifecycle := activeLifecycle("")
+			lifecycle.Status = lifecycleStatusFromActive(item.Active)
+			lifecycle.EffectiveStatus = lifecycle.Status
 			model := APIModelCatalog{
-				ID: uuid.NewString(), ProviderID: item.ProviderID, ProviderCode: item.ProviderCode,
+				Lifecycle: lifecycle,
+				ID:        uuid.NewString(), ProviderID: item.ProviderID, ProviderCode: item.ProviderCode,
 				Provider: s.apiProviders[item.ProviderID].DisplayName, ProviderCategory: s.apiProviders[item.ProviderID].ProviderCategory,
 				ProviderActive: s.apiProviders[item.ProviderID].Active, ModelKey: item.ModelKey,
 				Capabilities: append([]string(nil), item.Capabilities...), Active: item.Active, SortOrder: nextSort,
@@ -453,29 +395,6 @@ func (s *Service) applyAPIModelSyncInMemory(input APIModelSyncMutationInput) (AP
 		s.apiModels[model.ID] = model
 		result.Updated++
 		result.IDs = append(result.IDs, model.ID)
-	}
-	return result, nil
-}
-
-func (s *Service) setAPIModelsActiveInMemory(input APIModelBulkStatusMutationInput) (APIModelBulkMutationResult, *domain.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, id := range input.ModelIDs {
-		if _, ok := s.apiModels[id]; !ok {
-			return APIModelBulkMutationResult{}, apiModelNotFound()
-		}
-	}
-	result := APIModelBulkMutationResult{IDs: append([]string(nil), input.ModelIDs...)}
-	now := s.now().UTC()
-	for _, id := range input.ModelIDs {
-		model := s.apiModels[id]
-		if model.Active == input.Active {
-			continue
-		}
-		model.Active = input.Active
-		model.UpdatedAt = now
-		s.apiModels[id] = model
-		result.Changed++
 	}
 	return result, nil
 }

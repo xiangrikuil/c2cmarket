@@ -25,23 +25,16 @@ const emit = defineEmits<{
 const open = ref(false)
 const query = ref('')
 
-const categoryOrder: CarpoolProductCatalogItem['categoryCode'][] = ['gpt', 'claude', 'cursor', 'gemini', 'perplexity', 'other']
-const categoryLabels: Record<CarpoolProductCatalogItem['categoryCode'], string> = {
-  gpt: 'ChatGPT',
-  claude: 'Claude',
-  cursor: 'Cursor',
-  gemini: 'Gemini',
-  perplexity: 'Perplexity',
-  other: '其他',
-}
+const categoryLabels: Record<string, string> = { gpt: 'GPT', claude: 'Claude', grok: 'Grok' }
+const categoryCodes = computed(() => Array.from(new Set(props.catalog.map(item => item.categoryCode))))
+const categoryLabel = (code: string) => categoryLabels[code] ?? code
 
 const selectedCatalogPlan = computed(() => props.catalog.find(item => item.id === props.productPlanId) ?? null)
 const normalizedQuery = computed(() => query.value.trim().toLowerCase())
 const productOptions = computed(() => {
   const seen = new Set<string>()
-  return categoryOrder
-    .filter(category => props.catalog.some(item => item.categoryCode === category))
-    .map(category => categoryLabels[category])
+  return categoryCodes.value
+    .map(categoryLabel)
     .filter(label => {
       if (seen.has(label)) return false
       seen.add(label)
@@ -51,7 +44,7 @@ const productOptions = computed(() => {
 })
 const planOptions = computed(() => {
   const productText = props.productText.trim().toLowerCase()
-  const selectedCategory = categoryOrder.find(category => categoryLabels[category].toLowerCase() === productText)
+  const selectedCategory = categoryCodes.value.find(category => categoryLabel(category).toLowerCase() === productText)
   const filtered = props.catalog.filter(item => {
     const productMatches = selectedCategory ? item.categoryCode === selectedCategory : true
     if (!productMatches) return false

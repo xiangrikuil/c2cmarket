@@ -742,6 +742,10 @@ func TestPostgresAPIOrderReleasesPurchaseIntent(t *testing.T) {
 	if secondIntent.ID == firstIntent.ID || secondIntent.Status != app.APIPurchaseIntentStatusOpen {
 		t.Fatalf("expected a new active intent after first order, got first=%+v second=%+v", firstIntent, secondIntent)
 	}
+	firstPayment := apiOrderAction(t, server, buyerSession, "me", firstOrder.ID, "submit-payment", firstOrder.Version, "pg-api-order-release-submit-payment-one-"+suffix, `{"paymentSummary":"已提交首单付款，继续验证购买意向释放。"}`)
+	if firstPayment.Status != "payment_submitted" {
+		t.Fatalf("expected first order payment submitted before another pending order, got %+v", firstPayment)
+	}
 	secondOrder := createAPIOrder(t, server, buyerSession, secondIntent.ID, "wechat", "pg-api-order-release-order-two-"+suffix)
 	if firstOrder.ID == secondOrder.ID || secondOrder.APIPurchaseIntentID != secondIntent.ID {
 		t.Fatalf("expected a second order for the new intent, got first=%+v second=%+v", firstOrder, secondOrder)

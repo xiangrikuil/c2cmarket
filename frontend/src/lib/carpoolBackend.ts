@@ -223,12 +223,11 @@ function formatTime(value: string | undefined) {
 }
 
 function mapProviderCode(value: string): CarpoolProductCatalogItem['providerCode'] {
-  return value === 'openai' || value === 'anthropic' ? value : 'other'
+  return value
 }
 
 function mapCategoryCode(value: string): CarpoolProductCatalogItem['categoryCode'] {
-  if (value === 'gpt' || value === 'claude' || value === 'cursor' || value === 'gemini' || value === 'perplexity') return value
-  return 'other'
+  return value
 }
 
 function mapPublishPolicy(value: string): CarpoolProductCatalogItem['publishPolicy'] {

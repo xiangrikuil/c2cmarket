@@ -18,7 +18,7 @@ HTTP endpoints:
 ```text
 POST /api/v1/admin/api-models/models-dev/preview
 POST /api/v1/admin/api-models/models-dev/apply
-POST /api/v1/admin/api-models/bulk-status
+POST /api/v1/admin/api-models/{id}/{deprecate|block|reactivate|unblock}
 GET  /api/v1/api-models
 ```
 
@@ -31,7 +31,7 @@ type Source interface {
 
 PreviewAPIModelSync(ctx, user, APIModelSyncPreviewInput) (APIModelSyncPreview, *domain.AppError)
 ApplyAPIModelSyncWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion) (idempotency.Completion, *domain.AppError)
-SetAPIModelsActiveWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion) (idempotency.Completion, *domain.AppError)
+ApplyCatalogLifecycleWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion) (idempotency.Completion, *domain.AppError)
 ```
 
 Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_model_price_versions`, and the existing idempotency records. Do not add a sync staging table unless the product contract explicitly changes.
@@ -49,7 +49,7 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 - Apply locks and validates every selected row before writing, rolls the current price version forward, and completes idempotency in one PostgreSQL transaction. Any conflict rolls back the whole batch.
 - When apply returns `412 VERSION_CONFLICT`, the frontend must discard the stale preview and its selection/activation choices, fetch a fresh preview for the currently selected providers, and require explicit administrator review before another apply. It must never automatically replay the stale selection or automatically submit the refreshed preview.
 - A completed bulk apply or status mutation associates its idempotency record with the first affected model ID while retaining every affected ID in the cached response body. An empty mutation result is an internal error and must not be written as a completed idempotency record.
-- Bulk status validates and locks the complete model set before one atomic update. The public catalog continues to return only rows where both model and provider are active.
+- Model lifecycle changes use per-resource idempotent commands with `If-Match`; ordinary update and models.dev apply cannot bypass lifecycle. The public catalog returns only rows whose model and provider are both active.
 - PostgreSQL provider lists order by provider category, sort order, provider `display_name`, and ID. Model lists order by model `model_key`; Migration 81 removed `api_model_catalog.display_name`, while `api_model_providers` never has a `model_key`. Keep these relation-specific columns explicit and cover all three catalog reads with a current-schema integration test.
 - Single-model activation and deactivation must update and then read the catalog projection in separate statements inside one transaction. A data-modifying CTE joined back to `api_model_view` both risks ambiguous columns and reads the statement-start snapshot instead of a reliable updated projection. Cover both state transitions against the current PostgreSQL schema.
 - Real frontend mode must call these endpoints and surface failures. Mock mode must reproduce preview side-effect freedom, fingerprint validation, atomic apply, active-state preservation, and public-catalog invalidation; it must not silently turn a real backend failure into mock success.
@@ -83,7 +83,7 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 - models.dev client tests assert fixed-source redirect rejection, valid public response shape, HTTP failure, malformed/trailing JSON, response-size limit, and client timeout classification.
 - Server tests assert preview status counts, exact model keys, unavailable/source-missing records, tampered fingerprint rejection, atomic create plus price update, default inactive state, existing active-state preservation, idempotency replay, bulk activation, public visibility, and external-source Problem Details.
 - PostgreSQL coverage must assert row locking, old price-version closure, new current version creation, whole-batch rollback, stale version conflict, and idempotency completion in the business transaction.
-- Frontend adapter tests assert preview has no writes, new imports remain hidden from the public catalog until enabled, price updates preserve active state, stale/tampered selections fail, and bulk status refreshes public/admin queries.
+- Frontend adapter tests assert preview has no writes, new imports remain hidden until explicitly reactivated, price updates preserve lifecycle, stale/tampered selections fail, and lifecycle commands refresh public/admin queries.
 - Frontend dialog tests assert `VERSION_CONFLICT` triggers one preview refresh, resets stale selections and activation choices, surfaces a re-review warning, and does not invoke apply again.
 - Run `go test ./...`, frontend Vitest, Nuxt typecheck/build, OpenAPI route/type drift checks, and browser QA at desktop and mobile widths.
 - Browser QA must inspect all five preview tabs, initial selection defaults, the activation switch, price comparison, apply result, batch status, horizontal table scrolling, reachable dialog footer, and absence of console errors.

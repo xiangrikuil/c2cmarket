@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 53
-- **Last Active**: 2026-08-12
+- **Total Sessions**: 54
+- **Last Active**: 2026-08-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1682 | Active |
+| `journal-1.md` | ~1704 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 54 | 2026-08-14 | API order and rush-sale launch hardening | `38333b6` | `codex/transaction-review-dialog` |
 | 53 | 2026-08-12 | API 纠纷发布限制与唯一 linux.do 联系方式 | `f65ead0` | `staging` |
 | 52 | 2026-08-10 | API order after-sales contacts and refund evidence | `3b29dc8` | `codex/api-order-after-sales-contacts` |
 | 51 | 2026-08-10 | Development personas and user switcher | `d995824` | `codex/dev-user-switcher` |

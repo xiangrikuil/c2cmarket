@@ -1,5 +1,5 @@
 import type { PublicReviewRecord } from '@/data/mock'
-import type { ReviewCenterData, ReviewCenterRow, SubmitReviewPayload } from '@/lib/api'
+import type { ReviewCenterData, ReviewCenterRow, ReviewTag, SubmitReviewPayload } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { collectCursorPages, normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
 
@@ -20,7 +20,7 @@ type BackendReviewCenterRow = {
   revieweeRole: 'buyer' | 'seller'
   status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
-  counterpartySubmitted: boolean
+  allowedTags: ReviewTag[]
   canCreate: boolean
   canEdit: boolean
   rating: number | null
@@ -38,12 +38,12 @@ type BackendReviewCenterRow = {
 
 type BackendReviewCenterResponse = {
   items: BackendReviewCenterRow[]
-  presetTags: string[]
+  presetTags: ReviewTag[]
   nextCursor?: string | null
 }
 
 export type ReviewCenterPage = CursorPage<ReviewCenterRow> & {
-  presetTags: string[]
+  presetTags: ReviewTag[]
 }
 
 type BackendPublicReview = {
@@ -70,7 +70,7 @@ function mapReviewCenterRow(row: BackendReviewCenterRow): ReviewCenterRow {
     revieweeRole: row.revieweeRole,
     status: row.status,
     visibility: row.visibility,
-    counterpartySubmitted: row.counterpartySubmitted,
+    allowedTags: Array.isArray(row.allowedTags) ? row.allowedTags : [],
     canCreate: row.canCreate,
     canEdit: row.canEdit,
     rating: row.rating ?? null,
@@ -116,7 +116,7 @@ export async function backendReviewCenterPage(direction: ReviewCenterRow['direct
 }
 
 export async function backendReviewCenterRows(): Promise<ReviewCenterData> {
-  let presetTags: string[] = []
+  let presetTags: ReviewTag[] = []
   const items = await collectCursorPages(async (page) => {
     const response = await backendReviewCenterPage(undefined, page)
     presetTags = response.presetTags

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
+import ReviewDialog from '@/components/review/ReviewDialog.vue'
 import { Card } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -34,7 +35,7 @@ import { shouldUseRealBackend } from '@/lib/backendClient'
 import { functionalMotion } from '@/lib/motion'
 import { getProductCategory } from '@/lib/productCategories'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
-import { useCarpoolApplication, useCarpoolApplicationContactsQuery, useCarpoolApplicationEvents } from '@/queries/useMarketQueries'
+import { useCarpoolApplication, useCarpoolApplicationContactsQuery, useCarpoolApplicationEvents, useReviewCenterRows } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,6 +46,7 @@ const ownerMode = computed(() => route.path.startsWith('/merchant/'))
 const { data: application, isLoading } = useCarpoolApplication(id)
 const { data: events } = useCarpoolApplicationEvents(id)
 const { data: contactSnapshot } = useCarpoolApplicationContactsQuery(id)
+const { data: reviewCenter } = useReviewCenterRows()
 const actionBusy = ref(false)
 const rejectPanelOpen = ref(false)
 const rejectReasonCode = ref('seat_full')
@@ -89,6 +91,14 @@ const canBuyerCancelApplication = computed(() => application.value && !ownerMode
 const canBuyerLeaveMembership = computed(() => application.value && !ownerMode.value && realBackend && ['active', 'pending_completion'].includes(application.value.status))
 const buyerCancelLabel = computed(() => application.value?.status === 'accepted_reserved' ? '取消预留' : '撤回申请')
 const canOpenReviewCenter = computed(() => application.value?.status === 'completed')
+const reviewTransactionId = computed(() => application.value?.backendMembershipId ?? application.value?.id ?? '')
+const reviewRow = computed(() => {
+  const matches = reviewCenter.value?.items.filter(item => (
+  item.transactionType === 'carpool_membership' && item.transactionId === reviewTransactionId.value
+  )) ?? []
+  return matches.find(item => item.direction === 'pending') ?? matches.find(item => item.direction === 'sent') ?? matches[0] ?? null
+})
+const reviewDialogOpen = computed(() => route.query.review === 'open')
 const rejectReasonOptions = [
   { value: 'seat_full', label: '席位已满' },
   { value: 'user_not_fit', label: '用户条件不符合' },
@@ -221,17 +231,19 @@ function requestManualIntervention() {
 
 function openReviewCenter() {
   if (!application.value) return
-  router.push({
-    path: '/my/reviews',
-    query: {
-      transactionType: 'carpool_membership',
-      transactionId: application.value.backendMembershipId ?? application.value.id,
-    },
-  })
+  router.push({ query: { ...route.query, review: 'open' } })
+}
+
+function setReviewDialogOpen(open: boolean) {
+  if (open) return router.push({ query: { ...route.query, review: 'open' } })
+  const query = { ...route.query }
+  delete query.review
+  router.push({ query })
 }
 </script>
 
 <template>
+  <ReviewDialog :open="reviewDialogOpen && Boolean(reviewRow)" :row="reviewRow" @update:open="setReviewDialogOpen" />
   <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载上车申请…</div>
   <div v-else-if="!application" class="rounded-xl border border-border bg-card p-8">
     <h1 class="text-xl font-semibold">未找到上车申请</h1>

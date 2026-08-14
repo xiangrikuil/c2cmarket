@@ -661,7 +661,7 @@ onBeforeUnmount(() => {
             <div>
               <div class="flex items-center gap-2 text-sm font-semibold text-primary"><Zap class="h-4 w-4" />今日限时抢</div>
               <h2 class="mt-1 text-xl font-semibold">{{ isTomorrowPreview && selectedSlot ? `明日 ${slotTime(selectedSlot)} 场预告` : selectedSlot ? `${formatSlotDate(selectedSlot)} 固定场次` : '北京时间固定场次' }}</h2>
-              <p class="mt-1 text-xs text-muted-foreground">每天 09:00、13:00、20:00 开抢，每场持续 30 分钟。</p>
+              <p class="mt-1 text-xs text-muted-foreground">每天 20:00 开抢，场次持续 30 分钟。</p>
             </div>
             <div v-if="selectedSlot" class="min-w-[180px] sm:text-right">
               <div class="text-xs text-muted-foreground">{{ countdownPrefix(selectedSlot) }}</div>

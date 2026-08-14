@@ -439,9 +439,30 @@ review_tag_counts AS (
     review_events.user_id,
     review_events.role,
     review_events.scope,
-    tag_values.tag,
+    CASE tag_values.tag
+      WHEN 'smooth_comm' THEN '沟通顺畅'
+      WHEN 'quick_response' THEN '响应及时'
+      WHEN 'clear_rules' THEN '规则清晰'
+      WHEN 'good_coop' THEN '合作愉快'
+      WHEN 'slow_response' THEN '响应较慢'
+      WHEN 'hard_to_comm' THEN '沟通困难'
+      WHEN 'late_change' THEN '临时变更'
+      WHEN 'true_desc' THEN '描述真实'
+      WHEN 'clear_delivery' THEN '交付清晰'
+      WHEN 'good_aftercare' THEN '售后响应及时'
+      WHEN 'desc_diff' THEN '实际体验与描述有差异'
+      WHEN '与描述不符' THEN '实际体验与描述有差异'
+      WHEN 'quick_payment' THEN '付款及时'
+      WHEN 'quick_confirm' THEN '确认及时'
+      WHEN 'clear_needs' THEN '需求清晰'
+      WHEN 'kept_agreement' THEN '遵守约定'
+      ELSE tag_values.tag
+    END AS tag,
     CASE
-      WHEN tag_values.tag IN ('响应较慢', '与描述不符') THEN 'negative'
+      WHEN tag_values.tag IN (
+        'slow_response', 'hard_to_comm', 'late_change', 'desc_diff',
+        '响应较慢', '沟通困难', '临时变更', '与描述不符', '实际体验与描述有差异'
+      ) THEN 'negative'
       ELSE 'positive'
     END AS polarity,
     COUNT(*)::bigint AS tag_count
@@ -452,9 +473,30 @@ review_tag_counts AS (
     review_events.user_id,
     review_events.role,
     review_events.scope,
-    tag_values.tag,
+    CASE tag_values.tag
+      WHEN 'smooth_comm' THEN '沟通顺畅'
+      WHEN 'quick_response' THEN '响应及时'
+      WHEN 'clear_rules' THEN '规则清晰'
+      WHEN 'good_coop' THEN '合作愉快'
+      WHEN 'slow_response' THEN '响应较慢'
+      WHEN 'hard_to_comm' THEN '沟通困难'
+      WHEN 'late_change' THEN '临时变更'
+      WHEN 'true_desc' THEN '描述真实'
+      WHEN 'clear_delivery' THEN '交付清晰'
+      WHEN 'good_aftercare' THEN '售后响应及时'
+      WHEN 'desc_diff' THEN '实际体验与描述有差异'
+      WHEN '与描述不符' THEN '实际体验与描述有差异'
+      WHEN 'quick_payment' THEN '付款及时'
+      WHEN 'quick_confirm' THEN '确认及时'
+      WHEN 'clear_needs' THEN '需求清晰'
+      WHEN 'kept_agreement' THEN '遵守约定'
+      ELSE tag_values.tag
+    END,
     CASE
-      WHEN tag_values.tag IN ('响应较慢', '与描述不符') THEN 'negative'
+      WHEN tag_values.tag IN (
+        'slow_response', 'hard_to_comm', 'late_change', 'desc_diff',
+        '响应较慢', '沟通困难', '临时变更', '与描述不符', '实际体验与描述有差异'
+      ) THEN 'negative'
       ELSE 'positive'
     END
 ),

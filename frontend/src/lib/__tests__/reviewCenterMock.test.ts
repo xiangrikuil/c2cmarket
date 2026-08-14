@@ -51,11 +51,8 @@ test('mock 评价中心覆盖双盲、双方公开和截止状态', async () => 
   const expired = center.items.find(item => item.transactionId === 'ride-app-9' && item.direction === 'pending')
 
   assert.equal(pending?.status, 'reviewable')
-  assert.equal(pending?.counterpartySubmitted, true)
-  assert.equal(receivedSealed?.visibility, 'sealed')
-  assert.equal(receivedSealed?.rating, null)
-  assert.equal(receivedSealed?.note, null)
-  assert.deepEqual(receivedSealed?.tags, [])
+  assert.equal(receivedSealed, undefined)
+  assert.equal(pending?.allowedTags.some(tag => tag.code === 'true_desc'), true)
   assert.equal(sentSealed?.visibility, 'sealed')
   assert.equal(sentSealed?.canEdit, true)
   assert.equal(sentSealed?.rating, 4)
@@ -88,7 +85,7 @@ test('mock 第二方提交后双方评价立即公开冻结', async () => {
   const received = center.items.find(item => item.transactionId === 'ride-app-7' && item.direction === 'received')
   assert.equal(received?.visibility, 'published')
   assert.equal(received?.rating, 5)
-  assert.equal(received?.note, '对方已经提交，双盲期内不应向买家显示。')
+  assert.equal(received?.note, '付款和确认都很及时，沟通顺畅。')
 })
 
 test('mock 拒绝超过十四天窗口的评价', async () => {

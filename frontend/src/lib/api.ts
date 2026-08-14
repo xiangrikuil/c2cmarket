@@ -178,6 +178,7 @@ import {
   backendAPIQuotaBatchAction,
   backendAPIQuotaCredentialSummary,
   backendAdminAPIOrder,
+  backendResolveAdminAPIOrderCatalogRiskHold,
   backendAdminAPIOrderRows,
   backendAdminAPIOrderRowsPage,
   backendAPIServiceById,
@@ -188,6 +189,7 @@ import {
   backendCancelAPIOrder,
   backendConfirmAPIOrderComplete,
   backendConfirmAPIOrderPayment,
+  backendConfirmAPIQuotaRoundFulfillment,
   backendCreateAPIOrderFromIntent,
   backendCreateAPIQuotaBatch,
   backendCreateAPIQuotaOffer,
@@ -223,7 +225,9 @@ import {
   backendPublicAPIQuotaOffersPage,
   backendAPIQuotaSaleSlots,
   backendReadAPIOrderPaymentInstructions,
+  backendReportLateAPIOrderPayment,
   backendReportAPIOrderPaymentIssue,
+  backendResolveLateAPIOrderPayment,
   backendRunAdminAPIServiceAction,
   backendResumeAPIService,
   backendSubmitAPIOrderDeliveryCredential,
@@ -432,7 +436,7 @@ export type ReviewCenterRow = {
   revieweeRole: 'buyer' | 'seller'
   status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
-  counterpartySubmitted: boolean
+  allowedTags: ReviewTag[]
   canCreate: boolean
   canEdit: boolean
   rating: number | null
@@ -450,8 +454,31 @@ export type ReviewCenterRow = {
 
 export type ReviewCenterData = {
   items: ReviewCenterRow[]
-  presetTags: string[]
+  presetTags: ReviewTag[]
 }
+
+export type ReviewTag = {
+  code: string
+  label: string
+  polarity: 'positive' | 'negative' | 'neutral'
+}
+
+const mockReviewTags: ReviewTag[] = [
+  { code: 'smooth_comm', label: '沟通顺畅', polarity: 'positive' },
+  { code: 'quick_response', label: '响应及时', polarity: 'positive' },
+  { code: 'clear_rules', label: '规则清晰', polarity: 'positive' },
+  { code: 'good_coop', label: '合作愉快', polarity: 'positive' },
+  { code: 'slow_response', label: '响应较慢', polarity: 'negative' },
+  { code: 'hard_to_comm', label: '沟通困难', polarity: 'negative' },
+  { code: 'late_change', label: '临时变更', polarity: 'negative' },
+  { code: 'true_desc', label: '描述真实', polarity: 'positive' },
+  { code: 'good_aftercare', label: '售后响应及时', polarity: 'positive' },
+  { code: 'desc_diff', label: '实际体验与描述有差异', polarity: 'negative' },
+  { code: 'quick_payment', label: '付款及时', polarity: 'positive' },
+  { code: 'quick_confirm', label: '确认及时', polarity: 'positive' },
+  { code: 'clear_needs', label: '需求清晰', polarity: 'positive' },
+  { code: 'kept_agreement', label: '遵守约定', polarity: 'positive' },
+]
 
 export type FeedbackTicketType = 'function_issue' | 'data_correction' | 'experience_suggestion' | 'publish_contact_block'
 export type FeedbackImpact = 'general' | 'blocks_operation' | 'cannot_continue'
@@ -545,6 +572,7 @@ export type ApiOrderStatus =
 
 export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
 export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
+export type ApiOrderLatePaymentStatus = 'reported' | 'not_received' | 'received_refund_pending'
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
 export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
 export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
@@ -618,6 +646,7 @@ export type ApiOrder = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitle: string
   amount: number
   amountDecimal?: string
@@ -628,10 +657,14 @@ export type ApiOrder = {
   buyerNote?: string
   paymentSummary?: string
   paymentSubmittedAt?: string
+  merchantConfirmDueAt?: string
+  merchantConfirmOverdue?: boolean
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
+  deliveryDueAt?: string
+  deliveryOverdue?: boolean
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
@@ -640,6 +673,11 @@ export type ApiOrder = {
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
+	latePaymentStatus?: ApiOrderLatePaymentStatus
+	latePaymentReportedAt?: string
+	latePaymentNote?: string
+	latePaymentResolvedAt?: string
+	canReportLatePayment?: boolean
 	afterSalesExpiresAt?: string
 	canOpenDispute?: boolean
 	disputeEligibilityReason?: string
@@ -661,6 +699,19 @@ export type ApiOrder = {
   updatedAt: string
 }
 
+export type ApiOrderCatalogRiskHold = {
+  id: string
+  sourceType: 'api_model_provider' | 'api_model_catalog'
+  sourceId: string
+  status: 'active' | 'restored' | 'refund_pending' | 'dispute_opened'
+  reason: string
+  createdAt: string
+  resolvedBy?: string
+  resolvedAt?: string | null
+  resolutionNote?: string
+  version: number
+}
+
 export type AdminApiOrderDetail = {
   id: string
   purchaseKind: ApiOrderPurchaseKind
@@ -671,6 +722,7 @@ export type AdminApiOrderDetail = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
   selectedPackageId?: string
@@ -682,10 +734,14 @@ export type AdminApiOrderDetail = {
   selectedPaymentMethod: ApiPaymentOption['paymentMethod']
   paymentExpiresAt: string
   paymentSubmittedAt?: string
+  merchantConfirmDueAt?: string
+  merchantConfirmOverdue?: boolean
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
+  deliveryDueAt?: string
+  deliveryOverdue?: boolean
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
@@ -693,6 +749,11 @@ export type AdminApiOrderDetail = {
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
+	latePaymentStatus?: ApiOrderLatePaymentStatus
+	latePaymentReportedAt?: string
+	latePaymentNote?: string
+	latePaymentResolvedAt?: string
+	canReportLatePayment?: boolean
 	afterSalesExpiresAt?: string
 	canOpenDispute?: boolean
 	disputeEligibilityReason?: string
@@ -2067,6 +2128,7 @@ function buildPublicReviewFromCarpoolApplication(application: CarpoolApplication
     username: application.ownerUsername,
     date: dateFromDateTime(application.buyerReview.createdAt ?? application.completedAt ?? application.updatedAt),
     serviceType: application.snapshot.productName,
+    rating: application.buyerReview.rating,
     tags: application.buyerReview.tags,
     note: application.buyerReview.note,
     verified: true,
@@ -2437,7 +2499,7 @@ export async function getCarpools() {
 }
 
 export type CarpoolListPageFilters = CarpoolPageFilters & {
-  category?: ProductCategoryKey
+  category?: string
   plan?: string
   openingMethod?: string
 }
@@ -2797,7 +2859,7 @@ function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
       String(date.getUTCMonth() + 1).padStart(2, '0'),
       String(date.getUTCDate()).padStart(2, '0'),
     ].join('-')
-    for (const hour of [9, 13, 20]) {
+    for (const hour of [20]) {
       const time = `${String(hour).padStart(2, '0')}:00`
       const startsAt = beijingDateTimeInputToISOString(`${dateKey}T${time}`)
       const startsAtMs = Date.parse(startsAt)
@@ -2834,12 +2896,15 @@ function projectMockSystemRushOffer(item: PublicApiQuotaOffer, now = Date.now())
     projected.orderabilityReason = '本场尚未开抢。'
   } else if (now < Date.parse(round.endsAt)) {
     projected.currentRound = clone(round)
-    projected.isOrderable = projected.batchStatus === 'published'
+    projected.isOrderable = Boolean(round.fulfillmentConfirmedAt)
+      && projected.batchStatus === 'published'
       && projected.status === 'published'
       && projected.availableCopies > 0
       && (projected.deliveryMode !== 'preimported' || projected.credentialAvailableCopies >= projected.availableCopies)
     projected.orderabilityCode = projected.isOrderable
       ? 'orderable'
+      : !round.fulfillmentConfirmedAt
+        ? 'fulfillment_confirmation_required'
       : projected.availableCopies <= 0
         ? 'sold_out'
         : projected.deliveryMode === 'preimported'
@@ -2847,6 +2912,8 @@ function projectMockSystemRushOffer(item: PublicApiQuotaOffer, now = Date.now())
           : 'service_unavailable'
     projected.orderabilityReason = projected.isOrderable
       ? '正在抢购。'
+      : !round.fulfillmentConfirmedAt
+        ? '卖家尚未确认本场履约准备。'
       : projected.availableCopies <= 0
         ? '本场已售罄。'
         : projected.deliveryMode === 'preimported'
@@ -3029,7 +3096,7 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
     throw new Error('额度失效时间必须至少晚于场次结束 1 小时。')
   }
   const copies = Math.trunc(payload.copies)
-  if (copies < 1 || copies > 5000) throw new Error('计划份数必须在 1-5000 之间。')
+  if (copies < 1 || copies > 10) throw new Error('计划份数必须在 1-10 之间。')
   const usdAllowance = normalizeDecimalTrimmed(payload.usdAllowance, 6)
   const priceCny = normalizeDecimal(payload.priceCny, 2)
   const modelMultiplier = normalizeDecimal(payload.modelMultiplier, 4)
@@ -3176,6 +3243,23 @@ export async function createApiQuotaRound(payload: CreateApiQuotaRoundPayload) {
     const offer = apiQuotaOfferStore.find(item => item.id === allocation.offerId)
     if (offer && (!offer.nextRound || Date.parse(startsAt) < Date.parse(offer.nextRound.startsAt))) offer.nextRound = clone(round)
   }
+  persistApiQuotaStores()
+  return clone(round)
+}
+
+export async function confirmApiQuotaRoundFulfillment(roundId: string, version: number) {
+  if (shouldUseRealBackend()) return backendConfirmAPIQuotaRoundFulfillment(roundId, version)
+  await wait()
+  const round = apiQuotaRoundStore.find(item => item.id === roundId)
+  if (!round) throw new Error('未找到放量场次。')
+  if (round.version !== version) throw new Error('场次已更新，请刷新后重试。')
+  if (!round.systemSlotKey) throw new Error('自定义轮次不需要履约确认。')
+  const now = Date.now()
+  if (now < Date.parse(round.startsAt) - 30 * 60 * 1000 || now >= Date.parse(round.startsAt)) {
+    throw new Error('请在开抢前 30 分钟内确认履约准备。')
+  }
+  round.fulfillmentConfirmedAt = nowText()
+  round.version += 1
   persistApiQuotaStores()
   return clone(round)
 }
@@ -3830,6 +3914,7 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     status: order.status,
     disputeStatus: order.disputeStatus,
     disputeCaseId: order.disputeCaseId,
+    catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitle,
     selectedPackageId: order.selectedPackageId,
     selectedPackageSnapshot: order.packageSnapshot ? JSON.stringify(order.packageSnapshot) : undefined,
@@ -3861,6 +3946,29 @@ export async function getAdminApiOrderById(id: string): Promise<AdminApiOrderDet
   await wait()
   materializeMockApiOrderReviews()
   return clone(projectMockAdminApiOrder(findApiOrder(id)))
+}
+
+export async function resolveAdminApiOrderCatalogRiskHold(
+  id: string,
+  action: 'restore' | 'refund-pending' | 'open-dispute',
+  resolutionNote: string,
+  version: number,
+): Promise<AdminApiOrderDetail> {
+  if (shouldUseRealBackend()) return backendResolveAdminAPIOrderCatalogRiskHold(id, action, resolutionNote, version)
+  await wait()
+  const order = findApiOrder(id)
+  if (!order.catalogRiskHold || order.catalogRiskHold.status !== 'active' || order.catalogRiskHold.version !== version) {
+    throw new Error('该订单没有可处置的目录风险暂停，或版本已变化。')
+  }
+  order.catalogRiskHold = {
+    ...order.catalogRiskHold,
+    status: action === 'restore' ? 'restored' : action === 'refund-pending' ? 'refund_pending' : 'dispute_opened',
+    resolutionNote: resolutionNote.trim(),
+    resolvedAt: new Date().toISOString(),
+    version: version + 1,
+  }
+  persistApiOrderStore()
+  return clone(projectMockAdminApiOrder(order))
 }
 
 function withAdminRowLinks(rows: AdminRow[]) {
@@ -4528,6 +4636,13 @@ function apiDeliveryModes(value: unknown): ApiDeliveryMode[] {
   return modes.length ? modes : ['api_key_endpoint']
 }
 
+function apiModelProviderLabel(provider: string | undefined) {
+  if (provider === 'openai') return 'OpenAI'
+  if (provider === 'anthropic') return 'Anthropic'
+  if (provider === 'xai') return 'xAI'
+  return provider || '未标注供应商'
+}
+
 function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaultMultiplier: number): ApiService['modelPriceRows'] {
   const selected = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   return selected
@@ -4537,7 +4652,7 @@ function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaul
       return {
         modelId: model?.id ?? item.modelId ?? 'custom-model',
         modelName: model?.name ?? item.modelId ?? '自定义模型',
-        provider: model?.provider === 'openai' ? 'OpenAI' : model?.provider === 'anthropic' ? 'Anthropic' : 'Other',
+        provider: apiModelProviderLabel(model?.provider),
         officialInputPricePerMillion: model?.officialInputPricePerMillion ?? 0,
         officialCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion ?? null,
         officialOutputPricePerMillion: model?.officialOutputPricePerMillion ?? 0,
@@ -5508,6 +5623,11 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
       const ownReviewerRole = currentIsBuyer ? 'buyer' as const : 'seller' as const
       const ownRevieweeRole = currentIsBuyer ? 'seller' as const : 'buyer' as const
       const rows: ReviewCenterRow[] = []
+      const allowedTags = mockReviewTags.filter(tag => (
+        ['smooth_comm', 'quick_response', 'clear_rules', 'good_coop', 'slow_response', 'hard_to_comm', 'late_change'].includes(tag.code)
+        || (ownReviewerRole === 'buyer' && ['true_desc', 'good_aftercare', 'desc_diff'].includes(tag.code))
+        || (ownReviewerRole === 'seller' && ['quick_payment', 'quick_confirm', 'clear_needs', 'kept_agreement'].includes(tag.code))
+      ))
 
       if (ownReview) {
         rows.push({
@@ -5522,7 +5642,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownRevieweeRole,
           status: published ? 'published' : 'sealed',
           visibility: published ? 'published' : 'sealed',
-          counterpartySubmitted: Boolean(counterpartyReview),
+          allowedTags,
           canCreate: false,
           canEdit: !published,
           rating: ownReview.rating,
@@ -5550,7 +5670,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownRevieweeRole,
           status: deadlinePassed ? 'expired' : 'reviewable',
           visibility: 'none',
-          counterpartySubmitted: Boolean(counterpartyReview),
+          allowedTags,
           canCreate: !deadlinePassed,
           canEdit: false,
           rating: null,
@@ -5567,7 +5687,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
         })
       }
 
-      if (counterpartyReview) {
+      if (counterpartyReview && published) {
         rows.push({
           id: `review-carpool-${item.id}-received`,
           transactionType: 'carpool_membership',
@@ -5580,7 +5700,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownReviewerRole,
           status: published ? 'published' : 'sealed',
           visibility: published ? 'published' : 'sealed',
-          counterpartySubmitted: true,
+          allowedTags: [],
           canCreate: false,
           canEdit: false,
           rating: published ? counterpartyReview.rating : null,
@@ -5600,11 +5720,11 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
     })
   return {
     items: clone(carpoolRows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
-    presetTags: ['沟通顺畅', '描述真实', '响应及时', '规则清晰', '付款及时', '确认及时', '交付清晰', '合作愉快', '响应较慢', '与描述不符'],
+    presetTags: mockReviewTags,
   }
 }
 
-export async function getReviewCenterPage(direction: ReviewCenterRow['direction'] | undefined, page: CursorPageRequest = {}): Promise<CursorPage<ReviewCenterRow> & { presetTags: string[] }> {
+export async function getReviewCenterPage(direction: ReviewCenterRow['direction'] | undefined, page: CursorPageRequest = {}): Promise<CursorPage<ReviewCenterRow> & { presetTags: ReviewTag[] }> {
   if (shouldUseRealBackend()) return backendReviewCenterPage(direction, page)
   const center = await getReviewCenterRows()
   return {
@@ -6423,6 +6543,8 @@ export async function submitApiOrderPayment(id: string, paymentSummary: string, 
     order.status = 'payment_submitted'
     order.paymentSummary = paymentSummary.trim()
     order.paymentSubmittedAt = nowText()
+    order.merchantConfirmDueAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    order.merchantConfirmOverdue = false
     order.paymentIssueReason = undefined
     order.paymentIssueNote = undefined
     order.paymentIssueReportedAt = undefined
@@ -6465,6 +6587,20 @@ export async function cancelApiOrder(id: string, reason: string, version: number
     persistApiQuotaStores()
   }
   return updated
+}
+
+export async function reportLateApiOrderPayment(id: string, note: string, version: number) {
+  if (shouldUseRealBackend()) return backendReportLateAPIOrderPayment(id, note, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'cancelled' || order.cancelReason !== 'payment_timeout') throw new Error('只能为付款超时取消的订单报告逾期付款。')
+    if (!order.canReportLatePayment) throw new Error('逾期付款报告窗口已结束。')
+    order.latePaymentStatus = 'reported'
+    order.latePaymentReportedAt = nowText()
+    order.latePaymentNote = note.trim() || undefined
+    order.canReportLatePayment = false
+  })
 }
 
 export async function confirmApiOrderComplete(id: string, version: number) {
@@ -6513,6 +6649,9 @@ export async function confirmApiOrderPayment(id: string, version: number) {
     if (order.status !== 'payment_submitted') throw new Error('只有买家已付款订单可以确认收款。')
     const confirmedAt = nowText()
     order.paidConfirmedAt = confirmedAt
+    const deliveryMinutes = order.quotaSnapshot?.deliveryEtaMinutes ?? 10
+    order.deliveryDueAt = new Date(Date.parse(confirmedAt) + deliveryMinutes * 60 * 1000).toISOString()
+    order.deliveryOverdue = false
     order.packageStockReserved = false
     if (order.purchaseKind !== 'limited_quota_offer' || order.quotaSnapshot?.deliveryMode !== 'preimported') {
       order.status = 'paid_confirmed'
@@ -6559,6 +6698,18 @@ export async function reportApiOrderPaymentIssue(id: string, reason: ApiOrderPay
     order.paymentIssueReason = reason
     order.paymentIssueNote = note.trim() || undefined
     order.paymentIssueReportedAt = nowText()
+  })
+}
+
+export async function resolveLateApiOrderPayment(id: string, status: Exclude<ApiOrderLatePaymentStatus, 'reported'>, note: string, version: number) {
+  if (shouldUseRealBackend()) return backendResolveLateAPIOrderPayment(id, status, note, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.latePaymentStatus !== 'reported') throw new Error('当前没有待处理的逾期付款报告。')
+    order.latePaymentStatus = status
+    order.latePaymentNote = note.trim() || order.latePaymentNote
+    order.latePaymentResolvedAt = nowText()
   })
 }
 

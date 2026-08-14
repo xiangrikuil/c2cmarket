@@ -13,6 +13,7 @@ import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
+import StarRatingDisplay from '@/components/review/StarRatingDisplay.vue'
 import { trackAnalytics } from '@/lib/analytics'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
 import { useEntitySeo } from '@/composables/useEntitySeo'
@@ -44,6 +45,12 @@ const hasPublicActivity = computed(() => Boolean(data.value && (
   || data.value.reviews.length
   || data.value.disputes.length
 )))
+const reviewSummary = computed(() => {
+  const reviews = (data.value?.reviews ?? []).filter((item): item is typeof item & { rating: number } => typeof item.rating === 'number')
+  const distribution = [5, 4, 3, 2, 1].map(rating => ({ rating, count: reviews.filter(item => item.rating === rating).length }))
+  const average = reviews.length ? reviews.reduce((total, item) => total + item.rating, 0) / reviews.length : null
+  return { count: reviews.length, average, distribution }
+})
 
 const completedTotal = computed(() => {
   if (!profile.value?.privacy.showCompletionStats) return null
@@ -227,15 +234,34 @@ function reportPublicProfile() {
       <tr v-if="data.completions.length === 0"><td colspan="5" class="py-8 text-center text-sm text-muted-foreground">暂无平台确认完成记录。</td></tr>
     </SoftTable>
 
-    <SoftTable v-else-if="activeTab === '交易评价'" :columns="['日期', '服务类型', '标签', '评价']">
+    <div v-else-if="activeTab === '交易评价'" class="space-y-4">
+      <section class="border-y border-border py-4" aria-label="交易评价摘要">
+        <div class="grid gap-5 sm:grid-cols-[180px_1fr]">
+          <div>
+            <div class="text-3xl font-semibold">{{ reviewSummary.average === null ? '暂无' : reviewSummary.average.toFixed(1) }}</div>
+            <StarRatingDisplay v-if="reviewSummary.average !== null" :rating="reviewSummary.average" compact :show-value="false" class="mt-1" />
+            <p class="mt-1 text-sm text-muted-foreground">{{ reviewSummary.count }} 条公开评价</p>
+          </div>
+          <div class="space-y-1.5">
+            <div v-for="item in reviewSummary.distribution" :key="item.rating" class="grid grid-cols-[36px_1fr_28px] items-center gap-2 text-xs">
+              <span>{{ item.rating }} 星</span>
+              <div class="h-2 overflow-hidden rounded-full bg-muted"><div class="h-full bg-amber-400" :style="{ width: reviewSummary.count ? `${item.count / reviewSummary.count * 100}%` : '0%' }" /></div>
+              <span class="text-right text-muted-foreground">{{ item.count }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <SoftTable :columns="['日期', '服务类型', '评分', '标签', '评价']">
       <tr v-for="review in data.reviews" :key="review.id">
-        <td><div>{{ review.date }}</div><Badge v-if="review.verified" class="mt-1" variant="verified">已验证交易</Badge></td>
+        <td><div>{{ review.date }}</div><span v-if="review.verified" class="mt-1 block text-xs text-muted-foreground">来自平台内已完成交易</span></td>
         <td>{{ review.serviceType }}</td>
+        <td><StarRatingDisplay v-if="typeof review.rating === 'number'" :rating="review.rating" compact /><span v-else>暂无评分</span></td>
         <td><div class="flex flex-wrap gap-1"><Badge v-for="tag in review.tags.slice(0, 3)" :key="tag" variant="capability">{{ tag }}</Badge></div></td>
-        <td class="text-muted-foreground">{{ review.note }}</td>
+        <td class="text-muted-foreground">{{ review.note || '未填写文字说明' }}</td>
       </tr>
-      <tr v-if="data.reviews.length === 0"><td colspan="4" class="py-8 text-center text-sm text-muted-foreground">暂无交易评价。</td></tr>
-    </SoftTable>
+      <tr v-if="data.reviews.length === 0"><td colspan="5" class="py-8 text-center text-sm text-muted-foreground">暂无交易评价。</td></tr>
+      </SoftTable>
+    </div>
 
         <SoftTable v-else :columns="['纠纷类型', '处理结果', '处理时间', '状态']">
       <tr>

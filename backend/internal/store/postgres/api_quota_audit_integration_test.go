@@ -44,7 +44,7 @@ func TestAPIQuotaAuditAndIdempotencyAreAtomic(t *testing.T) {
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
 	t.Cleanup(func() { cleanupQuotaServiceForTest(t, context.Background(), pool, sellerID, buyerID) })
 
 	store := &Store{pool: pool}

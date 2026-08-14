@@ -34,13 +34,14 @@ func TestTransactionReviewsRemainSealedUntilBothParticipantsSubmit(t *testing.T)
 	if appErr != nil {
 		t.Fatalf("seller review center failed: %v", appErr)
 	}
-	received := findReviewRow(t, sellerRows, DirectionReceived)
-	if received.Status != StatusSealed || received.ContentVisible || received.Rating != 0 || received.Note != "" {
-		t.Fatalf("sealed review leaked content: %+v", received)
-	}
 	pending := findReviewRow(t, sellerRows, DirectionPending)
-	if !pending.CounterpartySubmitted || !pending.CanCreate {
-		t.Fatalf("seller must know the counterparty submitted without seeing content: %+v", pending)
+	if !pending.CanCreate {
+		t.Fatalf("seller row should remain reviewable: %+v", pending)
+	}
+	for _, row := range sellerRows {
+		if row.Direction == DirectionReceived {
+			t.Fatalf("sealed counterparty submission must not be observable: %+v", row)
+		}
 	}
 
 	_, appErr = service.SubmitWithIdempotency(context.Background(), transaction.SellerUserID, "seller-create", "seller-key", "seller-hash", SubmitReviewInput{
@@ -147,6 +148,56 @@ func TestReviewValidationRequiresPresetTags(t *testing.T) {
 	if appErr == nil || appErr.Code != domain.CodeValidationFailed {
 		t.Fatalf("expected preset tag validation error, got %#v", appErr)
 	}
+}
+
+func TestReviewValidationAllowsTagOrNoteAndRejectsEmptyContent(t *testing.T) {
+	base := SubmitReviewInput{
+		TransactionType: TransactionAPIOrder,
+		TransactionID:   "30000000-0000-0000-0000-000000000001",
+		ReviewerUserID:  "30000000-0000-0000-0000-000000000002",
+		Operation:       OperationCreate,
+		Rating:          5,
+	}
+	withTag := base
+	withTag.Tags = []string{"smooth_comm"}
+	if appErr := ValidateSubmitInput(withTag); appErr != nil {
+		t.Fatalf("tag-only review should be valid: %v", appErr)
+	}
+	withNote := base
+	withNote.Note = "沟通过程说明清楚。"
+	if appErr := ValidateSubmitInput(withNote); appErr != nil {
+		t.Fatalf("note-only review should be valid: %v", appErr)
+	}
+	if appErr := ValidateSubmitInput(base); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("empty review content should fail, got %#v", appErr)
+	}
+}
+
+func TestReviewTagsAreScopedByDirectionAndTransaction(t *testing.T) {
+	buyerTags := AllowedTags(TransactionAPIOrder, RoleBuyer, RoleSeller)
+	sellerTags := AllowedTags(TransactionAPIOrder, RoleSeller, RoleBuyer)
+	if !containsTagCode(buyerTags, "clear_delivery") || containsTagCode(buyerTags, "quick_payment") {
+		t.Fatalf("buyer-to-seller tags are incorrect: %+v", buyerTags)
+	}
+	if !containsTagCode(sellerTags, "quick_payment") || containsTagCode(sellerTags, "clear_delivery") {
+		t.Fatalf("seller-to-buyer tags are incorrect: %+v", sellerTags)
+	}
+	if ValidateTagsForScenario([]string{"quick_payment"}, TransactionAPIOrder, RoleBuyer, RoleSeller) {
+		t.Fatal("buyer must not submit a seller-to-buyer payment tag")
+	}
+	labels := DisplayTagLabels([]string{"desc_diff", "与描述不符"})
+	if len(labels) != 2 || labels[0] != "实际体验与描述有差异" || labels[1] != labels[0] {
+		t.Fatalf("legacy tag aliases were not projected consistently: %+v", labels)
+	}
+}
+
+func containsTagCode(items []TagDefinition, code string) bool {
+	for _, item := range items {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func testReviewTransaction(transactionType string, completedAt time.Time) Transaction {

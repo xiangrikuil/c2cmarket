@@ -14,39 +14,45 @@ import (
 )
 
 type reviewCenterRowDTO struct {
-	ID                    string   `json:"id"`
-	TransactionType       string   `json:"transactionType"`
-	TransactionID         string   `json:"transactionId"`
-	SourceType            string   `json:"sourceType"`
-	SourceID              string   `json:"sourceId"`
-	Direction             string   `json:"direction"`
-	Target                string   `json:"target"`
-	CounterpartyUsername  string   `json:"counterpartyUsername"`
-	CounterpartyName      string   `json:"counterpartyName"`
-	ReviewerRole          string   `json:"reviewerRole"`
-	RevieweeRole          string   `json:"revieweeRole"`
-	Status                string   `json:"status"`
-	Visibility            string   `json:"visibility"`
-	CounterpartySubmitted bool     `json:"counterpartySubmitted"`
-	CanCreate             bool     `json:"canCreate"`
-	CanEdit               bool     `json:"canEdit"`
-	Rating                *int     `json:"rating"`
-	Tags                  []string `json:"tags"`
-	Note                  *string  `json:"note"`
-	CompletedAt           string   `json:"completedAt"`
-	ReviewDeadlineAt      string   `json:"reviewDeadlineAt"`
-	SubmittedAt           *string  `json:"submittedAt"`
-	VisibleAt             *string  `json:"visibleAt"`
-	FrozenAt              *string  `json:"frozenAt"`
-	CreatedAt             string   `json:"createdAt"`
-	UpdatedAt             string   `json:"updatedAt"`
-	Version               int64    `json:"version"`
+	ID                   string         `json:"id"`
+	TransactionType      string         `json:"transactionType"`
+	TransactionID        string         `json:"transactionId"`
+	SourceType           string         `json:"sourceType"`
+	SourceID             string         `json:"sourceId"`
+	Direction            string         `json:"direction"`
+	Target               string         `json:"target"`
+	CounterpartyUsername string         `json:"counterpartyUsername"`
+	CounterpartyName     string         `json:"counterpartyName"`
+	ReviewerRole         string         `json:"reviewerRole"`
+	RevieweeRole         string         `json:"revieweeRole"`
+	Status               string         `json:"status"`
+	Visibility           string         `json:"visibility"`
+	AllowedTags          []reviewTagDTO `json:"allowedTags"`
+	CanCreate            bool           `json:"canCreate"`
+	CanEdit              bool           `json:"canEdit"`
+	Rating               *int           `json:"rating"`
+	Tags                 []string       `json:"tags"`
+	Note                 *string        `json:"note"`
+	CompletedAt          string         `json:"completedAt"`
+	ReviewDeadlineAt     string         `json:"reviewDeadlineAt"`
+	SubmittedAt          *string        `json:"submittedAt"`
+	VisibleAt            *string        `json:"visibleAt"`
+	FrozenAt             *string        `json:"frozenAt"`
+	CreatedAt            string         `json:"createdAt"`
+	UpdatedAt            string         `json:"updatedAt"`
+	Version              int64          `json:"version"`
 }
 
 type reviewCenterResponse struct {
 	Items      []reviewCenterRowDTO `json:"items"`
-	PresetTags []string             `json:"presetTags"`
+	PresetTags []reviewTagDTO       `json:"presetTags"`
 	NextCursor *string              `json:"nextCursor,omitempty"`
+}
+
+type reviewTagDTO struct {
+	Code     string `json:"code"`
+	Label    string `json:"label"`
+	Polarity string `json:"polarity"`
 }
 
 type submitReviewRequest struct {
@@ -91,7 +97,7 @@ func (s *Server) handleMyReviewCenter(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, reviewCenterResponse{
 		Items:      toReviewCenterRowDTOs(page.Items),
-		PresetTags: append([]string{}, review.PresetTags...),
+		PresetTags: toReviewTagDTOs(review.AllTags()),
 		NextCursor: page.NextCursor,
 	})
 }
@@ -251,31 +257,31 @@ func toReviewCenterRowDTOs(rows []review.ReviewCenterRow) []reviewCenterRowDTO {
 
 func toReviewCenterRowDTO(row review.ReviewCenterRow) reviewCenterRowDTO {
 	item := reviewCenterRowDTO{
-		ID:                    row.ID,
-		TransactionType:       row.TransactionType,
-		TransactionID:         row.TransactionID,
-		SourceType:            row.TransactionType,
-		SourceID:              row.TransactionID,
-		Direction:             row.Direction,
-		Target:                row.Target,
-		CounterpartyUsername:  row.CounterpartyUsername,
-		CounterpartyName:      row.CounterpartyName,
-		ReviewerRole:          row.ReviewerRole,
-		RevieweeRole:          row.RevieweeRole,
-		Status:                row.Status,
-		Visibility:            row.Visibility,
-		CounterpartySubmitted: row.CounterpartySubmitted,
-		CanCreate:             row.CanCreate,
-		CanEdit:               row.CanEdit,
-		Tags:                  []string{},
-		CompletedAt:           formatReviewTime(row.CompletedAt),
-		ReviewDeadlineAt:      formatReviewTime(row.ReviewDeadlineAt),
-		SubmittedAt:           formatOptionalReviewTime(row.SubmittedAt),
-		VisibleAt:             formatOptionalReviewTime(row.VisibleAt),
-		FrozenAt:              formatOptionalReviewTime(row.FrozenAt),
-		CreatedAt:             formatReviewTime(row.CreatedAt),
-		UpdatedAt:             formatReviewTime(row.UpdatedAt),
-		Version:               row.Version,
+		ID:                   row.ID,
+		TransactionType:      row.TransactionType,
+		TransactionID:        row.TransactionID,
+		SourceType:           row.TransactionType,
+		SourceID:             row.TransactionID,
+		Direction:            row.Direction,
+		Target:               row.Target,
+		CounterpartyUsername: row.CounterpartyUsername,
+		CounterpartyName:     row.CounterpartyName,
+		ReviewerRole:         row.ReviewerRole,
+		RevieweeRole:         row.RevieweeRole,
+		Status:               row.Status,
+		Visibility:           row.Visibility,
+		AllowedTags:          toReviewTagDTOs(review.AllowedTags(row.TransactionType, row.ReviewerRole, row.RevieweeRole)),
+		CanCreate:            row.CanCreate,
+		CanEdit:              row.CanEdit,
+		Tags:                 []string{},
+		CompletedAt:          formatReviewTime(row.CompletedAt),
+		ReviewDeadlineAt:     formatReviewTime(row.ReviewDeadlineAt),
+		SubmittedAt:          formatOptionalReviewTime(row.SubmittedAt),
+		VisibleAt:            formatOptionalReviewTime(row.VisibleAt),
+		FrozenAt:             formatOptionalReviewTime(row.FrozenAt),
+		CreatedAt:            formatReviewTime(row.CreatedAt),
+		UpdatedAt:            formatReviewTime(row.UpdatedAt),
+		Version:              row.Version,
 	}
 	if row.ContentVisible {
 		rating := row.Rating
@@ -299,10 +305,18 @@ func toPublicReviewDTOs(items []review.PublicReview) []publicReviewDTO {
 			ReviewerRole:    item.ReviewerRole,
 			RevieweeRole:    item.RevieweeRole,
 			Rating:          item.Rating,
-			Tags:            append([]string{}, item.Tags...),
+			Tags:            review.DisplayTagLabels(item.Tags),
 			Note:            item.Note,
 			Verified:        item.Verified,
 		})
+	}
+	return result
+}
+
+func toReviewTagDTOs(items []review.TagDefinition) []reviewTagDTO {
+	result := make([]reviewTagDTO, 0, len(items))
+	for _, item := range items {
+		result = append(result, reviewTagDTO{Code: item.Code, Label: item.Label, Polarity: item.Polarity})
 	}
 	return result
 }

@@ -23,7 +23,7 @@
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/community-linux.do-1D4ED8?logo=discourse&logoColor=white" alt="linux.do 社区"></a>
-  <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
+  <img src="https://img.shields.io/badge/Go-1.26.6-00ADD8?logo=go&logoColor=white" alt="Go 1.26.6">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
 
@@ -60,7 +60,7 @@ C2CMarket 把订阅拼车、API 服务、求车需求和官网公开价记录放
 | 层级 | 技术 |
 | --- | --- |
 | 前端 | Nuxt 4、Vue 3、TypeScript、Pinia、TanStack Query、Tailwind CSS |
-| 后端 | Go 1.26.5、chi、pgx |
+| 后端 | Go 1.26.6、chi、pgx |
 | 数据库 | PostgreSQL 18、版本化 SQL migrations |
 | 部署 | Docker Compose、Cloudflare Workers、VPS/Caddy、GHCR |
 | 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami |
@@ -72,7 +72,7 @@ C2CMarket 把订阅拼车、API 服务、求车需求和官网公开价记录放
 - Docker 和 Docker Compose
 - Node.js `>=24.11 <25`
 - pnpm `>=10 <11`
-- Go 1.26.5（仅在 Docker 外运行后端时需要）
+- Go 1.26.6（仅在 Docker 外运行后端时需要）
 
 ### 1. 获取代码与配置
 

@@ -467,19 +467,21 @@ GET   /api/v1/admin/product-plans?category=<code>
 GET   /api/v1/admin/product-plans/{id}
 POST  /api/v1/admin/product-plans
 PATCH /api/v1/admin/product-plans/{id}
-POST  /api/v1/admin/product-plans/{id}/activate
-POST  /api/v1/admin/product-plans/{id}/deactivate
+POST  /api/v1/admin/product-plans/{id}/deprecate
+POST  /api/v1/admin/product-plans/{id}/block
+POST  /api/v1/admin/product-plans/{id}/reactivate
+POST  /api/v1/admin/product-plans/{id}/unblock
 
 ProductPlanRequest:
   categoryId, providerCode, slug, displayName, description
   publishPolicy, accessMode, providerPolicyStatus, riskLevel
   riskAckRequired, riskNoticeCode, policyNote
-  active, allowCustomVariant, sortOrder
+  allowCustomVariant, sortOrder
 ```
 
 ### 3. Contracts
 
-- Public product-plan reads return only active plans whose category is active. Admin reads return active and inactive product plans.
+- Public product-plan reads return only effectively active plans whose category is active. Admin reads return every lifecycle status.
 - Admin writes require a backend admin session. State-changing admin endpoints require CSRF validation before business decoding.
 - Admin create/update payloads are complete forms, not merge patches. JSON fields use camelCase and map to the existing snake_case `product_plans` columns.
 - `slug` is globally unique across product plans and uses lowercase letters, numbers, and dashes. `providerCode` uses the same lowercase slug shape.
@@ -490,8 +492,8 @@ ProductPlanRequest:
   - `riskLevel`: `normal`, `elevated`, `high`
 - If `riskAckRequired=true`, `riskNoticeCode` is required and must reference a supported risk notice.
 - Policy fields are `publishPolicy`, `accessMode`, `providerPolicyStatus`, `riskLevel`, `riskAckRequired`, `riskNoticeCode`, and `policyNote`.
-- Only policy field changes increment `policyVersion` and append `product_plan_policy_history`. Display name, description, sort order, active state, and custom-variant toggles must not increment policy version.
-- Activate/deactivate changes only `active` and `updated_at`; it never physically deletes rows and never writes policy history.
+- Only policy field changes increment `policyVersion` and append `product_plan_policy_history`. Display name, description, sort order, lifecycle state, and custom-variant toggles must not increment policy version.
+- Ordinary PATCH cannot change lifecycle. Dedicated deprecate/block/reactivate/unblock commands require idempotency, `If-Match`, a reason, immutable audit events, and transactional governance side effects.
 - Frontend mutations must invalidate both admin product-plan queries and user-facing active catalog caches so dropdowns refresh after admin changes.
 
 ### 4. Validation & Error Matrix
@@ -499,22 +501,22 @@ ProductPlanRequest:
 | Condition | HTTP | Code / Behavior |
 | --- | ---: | --- |
 | Non-admin calls admin list/detail/write | 403 | Admin authority comes from backend session/user permissions |
-| Missing CSRF on create/update/activate/deactivate | 401/403 | Session/CSRF middleware rejects before mutation |
+| Missing CSRF on create/update/lifecycle commands | 401/403 | Session/CSRF middleware rejects before mutation |
 | Unknown request body field on create/update | 400 | Strict JSON decoding rejects it |
 | Missing `categoryId`, invalid category, invalid enum, invalid slug/provider code | 422 | `VALIDATION_FAILED` field error |
 | Duplicate `slug` on create/update | 409 | `VALIDATION_FAILED` field error on `slug` |
 | Unknown plan ID on admin detail/update/toggle | 404 | Product plan not found |
-| Public list/detail points at inactive plan | 404 or omitted | Public reads are active-only |
+| Public list points at non-active plan | omitted | Public selection reads are effective-active-only; historical direct reads remain available |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: admin creates an inactive plan, sees it in `GET /api/v1/admin/product-plans`, and public `GET /api/v1/product-plans` does not expose it until activation.
+- Good: admin creates a plan, deprecates it through the dedicated command, sees it in the admin list, and public selection reads omit it until reactivation.
 - Base: admin changes only `displayName` or `sortOrder`; `policyVersion` remains unchanged.
 - Bad: admin deactivates a plan and existing historical records break because the row was deleted or public code hard-coded Plus/Pro behavior instead of resolving catalog policy.
 
 ### 6. Tests Required
 
-- Backend route/service tests for create, policy update version increment, deactivate, admin inactive visibility, and public active-only visibility.
+- Backend route/service tests for create, policy update version increment, lifecycle transitions, admin all-status visibility, and public effective-active-only visibility.
 - PostgreSQL repository coverage or focused review for policy history insertion and non-policy updates avoiding policy history.
 - OpenAPI YAML parse and route parity checks after adding or changing admin catalog routes.
 - Frontend type/build checks after changing product catalog adapters, query hooks, pages, or route integration.
@@ -2620,7 +2622,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 95 (current repository target)
+  ExpectedMigrationVersion = 97 (current repository target)
 ```
 
 ### 3. Contracts

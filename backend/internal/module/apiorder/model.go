@@ -10,6 +10,12 @@ import (
 )
 
 const (
+	MerchantConfirmWindow = 10 * time.Minute
+	DefaultDeliveryWindow = 10 * time.Minute
+	LatePaymentWindow     = 24 * time.Hour
+)
+
+const (
 	PurchaseKindAPIService        = "api_service"
 	PurchaseKindLimitedQuotaOffer = "limited_quota_offer"
 
@@ -62,10 +68,16 @@ const (
 	EventDisputeOpened           = "api_order.dispute_opened"
 	EventDisputeRemedyAwaiting   = "api_order.dispute_remedy_awaiting"
 	EventDisputeRemedyClaimed    = "api_order.dispute_remedy_claimed"
+	EventLatePaymentReported     = "api_order.late_payment_reported"
+	EventLatePaymentResolved     = "api_order.late_payment_resolved"
 	EventDisputeRemedyContested  = "api_order.dispute_remedy_contested"
 	EventDisputeClosed           = "api_order.dispute_closed"
 	EventDeliveryReviewReminder  = "api_order.delivery_review_reminder_sent"
 	EventAutoCompleted           = "api_order.auto_completed"
+	EventCatalogRiskHoldCreated  = "api_order.catalog_risk_hold_created"
+	EventCatalogRiskHoldRestored = "api_order.catalog_risk_hold_restored"
+	EventCatalogRefundPending    = "api_order.catalog_risk_refund_pending"
+	EventCatalogDisputeOpened    = "api_order.catalog_risk_dispute_opened"
 
 	DeliveryKindAPIKeyEndpoint = "api_key_endpoint"
 	DeliveryKindLoginAccount   = "login_account"
@@ -76,6 +88,12 @@ const (
 
 	DeliveryReviewWindow       = 24 * time.Hour
 	DeliveryReviewReminderLead = 2 * time.Hour
+)
+
+const (
+	LatePaymentStatusReported              = "reported"
+	LatePaymentStatusNotReceived           = "not_received"
+	LatePaymentStatusReceivedRefundPending = "received_refund_pending"
 )
 
 func IsDisputeActive(status string) bool {
@@ -168,10 +186,14 @@ type Order struct {
 	PaymentQRCodeDataURLSnapshot  string
 	PaymentSummary                string
 	PaymentSubmittedAt            *time.Time
+	MerchantConfirmDueAt          *time.Time
+	MerchantConfirmOverdue        bool
 	PaymentIssueReason            string
 	PaymentIssueNote              string
 	PaymentIssueReportedAt        *time.Time
 	PaidConfirmedAt               *time.Time
+	DeliveryDueAt                 *time.Time
+	DeliveryOverdue               bool
 	DeliveryNote                  string
 	DeliverySubmittedAt           *time.Time
 	DeliveryReviewExpiresAt       *time.Time
@@ -181,6 +203,11 @@ type Order struct {
 	CompletedAt                   *time.Time
 	CancelledAt                   *time.Time
 	CancelReason                  string
+	LatePaymentStatus             string
+	LatePaymentReportedAt         *time.Time
+	LatePaymentNote               string
+	LatePaymentResolvedAt         *time.Time
+	CanReportLatePayment          bool
 	AfterSalesExpiresAt           *time.Time
 	CanOpenDispute                bool
 	DisputeEligibilityReason      string
@@ -189,6 +216,27 @@ type Order struct {
 	Version                       int64
 	BuyerReputation               *reputation.ReputationSnapshot
 	SellerReputation              *reputation.ReputationSnapshot
+	CatalogRiskHold               *CatalogRiskHold
+}
+
+const (
+	CatalogRiskHoldActive        = "active"
+	CatalogRiskHoldRestored      = "restored"
+	CatalogRiskHoldRefundPending = "refund_pending"
+	CatalogRiskHoldDisputeOpened = "dispute_opened"
+)
+
+type CatalogRiskHold struct {
+	ID             string
+	SourceType     string
+	SourceID       string
+	Status         string
+	Reason         string
+	CreatedAt      time.Time
+	ResolvedBy     string
+	ResolvedAt     *time.Time
+	ResolutionNote string
+	Version        int64
 }
 
 type Event struct {
@@ -247,6 +295,8 @@ type ActionInput struct {
 	PaymentSummary         string
 	PaymentIssueReason     string
 	PaymentIssueNote       string
+	LatePaymentStatus      string
+	LatePaymentNote        string
 	DeliveryNote           string
 	DeliveryCredential     DeliveryCredentialInput
 	Reason                 string
@@ -256,6 +306,15 @@ type ActionInput struct {
 	IssueOccurredAt        string
 	ExpectedVersion        int64
 	RequestID              string
+}
+
+type CatalogRiskHoldActionInput struct {
+	OrderID         string
+	AdminUserID     string
+	Resolution      string
+	ResolutionNote  string
+	ExpectedVersion int64
+	RequestID       string
 }
 
 type DeliveryCredentialInput struct {

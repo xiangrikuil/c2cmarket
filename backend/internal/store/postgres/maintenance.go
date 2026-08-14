@@ -724,12 +724,13 @@ func (s *Store) materializeAPIOrdersForMaintenanceInTx(ctx context.Context, tx p
 	rows, err := tx.Query(ctx, `
 		SELECT id::text
 		FROM api_orders
-		WHERE (status = 'pending_payment' AND dispute_status IN ('none', 'closed') AND payment_expires_at <= $1)
+		WHERE NOT EXISTS (SELECT 1 FROM api_order_catalog_risk_holds hold WHERE hold.api_order_id = api_orders.id AND hold.status = 'active')
+		  AND ((status = 'pending_payment' AND dispute_status IN ('none', 'closed') AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
 		     AND dispute_status IN ('none', 'closed')
 		     AND delivery_review_expires_at <= $2
-		   )
+		   ))
 		ORDER BY COALESCE(delivery_review_expires_at, payment_expires_at), id
 		LIMIT $3
 		FOR UPDATE SKIP LOCKED

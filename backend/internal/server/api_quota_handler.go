@@ -129,15 +129,16 @@ type apiQuotaAllocationResponse struct {
 }
 
 type apiQuotaRoundResponse struct {
-	ID            string                       `json:"id"`
-	BatchID       string                       `json:"batchId"`
-	SystemSlotKey string                       `json:"systemSlotKey,omitempty"`
-	Name          string                       `json:"name"`
-	StartsAt      string                       `json:"startsAt"`
-	EndsAt        string                       `json:"endsAt"`
-	Status        string                       `json:"status"`
-	Allocations   []apiQuotaAllocationResponse `json:"allocations"`
-	Version       int64                        `json:"version"`
+	ID                     string                       `json:"id"`
+	BatchID                string                       `json:"batchId"`
+	SystemSlotKey          string                       `json:"systemSlotKey,omitempty"`
+	Name                   string                       `json:"name"`
+	StartsAt               string                       `json:"startsAt"`
+	EndsAt                 string                       `json:"endsAt"`
+	Status                 string                       `json:"status"`
+	FulfillmentConfirmedAt *string                      `json:"fulfillmentConfirmedAt,omitempty"`
+	Allocations            []apiQuotaAllocationResponse `json:"allocations"`
+	Version                int64                        `json:"version"`
 }
 
 type apiQuotaSystemSaleSlotResponse struct {
@@ -556,6 +557,39 @@ func (s *Server) handleCreateAPIQuotaRound(w http.ResponseWriter, r *http.Reques
 	writeIdempotencyCompletion(w, completion)
 }
 
+func (s *Server) handleConfirmAPIQuotaRoundFulfillment(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
+		return
+	}
+	body, _, appErr := decodeStrictJSON[emptyRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	roundID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/owner/api-quota-rounds/{id}/confirm-fulfillment"
+	completion, appErr := s.apiQuotas.ConfirmAPIQuotaRoundFulfillmentWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey+":"+roundID, body),
+		apiquota.SaleRoundActionInput{SaleRoundID: roundID, ExpectedVersion: version, RequestID: requestIDFrom(r)},
+		apiQuotaRoundCompletionBuilder(http.StatusOK),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
+}
+
 func (s *Server) handleAPIQuotaBatchAction(w http.ResponseWriter, r *http.Request, action string) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -857,7 +891,7 @@ func toAPIQuotaRoundResponse(item apiquota.SaleRound) apiQuotaRoundResponse {
 	return apiQuotaRoundResponse{
 		ID: item.ID, BatchID: item.BatchID, SystemSlotKey: item.SystemSlotKey, Name: item.Name,
 		StartsAt: item.StartsAt.UTC().Format(time.RFC3339), EndsAt: item.EndsAt.UTC().Format(time.RFC3339),
-		Status: item.Status, Allocations: allocations, Version: item.Version,
+		Status: item.Status, FulfillmentConfirmedAt: formatOptionalTime(item.FulfillmentConfirmedAt), Allocations: allocations, Version: item.Version,
 	}
 }
 

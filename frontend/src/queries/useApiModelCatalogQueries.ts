@@ -1,18 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   applyAPIModelsDevSync,
+  applyAPIModelLifecycle,
+  applyAPIModelProviderLifecycle,
   createAPIModel,
   createAPIModelProvider,
   getAdminAPIModels,
   getAdminAPIModelProviders,
   previewAPIModelsDevSync,
-  setAPIModelsBulkStatus,
-  setAPIModelActive,
-  setAPIModelProviderActive,
   updateAPIModel,
   updateAPIModelProvider,
 } from '@/lib/apiModelCatalogBackend'
-import type { ApiModelBulkStatusInput, ApiModelInput, ApiModelProviderInput, ApiModelSyncSelection } from '@/types/apiModelCatalog'
+import type { ApiModelInput, ApiModelProviderInput, ApiModelSyncSelection, CatalogLifecycleAction } from '@/types/apiModelCatalog'
 
 export const apiModelCatalogQueryKeys = {
   adminProviders: ['admin-api-model-providers'] as const,
@@ -56,10 +55,10 @@ export function useUpdateAPIModelProvider() {
   })
 }
 
-export function useSetAPIModelProviderActive() {
+export function useApplyAPIModelProviderLifecycle() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, active }: { id: string, active: boolean }) => setAPIModelProviderActive(id, active),
+    mutationFn: ({ id, version, action, reason, targetStatus }: { id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated' }) => applyAPIModelProviderLifecycle(id, version, action, reason, targetStatus),
     onSuccess() {
       invalidateAPIModelCatalog(queryClient)
     },
@@ -86,10 +85,10 @@ export function useUpdateAPIModel() {
   })
 }
 
-export function useSetAPIModelActive() {
+export function useApplyAPIModelLifecycle() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, active }: { id: string, active: boolean }) => setAPIModelActive(id, active),
+    mutationFn: ({ id, version, action, reason, targetStatus }: { id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated' }) => applyAPIModelLifecycle(id, version, action, reason, targetStatus),
     onSuccess() {
       invalidateAPIModelCatalog(queryClient)
     },
@@ -106,16 +105,6 @@ export function useApplyAPIModelsDevSync() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (items: ApiModelSyncSelection[]) => applyAPIModelsDevSync(items),
-    onSuccess() {
-      invalidateAPIModelCatalog(queryClient)
-    },
-  })
-}
-
-export function useSetAPIModelsBulkStatus() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (input: ApiModelBulkStatusInput) => setAPIModelsBulkStatus(input),
     onSuccess() {
       invalidateAPIModelCatalog(queryClient)
     },

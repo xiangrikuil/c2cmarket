@@ -6,7 +6,7 @@ import {
   type AdminApiModelProvider,
   type ApiModelCapability,
   type ApiModelBulkMutationResult,
-  type ApiModelBulkStatusInput,
+  type CatalogLifecycleAction,
   type ApiModelInput,
   type ApiModelProviderCategory,
   type ApiModelProviderInput,
@@ -21,7 +21,6 @@ type ListResponse<T> = { items: T[] }
 const apiModelProviderStorageKey = 'marketplace.admin.api-model-providers'
 const apiModelAdminStorageKey = 'marketplace.admin.api-models'
 
-const providerOrder: ApiModelProviderCategory[] = ['gpt', 'claude', 'cursor', 'gemini', 'perplexity', 'other']
 const capabilityOrder = apiModelCapabilities.map(item => item.value)
 
 export async function getAdminAPIModelProviders(): Promise<AdminApiModelProvider[]> {
@@ -66,18 +65,8 @@ export async function updateAPIModelProvider(id: string, input: ApiModelProvider
   return updated
 }
 
-export async function setAPIModelProviderActive(id: string, active: boolean): Promise<AdminApiModelProvider> {
-  if (shouldUseRealBackend()) {
-    await ensureBackendSession('admin', true)
-    return backendMutation<AdminApiModelProvider>(`/api/v1/admin/api-model-providers/${encodeURIComponent(id)}/${active ? 'activate' : 'deactivate'}`, {})
-  }
-  const rows = readMockAPIModelProviders()
-  const previous = rows.find(item => item.id === id)
-  if (!previous) throw new Error('API 提供商不存在。')
-  const updated = { ...previous, active, updatedAt: new Date().toISOString() }
-  writeMockAPIModelProviders(rows.map(item => item.id === id ? updated : item))
-  writeMockAdminAPIModels(readMockAdminAPIModels().map(item => item.providerId === id ? withProvider(item, updated) : item))
-  return updated
+export async function applyAPIModelProviderLifecycle(id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated'): Promise<AdminApiModelProvider> {
+  return applyCatalogLifecycle('api-model-providers', id, version, action, reason, targetStatus) as Promise<AdminApiModelProvider>
 }
 
 export async function getAdminAPIModels(): Promise<AdminApiModel[]> {
@@ -123,17 +112,8 @@ export async function updateAPIModel(id: string, input: ApiModelInput): Promise<
   return updated
 }
 
-export async function setAPIModelActive(id: string, active: boolean): Promise<AdminApiModel> {
-  if (shouldUseRealBackend()) {
-    await ensureBackendSession('admin', true)
-    return backendMutation<AdminApiModel>(`/api/v1/admin/api-models/${encodeURIComponent(id)}/${active ? 'activate' : 'deactivate'}`, {})
-  }
-  const rows = readMockAdminAPIModels()
-  const previous = rows.find(item => item.id === id)
-  if (!previous) throw new Error('API 模型不存在。')
-  const updated = { ...previous, active, updatedAt: new Date().toISOString() }
-  writeMockAdminAPIModels(rows.map(item => item.id === id ? updated : item))
-  return updated
+export async function applyAPIModelLifecycle(id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated'): Promise<AdminApiModel> {
+  return applyCatalogLifecycle('api-models', id, version, action, reason, targetStatus) as Promise<AdminApiModel>
 }
 
 export async function previewAPIModelsDevSync(providerIds: string[]): Promise<ApiModelSyncPreview> {
@@ -154,27 +134,19 @@ export async function applyAPIModelsDevSync(items: ApiModelSyncSelection[]): Pro
   return applyMockModelsDevSync(items)
 }
 
-export async function setAPIModelsBulkStatus(input: ApiModelBulkStatusInput): Promise<ApiModelBulkMutationResult> {
+async function applyCatalogLifecycle(resource: 'api-model-providers' | 'api-models', id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated') {
   if (shouldUseRealBackend()) {
     await ensureBackendSession('admin', true)
-    return backendMutation<ApiModelBulkMutationResult>('/api/v1/admin/api-models/bulk-status', input, {
-      idempotencyPrefix: 'api-model-bulk-status',
+    return backendMutation<AdminApiModelProvider | AdminApiModel>(`/api/v1/admin/${resource}/${encodeURIComponent(id)}/${action}`, {
+      reason: reason.trim(),
+      ...(action === 'unblock' ? { targetStatus } : {}),
+    }, {
+      idempotencyPrefix: `catalog-${resource}-${action}`,
+      ifMatch: version,
     })
   }
-  const rows = readMockAdminAPIModels()
-  const ids = Array.from(new Set(input.modelIds))
-  if (ids.length === 0 || ids.some(id => !rows.some(item => item.id === id))) {
-    throw new Error('部分 API 模型不存在，请刷新目录后重试。')
-  }
-  const now = new Date().toISOString()
-  let changed = 0
-  const nextRows = rows.map((item) => {
-    if (!ids.includes(item.id) || item.active === input.active) return item
-    changed += 1
-    return { ...item, active: input.active, updatedAt: now }
-  })
-  writeMockAdminAPIModels(nextRows)
-  return { created: 0, updated: 0, changed, ids }
+  if (resource === 'api-model-providers') return applyMockProviderLifecycle(id, version, action, reason, targetStatus)
+  return applyMockModelLifecycle(id, version, action, reason, targetStatus)
 }
 
 export function getMockPublicAPIModels(): ModelCatalogItem[] {
@@ -227,38 +199,39 @@ function writeMockAdminAPIModels(items: AdminApiModel[]) {
 }
 
 function seedAPIModelProviders(): AdminApiModelProvider[] {
-  const now = '2026-06-29T00:00:00.000Z'
+  const now = '2026-08-14T00:00:00.000Z'
   return sortAPIModelProviders([
-    { id: 'mock-api-provider-openai', providerCategory: 'gpt', code: 'openai', displayName: 'OpenAI', active: true, sortOrder: 10, createdAt: now, updatedAt: now },
-    { id: 'mock-api-provider-anthropic', providerCategory: 'claude', code: 'anthropic', displayName: 'Anthropic', active: true, sortOrder: 20, createdAt: now, updatedAt: now },
-    { id: 'mock-api-provider-google', providerCategory: 'gemini', code: 'google', displayName: 'Google', active: true, sortOrder: 30, createdAt: now, updatedAt: now },
-    { id: 'mock-api-provider-perplexity', providerCategory: 'perplexity', code: 'perplexity', displayName: 'Perplexity', active: true, sortOrder: 40, createdAt: now, updatedAt: now },
-    { id: 'mock-api-provider-openrouter', providerCategory: 'other', code: 'openrouter', displayName: 'OpenRouter', active: true, sortOrder: 50, createdAt: now, updatedAt: now },
+    { id: '00000000-0000-0000-0000-000000000c01', providerCategory: 'gpt', code: 'openai', displayName: 'OpenAI', coreKey: 'gpt', ...mockLifecycle(now, true), sortOrder: 10, createdAt: now, updatedAt: now },
+    { id: '00000000-0000-0000-0000-000000000c02', providerCategory: 'claude', code: 'anthropic', displayName: 'Anthropic', coreKey: 'claude', ...mockLifecycle(now, true), sortOrder: 20, createdAt: now, updatedAt: now },
+    { id: '00000000-0000-0000-0000-000000000c06', providerCategory: 'grok', code: 'xai', displayName: 'xAI', coreKey: 'grok', ...mockLifecycle(now, true), sortOrder: 30, createdAt: now, updatedAt: now },
   ])
 }
 
 function seedAdminAPIModels(providers: AdminApiModelProvider[]): AdminApiModel[] {
-  const now = '2026-06-29T00:00:00.000Z'
-  return sortAdminAPIModels(modelCatalog.map((item, index) => {
-    const provider = seedProviderForPublicModel(item, providers)
+  const now = '2026-08-14T00:00:00.000Z'
+  const seeds = [
+    { id: '00000000-0000-0000-0000-000000000a01', providerCode: 'openai', coreKey: 'gpt' as const, modelKey: 'gpt-4.1', sortOrder: 10, inputPricePerMillion: '2.000000', cachedInputPricePerMillion: '0.500000', outputPricePerMillion: '8.000000' },
+    { id: '00000000-0000-0000-0000-000000000a02', providerCode: 'openai', coreKey: undefined, modelKey: 'gpt-4.1-mini', sortOrder: 20, inputPricePerMillion: '0.400000', cachedInputPricePerMillion: '0.100000', outputPricePerMillion: '1.600000' },
+    { id: '00000000-0000-0000-0000-000000000a31', providerCode: 'xai', coreKey: 'grok' as const, modelKey: 'grok-4', sortOrder: 310 },
+  ]
+  return sortAdminAPIModels(seeds.map((seed) => {
+    const provider = providerByCode(seed.providerCode, providers)
     return withProvider({
-      id: item.id,
+      id: seed.id,
       providerId: provider.id,
       providerCategory: provider.providerCategory,
       providerCode: provider.code,
       provider: provider.displayName,
-      providerActive: provider.active,
-      modelKey: item.name,
-      capabilities: normalizeCapabilities(item.capabilities),
-      active: item.active,
-      currentPriceVersionId: item.officialInputPricePerMillion !== null || item.officialCachedInputPricePerMillion !== null || item.officialOutputPricePerMillion !== null ? `mock-price-${item.id}-seed` : undefined,
-      currentPriceSourceUrl: '',
-      currentPriceSourceVersion: 'mock-seed',
-      currentPriceValidFrom: now,
-      inputPricePerMillion: priceToString(item.officialInputPricePerMillion),
-      cachedInputPricePerMillion: priceToString(item.officialCachedInputPricePerMillion),
-      outputPricePerMillion: priceToString(item.officialOutputPricePerMillion),
-      sortOrder: (index + 1) * 10,
+      providerActive: true,
+      coreKey: seed.coreKey,
+      ...mockLifecycle(now, true),
+      modelKey: seed.modelKey,
+      capabilities: ['text'],
+      currentPriceSourceVersion: 'mock-seed-2026-08-14',
+      inputPricePerMillion: seed.inputPricePerMillion,
+      cachedInputPricePerMillion: seed.cachedInputPricePerMillion,
+      outputPricePerMillion: seed.outputPricePerMillion,
+      sortOrder: seed.sortOrder,
       createdAt: now,
       updatedAt: now,
     }, provider)
@@ -282,9 +255,6 @@ const mockModelsDevModels: MockModelsDevModel[] = [
   { providerCode: 'openai', modelKey: 'gpt-audio-preview', capabilities: ['text'], inputPricePerMillion: '', cachedInputPricePerMillion: '', outputPricePerMillion: '', sourceVersion: '', unavailableReason: '当前目录不支持音频模型计价。' },
   { providerCode: 'anthropic', modelKey: 'claude-sonnet', capabilities: ['text', 'vision'], inputPricePerMillion: '3.000000', cachedInputPricePerMillion: '', outputPricePerMillion: '15.000000', sourceVersion: 'models.dev:2026-08-08' },
   { providerCode: 'anthropic', modelKey: 'claude-3-5-haiku', capabilities: ['text', 'vision'], inputPricePerMillion: '0.800000', cachedInputPricePerMillion: '0.080000', outputPricePerMillion: '4.000000', sourceVersion: 'models.dev:2026-08-08' },
-  { providerCode: 'google', modelKey: 'gemini-flash', capabilities: ['text', 'vision'], inputPricePerMillion: '0.100000', cachedInputPricePerMillion: '0.025000', outputPricePerMillion: '0.400000', sourceVersion: 'models.dev:2026-08-08' },
-  { providerCode: 'google', modelKey: 'gemini-2.5-pro', capabilities: ['text', 'vision', 'reasoning'], inputPricePerMillion: '1.250000', cachedInputPricePerMillion: '0.125000', outputPricePerMillion: '10.000000', sourceVersion: 'models.dev:2026-08-08' },
-  { providerCode: 'perplexity', modelKey: 'sonar', capabilities: ['text'], inputPricePerMillion: '1.000000', cachedInputPricePerMillion: '', outputPricePerMillion: '1.000000', sourceVersion: 'models.dev:2026-08-08' },
 ]
 
 function buildMockModelsDevPreview(providerIds: string[]): ApiModelSyncPreview {
@@ -400,7 +370,8 @@ function applyMockModelsDevSync(items: ApiModelSyncSelection[]): ApiModelBulkMut
       const createdModel = withProvider({
         id, providerId: provider.id, providerCategory: provider.providerCategory,
         providerCode: provider.code, provider: provider.displayName, providerActive: provider.active,
-        modelKey: item.modelKey, capabilities: item.capabilities, active: item.active,
+        ...mockLifecycle(now, false, item.active ? 'active' : 'deprecated'),
+        modelKey: item.modelKey, capabilities: item.capabilities,
         currentPriceVersionId: `mock-price-${id}-${Date.now()}`,
         currentPriceSourceUrl: item.sourceUrl, currentPriceSourceVersion: item.sourceVersion,
         currentPriceValidFrom: now, inputPricePerMillion: item.inputPricePerMillion,
@@ -441,7 +412,7 @@ function mockPriceChanged(local: AdminApiModel, external: MockModelsDevModel) {
 }
 
 function isModelsDevProviderCode(value: string): value is ModelsDevProviderCode {
-  return value === 'openai' || value === 'anthropic' || value === 'google' || value === 'perplexity'
+  return value === 'openai' || value === 'anthropic'
 }
 
 function mockFingerprint(value: string) {
@@ -472,10 +443,9 @@ function mockSyncSelectionFingerprint(item: Pick<ApiModelSyncSelection, 'status'
 
 function normalizeProviderInput(input: ApiModelProviderInput): ApiModelProviderInput {
   return {
-    providerCategory: input.providerCategory,
+    providerCategory: input.providerCategory.trim().toLowerCase(),
     code: input.code.trim().toLowerCase(),
     displayName: input.displayName.trim(),
-    active: input.active,
     sortOrder: input.sortOrder,
   }
 }
@@ -490,7 +460,6 @@ function normalizeModelInput(input: ApiModelInput): ApiModelInput {
     outputTokenPrice: normalizePriceInput(input.outputTokenPrice),
     sourceUrl: input.sourceUrl.trim(),
     sourceVersion: input.sourceVersion.trim(),
-    active: input.active,
     sortOrder: input.sortOrder,
   }
 }
@@ -498,11 +467,11 @@ function normalizeModelInput(input: ApiModelInput): ApiModelInput {
 function fromProviderInput(id: string, input: ApiModelProviderInput, previous?: AdminApiModelProvider): AdminApiModelProvider {
   const now = new Date().toISOString()
   return {
+    ...(previous ? lifecycleFields(previous) : mockLifecycle(now, false)),
     id,
     providerCategory: input.providerCategory,
     code: input.code,
     displayName: input.displayName,
-    active: input.active,
     sortOrder: input.sortOrder,
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
@@ -522,6 +491,7 @@ function fromModelInput(id: string, input: ApiModelInput, previous?: AdminApiMod
     ? `mock-price-${id}-${Date.now()}`
     : previous?.currentPriceVersionId
   return {
+    ...(previous ? lifecycleFields(previous) : mockLifecycle(now, priceVersionId !== undefined)),
     id,
     providerId: input.providerId,
     providerCategory: previous?.providerCategory ?? 'other',
@@ -530,7 +500,6 @@ function fromModelInput(id: string, input: ApiModelInput, previous?: AdminApiMod
     providerActive: previous?.providerActive ?? true,
     modelKey: input.modelKey,
     capabilities: input.capabilities,
-    active: input.active,
     currentPriceVersionId: priceVersionId,
     currentPriceSourceUrl: input.sourceUrl,
     currentPriceSourceVersion: input.sourceVersion,
@@ -544,14 +513,117 @@ function fromModelInput(id: string, input: ApiModelInput, previous?: AdminApiMod
   }
 }
 
+function mockLifecycle(now: string, identityLocked: boolean, status: 'active' | 'deprecated' | 'blocked' = 'active') {
+  return {
+    status,
+    effectiveStatus: status,
+    effectiveStatusSource: 'self' as const,
+    statusChangedAt: now,
+    statusReason: '',
+    version: 1,
+    identityLocked,
+    identityLockReason: identityLocked ? '目录身份由系统管理或已被业务引用，不能修改。' : '',
+    active: status === 'active',
+  }
+}
+
+function lifecycleFields(item: AdminApiModelProvider | AdminApiModel) {
+  return {
+    coreKey: item.coreKey,
+    status: item.status,
+    effectiveStatus: item.effectiveStatus,
+    effectiveStatusSource: item.effectiveStatusSource,
+    statusChangedAt: item.statusChangedAt,
+    statusChangedBy: item.statusChangedBy,
+    statusReason: item.statusReason,
+    version: item.version,
+    identityLocked: item.identityLocked,
+    identityLockReason: item.identityLockReason,
+    active: item.active,
+  }
+}
+
+function lifecycleTarget(action: CatalogLifecycleAction, targetStatus?: 'active' | 'deprecated') {
+  if (action === 'deprecate') return 'deprecated' as const
+  if (action === 'block') return 'blocked' as const
+  if (action === 'reactivate') return 'active' as const
+  if (action === 'unblock' && targetStatus) return targetStatus
+  throw new Error('目录状态动作无效。')
+}
+
+function assertLifecycleTransition(status: AdminApiModelProvider['status'], action: CatalogLifecycleAction) {
+  const allowed = (action === 'deprecate' && status === 'active')
+    || (action === 'block' && (status === 'active' || status === 'deprecated'))
+    || (action === 'reactivate' && status === 'deprecated')
+    || (action === 'unblock' && status === 'blocked')
+  if (!allowed) throw new Error('当前目录状态不允许执行该动作。')
+}
+
+function applyMockProviderLifecycle(id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated') {
+  const rows = readMockAPIModelProviders()
+  const previous = rows.find(item => item.id === id)
+  if (!previous) throw new Error('API 提供商不存在。')
+  if (previous.version !== version) throw new Error('目录版本已变化，请刷新后重试。')
+  assertLifecycleTransition(previous.status, action)
+  const status = lifecycleTarget(action, targetStatus)
+  const now = new Date().toISOString()
+  const updated: AdminApiModelProvider = {
+    ...previous,
+    status,
+    effectiveStatus: status,
+    effectiveStatusSource: 'self',
+    statusChangedAt: now,
+    statusReason: reason.trim(),
+    version: previous.version + 1,
+    active: status === 'active',
+    updatedAt: now,
+  }
+  writeMockAPIModelProviders(rows.map(item => item.id === id ? updated : item))
+  writeMockAdminAPIModels(readMockAdminAPIModels().map(item => item.providerId === id ? withProvider(item, updated) : item))
+  return updated
+}
+
+function applyMockModelLifecycle(id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated') {
+  const rows = readMockAdminAPIModels()
+  const previous = rows.find(item => item.id === id)
+  if (!previous) throw new Error('API 模型不存在。')
+  if (previous.version !== version) throw new Error('目录版本已变化，请刷新后重试。')
+  assertLifecycleTransition(previous.status, action)
+  const status = lifecycleTarget(action, targetStatus)
+  const provider = providerById(previous.providerId, readMockAPIModelProviders())
+  if (status === 'active' && provider.effectiveStatus !== 'active') throw new Error('父级提供商当前不可用，不能恢复该模型。')
+  const now = new Date().toISOString()
+  const updated = withProvider({
+    ...previous,
+    status,
+    effectiveStatus: status,
+    effectiveStatusSource: 'self',
+    statusChangedAt: now,
+    statusReason: reason.trim(),
+    version: previous.version + 1,
+    active: status === 'active',
+    updatedAt: now,
+  }, provider)
+  writeMockAdminAPIModels(rows.map(item => item.id === id ? updated : item))
+  return updated
+}
+
 function withProvider(item: AdminApiModel, provider: AdminApiModelProvider): AdminApiModel {
+  const effectiveStatus = item.status === 'blocked' || provider.status === 'blocked'
+    ? 'blocked'
+    : item.status === 'deprecated' || provider.status === 'deprecated'
+      ? 'deprecated'
+      : 'active'
   return {
     ...item,
     providerId: provider.id,
     providerCategory: provider.providerCategory,
     providerCode: provider.code,
     provider: provider.displayName,
-    providerActive: provider.active,
+    providerActive: provider.effectiveStatus === 'active',
+    effectiveStatus,
+    effectiveStatusSource: effectiveStatus !== item.status ? 'parent' : 'self',
+    active: effectiveStatus === 'active',
   }
 }
 
@@ -569,16 +641,7 @@ function toPublicModel(item: AdminApiModel): ModelCatalogItem {
 }
 
 function publicProvider(item: AdminApiModel): ModelCatalogItem['provider'] {
-  if (item.providerCategory === 'gpt' || item.providerCode === 'openai') return 'openai'
-  if (item.providerCategory === 'claude' || item.providerCode === 'anthropic') return 'anthropic'
-  return 'other'
-}
-
-function seedProviderForPublicModel(item: ModelCatalogItem, providers: AdminApiModelProvider[]) {
-  if (item.provider === 'openai') return providerByCode('openai', providers)
-  if (item.provider === 'anthropic') return providerByCode('anthropic', providers)
-  if (item.id.includes('gemini')) return providerByCode('google', providers)
-  return providerByCode('openrouter', providers)
+  return item.providerCode
 }
 
 function activeProviderOrThrow(providerId: string) {
@@ -588,7 +651,7 @@ function activeProviderOrThrow(providerId: string) {
 }
 
 function providerById(providerId: string, providers: AdminApiModelProvider[]) {
-  return providers.find(item => item.id === providerId) ?? providerByCode('openrouter', providers)
+  return providers.find(item => item.id === providerId) ?? providers[0]
 }
 
 function providerByCode(code: string, providers: AdminApiModelProvider[]) {
@@ -649,8 +712,6 @@ function stableModelId(modelKey: string, rows: AdminApiModel[]) {
 
 function sortAPIModelProviders(items: AdminApiModelProvider[]) {
   return [...items].sort((left, right) => {
-    const providerDelta = providerOrder.indexOf(left.providerCategory) - providerOrder.indexOf(right.providerCategory)
-    if (providerDelta !== 0) return providerDelta
     if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder
     return left.displayName.localeCompare(right.displayName)
   })
@@ -658,8 +719,6 @@ function sortAPIModelProviders(items: AdminApiModelProvider[]) {
 
 function sortAdminAPIModels(items: AdminApiModel[]) {
   return [...items].sort((left, right) => {
-    const providerDelta = providerOrder.indexOf(left.providerCategory) - providerOrder.indexOf(right.providerCategory)
-    if (providerDelta !== 0) return providerDelta
     if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder
     return left.modelKey.localeCompare(right.modelKey)
   })

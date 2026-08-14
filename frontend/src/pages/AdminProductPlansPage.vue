@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import {
+  Ban,
   ChevronDown,
   ChevronRight,
   FilePenLine,
   FolderPlus,
   ImageIcon,
+  MoreHorizontal,
   Plus,
   RotateCcw,
   Save,
-  ToggleLeft,
-  ToggleRight,
   TriangleAlert,
   Trash2,
   Upload,
@@ -22,6 +22,12 @@ import CompactStats from '@/components/market/CompactStats.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Dialog,
   DialogContent,
@@ -53,14 +59,14 @@ import {
   useAdminProductPlans,
   useCreateProductCategory,
   useCreateProductPlan,
-  useSetProductCategoryActive,
-  useSetProductPlanActive,
+  useApplyProductCategoryLifecycle,
+  useApplyProductPlanLifecycle,
   useUpdateProductCategory,
   useUpdateProductPlan,
 } from '@/queries/useProductCatalogQueries'
-import type { ProductAccessMode, ProductCategory, ProductCategoryInput, ProductPlan, ProductPlanInput } from '@/types/productCatalog'
+import type { CatalogLifecycleAction, CatalogStatus, ProductAccessMode, ProductCategory, ProductCategoryInput, ProductPlan, ProductPlanInput } from '@/types/productCatalog'
 
-type StatusFilter = '全部' | '启用' | '停用'
+type StatusFilter = '全部' | '可用' | '已退役' | '已阻断'
 type CategoryFormMode = 'create' | 'edit'
 
 type CategoryGroup = {
@@ -68,7 +74,7 @@ type CategoryGroup = {
   plans: ProductPlan[]
   visiblePlans: ProductPlan[]
   activePlanCount: number
-  inactivePlanCount: number
+  unavailablePlanCount: number
 }
 
 const statusFilter = ref<StatusFilter>('全部')
@@ -81,6 +87,9 @@ const showAdvancedPlanFields = ref(false)
 const selectedBusinessStatus = ref<CatalogBusinessStatus>('publishable')
 const categoryFormMode = ref<CategoryFormMode>('create')
 const categoryIconInput = ref<HTMLInputElement | null>(null)
+const lifecycleTarget = ref<{ kind: 'category' | 'plan', item: ProductCategory | ProductPlan, action: CatalogLifecycleAction } | null>(null)
+const lifecycleReason = ref('')
+const unblockTargetStatus = ref<'active' | 'deprecated'>('active')
 const planForm = reactive<ProductPlanInput>({
   categoryId: '',
   providerCode: 'other',
@@ -97,7 +106,6 @@ const planForm = reactive<ProductPlanInput>({
   quotaLabel: '额度',
   quotaUnit: 'USD',
   quotaPeriod: 'monthly',
-  active: true,
   allowCustomVariant: false,
   sortOrder: 100,
 })
@@ -106,17 +114,16 @@ const categoryForm = reactive<ProductCategoryInput>({
   displayName: '',
   iconDataUrl: '',
   sortOrder: 10,
-  active: true,
 })
 
 const categoriesQuery = useAdminProductCategories()
 const plansQuery = useAdminProductPlans()
 const createPlanMutation = useCreateProductPlan()
 const updatePlanMutation = useUpdateProductPlan()
-const activePlanMutation = useSetProductPlanActive()
+const planLifecycleMutation = useApplyProductPlanLifecycle()
 const createCategoryMutation = useCreateProductCategory()
 const updateCategoryMutation = useUpdateProductCategory()
-const activeCategoryMutation = useSetProductCategoryActive()
+const categoryLifecycleMutation = useApplyProductCategoryLifecycle()
 
 const categories = categoriesQuery.data
 const plans = plansQuery.data
@@ -128,9 +135,9 @@ const catalogErrorMessage = computed(() => {
   const error = categoriesQuery.error.value ?? plansQuery.error.value
   return error instanceof Error ? error.message : '套餐目录读取失败，请确认当前账号有管理权限并重试。'
 })
-const activeCategoryCount = computed(() => categoryRows.value.filter(item => item.active).length)
-const activePlanCount = computed(() => rows.value.filter(item => item.active).length)
-const inactivePlanCount = computed(() => rows.value.filter(item => !item.active).length)
+const activeCategoryCount = computed(() => categoryRows.value.filter(item => item.effectiveStatus === 'active').length)
+const activePlanCount = computed(() => rows.value.filter(item => item.effectiveStatus === 'active').length)
+const unavailablePlanCount = computed(() => rows.value.filter(item => item.effectiveStatus !== 'active').length)
 const restrictedPlanCount = computed(() => rows.value.filter(item => item.publishPolicy !== 'allowed').length)
 const uncategorizedPlans = computed(() => rows.value.filter(plan => !categoryRows.value.some(category => category.id === plan.categoryId)))
 const categoryGroups = computed<CategoryGroup[]>(() => categoryRows.value.map(category => {
@@ -141,8 +148,8 @@ const categoryGroups = computed<CategoryGroup[]>(() => categoryRows.value.map(ca
     category,
     plans: plansInCategory,
     visiblePlans: plansInCategory.filter(matchesStatusFilter),
-    activePlanCount: plansInCategory.filter(item => item.active).length,
-    inactivePlanCount: plansInCategory.filter(item => !item.active).length,
+    activePlanCount: plansInCategory.filter(item => item.effectiveStatus === 'active').length,
+    unavailablePlanCount: plansInCategory.filter(item => item.effectiveStatus !== 'active').length,
   }
 }))
 const visibleCategoryGroups = computed(() => categoryGroups.value.filter(group => group.visiblePlans.length > 0 || matchesStatusFilter(group.category)))
@@ -158,7 +165,7 @@ const editingCategory = computed(() => categoryRows.value.find(item => item.id =
 const selectedPlanCategory = computed(() => categoryRows.value.find(item => item.id === planForm.categoryId) ?? categoryRows.value[0])
 const visibleCategoriesForPlanForm = computed(() => {
   if (editingPlan.value) return categoryRows.value
-  return categoryRows.value.filter(item => item.active)
+  return categoryRows.value.filter(item => item.effectiveStatus === 'active')
 })
 
 const accessModeLabels: Record<ProductAccessMode, string> = {
@@ -175,7 +182,7 @@ watch(categoryRows, value => {
     expandedCategoryIds.value = value.map(item => item.id)
   }
   if (!planForm.categoryId || !value.some(item => item.id === planForm.categoryId)) {
-    planForm.categoryId = value.find(item => item.active)?.id ?? value[0].id
+    planForm.categoryId = value.find(item => item.effectiveStatus === 'active')?.id ?? value[0].id
   }
 }, { immediate: true })
 
@@ -201,13 +208,12 @@ function emptyCategoryForm(): ProductCategoryInput {
     displayName: '',
     iconDataUrl: '',
     sortOrder: nextCategorySortOrder(),
-    active: true,
   }
 }
 
 function emptyPlanForm(categoryId?: string): ProductPlanInput {
   const category = categoryRows.value.find(item => item.id === categoryId)
-    ?? categoryRows.value.find(item => item.active)
+    ?? categoryRows.value.find(item => item.effectiveStatus === 'active')
     ?? categoryRows.value[0]
   return {
     categoryId: category?.id ?? '',
@@ -225,7 +231,6 @@ function emptyPlanForm(categoryId?: string): ProductPlanInput {
     quotaLabel: '额度',
     quotaUnit: 'USD',
     quotaPeriod: 'monthly',
-    active: true,
     allowCustomVariant: false,
     sortOrder: nextPlanSortOrder(category?.id),
   }
@@ -257,7 +262,6 @@ function inputFromPlan(plan: ProductPlan): ProductPlanInput {
     quotaLabel: plan.quotaLabel,
     quotaUnit: plan.quotaUnit,
     quotaPeriod: plan.quotaPeriod,
-    active: plan.active,
     allowCustomVariant: plan.allowCustomVariant,
     sortOrder: plan.sortOrder,
   }
@@ -269,7 +273,6 @@ function inputFromCategory(category: ProductCategory): ProductCategoryInput {
     displayName: category.displayName,
     iconDataUrl: category.iconDataUrl,
     sortOrder: category.sortOrder,
-    active: category.active,
   }
 }
 
@@ -410,24 +413,44 @@ async function savePlan() {
   }
 }
 
-async function setCategoryActive(category: ProductCategory, active: boolean) {
-  if (!active && !window.confirm(`停用分类“${category.displayName}”会隐藏其公开套餐并阻止新发布，已有交易记录不受影响。确认继续？`)) return
+function openLifecycle(kind: 'category' | 'plan', item: ProductCategory | ProductPlan, action: CatalogLifecycleAction) {
+  lifecycleTarget.value = { kind, item, action }
+  lifecycleReason.value = ''
+  unblockTargetStatus.value = 'active'
+}
+
+async function applyLifecycle() {
+  const target = lifecycleTarget.value
+  if (!target) return
+  if (lifecycleReason.value.trim().length < 2) {
+    toast.warning('请填写至少 2 个字符的状态变更原因。')
+    return
+  }
+  const input = {
+    id: target.item.id,
+    version: target.item.version,
+    action: target.action,
+    reason: lifecycleReason.value,
+    targetStatus: target.action === 'unblock' ? unblockTargetStatus.value : undefined,
+  }
   try {
-    await activeCategoryMutation.mutateAsync({ id: category.id, active })
-    toast.success(active ? '分类已启用。' : '分类已停用。')
+    if (target.kind === 'category') await categoryLifecycleMutation.mutateAsync(input)
+    else await planLifecycleMutation.mutateAsync(input)
+    toast.success('目录状态已更新。')
+    lifecycleTarget.value = null
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '分类状态更新失败')
+    toast.error(error instanceof Error ? error.message : '目录状态更新失败')
   }
 }
 
-async function setPlanActive(plan: ProductPlan, active: boolean) {
-  if (!active && !window.confirm(`停用套餐“${plan.displayName}”会阻止新的车源发布并隐藏公开目录入口，已有申请继续使用快照。确认继续？`)) return
-  try {
-    await activePlanMutation.mutateAsync({ id: plan.id, active })
-    toast.success(active ? '套餐已启用。' : '套餐已停用。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '套餐状态更新失败')
-  }
+function lifecycleActions(status: CatalogStatus): CatalogLifecycleAction[] {
+  if (status === 'active') return ['deprecate', 'block']
+  if (status === 'deprecated') return ['reactivate', 'block']
+  return ['unblock']
+}
+
+function lifecycleActionLabel(action: CatalogLifecycleAction) {
+  return { deprecate: '退役目录', block: '紧急阻断', reactivate: '重新启用', unblock: '解除阻断' }[action]
 }
 
 function toggleCategory(categoryId: string) {
@@ -440,9 +463,9 @@ function isCategoryExpanded(categoryId: string) {
   return expandedCategoryIds.value.includes(categoryId)
 }
 
-function matchesStatusFilter(item: { active: boolean }) {
+function matchesStatusFilter(item: ProductCategory | ProductPlan) {
   if (statusFilter.value === '全部') return true
-  return statusFilter.value === '启用' ? item.active : !item.active
+  return item.effectiveStatus === ({ 可用: 'active', 已退役: 'deprecated', 已阻断: 'blocked' } as const)[statusFilter.value]
 }
 
 function businessStatusLabel(plan: ProductPlan) {
@@ -453,8 +476,14 @@ function businessStatusVariant(plan: ProductPlan) {
   return getCatalogBusinessStatusMeta(getCatalogBusinessStatus(plan)).badgeVariant
 }
 
-function categoryStatusText(category: ProductCategory) {
-  return category.active ? '启用' : '停用'
+function statusText(status: CatalogStatus) {
+  return { active: '可用', deprecated: '已退役', blocked: '已阻断' }[status]
+}
+
+function statusVariant(status: CatalogStatus) {
+  if (status === 'active') return 'verified'
+  if (status === 'blocked') return 'destructive'
+  return 'secondary'
 }
 
 function quotaText(plan: ProductPlan) {
@@ -493,11 +522,11 @@ function uniqueIds(ids: string[]) {
       description="按分类维护可发布套餐，主界面只保留业务状态和发布所需基础字段。"
     />
 
-    <CompactStats :items="[{ label: '全部分类', value: categoryRows.length, hint: `启用 ${activeCategoryCount}` }, { label: '全部套餐', value: rows.length, hint: '含停用套餐' }, { label: '启用套餐', value: activePlanCount, hint: `停用 ${inactivePlanCount}` }, { label: '限制展示', value: restrictedPlanCount, hint: '仅信息或禁止发布' }]" :loading="isLoading" />
+    <CompactStats :items="[{ label: '全部分类', value: categoryRows.length, hint: `可用 ${activeCategoryCount}` }, { label: '全部套餐', value: rows.length, hint: '含退役和阻断目录' }, { label: '可用套餐', value: activePlanCount, hint: `不可用 ${unavailablePlanCount}` }, { label: '限制展示', value: restrictedPlanCount, hint: '仅信息或禁止发布' }]" :loading="isLoading" />
 
     <section class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <StatusTabs v-model="statusFilter" :items="['全部', '启用', '停用']" class="mb-0" />
+        <StatusTabs v-model="statusFilter" :items="['全部', '可用', '已退役', '已阻断']" class="mb-0" />
         <div class="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" @click="openNewCategory">
             <FolderPlus class="h-4 w-4" />新建分类
@@ -536,7 +565,7 @@ function uniqueIds(ids: string[]) {
         <Card v-for="group in visibleCategoryGroups" :key="group.category.id" class="overflow-hidden p-0">
           <div
             class="grid gap-3 border-b border-border bg-muted/25 p-3 md:grid-cols-[minmax(0,1.6fr)_auto_auto] md:items-center"
-            :class="group.category.active ? '' : 'opacity-75'"
+            :class="group.category.effectiveStatus === 'active' ? '' : 'opacity-75'"
           >
             <Button type="button" variant="ghost" class="h-auto min-w-0 justify-start gap-3 whitespace-normal p-0 text-left hover:bg-transparent" @click="toggleCategory(group.category.id)">
               <span class="grid h-8 w-8 shrink-0 place-items-center rounded-md border bg-background text-muted-foreground">
@@ -549,14 +578,15 @@ function uniqueIds(ids: string[]) {
               <span class="min-w-0">
                 <span class="flex flex-wrap items-center gap-2">
                   <span class="truncate font-semibold">{{ group.category.displayName }}</span>
-                  <Badge :variant="group.category.active ? 'verified' : 'secondary'">{{ categoryStatusText(group.category) }}</Badge>
+                  <Badge :variant="statusVariant(group.category.effectiveStatus)">{{ statusText(group.category.effectiveStatus) }}</Badge>
+                  <Badge v-if="group.category.effectiveStatusSource === 'parent'" variant="outline">由父级限制</Badge>
                 </span>
                 <span class="mt-1 block truncate text-xs text-muted-foreground">{{ group.category.code }}</span>
               </span>
             </Button>
             <div class="flex flex-wrap gap-2 text-xs text-muted-foreground md:justify-end">
               <span class="rounded-md border border-border bg-background px-2 py-1">启用 {{ group.activePlanCount }}</span>
-              <span class="rounded-md border border-border bg-background px-2 py-1">停用 {{ group.inactivePlanCount }}</span>
+              <span class="rounded-md border border-border bg-background px-2 py-1">不可用 {{ group.unavailablePlanCount }}</span>
               <span class="rounded-md border border-border bg-background px-2 py-1">排序 {{ group.category.sortOrder }}</span>
             </div>
             <div class="flex flex-wrap gap-1.5 md:justify-end">
@@ -566,15 +596,16 @@ function uniqueIds(ids: string[]) {
               <Button size="sm" variant="outline" @click="openEditCategory(group.category)">
                 <FilePenLine class="h-4 w-4" />分类
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                :disabled="activeCategoryMutation.isPending.value"
-                @click="setCategoryActive(group.category, !group.category.active)"
-              >
-                <component :is="group.category.active ? ToggleLeft : ToggleRight" class="h-4 w-4" />
-                {{ group.category.active ? '停用' : '启用' }}
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger as-child>
+                  <Button size="icon" variant="ghost" title="分类状态操作"><MoreHorizontal class="h-4 w-4" /></Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem v-for="action in lifecycleActions(group.category.status)" :key="action" :class="action === 'block' ? 'text-destructive' : ''" @click="openLifecycle('category', group.category, action)">
+                    <Ban v-if="action === 'block'" class="mr-2 h-4 w-4" />{{ lifecycleActionLabel(action) }}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
@@ -608,7 +639,10 @@ function uniqueIds(ids: string[]) {
                   <td class="px-3 py-3 text-sm text-muted-foreground">{{ quotaText(plan) }}</td>
                   <td class="px-3 py-3 text-sm text-muted-foreground">{{ accessModeLabels[plan.accessMode] }}</td>
                   <td class="px-3 py-3">
-                    <Badge :variant="plan.active ? 'verified' : 'secondary'">{{ plan.active ? '启用' : '停用' }}</Badge>
+                    <div class="flex flex-wrap gap-1">
+                      <Badge :variant="statusVariant(plan.effectiveStatus)">{{ statusText(plan.effectiveStatus) }}</Badge>
+                      <Badge v-if="plan.effectiveStatusSource === 'parent'" variant="outline">由父级限制</Badge>
+                    </div>
                   </td>
                   <td class="px-3 py-3 text-sm text-muted-foreground">{{ plan.sortOrder }}</td>
                   <td class="px-3 py-3">
@@ -616,15 +650,16 @@ function uniqueIds(ids: string[]) {
                       <Button size="sm" variant="outline" @click="openEditPlan(plan)">
                         <FilePenLine class="h-4 w-4" />编辑
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        :disabled="activePlanMutation.isPending.value"
-                        @click="setPlanActive(plan, !plan.active)"
-                      >
-                        <component :is="plan.active ? ToggleLeft : ToggleRight" class="h-4 w-4" />
-                        {{ plan.active ? '停用' : '启用' }}
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger as-child>
+                          <Button size="icon" variant="ghost" title="套餐状态操作"><MoreHorizontal class="h-4 w-4" /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem v-for="action in lifecycleActions(plan.status)" :key="action" :class="action === 'block' ? 'text-destructive' : ''" @click="openLifecycle('plan', plan, action)">
+                            <Ban v-if="action === 'block'" class="mr-2 h-4 w-4" />{{ lifecycleActionLabel(action) }}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </td>
                 </tr>
@@ -653,7 +688,7 @@ function uniqueIds(ids: string[]) {
       <DialogContent class="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{{ categoryFormTitle }}</DialogTitle>
-          <DialogDescription>分类是套餐目录的一级节点，停用后公开目录会隐藏该分类下套餐。</DialogDescription>
+          <DialogDescription>分类是套餐目录的一级节点，生命周期状态通过列表中的独立治理操作修改。</DialogDescription>
         </DialogHeader>
 
         <div class="space-y-4">
@@ -663,7 +698,8 @@ function uniqueIds(ids: string[]) {
           </label>
           <label class="space-y-2">
             <span class="text-sm font-medium">分类 code</span>
-            <Input v-model="categoryForm.code" placeholder="gpt" />
+            <Input v-model="categoryForm.code" placeholder="gpt" :disabled="Boolean(editingCategory?.identityLocked)" />
+            <span v-if="editingCategory?.identityLocked" class="text-xs text-muted-foreground">{{ editingCategory.identityLockReason }}</span>
           </label>
           <div class="space-y-2">
             <span class="text-sm font-medium">分类图标</span>
@@ -686,15 +722,11 @@ function uniqueIds(ids: string[]) {
               <input ref="categoryIconInput" class="hidden" type="file" :accept="productCategoryIconAccept" @change="selectCategoryIcon" />
             </div>
           </div>
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div>
             <label class="space-y-2">
               <span class="text-sm font-medium">排序</span>
               <Input v-model.number="categoryForm.sortOrder" type="number" />
             </label>
-            <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <span>启用分类</span>
-              <Switch v-model="categoryForm.active" aria-label="启用分类" />
-            </div>
           </div>
 
           <DialogFooter>
@@ -726,11 +758,11 @@ function uniqueIds(ids: string[]) {
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="space-y-2">
               <span class="text-sm font-medium">分类</span>
-              <Select v-model="planForm.categoryId">
+              <Select v-model="planForm.categoryId" :disabled="Boolean(editingPlan?.identityLocked)">
                 <SelectTrigger><SelectValue placeholder="选择分类" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="category in visibleCategoriesForPlanForm" :key="category.id" :value="category.id">
-                    {{ category.displayName }}{{ category.active ? '' : '（停用）' }}
+                    {{ category.displayName }}{{ category.effectiveStatus === 'active' ? '' : `（${statusText(category.effectiveStatus)}）` }}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -789,14 +821,10 @@ function uniqueIds(ids: string[]) {
             </label>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div>
             <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
               <span>允许用户补充自定义变体</span>
               <Switch v-model="planForm.allowCustomVariant" aria-label="允许用户补充自定义变体" />
-            </div>
-            <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <span>启用套餐</span>
-              <Switch v-model="planForm.active" aria-label="启用套餐" />
             </div>
           </div>
 
@@ -809,11 +837,11 @@ function uniqueIds(ids: string[]) {
               <div class="grid gap-3 sm:grid-cols-2">
                 <label class="space-y-2">
                   <span class="text-sm font-medium">Slug</span>
-                  <Input v-model="planForm.slug" placeholder="chatgpt-pro-20x-web" />
+                  <Input v-model="planForm.slug" placeholder="chatgpt-pro-20x-web" :disabled="Boolean(editingPlan?.identityLocked)" />
                 </label>
                 <label class="space-y-2">
                   <span class="text-sm font-medium">Provider code</span>
-                  <Input v-model="planForm.providerCode" placeholder="openai" />
+                  <Input v-model="planForm.providerCode" placeholder="openai" :disabled="Boolean(editingPlan?.identityLocked)" />
                 </label>
               </div>
               <label class="space-y-2">
@@ -830,5 +858,29 @@ function uniqueIds(ids: string[]) {
         </div>
       </DialogContent>
     </Dialog>
+
+    <Dialog :open="Boolean(lifecycleTarget)" @update:open="value => { if (!value) lifecycleTarget = null }">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ lifecycleTarget ? lifecycleActionLabel(lifecycleTarget.action) : '目录状态操作' }}</DialogTitle>
+          <DialogDescription>状态变化会影响公开展示、新发布和新交易，历史正式订单仍按快照继续处理。</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-4">
+          <label v-if="lifecycleTarget?.action === 'unblock'" class="block space-y-2">
+            <span class="text-sm font-medium">解除后状态</span>
+            <Select v-model="unblockTargetStatus"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">恢复可用</SelectItem><SelectItem value="deprecated">保持退役</SelectItem></SelectContent></Select>
+          </label>
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">操作原因</span>
+            <Textarea v-model="lifecycleReason" maxlength="500" class="min-h-24" placeholder="说明本次目录治理依据，至少 2 个字符。" />
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="lifecycleTarget = null">取消</Button>
+          <Button :variant="lifecycleTarget?.action === 'block' ? 'destructive' : 'default'" :disabled="categoryLifecycleMutation.isPending.value || planLifecycleMutation.isPending.value" @click="applyLifecycle">确认执行</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
+  MoreHorizontal,

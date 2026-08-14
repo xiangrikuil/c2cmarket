@@ -652,8 +652,8 @@ func TestAdminProductPlanCRUD(t *testing.T) {
 		t.Fatalf("expected policy update to increment version, got %+v", updated)
 	}
 
-	deactivateRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/product-plans/"+created.ID+"/deactivate", `{}`)
-	addAuth(deactivateRequest, adminSession, "product-plan-deactivate")
+	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/product-plans/"+created.ID, updated.Version)
+	addAuth(deactivateRequest, adminSession, "product-plan-deprecate")
 	deactivateResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateResponse, deactivateRequest)
 	if deactivateResponse.Code != http.StatusOK {
@@ -764,8 +764,8 @@ func TestAdminAPIModelCRUDAndPublicVisibility(t *testing.T) {
 		t.Fatalf("expected clearing prices to create current null version, got %+v", cleared)
 	}
 
-	deactivateRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/"+created.ID+"/deactivate", `{}`)
-	addAuth(deactivateRequest, adminSession, "api-model-deactivate")
+	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/api-models/"+created.ID, cleared.Version)
+	addAuth(deactivateRequest, adminSession, "api-model-deprecate")
 	deactivateResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateResponse, deactivateRequest)
 	if deactivateResponse.Code != http.StatusOK {
@@ -794,7 +794,7 @@ func TestAdminAPIModelCRUDAndPublicVisibility(t *testing.T) {
 	}
 }
 
-func TestAdminAPIModelModelsDevSyncAndBulkStatus(t *testing.T) {
+func TestAdminAPIModelModelsDevSyncAndLifecycle(t *testing.T) {
 	now := time.Date(2026, 8, 8, 8, 0, 0, 0, time.UTC)
 	service := app.NewServiceWithClock(func() time.Time { return now })
 	service.ConfigureModelsDevSource(staticModelsDevSource{catalog: modelsdev.Catalog{
@@ -935,6 +935,7 @@ func TestAdminAPIModelModelsDevSyncAndBulkStatus(t *testing.T) {
 		t.Fatalf("decode models: %v", err)
 	}
 	modelID := ""
+	modelVersion := int64(0)
 	priceUpdated := false
 	for _, model := range models.Items {
 		if model.ModelKey == "gpt-sync-test" {
@@ -942,6 +943,7 @@ func TestAdminAPIModelModelsDevSyncAndBulkStatus(t *testing.T) {
 				t.Fatalf("new synced model must default inactive: %+v", model)
 			}
 			modelID = model.ID
+			modelVersion = model.Version
 		}
 		if model.ModelKey == "gpt-4.1-mini" {
 			priceUpdated = model.Active && model.InputPricePerMillion == "0.500000" && model.OutputPricePerMillion == "1.800000" && model.CurrentPriceVersionID != changedCandidate.LocalPriceVersionID
@@ -954,12 +956,13 @@ func TestAdminAPIModelModelsDevSyncAndBulkStatus(t *testing.T) {
 		t.Fatal("expected existing model price version to update without deactivation")
 	}
 
-	bulkRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/bulk-status", `{"modelIds":["`+modelID+`"],"active":true}`)
-	addAuth(bulkRequest, adminSession, "models-dev-bulk-status")
-	bulkResponse := httptest.NewRecorder()
-	server.ServeHTTP(bulkResponse, bulkRequest)
-	if bulkResponse.Code != http.StatusOK || !strings.Contains(bulkResponse.Body.String(), `"changed":1`) {
-		t.Fatalf("bulk status %d body %s", bulkResponse.Code, bulkResponse.Body.String())
+	lifecycleRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/"+modelID+"/reactivate", `{"reason":"确认同步结果后启用模型"}`)
+	lifecycleRequest.Header.Set("If-Match", fmt.Sprintf(`"%d"`, modelVersion))
+	addAuth(lifecycleRequest, adminSession, "models-dev-reactivate")
+	lifecycleResponse := httptest.NewRecorder()
+	server.ServeHTTP(lifecycleResponse, lifecycleRequest)
+	if lifecycleResponse.Code != http.StatusOK || !strings.Contains(lifecycleResponse.Body.String(), `"status":"active"`) {
+		t.Fatalf("reactivate synced model %d body %s", lifecycleResponse.Code, lifecycleResponse.Body.String())
 	}
 
 	publicRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-models", nil)
@@ -1032,8 +1035,8 @@ func TestAdminAPIModelValidationAndAuth(t *testing.T) {
 		}
 	}
 
-	deactivateProviderRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-model-providers/"+provider.ID+"/deactivate", `{}`)
-	addAuth(deactivateProviderRequest, adminSession, "api-model-provider-deactivate-validation")
+	deactivateProviderRequest := catalogDeprecateRequest("/api/v1/admin/api-model-providers/"+provider.ID, provider.Version)
+	addAuth(deactivateProviderRequest, adminSession, "api-model-provider-deprecate-validation")
 	deactivateProviderResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateProviderResponse, deactivateProviderRequest)
 	if deactivateProviderResponse.Code != http.StatusOK {
@@ -1055,8 +1058,8 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Inactive API Owner TG", "@inactive_api_owner")
 	model := createAdminAPIModel(t, server, adminSession, "inactive-service-model", "inactive-model-create")
 
-	deactivateRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/"+model.ID+"/deactivate", `{}`)
-	addAuth(deactivateRequest, adminSession, "inactive-model-deactivate")
+	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/api-models/"+model.ID, model.Version)
+	addAuth(deactivateRequest, adminSession, "inactive-model-deprecate")
 	deactivateResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateResponse, deactivateRequest)
 	if deactivateResponse.Code != http.StatusOK {
@@ -1067,7 +1070,7 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	addAuth(createWithInactive, ownerSession, "api-service-inactive-model-create")
 	createWithInactiveResponse := httptest.NewRecorder()
 	server.ServeHTTP(createWithInactiveResponse, createWithInactive)
-	if createWithInactiveResponse.Code != http.StatusNotFound {
+	if createWithInactiveResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(createWithInactiveResponse.Body.String(), `"code":"INVALID_STATE_TRANSITION"`) {
 		t.Fatalf("inactive model create should fail, got %d body %s", createWithInactiveResponse.Code, createWithInactiveResponse.Body.String())
 	}
 
@@ -1077,7 +1080,7 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	updateWithInactive.Header.Set("If-Match", `"`+strconv.FormatInt(service.Version, 10)+`"`)
 	updateWithInactiveResponse := httptest.NewRecorder()
 	server.ServeHTTP(updateWithInactiveResponse, updateWithInactive)
-	if updateWithInactiveResponse.Code != http.StatusNotFound {
+	if updateWithInactiveResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(updateWithInactiveResponse.Body.String(), `"code":"INVALID_STATE_TRANSITION"`) {
 		t.Fatalf("inactive model update should fail, got %d body %s", updateWithInactiveResponse.Code, updateWithInactiveResponse.Body.String())
 	}
 }
@@ -1105,8 +1108,8 @@ func TestInactiveAPIModelProviderHidesPublicModels(t *testing.T) {
 		t.Fatalf("public list should include model before provider deactivate, got %s", publicBeforeDeactivateResponse.Body.String())
 	}
 
-	deactivateProviderRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-model-providers/"+provider.ID+"/deactivate", `{}`)
-	addAuth(deactivateProviderRequest, adminSession, "provider-hide-public-deactivate")
+	deactivateProviderRequest := catalogDeprecateRequest("/api/v1/admin/api-model-providers/"+provider.ID, provider.Version)
+	addAuth(deactivateProviderRequest, adminSession, "provider-hide-public-deprecate")
 	deactivateProviderResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateProviderResponse, deactivateProviderRequest)
 	if deactivateProviderResponse.Code != http.StatusOK {
@@ -1143,8 +1146,7 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 		"code":"vpn",
 		"displayName":"VPN",
 		"iconDataUrl":"data:image/png;base64,aGVsbG8=",
-		"sortOrder":60,
-		"active":true
+		"sortOrder":60
 	}`)
 	addAuth(createCategoryRequest, adminSession, "product-category-create")
 	createCategoryResponse := httptest.NewRecorder()
@@ -1164,8 +1166,7 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 		"code":"invalid-icon",
 		"displayName":"Invalid icon",
 		"iconDataUrl":"data:image/svg+xml;base64,PHN2Zz4=",
-		"sortOrder":61,
-		"active":true
+		"sortOrder":61
 	}`)
 	addAuth(invalidIconRequest, adminSession, "product-category-invalid-icon")
 	invalidIconResponse := httptest.NewRecorder()
@@ -1189,8 +1190,8 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 		t.Fatalf("expected plan to use created category, got %+v", plan)
 	}
 
-	deactivateCategoryRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/product-categories/"+category.ID+"/deactivate", `{}`)
-	addAuth(deactivateCategoryRequest, adminSession, "product-category-deactivate")
+	deactivateCategoryRequest := catalogDeprecateRequest("/api/v1/admin/product-categories/"+category.ID, category.Version)
+	addAuth(deactivateCategoryRequest, adminSession, "product-category-deprecate")
 	deactivateCategoryResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateCategoryResponse, deactivateCategoryRequest)
 	if deactivateCategoryResponse.Code != http.StatusOK {
@@ -1661,9 +1662,14 @@ func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	}
 
 	ownerCenter := listTransactionReviewsHTTP(t, server, ownerSession)
-	sealedReceived := findReviewDTO(t, ownerCenter.Items, "received", membership.ID)
-	if sealedReceived.Visibility != "sealed" || sealedReceived.Rating != nil || sealedReceived.Note != nil || len(sealedReceived.Tags) != 0 {
-		t.Fatalf("sealed review leaked through HTTP response: %+v", sealedReceived)
+	ownerPending := findReviewDTO(t, ownerCenter.Items, "pending", membership.ID)
+	if !ownerPending.CanCreate || !containsReviewTagDTO(ownerPending.AllowedTags, "quick_payment") {
+		t.Fatalf("owner pending row did not include seller-to-buyer tags: %+v", ownerPending)
+	}
+	for _, item := range ownerCenter.Items {
+		if item.TransactionID == membership.ID && item.Direction == "received" {
+			t.Fatalf("sealed counterparty submission must not be observable through HTTP: %+v", item)
+		}
 	}
 
 	ownerReview := submitTransactionReviewHTTP(
@@ -1729,6 +1735,15 @@ func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	if removedReceived.Visibility != "removed" || removedReceived.Rating != nil || removedReceived.Note != nil || len(removedReceived.Tags) != 0 {
 		t.Fatalf("removed review content remained visible: %+v", removedReceived)
 	}
+}
+
+func containsReviewTagDTO(items []reviewTagDTO, code string) bool {
+	for _, item := range items {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {
@@ -2296,14 +2311,14 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	disputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-dispute-intent")
 	disputeOrder := createAPIOrder(t, server, buyerSession, disputeIntent.ID, "wechat", "api-order-dispute-create")
 	disputePaid := apiOrderAction(t, server, buyerSession, "me", disputeOrder.ID, "submit-payment", disputeOrder.Version, "api-order-dispute-submit-payment", `{"paymentSummary":"已付款但站外确认存在争议。"}`)
-	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"issueCode":"not_delivered","requestedResolution":"continue_fulfillment","requestedAmountCny":"","reason":"付款后商户未按站外确认说明继续处理。"}`)
+	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"issueCode":"not_delivered","requestedResolution":"full_refund","requestedAmountCny":"","reason":"付款后商户未按站外确认说明继续处理。"}`)
 	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "negotiating" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
 	}
 	buyerDisputeDetail := getMyDispute(t, server, buyerSession, disputed.DisputeCaseID)
 	ownerDisputeDetail := getMyDispute(t, server, ownerSession, disputed.DisputeCaseID)
 	if buyerDisputeDetail.IssueCode != "not_delivered" ||
-		buyerDisputeDetail.RequestedResolution != "continue_fulfillment" ||
+		buyerDisputeDetail.RequestedResolution != "full_refund" ||
 		buyerDisputeDetail.RequestedAmountCNY != "" ||
 		len(buyerDisputeDetail.Messages) != 1 ||
 		buyerDisputeDetail.Messages[0].SenderUserID != buyerSession.userID ||
@@ -4902,7 +4917,6 @@ func apiModelPayloadWithCapabilities(providerID, modelKey, _ string, capabilitie
 		"outputTokenPrice":"` + outputPrice + `",
 		"sourceUrl":"` + sourceURL + `",
 		"sourceVersion":"` + sourceVersion + `",
-		"active":` + boolString(active) + `,
 		"sortOrder":333
 	}`
 }
@@ -4912,9 +4926,14 @@ func apiModelProviderPayload(providerCategory, code, displayName string, active 
 		"providerCategory":"` + providerCategory + `",
 		"code":"` + code + `",
 		"displayName":"` + displayName + `",
-		"active":` + boolString(active) + `,
 		"sortOrder":123
 	}`
+}
+
+func catalogDeprecateRequest(basePath string, version int64) *http.Request {
+	request := newJSONRequest(http.MethodPost, basePath+"/deprecate", `{"reason":"目录测试退役"}`)
+	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
+	return request
 }
 
 func productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayName, publishPolicy, riskLevel string, riskAckRequired bool) string {
@@ -4938,7 +4957,6 @@ func productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayNam
 		"quotaLabel":"额度",
 		"quotaUnit":"USD",
 		"quotaPeriod":"monthly",
-		"active":true,
 		"allowCustomVariant":true,
 		"sortOrder":120
 	}`
@@ -5049,7 +5067,7 @@ func collectOpenAPIRoutes(t *testing.T, includeDev bool) map[string]struct{} {
 		t.Fatalf("read openapi: %v", err)
 	}
 	pathRE := regexp.MustCompile(`^  (/[^:]+):$`)
-	methodRE := regexp.MustCompile(`^    (get|post|put|patch|delete):$`)
+	methodRE := regexp.MustCompile(`^    (get|post|put|patch|delete):(?:\s.*)?$`)
 	routes := map[string]struct{}{}
 	var currentPath, currentMethod string
 	var methodLines []string

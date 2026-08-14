@@ -535,7 +535,7 @@ func flexibleQuotaSalesState(service Service, now time.Time) string {
 	if service.QuotaExpiresAt == nil {
 		return ServiceSalesStateOffline
 	}
-	if !service.QuotaExpiresAt.After(now) {
+	if !service.QuotaExpiresAt.After(now.Add(24 * time.Hour)) {
 		return ServiceSalesStateExpired
 	}
 	available := strings.TrimSpace(service.AvailableUSDAllowance)
@@ -1098,6 +1098,17 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		if appErr != nil {
 			return Service{}, appErr
 		}
+		if model.EffectiveStatus != "" && !model.IsEffectiveActive() {
+			return Service{}, domain.NewFieldError(
+				http.StatusUnprocessableEntity,
+				domain.CodeInvalidStateTransition,
+				"API model catalog unavailable",
+				"所选模型目录已退役或被阻断，不能用于新发布。",
+				"models",
+				"catalog_unavailable",
+				"请移除不可用模型后重新发布。",
+			)
+		}
 		multiplier := strings.TrimSpace(modelInput.MerchantMultiplier)
 		if multiplier == "" {
 			multiplier = "1.0000"
@@ -1644,7 +1655,7 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 		}
 		if service.QuotaExpiresAt == nil {
 			reasons = append(reasons, "quota_expiration_required")
-		} else if !service.QuotaExpiresAt.After(now) {
+		} else if !service.QuotaExpiresAt.After(now.Add(24 * time.Hour)) {
 			reasons = append(reasons, "quota_expired")
 		}
 	case ServiceBillingModeFixedPackage:

@@ -3,8 +3,26 @@ package server
 import (
 	"net/http"
 
+	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/catalog"
+
 	"github.com/go-chi/chi/v5"
 )
+
+func registerCatalogLifecycleRoutes(r chi.Router, basePath, resourceType string, s *Server) {
+	actions := []string{
+		catalog.LifecycleActionDeprecate,
+		catalog.LifecycleActionBlock,
+		catalog.LifecycleActionReactivate,
+		catalog.LifecycleActionUnblock,
+	}
+	for _, action := range actions {
+		action := action
+		r.Post(basePath+"/"+action, func(w http.ResponseWriter, request *http.Request) {
+			s.handleCatalogLifecycle(w, request, resourceType, action)
+		})
+	}
+}
 
 func (s *Server) routes() {
 	if s.metrics != nil {
@@ -144,6 +162,7 @@ func (s *Server) routes() {
 		r.Post("/me/api-orders/{id}/cancel", s.handleCancelAPIOrder)
 		r.Post("/me/api-orders/{id}/confirm-complete", s.handleConfirmAPIOrderComplete)
 		r.Post("/me/api-orders/{id}/dispute", s.handleOpenAPIOrderDispute)
+		r.Post("/me/api-orders/{id}/report-late-payment", s.handleReportLateAPIOrderPayment)
 		r.Get("/me/notifications", s.handleMyNotifications)
 		r.Get("/me/notifications/unread-count", s.handleNotificationUnreadCount)
 		r.Post("/me/notifications/{id}/read", s.handleMarkNotificationRead)
@@ -189,6 +208,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-quota-batches/{id}/offers", s.handleCreateAPIQuotaOffer)
 		r.Get("/owner/api-quota-batches/{id}/rounds", s.handleOwnerAPIQuotaRounds)
 		r.Post("/owner/api-quota-batches/{id}/rounds", s.handleCreateAPIQuotaRound)
+		r.Post("/owner/api-quota-rounds/{id}/confirm-fulfillment", s.handleConfirmAPIQuotaRoundFulfillment)
 		r.Post("/owner/api-quota-batches/{id}/publish", func(w http.ResponseWriter, r *http.Request) {
 			s.handleAPIQuotaBatchAction(w, r, "publish")
 		})
@@ -213,6 +233,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-orders/{id}/report-payment-issue", s.handleReportAPIOrderPaymentIssue)
 		r.Post("/owner/api-orders/{id}/submit-delivery", s.handleSubmitAPIOrderDelivery)
 		r.Post("/owner/api-orders/{id}/dispute", s.handleOwnerOpenAPIOrderDispute)
+		r.Post("/owner/api-orders/{id}/resolve-late-payment", s.handleResolveLateAPIOrderPayment)
 
 		r.Get("/admin/official-price-leads", s.handleAdminOfficialPriceLeads)
 		r.Get("/admin/official-price-leads/{id}", s.handleAdminOfficialPriceLead)
@@ -268,24 +289,30 @@ func (s *Server) routes() {
 		r.Get("/admin/api-purchase-intents/{id}", s.handleAdminAPIPurchaseIntent)
 		r.Get("/admin/api-orders", s.handleAdminAPIOrders)
 		r.Get("/admin/api-orders/{id}", s.handleAdminAPIOrder)
+		r.Post("/admin/api-orders/{id}/catalog-risk-hold/restore", func(w http.ResponseWriter, r *http.Request) {
+			s.handleResolveAPIOrderCatalogRiskHold(w, r, apiorder.CatalogRiskHoldRestored)
+		})
+		r.Post("/admin/api-orders/{id}/catalog-risk-hold/refund-pending", func(w http.ResponseWriter, r *http.Request) {
+			s.handleResolveAPIOrderCatalogRiskHold(w, r, apiorder.CatalogRiskHoldRefundPending)
+		})
+		r.Post("/admin/api-orders/{id}/catalog-risk-hold/open-dispute", func(w http.ResponseWriter, r *http.Request) {
+			s.handleResolveAPIOrderCatalogRiskHold(w, r, apiorder.CatalogRiskHoldDisputeOpened)
+		})
 		r.Get("/admin/product-categories", s.handleAdminProductCategories)
 		r.Post("/admin/product-categories", s.handleCreateProductCategory)
 		r.Get("/admin/product-categories/{id}", s.handleAdminProductCategory)
 		r.Patch("/admin/product-categories/{id}", s.handleUpdateProductCategory)
-		r.Post("/admin/product-categories/{id}/activate", s.handleActivateProductCategory)
-		r.Post("/admin/product-categories/{id}/deactivate", s.handleDeactivateProductCategory)
+		registerCatalogLifecycleRoutes(r, "/admin/product-categories/{id}", catalog.ResourceProductCategory, s)
 		r.Get("/admin/product-plans", s.handleAdminProductPlans)
 		r.Post("/admin/product-plans", s.handleCreateProductPlan)
 		r.Get("/admin/product-plans/{id}", s.handleAdminProductPlan)
 		r.Patch("/admin/product-plans/{id}", s.handleUpdateProductPlan)
-		r.Post("/admin/product-plans/{id}/activate", s.handleActivateProductPlan)
-		r.Post("/admin/product-plans/{id}/deactivate", s.handleDeactivateProductPlan)
+		registerCatalogLifecycleRoutes(r, "/admin/product-plans/{id}", catalog.ResourceProductPlan, s)
 		r.Get("/admin/api-model-providers", s.handleAdminAPIModelProviders)
 		r.Post("/admin/api-model-providers", s.handleCreateAPIModelProvider)
 		r.Get("/admin/api-model-providers/{id}", s.handleAdminAPIModelProvider)
 		r.Patch("/admin/api-model-providers/{id}", s.handleUpdateAPIModelProvider)
-		r.Post("/admin/api-model-providers/{id}/activate", s.handleActivateAPIModelProvider)
-		r.Post("/admin/api-model-providers/{id}/deactivate", s.handleDeactivateAPIModelProvider)
+		registerCatalogLifecycleRoutes(r, "/admin/api-model-providers/{id}", catalog.ResourceAPIProvider, s)
 		r.Get("/admin/api-models", s.handleAdminAPIModels)
 		r.Get("/admin/api-health/latency-calibration", s.handleAdminAPIProbeLatencyCalibration)
 		r.Get("/admin/api-health/latency-rules", s.handleAdminAPIProbeLatencyRules)
@@ -294,11 +321,9 @@ func (s *Server) routes() {
 		r.Post("/admin/api-models", s.handleCreateAPIModel)
 		r.Post("/admin/api-models/models-dev/preview", s.handlePreviewAPIModelSync)
 		r.Post("/admin/api-models/models-dev/apply", s.handleApplyAPIModelSync)
-		r.Post("/admin/api-models/bulk-status", s.handleBulkAPIModelStatus)
 		r.Get("/admin/api-models/{id}", s.handleAdminAPIModel)
 		r.Patch("/admin/api-models/{id}", s.handleUpdateAPIModel)
-		r.Post("/admin/api-models/{id}/activate", s.handleActivateAPIModel)
-		r.Post("/admin/api-models/{id}/deactivate", s.handleDeactivateAPIModel)
+		registerCatalogLifecycleRoutes(r, "/admin/api-models/{id}", catalog.ResourceAPIModel, s)
 		r.Get("/admin/model-audit/targets", s.handleAdminModelAuditTargets)
 		r.Post("/admin/model-audit/targets", s.handleCreateModelAuditTarget)
 		r.Get("/admin/model-audit/targets/{id}", s.handleAdminModelAuditTarget)

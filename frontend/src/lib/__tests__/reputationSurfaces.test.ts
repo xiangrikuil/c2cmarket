@@ -158,9 +158,15 @@ describe('信誉页面接线', () => {
     expect(inlineSummary).toContain('<template v-else>')
   })
 
+  it('公开信誉摘要不把修正评分作为普通星级展示', () => {
+    expect(summaryCard).not.toContain('修正评分')
+    expect(summaryCard).not.toContain('weightedRating')
+    expect(summaryCard).toContain('有效评价')
+  })
+
   it('成长中心不诱导索评或展示还差多少五星', () => {
     expect(progressList).toContain('被动证据')
-    expect(progressList).toContain('由已验证交易自然形成')
+    expect(progressList).toContain('由平台内已完成交易自然形成')
     expect(progressList).not.toContain('还差')
     expect(progressList).not.toContain('五星')
   })
@@ -189,10 +195,10 @@ describe('信誉页面接线', () => {
     expect(carpoolList).not.toContain('(b.trustLevel ?? -1)')
   })
 
-  it('评价中心加载交易对手角色对应的公开信誉', () => {
-    expect(reviewCenter).toContain('usePublicUserReputationQuery')
-    expect(reviewCenter).toContain("selectedRow.value.direction === 'received'")
-    expect(reviewCenter).toContain(':summary="counterpartyReputation"')
+  it('评价中心复用轻量评价弹框，不在表单内嵌完整信誉卡', () => {
+    expect(reviewCenter).toContain('<ReviewDialog')
+    expect(reviewCenter).not.toContain('usePublicUserReputationQuery')
+    expect(reviewCenter).not.toContain('<ReputationSummaryCard')
   })
 
   it('管理端提供六快照审计和真实治理操作', () => {

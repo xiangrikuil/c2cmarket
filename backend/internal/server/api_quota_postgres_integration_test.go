@@ -47,9 +47,9 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 	service := createPostgresAPIService(t, databaseURL, server, owner, ownerContact.ID, "pg-quota-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, owner, service.ID, "submit-review", service.Version, "pg-quota-service-submit-"+suffix)
 	publishedService := ownerAPIServiceAction(t, server, owner, submitted.ID, "publish", submitted.Version, "pg-quota-service-publish-"+suffix)
-	orderableService := updateAPIServiceOrderSettings(t, server, owner, publishedService.ID, publishedService.Version, true, "pg-quota-service-settings-"+suffix)
+	quotaService := updateAPIServiceOrderSettings(t, server, owner, publishedService.ID, publishedService.Version, false, "pg-quota-service-settings-"+suffix)
 
-	batch := createQuotaBatchHTTP(t, server, owner, orderableService.ID, now, "pg-quota-batch-"+suffix)
+	batch := createQuotaBatchHTTP(t, server, owner, quotaService.ID, now, "pg-quota-batch-"+suffix)
 	continuous := createQuotaOfferHTTP(t, server, owner, batch.ID, `{
 		"name":"$50 全天额度包",
 		"usdAllowance":"50",
@@ -126,7 +126,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		t.Fatalf("expected published quota batch, got %+v", publishedBatch)
 	}
 
-	ownerListRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services/"+orderableService.ID+"/quota-batches", nil)
+	ownerListRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services/"+quotaService.ID+"/quota-batches", nil)
 	addCookie(ownerListRequest, owner.cookie)
 	ownerListResponse := httptest.NewRecorder()
 	server.ServeHTTP(ownerListResponse, ownerListRequest)

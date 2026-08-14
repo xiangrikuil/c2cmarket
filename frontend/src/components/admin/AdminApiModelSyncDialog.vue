@@ -38,7 +38,7 @@ const emit = defineEmits<{
   applied: [result: ApiModelBulkMutationResult]
 }>()
 
-const supportedProviderCodes = new Set<ModelsDevProviderCode>(['openai', 'anthropic', 'google', 'perplexity'])
+const supportedProviderCodes = new Set<ModelsDevProviderCode>(['openai', 'anthropic'])
 const statusTabs: Array<{ value: ApiModelSyncStatus, label: string }> = [
   { value: 'new', label: '新增' },
   { value: 'price_changed', label: '价格变化' },
@@ -68,7 +68,7 @@ watch(() => props.open, (open) => {
   if (!open) return
   previewMutation.reset()
   applyMutation.reset()
-  selectedProviderIds.value = supportedProviders.value.filter(provider => provider.active).map(provider => provider.id)
+  selectedProviderIds.value = supportedProviders.value.filter(provider => provider.effectiveStatus === 'active').map(provider => provider.id)
   selectedCandidateKeys.value = []
   activeCandidateKeys.value = []
   activeStatus.value = 'new'

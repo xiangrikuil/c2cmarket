@@ -32,10 +32,10 @@ func TestAPIQuotaSystemSaleSlotsResponseAndSlotFilter(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode slot list: %v", err)
 	}
-	if payload.ServerNow != now.Format(time.RFC3339Nano) || len(payload.Items) != 21 {
+	if payload.ServerNow != now.Format(time.RFC3339Nano) || len(payload.Items) != 7 {
 		t.Fatalf("unexpected slot list: %+v", payload)
 	}
-	if first := payload.Items[0]; first.Key != "2026-07-24@09:00" || first.State != apiquota.SystemSlotStateRegistrationOpen {
+	if first := payload.Items[0]; first.Key != "2026-07-24@20:00" || first.State != apiquota.SystemSlotStateRegistrationOpen {
 		t.Fatalf("unexpected first slot: %+v", first)
 	}
 
@@ -118,8 +118,8 @@ func TestAPIQuotaRushOfferManualPublication(t *testing.T) {
 			Round: apiquota.SaleRound{
 				ID:            "40000000-0000-0000-0000-000000000001",
 				BatchID:       "20000000-0000-0000-0000-000000000001",
-				SystemSlotKey: "2026-07-24@09:00",
-				Name:          "2026-07-24@09:00",
+				SystemSlotKey: "2026-07-24@20:00",
+				Name:          "2026-07-24@20:00",
 				StartsAt:      now.Add(2 * time.Hour),
 				EndsAt:        now.Add(150 * time.Minute),
 				Status:        apiquota.RoundStatusScheduled,
@@ -149,8 +149,8 @@ func TestAPIQuotaRushOfferManualPublication(t *testing.T) {
 		"copies":1,
 		"deliveryMode":"manual",
 		"deliveryEtaMinutes":10,
-		"slotKey":"2026-07-24@09:00",
-		"expiresAt":"2026-07-24T11:00:00+08:00",
+		"slotKey":"2026-07-24@20:00",
+		"expiresAt":"2026-07-24T22:00:00+08:00",
 		"sourceConfirmedAt":"2026-07-24T07:00:00+08:00"
 	}`
 	request := newQuotaRushMultipartRequest(t, payload, "", "")
@@ -168,7 +168,7 @@ func TestAPIQuotaRushOfferManualPublication(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		t.Fatalf("decode rush publication: %v", err)
 	}
-	if result.CredentialImported != 0 || result.Round.SystemSlotKey != "2026-07-24@09:00" {
+	if result.CredentialImported != 0 || result.Round.SystemSlotKey != "2026-07-24@20:00" {
 		t.Fatalf("unexpected rush publication response: %+v", result)
 	}
 }

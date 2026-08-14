@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { CarpoolProductCatalogItem } from './types'
-import { productDisplayName, providerLabels } from './utils'
+import { productDisplayName } from './utils'
 
 const props = defineProps<{
   modelValue: string
@@ -60,10 +60,9 @@ const groupedOptions = computed(() => {
     return item.displayName.toLowerCase().includes(normalized) || item.slug.toLowerCase().includes(normalized)
   })
 
-  return (['openai', 'anthropic', 'other'] as const).map(provider => ({
-    provider,
-    items: filtered.filter(item => item.providerCode === provider),
-  })).filter(group => group.items.length)
+  const grouped = new Map<string, CarpoolProductCatalogItem[]>()
+  for (const item of filtered) grouped.set(item.providerCode, [...(grouped.get(item.providerCode) ?? []), item])
+  return Array.from(grouped, ([provider, items]) => ({ provider, items }))
 })
 
 function selectProduct(item: CarpoolProductCatalogItem) {
@@ -89,7 +88,7 @@ function selectProduct(item: CarpoolProductCatalogItem) {
         </div>
         <div class="mt-2 max-h-72 overflow-y-auto pr-1">
           <div v-for="group in groupedOptions" :key="group.provider" class="py-1">
-            <div class="px-2 py-1 text-[11px] font-medium text-muted-foreground">{{ providerLabels[group.provider] }}</div>
+            <div class="px-2 py-1 text-[11px] font-medium text-muted-foreground">{{ group.provider }}</div>
             <Button
               v-for="item in group.items"
               :key="item.id"
@@ -104,7 +103,10 @@ function selectProduct(item: CarpoolProductCatalogItem) {
               </span>
             </Button>
           </div>
-          <div v-if="!groupedOptions.length" class="px-2 py-6 text-center text-sm text-muted-foreground">没有匹配的产品目录</div>
+          <div v-if="!groupedOptions.length" class="px-2 py-6 text-center text-sm text-muted-foreground">
+            <p>没有匹配的产品目录</p>
+            <NuxtLink to="/my/feedback?target=catalog-request" class="mt-2 inline-block text-primary hover:underline">申请平台新增</NuxtLink>
+          </div>
         </div>
       </PopoverContent>
     </Popover>

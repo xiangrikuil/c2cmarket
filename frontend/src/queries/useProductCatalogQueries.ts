@@ -1,17 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
+  applyProductCategoryLifecycle,
+  applyProductPlanLifecycle,
   createProductCategory,
   createProductPlan,
   getAdminProductCategories,
   getAdminProductPlans,
   getProductCategories,
-  setProductCategoryActive,
-  setProductPlanActive,
   updateProductCategory,
   updateProductPlan,
 } from '@/lib/productCatalogBackend'
 import { clearBackendCarpoolProductCatalogCache } from '@/lib/carpoolBackend'
-import type { ProductCategoryCode, ProductCategoryInput, ProductPlanInput } from '@/types/productCatalog'
+import type { CatalogLifecycleAction, ProductCategoryCode, ProductCategoryInput, ProductPlanInput } from '@/types/productCatalog'
 
 export const productCatalogQueryKeys = {
   categories: ['product-categories', 'active'] as const,
@@ -63,10 +63,10 @@ export function useUpdateProductCategory() {
   })
 }
 
-export function useSetProductCategoryActive() {
+export function useApplyProductCategoryLifecycle() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, active }: { id: string, active: boolean }) => setProductCategoryActive(id, active),
+    mutationFn: ({ id, version, action, reason, targetStatus }: { id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated' }) => applyProductCategoryLifecycle(id, version, action, reason, targetStatus),
     onSuccess() {
       invalidateProductCategoryQueries(queryClient)
     },
@@ -93,10 +93,10 @@ export function useUpdateProductPlan() {
   })
 }
 
-export function useSetProductPlanActive() {
+export function useApplyProductPlanLifecycle() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, active }: { id: string, active: boolean }) => setProductPlanActive(id, active),
+    mutationFn: ({ id, version, action, reason, targetStatus }: { id: string, version: number, action: CatalogLifecycleAction, reason: string, targetStatus?: 'active' | 'deprecated' }) => applyProductPlanLifecycle(id, version, action, reason, targetStatus),
     onSuccess() {
       invalidateProductPlanQueries(queryClient)
     },

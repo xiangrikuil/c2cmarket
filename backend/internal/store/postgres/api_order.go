@@ -57,6 +57,102 @@ func (s *Store) SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, entry
 	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "submit_delivery")
 }
 
+func (s *Store) ReportLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
+	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "report_late_payment")
+}
+
+func (s *Store) ResolveLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
+	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "resolve_late_payment")
+}
+
+func (s *Store) ResolveAPIOrderCatalogRiskHoldWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.CatalogRiskHoldActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil || buildCompletion == nil {
+		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
+	order, err := s.getAPIOrder(ctx, tx, input.OrderID, true, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apiorder.Order{}, idempotency.Completion{}, apiOrderNotFound()
+	}
+	if err != nil {
+		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
+	}
+	var hold apiorder.CatalogRiskHold
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, source_type, source_id::text, status, reason, created_at,
+		       COALESCE(resolved_by::text, ''), resolved_at, COALESCE(resolution_note, ''), version
+		FROM api_order_catalog_risk_holds
+		WHERE api_order_id = $1 AND status = 'active'
+		FOR UPDATE
+	`, order.ID).Scan(&hold.ID, &hold.SourceType, &hold.SourceID, &hold.Status, &hold.Reason, &hold.CreatedAt,
+		&hold.ResolvedBy, &hold.ResolvedAt, &hold.ResolutionNote, &hold.Version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apiorder.Order{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Catalog risk hold unavailable", "该订单没有待处置的目录风险暂停。")
+	}
+	if err != nil {
+		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
+	}
+	if hold.Version != input.ExpectedVersion {
+		return apiorder.Order{}, idempotency.Completion{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "风险暂停版本已变化，请刷新后重试。")
+	}
+	resolvedAt := now.UTC()
+	command, err := tx.Exec(ctx, `
+		UPDATE api_order_catalog_risk_holds
+		SET status = $2, resolved_by = $3, resolved_at = $4, resolution_note = $5, version = version + 1
+		WHERE id = $1 AND status = 'active' AND version = $6
+	`, hold.ID, input.Resolution, input.AdminUserID, resolvedAt, input.ResolutionNote, input.ExpectedVersion)
+	if err != nil || command.RowsAffected() != 1 {
+		if err != nil {
+			return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
+		}
+		return apiorder.Order{}, idempotency.Completion{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "风险暂停版本已变化，请刷新后重试。")
+	}
+	hold.Status = input.Resolution
+	hold.ResolvedBy = input.AdminUserID
+	hold.ResolvedAt = &resolvedAt
+	hold.ResolutionNote = input.ResolutionNote
+	hold.Version++
+	order.CatalogRiskHold = &hold
+	eventType := map[string]string{
+		apiorder.CatalogRiskHoldRestored:      apiorder.EventCatalogRiskHoldRestored,
+		apiorder.CatalogRiskHoldRefundPending: apiorder.EventCatalogRefundPending,
+		apiorder.CatalogRiskHoldDisputeOpened: apiorder.EventCatalogDisputeOpened,
+	}[input.Resolution]
+	if appErr := insertAPIOrderEventInTx(ctx, tx, order, input.AdminUserID, eventType, order.Status, order.Status, input.ResolutionNote, input.RequestID, now); appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
+	if appErr := insertAPIOrderCatalogRiskNotificationInTx(ctx, tx, order, hold.ID, eventType, now); appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
+	beforeJSON := `{"status":"active","version":` + strconv.FormatInt(input.ExpectedVersion, 10) + `}`
+	afterJSON := `{"status":"` + input.Resolution + `","version":` + strconv.FormatInt(hold.Version, 10) + `}`
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO admin_audit_logs (admin_user_id, action, target_type, target_id, reason, before_json, after_json, request_id, created_at)
+		VALUES ($1, $2, 'api_order', $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+	`, input.AdminUserID, eventType, order.ID, input.ResolutionNote, beforeJSON, afterJSON, input.RequestID, now); err != nil {
+		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
+	}
+	completion, appErr := buildCompletion(apiorder.WithAfterSalesProjection(order, now))
+	if appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
+	}
+	return order, completion, nil
+}
+
 func (s *Store) apiOrderWithIdempotency(ctx context.Context, entry idempotency.Entry, createInput apiorder.CreateInput, actionInput apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder, action string) (apiorder.Order, idempotency.Completion, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return apiorder.Order{}, idempotency.Completion{}, internalStoreError()
@@ -237,6 +333,9 @@ func (s *Store) ReadAPIOrderPaymentInstructions(ctx context.Context, buyerUserID
 	if apiorder.IsDisputeActive(order.DisputeStatus) || order.Status != apiorder.StatusPendingPayment || !now.Before(order.PaymentExpiresAt) {
 		return apiorder.PaymentInstructionsView{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单不再是有效付款入口。")
 	}
+	if appErr := rejectActiveCatalogRiskHoldInTx(ctx, tx, order.ID, "payment_instructions"); appErr != nil {
+		return apiorder.PaymentInstructionsView{}, appErr
+	}
 	if appErr := insertAPIOrderPaymentInstructionAccessLogInTx(ctx, tx, order.ID, buyerUserID, requestID, now); appErr != nil {
 		return apiorder.PaymentInstructionsView{}, appErr
 	}
@@ -374,15 +473,27 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if err != nil {
 		return apiorder.Order{}, internalStoreError()
 	}
+	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
+		return apiorder.Order{}, appErr
+	}
 	if appErr := loadReadyProbeTargetInTx(ctx, tx, &service); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	service = apimarket.WithOrderability(service)
+	service = apimarket.WithOrderabilityAt(service, now)
 	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	order, appErr := newStoreAPIOrder(input, intent, service, now)
 	if appErr != nil {
+		return apiorder.Order{}, appErr
+	}
+	productKind := "service"
+	productID := order.APIServiceID
+	if order.SelectedPackageID != "" {
+		productKind = "package"
+		productID = order.SelectedPackageID
+	}
+	if appErr := ensureAPIBuyerPendingCapacityInTx(ctx, tx, order.BuyerUserID, productKind, productID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	if appErr := reserveAPIOrderInventoryInTx(ctx, tx, order, now); appErr != nil {
@@ -401,6 +512,39 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		return apiorder.Order{}, appErr
 	}
 	return apiorder.WithAfterSalesProjection(order, now), nil
+}
+
+func ensureAPIBuyerPendingCapacityInTx(ctx context.Context, tx pgx.Tx, buyerUserID, productKind, productID string, now time.Time) *domain.AppError {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended('api-order-pending-capacity:' || $1::uuid::text, 0))
+	`, buyerUserID); err != nil {
+		return internalStoreError()
+	}
+
+	var productPending, totalPending int
+	err := tx.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (
+				WHERE ($2 = 'quota' AND api_quota_offer_id = $3::uuid)
+				   OR ($2 = 'package' AND selected_package_id = $3::uuid)
+				   OR ($2 = 'service' AND purchase_kind = 'api_service' AND api_service_id = $3::uuid AND selected_package_id IS NULL)
+			)::integer,
+			count(*)::integer
+		FROM api_orders
+		WHERE buyer_user_id = $1
+		  AND status = 'pending_payment'
+		  AND payment_expires_at > $4
+	`, buyerUserID, productKind, productID, now).Scan(&productPending, &totalPending)
+	if err != nil {
+		return internalStoreError()
+	}
+	if productPending >= 1 {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Pending order already exists", "你在该商品下已有待付款订单，请先完成或等待其关闭。")
+	}
+	if totalPending >= 3 {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Pending order limit reached", "你当前已有 3 个待付款 API 订单，请先处理后再下单。")
+	}
+	return nil
 }
 
 func loadReadyProbeTargetInTx(ctx context.Context, tx pgx.Tx, service *apimarket.Service) *domain.AppError {
@@ -499,6 +643,11 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if input.ExpectedVersion > 0 && order.Version != input.ExpectedVersion {
 		return apiorder.Order{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
+	if action != "open_dispute" {
+		if appErr := rejectActiveCatalogRiskHoldInTx(ctx, tx, order.ID, action); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+	}
 	if action == "open_dispute" {
 		if _, appErr := apiorder.ValidateDisputeOccurrence(order, input.IssueOccurredAt, now); appErr != nil {
 			return apiorder.Order{}, appErr
@@ -513,6 +662,9 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		}
 	}
 	if action == "submit_delivery" {
+		if expiresAt := apiorder.FulfillmentExpiresAt(order); expiresAt != nil && !now.Before(*expiresAt) {
+			return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Fulfillment expired", "所购额度已到期，不能再提交正常交付，请退款或进入纠纷处理。")
+		}
 		expiresAt, appErr := apiorder.PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, now)
 		if appErr != nil {
 			return apiorder.Order{}, appErr
@@ -670,12 +822,13 @@ func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text
 		FROM api_orders
-		WHERE (status = 'pending_payment' AND dispute_status IN ('none', 'closed') AND payment_expires_at <= $1)
+		WHERE NOT EXISTS (SELECT 1 FROM api_order_catalog_risk_holds hold WHERE hold.api_order_id = api_orders.id AND hold.status = 'active')
+		  AND ((status = 'pending_payment' AND dispute_status IN ('none', 'closed') AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
 		     AND dispute_status IN ('none', 'closed')
 		     AND delivery_review_expires_at <= $2
-		   )
+		   ))
 	`, now, now.Add(apiorder.DeliveryReviewReminderLead))
 	if err != nil {
 		return internalStoreError()
@@ -735,6 +888,13 @@ func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, o
 	}
 	if err != nil {
 		return apiOrderMaterializationResult{}, internalStoreError()
+	}
+	var activeCatalogHold bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM api_order_catalog_risk_holds WHERE api_order_id = $1 AND status = 'active')`, order.ID).Scan(&activeCatalogHold); err != nil {
+		return apiOrderMaterializationResult{}, internalStoreError()
+	}
+	if activeCatalogHold {
+		return apiOrderMaterializationResult{}, nil
 	}
 	if order.Status == apiorder.StatusPendingPayment && !apiorder.IsDisputeActive(order.DisputeStatus) && !order.PaymentExpiresAt.After(now) {
 		if appErr := releaseAPIOrderReservationInTx(ctx, tx, order, now); appErr != nil {
@@ -1100,10 +1260,13 @@ const apiOrderColumns = `
 	amount::text, currency, selected_payment_method,
 	payment_window_minutes_snapshot, payment_expires_at, payment_instructions_snapshot,
 		COALESCE(payment_qr_code_data_url_snapshot, ''), COALESCE(payment_summary, ''), payment_submitted_at,
+		merchant_confirm_due_at,
 		COALESCE(payment_issue_reason, ''), COALESCE(payment_issue_note, ''), payment_issue_reported_at, paid_confirmed_at,
+		delivery_due_at,
 	COALESCE(delivery_note, ''), delivery_submitted_at,
 	delivery_review_expires_at, delivery_review_reminded_at, COALESCE(completion_source, ''), completed_at,
-	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version,
+		cancelled_at, COALESCE(cancel_reason, ''), COALESCE(late_payment_status, ''), late_payment_reported_at,
+		COALESCE(late_payment_note, ''), late_payment_resolved_at, created_at, updated_at, version,
 	order_no, prompt_audit_enabled_snapshot
 `
 
@@ -1117,17 +1280,25 @@ func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []an
 	if err != nil {
 		return nil, internalStoreError()
 	}
-	defer rows.Close()
 	orders := []apiorder.Order{}
 	for rows.Next() {
 		var order apiorder.Order
 		if err := rows.Scan(apiOrderScanTargets(&order)...); err != nil {
+			rows.Close()
 			return nil, internalStoreError()
 		}
-		orders = append(orders, apiorder.WithAfterSalesProjection(order, now))
+		orders = append(orders, order)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, internalStoreError()
+	}
+	rows.Close()
+	for index := range orders {
+		if appErr := attachAPIOrderCatalogRiskHold(ctx, s.pool, &orders[index]); appErr != nil {
+			return nil, appErr
+		}
+		orders[index] = apiorder.WithAfterSalesProjection(orders[index], now)
 	}
 	return orders, nil
 }
@@ -1262,12 +1433,16 @@ func (s *Store) listAdminAPIOrdersPage(ctx context.Context, filter apiorder.Admi
 	if err != nil {
 		return domain.Page[apiorder.Order]{}, internalStoreError()
 	}
-	defer rows.Close()
 	orders, appErr := scanAPIOrders(rows)
 	if appErr != nil {
+		rows.Close()
 		return domain.Page[apiorder.Order]{}, appErr
 	}
+	rows.Close()
 	for index := range orders {
+		if appErr := attachAPIOrderCatalogRiskHold(ctx, s.pool, &orders[index]); appErr != nil {
+			return domain.Page[apiorder.Order]{}, appErr
+		}
 		orders[index] = apiorder.WithAfterSalesProjection(orders[index], now)
 	}
 	return apiorder.PageAdminOrderItems(orders, page, sortMode), nil
@@ -1295,12 +1470,59 @@ func (s *Store) getAPIOrder(ctx context.Context, q queryer, orderID string, forU
 	}
 	var order apiorder.Order
 	err := q.QueryRow(ctx, query, orderID).Scan(apiOrderScanTargets(&order)...)
+	if err == nil {
+		if appErr := attachAPIOrderCatalogRiskHold(ctx, q, &order); appErr != nil {
+			return apiorder.Order{}, errors.New(appErr.Detail)
+		}
+	}
 	if err == nil && !forUpdate && includeCredential {
 		if appErr := s.attachAPIOrderDeliveryCredential(ctx, q, &order); appErr != nil {
 			return apiorder.Order{}, errors.New(appErr.Detail)
 		}
 	}
 	return order, err
+}
+
+func attachAPIOrderCatalogRiskHold(ctx context.Context, q queryer, order *apiorder.Order) *domain.AppError {
+	if order == nil || strings.TrimSpace(order.ID) == "" {
+		return nil
+	}
+	var hold apiorder.CatalogRiskHold
+	err := q.QueryRow(ctx, `
+		SELECT id::text, source_type, source_id::text, status, reason, created_at,
+		       COALESCE(resolved_by::text, ''), resolved_at, COALESCE(resolution_note, ''), version
+		FROM api_order_catalog_risk_holds
+		WHERE api_order_id = $1
+		ORDER BY (status = 'active') DESC, created_at DESC, id DESC
+		LIMIT 1
+	`, order.ID).Scan(&hold.ID, &hold.SourceType, &hold.SourceID, &hold.Status, &hold.Reason, &hold.CreatedAt,
+		&hold.ResolvedBy, &hold.ResolvedAt, &hold.ResolutionNote, &hold.Version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		order.CatalogRiskHold = nil
+		return nil
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	order.CatalogRiskHold = &hold
+	return nil
+}
+
+func rejectActiveCatalogRiskHoldInTx(ctx context.Context, tx pgx.Tx, orderID, action string) *domain.AppError {
+	var holdID string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM api_order_catalog_risk_holds
+		WHERE api_order_id = $1 AND status = 'active'
+		FOR SHARE
+	`, orderID).Scan(&holdID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Catalog risk hold active", "订单因关联目录风险被暂停，当前操作不可执行；仍可查看证据或发起纠纷。")
 }
 
 func apiOrderScanTargets(order *apiorder.Order) []any {
@@ -1365,10 +1587,12 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.PaymentQRCodeDataURLSnapshot,
 		&order.PaymentSummary,
 		&order.PaymentSubmittedAt,
+		&order.MerchantConfirmDueAt,
 		&order.PaymentIssueReason,
 		&order.PaymentIssueNote,
 		&order.PaymentIssueReportedAt,
 		&order.PaidConfirmedAt,
+		&order.DeliveryDueAt,
 		&order.DeliveryNote,
 		&order.DeliverySubmittedAt,
 		&order.DeliveryReviewExpiresAt,
@@ -1377,6 +1601,10 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.CompletedAt,
 		&order.CancelledAt,
 		&order.CancelReason,
+		&order.LatePaymentStatus,
+		&order.LatePaymentReportedAt,
+		&order.LatePaymentNote,
+		&order.LatePaymentResolvedAt,
 		&order.CreatedAt,
 		&order.UpdatedAt,
 		&order.Version,
@@ -1535,29 +1763,36 @@ func updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 			    dispute_case_id = $4,
 			    payment_summary = $5,
 			    payment_submitted_at = $6,
-			    payment_issue_reason = $7,
-			    payment_issue_note = $8,
-			    payment_issue_reported_at = $9,
-			    paid_confirmed_at = $10,
-			    delivery_note = $11,
-			    delivery_submitted_at = $12,
-			    delivery_review_expires_at = $13,
-			    delivery_review_reminded_at = $14,
-			    completion_source = $15,
-			    completed_at = $16,
-			    cancelled_at = $17,
-			    cancel_reason = $18,
-			    package_stock_reserved = $19,
-			    package_expires_at = $20,
-			    updated_at = $21,
-			    version = $22
+			    merchant_confirm_due_at = $7,
+			    payment_issue_reason = $8,
+			    payment_issue_note = $9,
+			    payment_issue_reported_at = $10,
+			    paid_confirmed_at = $11,
+			    delivery_due_at = $12,
+			    delivery_note = $13,
+			    delivery_submitted_at = $14,
+			    delivery_review_expires_at = $15,
+			    delivery_review_reminded_at = $16,
+			    completion_source = $17,
+			    completed_at = $18,
+			    cancelled_at = $19,
+			    cancel_reason = $20,
+			    late_payment_status = $21,
+			    late_payment_reported_at = $22,
+			    late_payment_note = $23,
+			    late_payment_resolved_at = $24,
+			    package_stock_reserved = $25,
+			    package_expires_at = $26,
+			    updated_at = $27,
+			    version = $28
 		WHERE id = $1
 		`, order.ID, order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID),
-		nullText(order.PaymentSummary), order.PaymentSubmittedAt,
-		nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt, order.PaidConfirmedAt,
+		nullText(order.PaymentSummary), order.PaymentSubmittedAt, order.MerchantConfirmDueAt,
+		nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt, order.PaidConfirmedAt, order.DeliveryDueAt,
 		nullText(order.DeliveryNote), order.DeliverySubmittedAt,
 		order.DeliveryReviewExpiresAt, order.DeliveryReviewRemindedAt, nullText(order.CompletionSource), order.CompletedAt,
-		order.CancelledAt, nullText(order.CancelReason), order.PackageStockReserved, order.PackageExpiresAt,
+		order.CancelledAt, nullText(order.CancelReason), nullText(order.LatePaymentStatus), order.LatePaymentReportedAt,
+		nullText(order.LatePaymentNote), order.LatePaymentResolvedAt, order.PackageStockReserved, order.PackageExpiresAt,
 		order.UpdatedAt, order.Version)
 	if err != nil {
 		return internalStoreError()
@@ -1820,9 +2055,9 @@ func storeResolveAPIOrderAmount(intent apiintent.Intent, service apimarket.Servi
 
 func storeCanActorAccessAPIOrder(order apiorder.Order, actorUserID, action string) bool {
 	switch action {
-	case "submit_payment", "cancel", "confirm_complete":
+	case "submit_payment", "cancel", "confirm_complete", "report_late_payment":
 		return order.BuyerUserID == actorUserID
-	case "confirm_payment", "report_payment_issue", "submit_delivery":
+	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
 	case "open_dispute":
 		return order.BuyerUserID == actorUserID || order.SellerUserID == actorUserID
@@ -1850,6 +2085,10 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 		return order.Status == apiorder.StatusDeliverySubmitted
 	case "open_dispute":
 		return apiorder.WithAfterSalesProjection(order, now).CanOpenDispute
+	case "report_late_payment":
+		return apiorder.WithAfterSalesProjection(order, now).CanReportLatePayment
+	case "resolve_late_payment":
+		return order.Status == apiorder.StatusCancelled && order.CancelReason == "payment_timeout" && order.LatePaymentStatus == apiorder.LatePaymentStatusReported
 	default:
 		return false
 	}
@@ -1867,6 +2106,13 @@ func storeValidateAPIOrderActionInput(input apiorder.ActionInput, action string)
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment issue reason invalid", "请选择有效的付款问题。", "paymentIssueReason", "invalid", "请选择未到账、金额不符或备注不符。")
 		}
 		return storeValidateOptionalNonSecretText("paymentIssueNote", input.PaymentIssueNote)
+	case "report_late_payment":
+		return storeValidateOptionalNonSecretText("note", input.LatePaymentNote)
+	case "resolve_late_payment":
+		if input.LatePaymentStatus != apiorder.LatePaymentStatusNotReceived && input.LatePaymentStatus != apiorder.LatePaymentStatusReceivedRefundPending {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Late payment resolution invalid", "请选择未到账或已到账待退款。", "status", "invalid", "请选择有效的处理结果。")
+		}
+		return storeValidateOptionalNonSecretText("note", input.LatePaymentNote)
 	case "submit_delivery":
 		if _, err := apiorder.NormalizeDeliveryCredentialForStore(input.DeliveryCredential); err != nil {
 			return err
@@ -1888,6 +2134,8 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.Status = apiorder.StatusPaymentSubmitted
 		order.PaymentSummary = strings.TrimSpace(input.PaymentSummary)
 		order.PaymentSubmittedAt = &now
+		merchantConfirmDueAt := now.Add(apiorder.MerchantConfirmWindow)
+		order.MerchantConfirmDueAt = &merchantConfirmDueAt
 		order.PaymentIssueReason = ""
 		order.PaymentIssueNote = ""
 		order.PaymentIssueReportedAt = nil
@@ -1903,6 +2151,8 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 	case "confirm_payment":
 		order.Status = apiorder.StatusPaidConfirmed
 		order.PaidConfirmedAt = &now
+		deliveryDueAt := now.Add(apiorder.DeliveryWindow(order))
+		order.DeliveryDueAt = &deliveryDueAt
 		order.PackageStockReserved = false
 	case "submit_delivery":
 		order.Status = apiorder.StatusDeliverySubmitted
@@ -1916,6 +2166,14 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.CompletedAt = &now
 	case "open_dispute":
 		order.DisputeStatus = apiorder.DisputeStatusNegotiating
+	case "report_late_payment":
+		order.LatePaymentStatus = apiorder.LatePaymentStatusReported
+		order.LatePaymentReportedAt = &now
+		order.LatePaymentNote = strings.TrimSpace(input.LatePaymentNote)
+	case "resolve_late_payment":
+		order.LatePaymentStatus = input.LatePaymentStatus
+		order.LatePaymentResolvedAt = &now
+		order.LatePaymentNote = strings.TrimSpace(input.LatePaymentNote)
 	}
 	order.UpdatedAt = now
 	order.Version++
@@ -1938,6 +2196,10 @@ func storeAPIOrderEventType(action string) string {
 		return apiorder.EventCompleted
 	case "open_dispute":
 		return apiorder.EventDisputeOpened
+	case "report_late_payment":
+		return apiorder.EventLatePaymentReported
+	case "resolve_late_payment":
+		return apiorder.EventLatePaymentResolved
 	default:
 		return "api_order.updated"
 	}
@@ -1953,6 +2215,8 @@ func storeAPIOrderActionNote(input apiorder.ActionInput, action string) string {
 		return apiorder.PaymentIssueLabel(input.PaymentIssueReason) + paymentIssueStoreNoteSuffix(input.PaymentIssueNote)
 	case "cancel", "open_dispute":
 		return input.Reason
+	case "report_late_payment", "resolve_late_payment":
+		return input.LatePaymentNote
 	default:
 		return ""
 	}

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"c2c-market/backend/internal/domain"
@@ -13,12 +14,22 @@ import (
 )
 
 type productCategoryResponse struct {
-	ID          string `json:"id"`
-	Code        string `json:"code"`
-	DisplayName string `json:"displayName"`
-	IconDataURL string `json:"iconDataUrl"`
-	SortOrder   int    `json:"sortOrder"`
-	Active      bool   `json:"active"`
+	ID                    string `json:"id"`
+	Code                  string `json:"code"`
+	DisplayName           string `json:"displayName"`
+	IconDataURL           string `json:"iconDataUrl"`
+	SortOrder             int    `json:"sortOrder"`
+	Active                bool   `json:"active"`
+	CoreKey               string `json:"coreKey,omitempty"`
+	Status                string `json:"status"`
+	EffectiveStatus       string `json:"effectiveStatus"`
+	EffectiveStatusSource string `json:"effectiveStatusSource"`
+	StatusChangedAt       string `json:"statusChangedAt"`
+	StatusChangedBy       string `json:"statusChangedBy,omitempty"`
+	StatusReason          string `json:"statusReason,omitempty"`
+	Version               int64  `json:"version"`
+	IdentityLocked        bool   `json:"identityLocked"`
+	IdentityLockReason    string `json:"identityLockReason,omitempty"`
 }
 
 type productCategoryRequest struct {
@@ -26,33 +37,42 @@ type productCategoryRequest struct {
 	DisplayName string `json:"displayName"`
 	IconDataURL string `json:"iconDataUrl"`
 	SortOrder   int    `json:"sortOrder"`
-	Active      bool   `json:"active"`
 }
 
 type productPlanResponse struct {
-	ID                   string `json:"id"`
-	CategoryID           string `json:"categoryId"`
-	CategoryCode         string `json:"categoryCode"`
-	ProviderCode         string `json:"providerCode"`
-	Slug                 string `json:"slug"`
-	DisplayName          string `json:"displayName"`
-	Description          string `json:"description"`
-	PublishPolicy        string `json:"publishPolicy"`
-	AccessMode           string `json:"accessMode"`
-	ProviderPolicyStatus string `json:"providerPolicyStatus"`
-	RiskLevel            string `json:"riskLevel"`
-	RiskAckRequired      bool   `json:"riskAckRequired"`
-	RiskNoticeCode       string `json:"riskNoticeCode,omitempty"`
-	PolicyVersion        int64  `json:"policyVersion"`
-	PolicyNote           string `json:"policyNote"`
-	QuotaLabel           string `json:"quotaLabel"`
-	QuotaUnit            string `json:"quotaUnit"`
-	QuotaPeriod          string `json:"quotaPeriod"`
-	Active               bool   `json:"active"`
-	AllowCustomVariant   bool   `json:"allowCustomVariant"`
-	SortOrder            int    `json:"sortOrder"`
-	CreatedAt            string `json:"createdAt"`
-	UpdatedAt            string `json:"updatedAt"`
+	ID                    string `json:"id"`
+	CategoryID            string `json:"categoryId"`
+	CategoryCode          string `json:"categoryCode"`
+	ProviderCode          string `json:"providerCode"`
+	Slug                  string `json:"slug"`
+	DisplayName           string `json:"displayName"`
+	Description           string `json:"description"`
+	PublishPolicy         string `json:"publishPolicy"`
+	AccessMode            string `json:"accessMode"`
+	ProviderPolicyStatus  string `json:"providerPolicyStatus"`
+	RiskLevel             string `json:"riskLevel"`
+	RiskAckRequired       bool   `json:"riskAckRequired"`
+	RiskNoticeCode        string `json:"riskNoticeCode,omitempty"`
+	PolicyVersion         int64  `json:"policyVersion"`
+	PolicyNote            string `json:"policyNote"`
+	QuotaLabel            string `json:"quotaLabel"`
+	QuotaUnit             string `json:"quotaUnit"`
+	QuotaPeriod           string `json:"quotaPeriod"`
+	Active                bool   `json:"active"`
+	AllowCustomVariant    bool   `json:"allowCustomVariant"`
+	SortOrder             int    `json:"sortOrder"`
+	CreatedAt             string `json:"createdAt"`
+	UpdatedAt             string `json:"updatedAt"`
+	CoreKey               string `json:"coreKey,omitempty"`
+	Status                string `json:"status"`
+	EffectiveStatus       string `json:"effectiveStatus"`
+	EffectiveStatusSource string `json:"effectiveStatusSource"`
+	StatusChangedAt       string `json:"statusChangedAt"`
+	StatusChangedBy       string `json:"statusChangedBy,omitempty"`
+	StatusReason          string `json:"statusReason,omitempty"`
+	Version               int64  `json:"version"`
+	IdentityLocked        bool   `json:"identityLocked"`
+	IdentityLockReason    string `json:"identityLockReason,omitempty"`
 }
 
 type productPlanRequest struct {
@@ -71,7 +91,6 @@ type productPlanRequest struct {
 	QuotaLabel           string `json:"quotaLabel"`
 	QuotaUnit            string `json:"quotaUnit"`
 	QuotaPeriod          string `json:"quotaPeriod"`
-	Active               bool   `json:"active"`
 	AllowCustomVariant   bool   `json:"allowCustomVariant"`
 	SortOrder            int    `json:"sortOrder"`
 }
@@ -96,6 +115,16 @@ type apiModelResponse struct {
 	SortOrder                  int      `json:"sortOrder"`
 	CreatedAt                  string   `json:"createdAt"`
 	UpdatedAt                  string   `json:"updatedAt"`
+	CoreKey                    string   `json:"coreKey,omitempty"`
+	Status                     string   `json:"status"`
+	EffectiveStatus            string   `json:"effectiveStatus"`
+	EffectiveStatusSource      string   `json:"effectiveStatusSource"`
+	StatusChangedAt            string   `json:"statusChangedAt"`
+	StatusChangedBy            string   `json:"statusChangedBy,omitempty"`
+	StatusReason               string   `json:"statusReason,omitempty"`
+	Version                    int64    `json:"version"`
+	IdentityLocked             bool     `json:"identityLocked"`
+	IdentityLockReason         string   `json:"identityLockReason,omitempty"`
 }
 
 type apiModelRequest struct {
@@ -107,26 +136,34 @@ type apiModelRequest struct {
 	OutputTokenPrice      string   `json:"outputTokenPrice"`
 	SourceURL             string   `json:"sourceUrl"`
 	SourceVersion         string   `json:"sourceVersion"`
-	Active                bool     `json:"active"`
 	SortOrder             int      `json:"sortOrder"`
 }
 
 type apiModelProviderResponse struct {
-	ID               string `json:"id"`
-	ProviderCategory string `json:"providerCategory"`
-	Code             string `json:"code"`
-	DisplayName      string `json:"displayName"`
-	Active           bool   `json:"active"`
-	SortOrder        int    `json:"sortOrder"`
-	CreatedAt        string `json:"createdAt"`
-	UpdatedAt        string `json:"updatedAt"`
+	ID                    string `json:"id"`
+	ProviderCategory      string `json:"providerCategory"`
+	Code                  string `json:"code"`
+	DisplayName           string `json:"displayName"`
+	Active                bool   `json:"active"`
+	SortOrder             int    `json:"sortOrder"`
+	CreatedAt             string `json:"createdAt"`
+	UpdatedAt             string `json:"updatedAt"`
+	CoreKey               string `json:"coreKey,omitempty"`
+	Status                string `json:"status"`
+	EffectiveStatus       string `json:"effectiveStatus"`
+	EffectiveStatusSource string `json:"effectiveStatusSource"`
+	StatusChangedAt       string `json:"statusChangedAt"`
+	StatusChangedBy       string `json:"statusChangedBy,omitempty"`
+	StatusReason          string `json:"statusReason,omitempty"`
+	Version               int64  `json:"version"`
+	IdentityLocked        bool   `json:"identityLocked"`
+	IdentityLockReason    string `json:"identityLockReason,omitempty"`
 }
 
 type apiModelProviderRequest struct {
 	ProviderCategory string `json:"providerCategory"`
 	Code             string `json:"code"`
 	DisplayName      string `json:"displayName"`
-	Active           bool   `json:"active"`
 	SortOrder        int    `json:"sortOrder"`
 }
 
@@ -195,16 +232,16 @@ type apiModelSyncSelectionRequest struct {
 	Active                     bool     `json:"active"`
 }
 
-type apiModelBulkStatusRequest struct {
-	ModelIDs []string `json:"modelIds"`
-	Active   bool     `json:"active"`
-}
-
 type apiModelBulkMutationResponse struct {
 	Created int      `json:"created"`
 	Updated int      `json:"updated"`
 	Changed int      `json:"changed"`
 	IDs     []string `json:"ids"`
+}
+
+type catalogLifecycleRequest struct {
+	Reason       string `json:"reason"`
+	TargetStatus string `json:"targetStatus,omitempty"`
 }
 
 func (s *Server) handleProductCategories(w http.ResponseWriter, r *http.Request) {
@@ -283,28 +320,6 @@ func (s *Server) handleUpdateProductCategory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	category, appErr := s.app.UpdateProductCategory(r.Context(), user, chi.URLParam(r, "id"), productCategoryInputFromRequest(req))
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	writeJSON(w, http.StatusOK, toProductCategoryResponse(category))
-}
-
-func (s *Server) handleActivateProductCategory(w http.ResponseWriter, r *http.Request) {
-	s.handleSetProductCategoryActive(w, r, true)
-}
-
-func (s *Server) handleDeactivateProductCategory(w http.ResponseWriter, r *http.Request) {
-	s.handleSetProductCategoryActive(w, r, false)
-}
-
-func (s *Server) handleSetProductCategoryActive(w http.ResponseWriter, r *http.Request, active bool) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	category, appErr := s.app.SetProductCategoryActive(r.Context(), user, chi.URLParam(r, "id"), active)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -396,28 +411,6 @@ func (s *Server) handleUpdateProductPlan(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, toProductPlanResponse(plan))
 }
 
-func (s *Server) handleActivateProductPlan(w http.ResponseWriter, r *http.Request) {
-	s.handleSetProductPlanActive(w, r, true)
-}
-
-func (s *Server) handleDeactivateProductPlan(w http.ResponseWriter, r *http.Request) {
-	s.handleSetProductPlanActive(w, r, false)
-}
-
-func (s *Server) handleSetProductPlanActive(w http.ResponseWriter, r *http.Request, active bool) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	plan, appErr := s.app.SetProductPlanActive(r.Context(), user, chi.URLParam(r, "id"), active)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	writeJSON(w, http.StatusOK, toProductPlanResponse(plan))
-}
-
 func (s *Server) handleAPIModels(w http.ResponseWriter, r *http.Request) {
 	models, appErr := s.app.APIModels(r.Context())
 	if appErr != nil {
@@ -502,28 +495,6 @@ func (s *Server) handleUpdateAPIModelProvider(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, toAPIModelProviderResponse(provider))
 }
 
-func (s *Server) handleActivateAPIModelProvider(w http.ResponseWriter, r *http.Request) {
-	s.handleSetAPIModelProviderActive(w, r, true)
-}
-
-func (s *Server) handleDeactivateAPIModelProvider(w http.ResponseWriter, r *http.Request) {
-	s.handleSetAPIModelProviderActive(w, r, false)
-}
-
-func (s *Server) handleSetAPIModelProviderActive(w http.ResponseWriter, r *http.Request, active bool) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	provider, appErr := s.app.SetAPIModelProviderActive(r.Context(), user, chi.URLParam(r, "id"), active)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	writeJSON(w, http.StatusOK, toAPIModelProviderResponse(provider))
-}
-
 func (s *Server) handleAdminAPIModels(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
@@ -596,31 +567,6 @@ func (s *Server) handleApplyAPIModelSync(w http.ResponseWriter, r *http.Request)
 	writeIdempotencyCompletion(w, completion)
 }
 
-func (s *Server) handleBulkAPIModelStatus(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	body, request, appErr := decodeStrictJSON[apiModelBulkStatusRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	routeKey := "POST /api/v1/admin/api-models/bulk-status"
-	completion, appErr := s.app.SetAPIModelsActiveWithIdempotency(
-		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
-		requestHash(r.Method, routeKey, body),
-		catalog.APIModelBulkStatusInput{ModelIDs: request.ModelIDs, Active: request.Active},
-		apiModelBulkMutationCompletionBuilder,
-	)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	writeIdempotencyCompletion(w, completion)
-}
-
 func (s *Server) handleCreateAPIModel(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -659,26 +605,35 @@ func (s *Server) handleUpdateAPIModel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toAPIModelResponse(model))
 }
 
-func (s *Server) handleActivateAPIModel(w http.ResponseWriter, r *http.Request) {
-	s.handleSetAPIModelActive(w, r, true)
-}
-
-func (s *Server) handleDeactivateAPIModel(w http.ResponseWriter, r *http.Request) {
-	s.handleSetAPIModelActive(w, r, false)
-}
-
-func (s *Server) handleSetAPIModelActive(w http.ResponseWriter, r *http.Request, active bool) {
+func (s *Server) handleCatalogLifecycle(w http.ResponseWriter, r *http.Request, resourceType, action string) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	model, appErr := s.app.SetAPIModelActive(r.Context(), user, chi.URLParam(r, "id"), active)
+	body, request, appErr := decodeStrictJSON[catalogLifecycleRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIModelResponse(model))
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	resourceID := chi.URLParam(r, "id")
+	routeKey := "POST " + chi.RouteContext(r.Context()).RoutePattern() + ":" + resourceID
+	completion, appErr := s.app.ApplyCatalogLifecycleWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body),
+		catalog.LifecycleActionInput{ResourceType: resourceType, ResourceID: resourceID, Action: action,
+			Reason: request.Reason, TargetStatus: request.TargetStatus, ExpectedVersion: version, RequestID: requestIDFrom(r)},
+		catalogLifecycleCompletionBuilder,
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func toProductCategoryResponse(category catalog.ProductCategory) productCategoryResponse {
@@ -689,6 +644,10 @@ func toProductCategoryResponse(category catalog.ProductCategory) productCategory
 		IconDataURL: category.IconDataURL,
 		SortOrder:   category.SortOrder,
 		Active:      category.Active,
+		CoreKey:     category.CoreKey, Status: category.Status, EffectiveStatus: category.EffectiveStatus,
+		EffectiveStatusSource: category.EffectiveStatusSource, StatusReason: category.StatusReason,
+		StatusChangedAt: category.StatusChangedAt.UTC().Format(time.RFC3339), StatusChangedBy: category.StatusChangedBy,
+		Version: category.Version, IdentityLocked: category.IdentityLocked, IdentityLockReason: category.IdentityLockReason,
 	}
 }
 
@@ -698,7 +657,6 @@ func productCategoryInputFromRequest(req productCategoryRequest) catalog.Product
 		DisplayName: req.DisplayName,
 		IconDataURL: req.IconDataURL,
 		SortOrder:   req.SortOrder,
-		Active:      req.Active,
 	}
 }
 
@@ -735,6 +693,10 @@ func toProductPlanResponse(plan catalog.ProductPlan) productPlanResponse {
 		SortOrder:            plan.SortOrder,
 		CreatedAt:            plan.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:            plan.UpdatedAt.UTC().Format(time.RFC3339),
+		CoreKey:              plan.CoreKey, Status: plan.Status, EffectiveStatus: plan.EffectiveStatus,
+		EffectiveStatusSource: plan.EffectiveStatusSource, StatusReason: plan.StatusReason,
+		StatusChangedAt: plan.StatusChangedAt.UTC().Format(time.RFC3339), StatusChangedBy: plan.StatusChangedBy,
+		Version: plan.Version, IdentityLocked: plan.IdentityLocked, IdentityLockReason: plan.IdentityLockReason,
 	}
 }
 
@@ -755,7 +717,6 @@ func productPlanInputFromRequest(req productPlanRequest) catalog.ProductPlanInpu
 		QuotaLabel:           req.QuotaLabel,
 		QuotaUnit:            req.QuotaUnit,
 		QuotaPeriod:          req.QuotaPeriod,
-		Active:               req.Active,
 		AllowCustomVariant:   req.AllowCustomVariant,
 		SortOrder:            req.SortOrder,
 	}
@@ -832,6 +793,46 @@ func apiModelBulkMutationCompletionBuilder(result catalog.APIModelBulkMutationRe
 	}, nil
 }
 
+func catalogLifecycleCompletionBuilder(result catalog.LifecycleMutationResult) (idempotency.Completion, *domain.AppError) {
+	var payload any
+	switch {
+	case result.Category != nil:
+		payload = toProductCategoryResponse(*result.Category)
+	case result.Plan != nil:
+		payload = toProductPlanResponse(*result.Plan)
+	case result.Provider != nil:
+		payload = toAPIModelProviderResponse(*result.Provider)
+	case result.Model != nil:
+		payload = toAPIModelResponse(*result.Model)
+	default:
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "目录状态响应缺少关联资源。")
+	}
+	body, err := json.Marshal(payload)
+	if err != nil || result.ResourceID() == "" {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "目录状态响应编码失败。")
+	}
+	return idempotency.Completion{
+		Status: http.StatusOK, ContentType: "application/json; charset=utf-8", Body: body,
+		ResourceType: result.ResourceType, ResourceID: result.ResourceID(),
+		Headers: map[string]string{"ETag": `"` + lifecycleResultVersion(result) + `"`},
+	}, nil
+}
+
+func lifecycleResultVersion(result catalog.LifecycleMutationResult) string {
+	var version int64
+	switch {
+	case result.Category != nil:
+		version = result.Category.Version
+	case result.Plan != nil:
+		version = result.Plan.Version
+	case result.Provider != nil:
+		version = result.Provider.Version
+	case result.Model != nil:
+		version = result.Model.Version
+	}
+	return strconv.FormatInt(version, 10)
+}
+
 func toAPIModelResponse(model catalog.APIModelCatalog) apiModelResponse {
 	validFrom := ""
 	if model.CurrentPriceValidFrom != nil {
@@ -857,6 +858,10 @@ func toAPIModelResponse(model catalog.APIModelCatalog) apiModelResponse {
 		SortOrder:                  model.SortOrder,
 		CreatedAt:                  model.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                  model.UpdatedAt.UTC().Format(time.RFC3339),
+		CoreKey:                    model.CoreKey, Status: model.Status, EffectiveStatus: model.EffectiveStatus,
+		EffectiveStatusSource: model.EffectiveStatusSource, StatusReason: model.StatusReason,
+		StatusChangedAt: model.StatusChangedAt.UTC().Format(time.RFC3339), StatusChangedBy: model.StatusChangedBy,
+		Version: model.Version, IdentityLocked: model.IdentityLocked, IdentityLockReason: model.IdentityLockReason,
 	}
 }
 
@@ -870,7 +875,6 @@ func apiModelInputFromRequest(req apiModelRequest) catalog.APIModelInput {
 		InputTokenPrice:       req.InputTokenPrice,
 		CachedInputTokenPrice: req.CachedInputTokenPrice,
 		OutputTokenPrice:      req.OutputTokenPrice,
-		Active:                req.Active,
 		SortOrder:             req.SortOrder,
 	}
 }
@@ -893,6 +897,10 @@ func toAPIModelProviderResponse(provider catalog.APIModelProvider) apiModelProvi
 		SortOrder:        provider.SortOrder,
 		CreatedAt:        provider.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        provider.UpdatedAt.UTC().Format(time.RFC3339),
+		CoreKey:          provider.CoreKey, Status: provider.Status, EffectiveStatus: provider.EffectiveStatus,
+		EffectiveStatusSource: provider.EffectiveStatusSource, StatusReason: provider.StatusReason,
+		StatusChangedAt: provider.StatusChangedAt.UTC().Format(time.RFC3339), StatusChangedBy: provider.StatusChangedBy,
+		Version: provider.Version, IdentityLocked: provider.IdentityLocked, IdentityLockReason: provider.IdentityLockReason,
 	}
 }
 
@@ -901,7 +909,6 @@ func apiModelProviderInputFromRequest(req apiModelProviderRequest) catalog.APIMo
 		ProviderCategory: req.ProviderCategory,
 		Code:             req.Code,
 		DisplayName:      req.DisplayName,
-		Active:           req.Active,
 		SortOrder:        req.SortOrder,
 	}
 }

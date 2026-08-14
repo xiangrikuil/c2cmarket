@@ -50,6 +50,7 @@ import {
   type ApiOrderDeliveryKind,
   type ApiQuotaBatch,
   type ApiQuotaOffer,
+  type ApiQuotaRound,
   type ApiQuotaSourceType,
 } from '@/lib/api'
 import { formatDecimal, normalizeDecimal } from '@/lib/decimal'
@@ -63,6 +64,7 @@ import {
 } from './apiQuotaOwnerPresentation'
 import {
   useApiQuotaBatchActionMutation,
+  useConfirmApiQuotaRoundFulfillmentMutation,
   useApiQuotaCredentialSummary,
   useCreateApiQuotaBatchMutation,
   useCreateApiQuotaOfferMutation,
@@ -160,6 +162,7 @@ const roundForm = reactive({
 const createBatchMutation = useCreateApiQuotaBatchMutation()
 const createOfferMutation = useCreateApiQuotaOfferMutation()
 const createRoundMutation = useCreateApiQuotaRoundMutation()
+const confirmRoundMutation = useConfirmApiQuotaRoundFulfillmentMutation()
 const batchActionMutation = useApiQuotaBatchActionMutation()
 const importMutation = useImportApiQuotaCredentialsMutation()
 
@@ -248,6 +251,20 @@ async function createRound() {
     toast.success('放量轮次已创建。')
   } catch (error) {
     toast.error(mutationMessage(error, '创建放量轮次失败。'))
+  }
+}
+
+function canConfirmRound(round: ApiQuotaRound) {
+  return Boolean(round.systemSlotKey)
+    && !round.fulfillmentConfirmedAt
+}
+
+async function confirmRoundFulfillment(round: ApiQuotaRound) {
+  try {
+    await confirmRoundMutation.mutateAsync({ roundId: round.id, version: round.version })
+    toast.success('已确认本场履约准备。')
+  } catch (error) {
+    toast.error(mutationMessage(error, '履约确认失败。'))
   }
 }
 
@@ -553,7 +570,7 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
         </div>
         <div v-else class="overflow-hidden rounded-lg border border-border">
           <Table class="min-w-[780px]">
-            <TableHeader class="bg-muted/40"><TableRow><TableHead>计划</TableHead><TableHead>开始时间</TableHead><TableHead>结束时间</TableHead><TableHead>规格份数</TableHead><TableHead>状态</TableHead></TableRow></TableHeader>
+            <TableHeader class="bg-muted/40"><TableRow><TableHead>计划</TableHead><TableHead>开始时间</TableHead><TableHead>结束时间</TableHead><TableHead>规格份数</TableHead><TableHead>状态</TableHead><TableHead class="text-right">履约确认</TableHead></TableRow></TableHeader>
             <TableBody>
               <TableRow v-for="round in sortedRounds" :key="round.id">
                 <TableCell class="font-medium">{{ round.name }}</TableCell>
@@ -561,6 +578,12 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
                 <TableCell><LocalTime :value="round.endsAt" /></TableCell>
                 <TableCell class="max-w-80 whitespace-normal">{{ round.allocations.map(item => `${offers.find(offer => offer.id === item.offerId)?.name || item.offerId}: ${item.copyLimit} 份`).join(' / ') }}</TableCell>
                 <TableCell><span class="inline-flex items-center gap-2 whitespace-nowrap"><span class="h-2 w-2 rounded-full" :class="statusDotClass(getApiQuotaRoundStatus(round, ownerNow).tone)" />{{ getApiQuotaRoundStatus(round, ownerNow).label }}</span></TableCell>
+                <TableCell class="text-right">
+                  <Badge v-if="round.fulfillmentConfirmedAt" variant="trust">已确认</Badge>
+                  <Button v-else-if="canConfirmRound(round)" size="sm" :disabled="confirmRoundMutation.isPending.value" @click="confirmRoundFulfillment(round)"><CheckCircle2 />确认准备就绪</Button>
+                  <span v-else-if="round.systemSlotKey" class="text-xs text-muted-foreground">开抢前 30 分钟确认</span>
+                  <span v-else class="text-xs text-muted-foreground">不需确认</span>
+                </TableCell>
               </TableRow>
             </TableBody>
           </Table>
@@ -637,7 +660,7 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
     <Dialog v-model:open="roundDialogOpen">
       <DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-[620px]"><DialogHeader><DialogTitle>新增放量轮次</DialogTitle><DialogDescription>为同一轮的每个定时额度规格分别设置权威份数。</DialogDescription></DialogHeader>
         <div class="grid gap-4 sm:grid-cols-2">
-          <label class="space-y-2 sm:col-span-2"><span class="text-sm font-medium">轮次名称</span><Input v-model="roundForm.name" maxlength="80" placeholder="09:00 上班场" /></label>
+          <label class="space-y-2 sm:col-span-2"><span class="text-sm font-medium">轮次名称</span><Input v-model="roundForm.name" maxlength="80" placeholder="20:00 晚间场" /></label>
           <label class="space-y-2"><span class="text-sm font-medium">开始时间</span><Input v-model="roundForm.startsAt" type="datetime-local" /></label>
           <label class="space-y-2"><span class="text-sm font-medium">结束时间</span><Input v-model="roundForm.endsAt" type="datetime-local" /></label>
         </div>

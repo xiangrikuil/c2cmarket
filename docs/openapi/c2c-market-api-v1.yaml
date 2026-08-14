@@ -1017,7 +1017,7 @@ paths:
           required: false
           schema:
             type: string
-          description: Optional product category code such as gpt, claude, cursor, gemini, perplexity, or other.
+          description: Optional database-driven product category code, for example gpt, claude, grok, or an administrator-defined code.
       responses:
         "200":
           description: Active product plans.
@@ -1358,7 +1358,7 @@ paths:
       tags: [APIMarket]
       security: []
       summary: List the platform's fixed API quota sale slots.
-      description: Returns 09:00, 13:00, and 20:00 Asia/Shanghai slots for seven Beijing calendar days. The server owns slot dates, registration cutoff, sale window, and current state.
+      description: Returns the 20:00 Asia/Shanghai slot for each of seven Beijing calendar days. The server owns slot dates, registration cutoff, sale window, and current state.
       responses:
         "200":
           description: Fixed sale slots and the authoritative server time used for countdown display.
@@ -3040,6 +3040,39 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/api-orders/{id}/report-late-payment:
+    post:
+      operationId: reportMyAPIOrderLatePayment
+      tags: [APIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: Reports an off-platform payment made after a payment-timeout cancellation. The cancelled order, inventory, and round claim remain unchanged.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIOrderLatePaymentRequest"
+      responses:
+        "200":
+          description: Late-payment report recorded without reviving the order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrder"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/notifications:
     get:
       operationId: listMyNotifications
@@ -4363,6 +4396,37 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-rounds/{id}/confirm-fulfillment:
+    post:
+      operationId: confirmOwnerAPIQuotaRoundFulfillment
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: Confirms fulfillment readiness for a platform fixed-slot round during the final 30 minutes before it starts.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Round fulfillment readiness confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaRound"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/api-quota-batches/{id}/pause:
     post:
       operationId: pauseOwnerAPIQuotaBatch
@@ -4795,6 +4859,39 @@ paths:
             ETag:
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrder"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-orders/{id}/resolve-late-payment:
+    post:
+      operationId: resolveOwnerAPIOrderLatePayment
+      tags: [OwnerAPIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: Records whether a reported late off-platform payment was not received or was received and awaits an off-platform refund. It never restores inventory or fulfillment.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIOrderLatePaymentRequest"
+      responses:
+        "200":
+          description: Late-payment report resolved.
           content:
             application/json:
               schema:
@@ -5786,6 +5883,74 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-orders/{id}/catalog-risk-hold/restore:
+    post:
+      operationId: restoreAdminAPIOrderCatalogRiskHold
+      tags: [APIOrders]
+      summary: Restore ordinary order processing after an administrator resolves a catalog risk hold.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/APIOrderCatalogRiskHoldActionRequest" }
+      responses:
+        "200":
+          description: Hold marked restored; the order main status is unchanged.
+          content: { application/json: { schema: { $ref: "#/components/schemas/APIOrder" } } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/api-orders/{id}/catalog-risk-hold/refund-pending:
+    post:
+      operationId: markAdminAPIOrderCatalogRiskRefundPending
+      tags: [APIOrders]
+      summary: Record that off-platform refund handling is pending without changing the order main status.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/APIOrderCatalogRiskHoldActionRequest" } } }
+      responses:
+        "200":
+          description: Hold marked refund_pending; no refund or order cancellation is performed.
+          content: { application/json: { schema: { $ref: "#/components/schemas/APIOrder" } } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/api-orders/{id}/catalog-risk-hold/open-dispute:
+    post:
+      operationId: markAdminAPIOrderCatalogRiskDisputeOpened
+      tags: [APIOrders]
+      summary: Record that the catalog risk hold was routed to dispute handling without fabricating a dispute case.
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/APIOrderCatalogRiskHoldActionRequest" } } }
+      responses:
+        "200":
+          description: Hold marked dispute_opened; participants continue dispute handling through the existing order dispute actions.
+          content: { application/json: { schema: { $ref: "#/components/schemas/APIOrder" } } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
   /api/v1/admin/student-registration:
     get:
       operationId: getAdminStudentRegistration
@@ -7085,7 +7250,7 @@ paths:
           required: false
           schema:
             type: string
-          description: Optional product category code such as gpt, claude, cursor, gemini, perplexity, or other.
+          description: Optional database-driven product category code, for example gpt, claude, grok, or an administrator-defined code.
       responses:
         "200":
           description: Admin product plan list, including inactive rows.
@@ -7204,58 +7369,49 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/product-categories/{id}/activate:
-    post:
-      operationId: activateAdminProductCategory
+  /api/v1/admin/product-categories/{id}/deprecate:
+    post: &catalogLifecycleOperation
+      operationId: deprecateAdminProductCategory
       tags: [AdminProductCatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
+      security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
+        - { $ref: "#/components/parameters/ResourceId" }
+        - { $ref: "#/components/parameters/IfMatch" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody: &catalogLifecycleRequestBody
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
+            schema: { $ref: "#/components/schemas/CatalogLifecycleRequest" }
+      responses: &catalogLifecycleResponses
         "200":
-          description: Product category activated.
+          description: Catalog lifecycle changed atomically.
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/ProductCategory"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/product-categories/{id}/deactivate:
+              schema: { $ref: "#/components/schemas/CatalogLifecycleResource" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/product-categories/{id}/block:
     post:
-      operationId: deactivateAdminProductCategory
-      tags: [AdminProductCatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
+      <<: *catalogLifecycleOperation
+      operationId: blockAdminProductCategory
+  /api/v1/admin/product-categories/{id}/reactivate:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: reactivateAdminProductCategory
+  /api/v1/admin/product-categories/{id}/unblock:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: unblockAdminProductCategory
+      requestBody: &catalogLifecycleUnblockRequestBody
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Product category deactivated. The row is retained for historical references.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductCategory"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
+            schema: { $ref: "#/components/schemas/CatalogLifecycleUnblockRequest" }
   /api/v1/admin/product-plans/{id}:
     get:
       operationId: getAdminProductPlan
@@ -7302,58 +7458,27 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/product-plans/{id}/activate:
+  /api/v1/admin/product-plans/{id}/deprecate:
     post:
-      operationId: activateAdminProductPlan
+      <<: *catalogLifecycleOperation
+      operationId: deprecateAdminProductPlan
       tags: [AdminProductCatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Product plan activated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductPlan"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/product-plans/{id}/deactivate:
+  /api/v1/admin/product-plans/{id}/block:
     post:
-      operationId: deactivateAdminProductPlan
+      <<: *catalogLifecycleOperation
+      operationId: blockAdminProductPlan
       tags: [AdminProductCatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Product plan deactivated. The row is retained for historical references.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductPlan"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
+  /api/v1/admin/product-plans/{id}/reactivate:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: reactivateAdminProductPlan
+      tags: [AdminProductCatalog]
+  /api/v1/admin/product-plans/{id}/unblock:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: unblockAdminProductPlan
+      tags: [AdminProductCatalog]
+      requestBody: *catalogLifecycleUnblockRequestBody
   /api/v1/admin/api-model-providers:
     get:
       operationId: listAdminAPIModelProviders
@@ -7438,58 +7563,27 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-model-providers/{id}/activate:
+  /api/v1/admin/api-model-providers/{id}/deprecate:
     post:
-      operationId: activateAdminAPIModelProvider
+      <<: *catalogLifecycleOperation
+      operationId: deprecateAdminAPIModelProvider
       tags: [AdminAPICatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: API model provider activated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIModelProvider"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-model-providers/{id}/deactivate:
+  /api/v1/admin/api-model-providers/{id}/block:
     post:
-      operationId: deactivateAdminAPIModelProvider
+      <<: *catalogLifecycleOperation
+      operationId: blockAdminAPIModelProvider
       tags: [AdminAPICatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: API model provider deactivated. The row is retained for model catalog references.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIModelProvider"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-model-providers/{id}/reactivate:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: reactivateAdminAPIModelProvider
+      tags: [AdminAPICatalog]
+  /api/v1/admin/api-model-providers/{id}/unblock:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: unblockAdminAPIModelProvider
+      tags: [AdminAPICatalog]
+      requestBody: *catalogLifecycleUnblockRequestBody
   /api/v1/admin/api-health/latency-calibration:
     get:
       operationId: getAdminAPIProbeLatencyCalibration
@@ -7682,38 +7776,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-models/bulk-status:
-    post:
-      operationId: setAdminAPIModelsBulkStatus
-      tags: [AdminAPICatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/APIModelBulkStatusRequest"
-      responses:
-        "200":
-          description: Selected models activated or deactivated atomically.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIModelBulkMutationResult"
-        "400":
-          $ref: "#/components/responses/Problem"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
   /api/v1/admin/api-models/{id}:
     get:
       operationId: getAdminAPIModel
@@ -7760,58 +7822,27 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-models/{id}/activate:
+  /api/v1/admin/api-models/{id}/deprecate:
     post:
-      operationId: activateAdminAPIModel
+      <<: *catalogLifecycleOperation
+      operationId: deprecateAdminAPIModel
       tags: [AdminAPICatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: API model activated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIModel"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-models/{id}/deactivate:
+  /api/v1/admin/api-models/{id}/block:
     post:
-      operationId: deactivateAdminAPIModel
+      <<: *catalogLifecycleOperation
+      operationId: blockAdminAPIModel
       tags: [AdminAPICatalog]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: API model deactivated. The row is retained for historical API service model snapshots.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIModel"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-models/{id}/reactivate:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: reactivateAdminAPIModel
+      tags: [AdminAPICatalog]
+  /api/v1/admin/api-models/{id}/unblock:
+    post:
+      <<: *catalogLifecycleOperation
+      operationId: unblockAdminAPIModel
+      tags: [AdminAPICatalog]
+      requestBody: *catalogLifecycleUnblockRequestBody
   /api/v1/admin/model-audit/targets:
     get:
       operationId: listAdminModelAuditTargets
@@ -11078,9 +11109,45 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GrowthRetentionCohort"
+    CatalogCoreKey:
+      type: string
+      enum: [gpt, claude, grok]
+    CatalogStatus:
+      type: string
+      enum: [active, deprecated, blocked]
+    CatalogEffectiveStatusSource:
+      type: string
+      enum: [self, parent]
+    CatalogLifecycleRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 500
+    CatalogLifecycleUnblockRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, targetStatus]
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 500
+        targetStatus:
+          type: string
+          enum: [active, deprecated]
+    CatalogLifecycleResource:
+      oneOf:
+        - $ref: "#/components/schemas/ProductCategory"
+        - $ref: "#/components/schemas/ProductPlan"
+        - $ref: "#/components/schemas/APIModelProvider"
+        - $ref: "#/components/schemas/APIModel"
     ProductCategory:
       type: object
-      required: [id, code, displayName, iconDataUrl, sortOrder, active]
+      required: [id, code, displayName, iconDataUrl, sortOrder, active, status, effectiveStatus, effectiveStatusSource, statusChangedAt, version, identityLocked]
       properties:
         id:
           type: string
@@ -11096,6 +11163,29 @@ components:
           type: integer
         active:
           type: boolean
+        coreKey:
+          $ref: "#/components/schemas/CatalogCoreKey"
+        status:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatus:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatusSource:
+          $ref: "#/components/schemas/CatalogEffectiveStatusSource"
+        statusChangedAt:
+          type: string
+          format: date-time
+        statusChangedBy:
+          type: string
+          format: uuid
+        statusReason:
+          type: string
+        version:
+          type: integer
+          format: int64
+        identityLocked:
+          type: boolean
+        identityLockReason:
+          type: string
     ProductCategoryList:
       type: object
       required: [items]
@@ -11109,7 +11199,7 @@ components:
     ProductCategoryRequest:
       type: object
       additionalProperties: false
-      required: [code, displayName, iconDataUrl, active, sortOrder]
+      required: [code, displayName, iconDataUrl, sortOrder]
       properties:
         code:
           type: string
@@ -11122,8 +11212,6 @@ components:
           type: string
           maxLength: 400000
           description: Empty string removes the icon; otherwise PNG or WebP data URL.
-        active:
-          type: boolean
         sortOrder:
           type: integer
     ProductPlan:
@@ -11147,6 +11235,12 @@ components:
         - quotaUnit
         - quotaPeriod
         - active
+        - status
+        - effectiveStatus
+        - effectiveStatusSource
+        - statusChangedAt
+        - version
+        - identityLocked
         - allowCustomVariant
         - sortOrder
         - createdAt
@@ -11199,6 +11293,29 @@ components:
           enum: [monthly]
         active:
           type: boolean
+        coreKey:
+          $ref: "#/components/schemas/CatalogCoreKey"
+        status:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatus:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatusSource:
+          $ref: "#/components/schemas/CatalogEffectiveStatusSource"
+        statusChangedAt:
+          type: string
+          format: date-time
+        statusChangedBy:
+          type: string
+          format: uuid
+        statusReason:
+          type: string
+        version:
+          type: integer
+          format: int64
+        identityLocked:
+          type: boolean
+        identityLockReason:
+          type: string
         allowCustomVariant:
           type: boolean
         sortOrder:
@@ -11235,7 +11352,6 @@ components:
         - quotaLabel
         - quotaUnit
         - quotaPeriod
-        - active
         - allowCustomVariant
         - sortOrder
       properties:
@@ -11285,28 +11401,48 @@ components:
         quotaPeriod:
           type: string
           enum: [monthly]
-        active:
-          type: boolean
         allowCustomVariant:
           type: boolean
         sortOrder:
           type: integer
     APIModelProvider:
       type: object
-      required: [id, providerCategory, code, displayName, active, sortOrder, createdAt, updatedAt]
+      required: [id, providerCategory, code, displayName, active, sortOrder, createdAt, updatedAt, status, effectiveStatus, effectiveStatusSource, statusChangedAt, version, identityLocked]
       properties:
         id:
           type: string
           format: uuid
         providerCategory:
           type: string
-          enum: [gpt, claude, cursor, gemini, perplexity, other]
         code:
           type: string
         displayName:
           type: string
         active:
           type: boolean
+        coreKey:
+          $ref: "#/components/schemas/CatalogCoreKey"
+        status:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatus:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatusSource:
+          $ref: "#/components/schemas/CatalogEffectiveStatusSource"
+        statusChangedAt:
+          type: string
+          format: date-time
+        statusChangedBy:
+          type: string
+          format: uuid
+        statusReason:
+          type: string
+        version:
+          type: integer
+          format: int64
+        identityLocked:
+          type: boolean
+        identityLockReason:
+          type: string
         sortOrder:
           type: integer
         createdAt:
@@ -11318,11 +11454,10 @@ components:
     APIModelProviderRequest:
       type: object
       additionalProperties: false
-      required: [providerCategory, code, displayName, active, sortOrder]
+      required: [providerCategory, code, displayName, sortOrder]
       properties:
         providerCategory:
           type: string
-          enum: [gpt, claude, cursor, gemini, perplexity, other]
         code:
           type: string
           minLength: 1
@@ -11332,8 +11467,6 @@ components:
           type: string
           minLength: 1
           maxLength: 80
-        active:
-          type: boolean
         sortOrder:
           type: integer
     APIModelProviderList:
@@ -11348,7 +11481,7 @@ components:
           type: [string, "null"]
     APIModel:
       type: object
-      required: [id, providerId, providerCategory, providerCode, provider, providerActive, modelKey, capabilities, active, sortOrder, createdAt, updatedAt]
+      required: [id, providerId, providerCategory, providerCode, provider, providerActive, modelKey, capabilities, active, sortOrder, createdAt, updatedAt, status, effectiveStatus, effectiveStatusSource, statusChangedAt, version, identityLocked]
       properties:
         id:
           type: string
@@ -11358,7 +11491,6 @@ components:
           format: uuid
         providerCategory:
           type: string
-          enum: [gpt, claude, cursor, gemini, perplexity, other]
         providerCode:
           type: string
         provider:
@@ -11374,6 +11506,29 @@ components:
             enum: [text, chat, vision, image_generation, image_edit, reasoning]
         active:
           type: boolean
+        coreKey:
+          $ref: "#/components/schemas/CatalogCoreKey"
+        status:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatus:
+          $ref: "#/components/schemas/CatalogStatus"
+        effectiveStatusSource:
+          $ref: "#/components/schemas/CatalogEffectiveStatusSource"
+        statusChangedAt:
+          type: string
+          format: date-time
+        statusChangedBy:
+          type: string
+          format: uuid
+        statusReason:
+          type: string
+        version:
+          type: integer
+          format: int64
+        identityLocked:
+          type: boolean
+        identityLockReason:
+          type: string
         currentPriceVersionId:
           type: string
           format: uuid
@@ -11401,7 +11556,7 @@ components:
     APIModelRequest:
       type: object
       additionalProperties: false
-      required: [providerId, modelKey, capabilities, active, sortOrder]
+      required: [providerId, modelKey, capabilities, sortOrder]
       properties:
         providerId:
           type: string
@@ -11431,8 +11586,6 @@ components:
         sourceVersion:
           type: string
           maxLength: 120
-        active:
-          type: boolean
         sortOrder:
           type: integer
     APIModelList:
@@ -11611,21 +11764,6 @@ components:
           maxItems: 200
           items:
             $ref: "#/components/schemas/APIModelSyncSelection"
-    APIModelBulkStatusRequest:
-      type: object
-      additionalProperties: false
-      required: [modelIds, active]
-      properties:
-        modelIds:
-          type: array
-          minItems: 1
-          maxItems: 200
-          uniqueItems: true
-          items:
-            type: string
-            format: uuid
-        active:
-          type: boolean
     APIModelBulkMutationResult:
       type: object
       required: [created, updated, changed, ids]
@@ -13958,7 +14096,7 @@ components:
           format: uuid
         systemSlotKey:
           type: string
-          pattern: '^\d{4}-\d{2}-\d{2}@(09|13|20):00$'
+          pattern: '^\d{4}-\d{2}-\d{2}@20:00$'
           description: Present only for platform fixed-slot rounds. Historical custom rounds omit it.
         name:
           type: string
@@ -13971,6 +14109,10 @@ components:
         status:
           type: string
           enum: [scheduled, closed, cancelled]
+        fulfillmentConfirmedAt:
+          type: string
+          format: date-time
+          description: Present after the seller confirms readiness during the final 30 minutes before a platform fixed-slot round.
         allocations:
           type: array
           items:
@@ -14008,8 +14150,8 @@ components:
           format: date-time
         items:
           type: array
-          minItems: 21
-          maxItems: 21
+          minItems: 7
+          maxItems: 7
           items:
             $ref: "#/components/schemas/APIQuotaSystemSaleSlot"
     APIQuotaRushOfferRequest:
@@ -14036,7 +14178,7 @@ components:
         copies:
           type: integer
           minimum: 1
-          maximum: 5000
+          maximum: 10
         deliveryMode:
           type: string
           enum: [manual]
@@ -14047,7 +14189,7 @@ components:
           maximum: 10
         slotKey:
           type: string
-          pattern: '^\d{4}-\d{2}-\d{2}@(09|13|20):00$'
+          pattern: '^\d{4}-\d{2}-\d{2}@20:00$'
         expiresAt:
           type: string
           format: date-time
@@ -14117,7 +14259,7 @@ components:
               type: boolean
             orderabilityCode:
               type: string
-              enum: [orderable, service_unavailable, batch_paused, offer_paused, not_started, round_ended, sold_out, credential_unavailable, batch_expired]
+              enum: [orderable, service_unavailable, batch_paused, offer_paused, not_started, round_ended, sold_out, credential_unavailable, fulfillment_confirmation_required, batch_expired]
             orderabilityReason:
               type: string
       unevaluatedProperties: false
@@ -14479,6 +14621,17 @@ components:
           type: string
           maxLength: 4000
           description: Optional non-sensitive explanation for the buyer. Credentials, tokens, sessions, cookies, and API keys are not accepted.
+    APIOrderLatePaymentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [not_received, received_refund_pending]
+          description: Required only for the seller resolution action.
+        note:
+          type: string
+          maxLength: 4000
     APIOrderDeliveryRequest:
       type: object
       additionalProperties: false
@@ -14566,7 +14719,7 @@ components:
           enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
         requestedResolution:
           type: string
-          enum: [full_refund, partial_refund, continue_fulfillment, other]
+          enum: [full_refund, partial_refund, other]
         requestedAmountCny:
           type: [string, "null"]
           pattern: '^[0-9]+(?:\.[0-9]{1,2})?$'
@@ -14604,6 +14757,9 @@ components:
         - selectedPaymentMethod
         - paymentWindowMinutesSnapshot
         - paymentExpiresAt
+        - merchantConfirmOverdue
+        - deliveryOverdue
+        - canReportLatePayment
         - canOpenDispute
         - disputeEligibilityReason
         - version
@@ -14779,6 +14935,11 @@ components:
         paymentSubmittedAt:
           type: [string, "null"]
           format: date-time
+        merchantConfirmDueAt:
+          type: [string, "null"]
+          format: date-time
+        merchantConfirmOverdue:
+          type: boolean
         paymentIssueReason:
           type: string
           enum: [not_received, amount_mismatch, remark_mismatch]
@@ -14790,6 +14951,11 @@ components:
         paidConfirmedAt:
           type: [string, "null"]
           format: date-time
+        deliveryDueAt:
+          type: [string, "null"]
+          format: date-time
+        deliveryOverdue:
+          type: boolean
         deliveryNote:
           type: string
           description: Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
@@ -14815,6 +14981,19 @@ components:
           format: date-time
         cancelReason:
           type: string
+        latePaymentStatus:
+          type: string
+          enum: [reported, not_received, received_refund_pending]
+        latePaymentReportedAt:
+          type: [string, "null"]
+          format: date-time
+        latePaymentNote:
+          type: string
+        latePaymentResolvedAt:
+          type: [string, "null"]
+          format: date-time
+        canReportLatePayment:
+          type: boolean
         version:
           type: integer
         createdAt:
@@ -14823,6 +15002,36 @@ components:
         updatedAt:
           type: string
           format: date-time
+        catalogRiskHold:
+          $ref: "#/components/schemas/APIOrderCatalogRiskHold"
+    APIOrderCatalogRiskHold:
+      type: object
+      additionalProperties: false
+      required: [id, sourceType, sourceId, status, reason, createdAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        sourceType:
+          type: string
+          enum: [api_model_provider, api_model_catalog]
+        sourceId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [active, restored, refund_pending, dispute_opened]
+        reason: { type: string }
+        createdAt: { type: string, format: date-time }
+        resolvedBy: { type: string, format: uuid }
+        resolvedAt: { type: [string, "null"], format: date-time }
+        resolutionNote: { type: string }
+        version: { type: integer, format: int64, minimum: 1 }
+    APIOrderCatalogRiskHoldActionRequest:
+      type: object
+      additionalProperties: false
+      required: [resolutionNote]
+      properties:
+        resolutionNote:
+          type: string
+          minLength: 2
+          maxLength: 500
     APIOrderPaymentInstructions:
       type: object
       additionalProperties: false
@@ -15600,7 +15809,7 @@ components:
         - revieweeRole
         - status
         - visibility
-        - counterpartySubmitted
+        - allowedTags
         - canCreate
         - canEdit
         - rating
@@ -15650,8 +15859,11 @@ components:
         visibility:
           type: string
           enum: [none, sealed, published, removed]
-        counterpartySubmitted:
-          type: boolean
+        allowedTags:
+          type: array
+          description: Tags allowed for this transaction type and review direction.
+          items:
+            $ref: "#/components/schemas/ReviewTag"
         canCreate:
           type: boolean
         canEdit:
@@ -15705,12 +15917,25 @@ components:
         presetTags:
           type: array
           items:
-            type: string
-            maxLength: 16
+            $ref: "#/components/schemas/ReviewTag"
+    ReviewTag:
+      type: object
+      required: [code, label, polarity]
+      properties:
+        code:
+          type: string
+          maxLength: 32
+        label:
+          type: string
+          maxLength: 16
+        polarity:
+          type: string
+          enum: [positive, negative, neutral]
     SubmitReviewRequest:
       type: object
       additionalProperties: false
       required: [rating, tags, note]
+      description: Rating is required. At least one tag or a non-empty note must be supplied.
       properties:
         rating:
           type: integer
@@ -15724,9 +15949,8 @@ components:
             maxLength: 16
         note:
           type: string
-          minLength: 1
           maxLength: 600
-          description: Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
+          description: May be empty when at least one tag is supplied. Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
     RemoveReviewRequest:
       type: object
       additionalProperties: false

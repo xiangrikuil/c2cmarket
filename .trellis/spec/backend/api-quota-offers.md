@@ -1,7 +1,7 @@
 # Limited API Quota Offer Contract
 
 Date: 2026-07-19
-Updated: 2026-08-10
+Updated: 2026-08-14
 Author: Codex
 
 ## Scenario: Fixed, Time-Limited API Quota Offers
@@ -10,7 +10,7 @@ Author: Codex
 
 - Trigger: changes to limited API quota batches, offers, sale rounds, inventory units, quota orders, merchant contact snapshots, after-sales eligibility, pre-imported delivery credentials, public offer projections, or their OpenAPI routes.
 - This contract is separate from the legacy Sub2API free-amount purchase path. Both reuse `api_services` and `api_orders`, but only limited offers use `purchase_kind='limited_quota_offer'` and authoritative inventory units.
-- Primary owners: `internal/module/apiquota`, `internal/store/postgres/api_quota.go`, `internal/server/api_quota_handler.go`, migrations `000054`, `000055`, and `000056`, and `docs/openapi/c2c-market-api-v1.yaml`.
+- Primary owners: `internal/module/apiquota`, `internal/store/postgres/api_quota.go`, `internal/server/api_quota_handler.go`, migrations `000054` through `000056` and `000096`, and `docs/openapi/c2c-market-api-v1.yaml`.
 
 ### 2. Signatures
 
@@ -170,12 +170,14 @@ afterSalesDeadline = order.quotaExpiresAtSnapshot + 24h
 GET  /api/v1/api-quota-sale-slots
 GET  /api/v1/api-quota-offers?slotKey=<YYYY-MM-DD@HH:00>
 POST /api/v1/owner/api-services/{id}/quota-rush-offers
+POST /api/v1/owner/api-quota-rounds/{id}/confirm-fulfillment
 
 apiquota.SystemSaleSlots/ResolveSystemSaleSlot/ResolveOpenSystemSaleSlot
 apiquota.Manager.CreateRushOfferWithIdempotency
 postgres.Store.CreateSystemRushOfferWithIdempotency
 
 api_quota_sale_rounds.system_slot_key text NULL
+api_quota_sale_rounds.fulfillment_confirmed_at timestamptz NULL
 ```
 
 The owner create route accepts `multipart/form-data` with one JSON `payload` part. The payload fields are `sourceType`, `sourceLabel`, `name`, `usdAllowance`, `priceCny`, `modelMultiplier`, `copies`, `deliveryMode=manual`, `deliveryEtaMinutes`, `slotKey`, `expiresAt`, and `sourceConfirmedAt`.
@@ -183,13 +185,15 @@ First-party clients populate `modelMultiplier` from the selected API service def
 
 ### 3. Contracts
 
-- Fixed sessions use `Asia/Shanghai` at `09:00`, `13:00`, and `20:00`, last 30 minutes, and close registration one hour before start. The server returns 21 slots covering Beijing today plus six following calendar days.
+- Fixed sessions use `Asia/Shanghai` at `20:00`, last 30 minutes, and close registration one hour before start. The server returns seven slots covering Beijing today plus six following calendar days.
 - A slot key is `YYYY-MM-DD@HH:00`. The server derives `startsAt`, `endsAt`, and `registrationClosesAt`; clients must not submit or derive those timestamps.
 - Simplified publication creates exactly one batch, one manual-delivery scheduled offer, one system round, one allocation, and one inventory row per copy in one PostgreSQL transaction. Any failure rolls everything back.
 - `sale_cutoff_at` equals the slot end. `expiresAt` must be at least one hour after slot end. Scheduled orders keep the existing five-minute frozen payment window even when it ends after the slot.
 - New rush publication rejects `preimported`, credential kind, and file input. Historical system-slot offers that were already pre-imported keep their credential and archive behavior.
 - Before registration closes, owner archive retires available inventory and credentials, closes active/planned allocations, returns their USD allowance, cancels the scheduled system round, and archives its offers in the same transaction.
 - At or after registration close, owners cannot pause or archive a system-slot batch. Historical rounds with `system_slot_key IS NULL` retain the existing advanced-management behavior.
+- A seller may publish at most 10 copies in one system slot across all of their offers. Publication serializes by seller and slot, then sums planned/active allocations in PostgreSQL before writing inventory.
+- A system-slot round is orderable only after the seller confirms fulfillment during `[startsAt-30m, startsAt)`. Confirmation rechecks seller eligibility, service/probe/payment readiness, and the published batch. Public projections and the order transaction enforce the same fact; historical custom rounds with `system_slot_key IS NULL` do not require it.
 - Global latest-migration validation belongs to `check-migrations-doc.mjs`; quota migration tests assert only the migration files and schema fragments owned by the quota feature.
 
 ### 4. Validation & Error Matrix
@@ -198,26 +202,30 @@ First-party clients populate `modelMultiplier` from the selected API service def
 | --- | --- |
 | Slot key is not one of the server-generated seven-day fixed slots | `422 VALIDATION_FAILED`, field `slotKey` |
 | Slot registration has closed | `409 INVALID_STATE_TRANSITION`, reason `registration_closed` |
-| `copies` is outside `1..5000` | `422 VALIDATION_FAILED`, field `copies` |
+| `copies` is outside `1..10` | `422 VALIDATION_FAILED`, field `copies` |
+| Existing planned/active copies plus requested copies exceed 10 for the seller and slot | `409 VALIDATION_FAILED`, field `copies`, reason `slot_limit` |
 | Expiry is earlier than slot end plus one hour | `422 VALIDATION_FAILED`, field `expiresAt` |
 | `deliveryMode=preimported` | `422 VALIDATION_FAILED`, field `deliveryMode`, reason `new_preimported_not_allowed` |
 | Request includes a credential kind or CSV part | `422 VALIDATION_FAILED` as an unknown/retired creation field |
 | Multipart has duplicate/unknown parts or exceeds the size limit | `422 VALIDATION_FAILED` or `413` |
 | Owner pauses or archives at/after registration close | `409 INVALID_STATE_TRANSITION` |
+| Seller confirms before `startsAt-30m` or at/after `startsAt` | `409 INVALID_STATE_TRANSITION` |
+| System round has no fulfillment confirmation | Public response uses `fulfillment_confirmation_required`; order creation returns `409 INVALID_STATE_TRANSITION` |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: at Beijing `07:59:59`, a seller publishes two manually delivered `$50` copies into the `09:00` slot; both inventory rows become available atomically.
-- Good: before `08:00`, archive retires both copies and credentials, returns `$100`, cancels the round, and removes the offer from public sale.
+- Good: before Beijing `19:00`, a seller publishes two manually delivered `$50` copies into the `20:00` slot; both inventory rows become available atomically, then the seller confirms fulfillment at `19:30`.
+- Good: before `19:00`, archive retires both copies and credentials, returns `$100`, cancels the round, and removes the offer from public sale.
 - Base: an old scheduled round with a null system key remains manageable through the advanced owner flow.
-- Bad: a client submits `10:15`, provides its own end time, or publishes after the one-hour registration cutoff.
+- Bad: a client submits a non-20:00 slot, provides its own end time, publishes 11 copies, or publishes after the one-hour registration cutoff.
+- Bad: the frontend hides an unconfirmed round while the public query or order transaction still permits purchase.
 - Bad: archive changes only the batch status while leaving available inventory, credentials, or allocated allowance behind.
 
 ### 6. Tests Required
 
-- Unit: fixed hours, Beijing day rollover, registration-close/start/end boundaries, invalid keys, seven-day range, expiry minimum, copy limit, stable pre-imported rejection, and idempotent replay.
+- Unit: fixed 20:00 hour, Beijing day rollover, registration-close/start/end boundaries, invalid keys, seven-day range, expiry minimum, 10-copy limit, confirmation window, stable pre-imported rejection, and idempotent replay.
 - HTTP/OpenAPI: slot list, `slotKey` filter, strict payload-only multipart parsing, retired file/kind rejection, `no-store`, and route parity.
-- PostgreSQL: atomic publication rollback and successful archive cleanup asserting inventory, credentials, allocation allowance, round, offer, and batch state.
+- PostgreSQL: atomic publication rollback, concurrent seller/slot copy aggregation, confirmation readiness recheck, unconfirmed-order rejection, and successful archive cleanup asserting inventory, credentials, allocation allowance, round, offer, and batch state.
 - Required commands: `go test ./...`, `node scripts/check-openapi-routes.mjs`, and `node scripts/check-migrations-doc.mjs`.
 
 ### 7. Wrong vs Correct
@@ -243,6 +251,83 @@ return repo.CreateSystemRushOfferWithIdempotency(ctx, entry, publicationFrom(slo
 ```
 
 Only the server resolves a fixed slot, and the repository commits the complete publication or no publication.
+
+## Scenario: API Order Deadlines, Pending Capacity, And Late Payment
+
+### 1. Scope / Trigger
+
+- Trigger: changes to API-order creation, payment submission/confirmation, delivery, timeout cancellation, late-payment recovery, flexible/limited channel publication, or their API/UI projections.
+- PostgreSQL time and frozen order facts are authoritative. Overdue flags are projections and do not add a primary order status.
+
+### 2. Signatures
+
+```text
+POST /api/v1/me/api-orders/{id}/report-late-payment
+POST /api/v1/owner/api-orders/{id}/resolve-late-payment
+
+api_orders.merchant_confirm_due_at timestamptz NULL
+api_orders.delivery_due_at timestamptz NULL
+api_orders.late_payment_status reported|not_received|received_refund_pending NULL
+api_orders.late_payment_reported_at/late_payment_resolved_at timestamptz NULL
+api_quota_sale_rounds.fulfillment_confirmed_at timestamptz NULL
+```
+
+### 3. Contracts
+
+- An on-time payment submission freezes `merchant_confirm_due_at = payment_submitted_at + 10 minutes`. Seller payment confirmation freezes `delivery_due_at = paid_confirmed_at + delivery ETA snapshot`; limited quota uses its frozen 1-10 minute ETA and other API orders use 10 minutes.
+- Boundaries use `[start,end)`: at the due timestamp the projection is overdue. Paid/payment-submitted orders are never auto-cancelled and never release inventory because a seller deadline elapsed.
+- Normal first delivery is rejected at or after the frozen absolute quota expiry. A reporting grace period never extends product validity.
+- Order creation takes a buyer advisory transaction lock before inventory reservation. A buyer may have no more than one `pending_payment` order for the same product and no more than three pending API orders globally across ordinary and limited-quota flows.
+- Only a `payment_timeout` cancellation may be reported, and only while `now < cancelled_at + 24h`. A report and its seller resolution are independent facts: they never revive the order, inventory unit, credential reservation, or round claim.
+- Seller resolution accepts only `not_received` or `received_refund_pending`. It records an event but does not claim that an off-platform refund has completed.
+- A flexible-quota service stops accepting orders when `quota_expires_at <= now + 24h`. Flexible quota and published/paused, unexpired limited quota are mutually exclusive channels for one API service.
+- New dispute requests reject `continue_fulfillment`; historical disputes containing it remain readable.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Buyer already has a pending order for the product | `409 INVALID_STATE_TRANSITION` |
+| Buyer already has three pending API orders | `409 INVALID_STATE_TRANSITION` |
+| Delivery occurs at/after frozen quota expiry | `409 INVALID_STATE_TRANSITION` |
+| Late-payment report is not for `payment_timeout`, is repeated, or reaches the 24-hour boundary | `409 INVALID_STATE_TRANSITION` |
+| Seller resolution status is absent, `reported`, or unknown | `422 VALIDATION_FAILED`, field `status` |
+| Flexible quota has 24 hours or less remaining | Service is not orderable; order transaction rejects the stale attempt |
+| Publishing/resuming one channel while the other is sellable | `409 INVALID_STATE_TRANSITION` |
+| New dispute requests `continue_fulfillment` | `422 VALIDATION_FAILED`, field `requestedResolution` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a buyer submits payment at `10:00`, the seller confirms at `10:05`, and a five-minute limited-quota ETA freezes delivery due at `10:10`.
+- Good: a timed-out buyer reports at `cancelledAt+23:59:59`; the seller records `received_refund_pending`, while the original inventory remains with its current owner.
+- Base: a historical order has null deadline and late-payment fields and remains readable without fabricated overdue facts.
+- Bad: restore a timed-out order or stock because the buyer reports an off-platform transfer.
+- Bad: release inventory when the seller misses a confirmation/delivery deadline, or calculate authority from browser time.
+
+### 6. Tests Required
+
+- Unit: exact merchant/delivery deadline boundaries, exact 24-hour report boundary, allowed seller resolutions, and historical null projections.
+- PostgreSQL: both order creation paths enforce same-product/global pending limits under concurrent requests; deadline writes, late-payment facts, idempotency completion, inventory non-resurrection, channel mutual exclusion, and expiry delivery rejection commit atomically.
+- HTTP/OpenAPI: both late-payment routes, version/idempotency headers, generated type drift, response projections, and rejection of `continue_fulfillment` on new disputes.
+- Frontend: deadline/overdue display, persistent transfer warning, report/resolve dialogs, historical dispute label, and no client-time authorization.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+if browserNow > paymentSubmittedAt + 10m: releaseInventory()
+if buyerReportsTransfer: reopenOrderAndReserveStock()
+```
+
+#### Correct
+
+```text
+merchantConfirmOverdue = serverNow >= merchantConfirmDueAt
+latePaymentReport -> append fact/event only; keep order, inventory, credential, and round claim unchanged
+```
+
+Deadlines explain seller performance; they do not rewrite the settled inventory state machine.
 
 ## Scenario: Owner API Service Sales Lifecycle Projection
 
@@ -271,7 +356,7 @@ healthSummary = ServiceHealthSummary
 
 - Missing `salesView` defaults to `active`. `active` contains `selling` and `upcoming`; `draft` contains `draft` and `offline`; `all` preserves every state.
 - The server filters before keyset pagination. PostgreSQL must derive channels and `overallState` in the same LATERAL/CTE projection used by `WHERE`; the frontend must not filter a partially loaded page or request batches/offers once per service.
-- One service may expose both `flexible_quota` and `limited_quota`. Overall priority is `selling > upcoming > paused > sold_out > expired > draft > offline > archived`.
+- One service may expose both channels in historical/owner projections, but only one may currently be sellable: opening flexible quota requires no published/paused unexpired limited batch, and publishing limited quota requires flexible ordering to be closed. Overall priority is `selling > upcoming > paused > sold_out > expired > draft > offline > archived`.
 - A limited channel uses batch, offer, allocation, round, inventory, credential, cutoff, and expiry facts. It must not derive state from `APIService.billingMode`.
 - The owner list response requires both `salesSummary` and `healthSummary`. The handler loads health summaries once for the page's deduplicated service IDs; the frontend must not issue one private probe-config request per row.
 - Missing probe configuration returns `no_sample/unconfigured`. A health-summary dependency failure is fail-open for the service list and returns `no_sample/temporarily_unavailable` with 12 no-sample slots; it must not omit the field or block service management.
@@ -289,13 +374,14 @@ healthSummary = ServiceHealthSummary
 | Cutoff or expiry reached with no higher-priority channel | `expired`; exclude from `active`, include in `expired` and `all` |
 | Service or selected sale plan is paused | `paused`; include in `paused` and `all` |
 | Service is reviewing, draft, or offline | `draft` or `offline`; include in `draft` and `all` |
-| Limited sale expired while flexible quota still sells | Preserve both channels; overall remains `selling` |
+| Limited sale expired while flexible quota sells | Preserve both historical/current channels; overall remains `selling` |
+| Flexible and unexpired limited channels would both be sellable | Reject the write before projection; never publish this owner state |
 | Probe is not configured | Required `healthSummary` with `no_sample/unconfigured` |
 | Health-summary loading fails | Return the service page with `no_sample/temporarily_unavailable` for each item |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: one service shows `自由额度 / 销售中` and `限时额度包 / 已过期` together, stays in the active view, and exposes limited-package republishing.
+- Good: one service shows `自由额度 / 销售中` and `限时额度包 / 已过期` together, stays in the active view, and requires closing flexible ordering before limited-package republishing.
 - Good: a scheduled offer between valid rounds remains `upcoming` with `nextStartsAt` and stays on the default page.
 - Base: a service with no sales channel uses its service lifecycle fallback and remains reachable through `draft` or `all`.
 - Base: an unconfigured probe remains manageable and shows `未配置` from the required owner-list health summary.

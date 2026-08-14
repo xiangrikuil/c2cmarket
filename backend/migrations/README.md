@@ -102,6 +102,8 @@ versions:
 | `000093_contact_usage_scopes` | canonical contact usage scopes for buyer, dispute, carpool owner, and API merchant contexts |
 | `000094_account_governance_session_foundation` | immutable governance actions, restricted-business sessions, dedicated restricted/appeal OAuth state tables, exact suspension expiry jobs, and purpose-bound administrator reauthentication |
 | `000095_account_governance_business_disposition` | durable governance disposition jobs, unique cross-action resource outcomes, structured governance cancellation facts, and non-restoring sales-stop links |
+| `000096_api_order_launch_hardening` | immutable merchant-confirm and delivery deadlines, constrained late-payment recovery, buyer pending-order capacity, and rush-round fulfillment confirmation |
+| `000097_dynamic_catalog_lifecycle` | three-state catalog lifecycle, Grok/xAI seed data, immutable core identity, and API-order catalog risk holds |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -474,6 +476,11 @@ rows default to the buyer/dispute pair. A database check enforces a non-empty,
 deduplicated, allowlisted, canonically ordered scope array. The guarded down
 migration refuses to erase policy once a row carries a post-migration scope set.
 
+Version 96 (`000096_api_order_launch_hardening`) adds immutable merchant-confirm
+and delivery deadlines, a constrained late-payment recovery fact, buyer pending
+order capacity indexes, and seller fulfillment confirmation for fixed rush
+rounds. Historical orders and non-system rounds remain readable with null fields.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical
@@ -494,6 +501,12 @@ preserving non-sensitive audit facts.
 `000007_seed_catalog_risk_and_policy.down.sql` removes only fixed seed UUIDs. If
 business rows already reference those seed plans, PostgreSQL foreign keys are
 expected to block rollback instead of deleting referenced catalog data.
+
+Version 97 (`000097_dynamic_catalog_lifecycle`) replaces catalog `active`
+booleans with `active | deprecated | blocked` lifecycle state, adds immutable
+core identity markers, seeds Grok/xAI, and persists independent API-order
+catalog risk holds. Its down migration refuses rollback after blocked state or
+risk-hold data has been used.
 
 ## Docker Compose
 

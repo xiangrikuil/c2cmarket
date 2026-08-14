@@ -299,6 +299,55 @@ func (s *Service) AdminOrder(ctx context.Context, user auth.User, orderID string
 	return order, nil
 }
 
+func (s *Service) ResolveCatalogRiskHoldWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CatalogRiskHoldActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return idempotency.Completion{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	input.OrderID = strings.TrimSpace(input.OrderID)
+	input.AdminUserID = user.ID
+	input.Resolution = strings.TrimSpace(input.Resolution)
+	input.ResolutionNote = strings.TrimSpace(input.ResolutionNote)
+	if input.OrderID == "" || input.ExpectedVersion < 1 {
+		return idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Catalog risk hold input invalid", "订单和风险暂停版本不能为空。")
+	}
+	switch input.Resolution {
+	case CatalogRiskHoldRestored, CatalogRiskHoldRefundPending, CatalogRiskHoldDisputeOpened:
+	default:
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Catalog risk hold resolution invalid", "风险暂停处置动作无效。", "resolution", "invalid", "风险暂停处置动作无效。")
+	}
+	if len([]rune(input.ResolutionNote)) < 2 || len([]rune(input.ResolutionNote)) > 500 {
+		return idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Resolution note invalid", "处置说明需为 2 到 500 个字符。", "resolutionNote", "invalid_length", "处置说明需为 2 到 500 个字符。")
+	}
+	key = strings.TrimSpace(key)
+	if appErr := idempotency.ValidateKey(key); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, appErr := s.idempotency.Begin(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		if s.repo != nil && entry.ResourceType == resourceType && entry.ResourceID != "" {
+			order, replayErr := s.repo.GetAdminAPIOrder(ctx, entry.ResourceID, s.now())
+			if replayErr != nil {
+				return idempotency.Completion{}, replayErr
+			}
+			return buildCompletion(order)
+		}
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if s.repo == nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "风险暂停处置存储不可用。")
+	}
+	_, completion, appErr := s.repo.ResolveAPIOrderCatalogRiskHoldWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
 func (s *Service) SellerOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.GetAPIOrderForSeller(ctx, user.ID, orderID, s.now())
@@ -477,6 +526,22 @@ func (s *Service) SubmitDeliveryWithIdempotency(ctx context.Context, userID, rou
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "submit_delivery")
 }
 
+func (s *Service) ReportLatePaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.ActorUserID = userID
+	if appErr := validateActionInput(input, "report_late_payment"); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "report_late_payment")
+}
+
+func (s *Service) ResolveLatePaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.ActorUserID = userID
+	if appErr := validateActionInput(input, "resolve_late_payment"); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "resolve_late_payment")
+}
+
 func (s *Service) SubmitDeliveryForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input = withBusinessActor(input, actor)
 	var appErr *domain.AppError
@@ -603,7 +668,7 @@ func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action st
 		return s.OrderForActor(ctx, actor, orderID, role)
 	}
 	switch action {
-	case "create", "submit_payment", "cancel", "confirm_complete":
+	case "create", "submit_payment", "cancel", "confirm_complete", "report_late_payment":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "open_dispute":
 		order, appErr := s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
@@ -614,7 +679,7 @@ func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action st
 			return Order{}, appErr
 		}
 		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
-	case "confirm_payment", "report_payment_issue", "submit_delivery":
+	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	default:
 		return Order{}, notFound()
@@ -1033,6 +1098,13 @@ func validateActionInput(input ActionInput, action string) *domain.AppError {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment issue reason invalid", "请选择有效的付款问题。", "paymentIssueReason", "invalid", "请选择未到账、金额不符或备注不符。")
 		}
 		return validateNonSecretText("paymentIssueNote", input.PaymentIssueNote)
+	case "report_late_payment":
+		return validateNonSecretText("note", input.LatePaymentNote)
+	case "resolve_late_payment":
+		if input.LatePaymentStatus != LatePaymentStatusNotReceived && input.LatePaymentStatus != LatePaymentStatusReceivedRefundPending {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Late payment resolution invalid", "请选择未到账或已到账待退款。", "status", "invalid", "请选择有效的处理结果。")
+		}
+		return validateNonSecretText("note", input.LatePaymentNote)
 	case "submit_delivery":
 		if _, err := normalizeDeliveryCredentialInput(input.DeliveryCredential); err != nil {
 			return err
@@ -1056,7 +1128,7 @@ func validateActionInput(input ActionInput, action string) *domain.AppError {
 		if !IsDisputeIssueCode(strings.TrimSpace(input.IssueCode)) {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Issue invalid", "请选择有效的问题类型。", "issueCode", "invalid", "请选择有效的问题类型。")
 		}
-		if !IsDisputeResolution(strings.TrimSpace(input.RequestedResolution)) {
+		if !IsDisputeResolution(strings.TrimSpace(input.RequestedResolution)) || input.RequestedResolution == DisputeResolutionContinueFulfillment {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Resolution invalid", "请选择有效的处理诉求。", "requestedResolution", "invalid", "请选择有效的处理诉求。")
 		}
 		if appErr := validateRequestedDisputeAmount(input.RequestedResolution, input.RequestedAmountCNY, ""); appErr != nil {
@@ -1304,9 +1376,9 @@ func validateDeliverySecretField(field, value string) *domain.AppError {
 
 func canActorAccess(order Order, actorUserID, action string) bool {
 	switch action {
-	case "submit_payment", "cancel", "confirm_complete":
+	case "submit_payment", "cancel", "confirm_complete", "report_late_payment":
 		return order.BuyerUserID == actorUserID
-	case "confirm_payment", "report_payment_issue", "submit_delivery":
+	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
 	case "open_dispute":
 		return order.BuyerUserID == actorUserID || order.SellerUserID == actorUserID
@@ -1334,6 +1406,10 @@ func canTransition(order Order, action string, now time.Time) bool {
 		return order.Status == StatusDeliverySubmitted
 	case "open_dispute":
 		return WithAfterSalesProjection(order, now).CanOpenDispute
+	case "report_late_payment":
+		return WithAfterSalesProjection(order, now).CanReportLatePayment
+	case "resolve_late_payment":
+		return order.Status == StatusCancelled && order.CancelReason == "payment_timeout" && order.LatePaymentStatus == LatePaymentStatusReported
 	default:
 		return false
 	}
@@ -1345,6 +1421,8 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusPaymentSubmitted
 		order.PaymentSummary = strings.TrimSpace(input.PaymentSummary)
 		order.PaymentSubmittedAt = &now
+		merchantConfirmDueAt := now.Add(MerchantConfirmWindow)
+		order.MerchantConfirmDueAt = &merchantConfirmDueAt
 		order.PaymentIssueReason = ""
 		order.PaymentIssueNote = ""
 		order.PaymentIssueReportedAt = nil
@@ -1360,6 +1438,8 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 	case "confirm_payment":
 		order.Status = StatusPaidConfirmed
 		order.PaidConfirmedAt = &now
+		deliveryDueAt := now.Add(DeliveryWindow(order))
+		order.DeliveryDueAt = &deliveryDueAt
 		order.PackageStockReserved = false
 	case "submit_delivery":
 		order.Status = StatusDeliverySubmitted
@@ -1373,6 +1453,14 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.CompletedAt = &now
 	case "open_dispute":
 		order.DisputeStatus = DisputeStatusNegotiating
+	case "report_late_payment":
+		order.LatePaymentStatus = LatePaymentStatusReported
+		order.LatePaymentReportedAt = &now
+		order.LatePaymentNote = strings.TrimSpace(input.LatePaymentNote)
+	case "resolve_late_payment":
+		order.LatePaymentStatus = input.LatePaymentStatus
+		order.LatePaymentResolvedAt = &now
+		order.LatePaymentNote = strings.TrimSpace(input.LatePaymentNote)
 	}
 	order.UpdatedAt = now
 	order.Version++
@@ -1395,6 +1483,10 @@ func eventTypeForAction(action string) string {
 		return EventCompleted
 	case "open_dispute":
 		return EventDisputeOpened
+	case "report_late_payment":
+		return EventLatePaymentReported
+	case "resolve_late_payment":
+		return EventLatePaymentResolved
 	default:
 		return "api_order.updated"
 	}
@@ -1410,6 +1502,8 @@ func noteForAction(input ActionInput, action string) string {
 		return PaymentIssueLabel(input.PaymentIssueReason) + paymentIssueNoteSuffix(input.PaymentIssueNote)
 	case "cancel", "open_dispute":
 		return input.Reason
+	case "report_late_payment", "resolve_late_payment":
+		return input.LatePaymentNote
 	default:
 		return ""
 	}

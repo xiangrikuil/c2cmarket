@@ -54,7 +54,7 @@ In real backend mode, global search state belongs to the backend `GET /api/v1/se
 
 In real backend mode, auth state belongs to backend cookies plus `GET /api/v1/auth/session`. The frontend may cache only the returned CSRF token in `backendClient.ts` for subsequent mutations. It must not store OAuth provider access tokens, refresh tokens, callback codes, passwords, cookies, or linux.do raw provider payloads in Pinia, sessionStorage, localStorage, or route query state.
 
-In real backend mode, product catalog state belongs to `GET /api/v1/product-categories`, `GET /api/v1/product-plans`, and admin `/api/v1/admin/product-plans`. Admin create/update/activate/deactivate mutations must invalidate admin plan queries and user-facing active catalog caches. If a backend adapter keeps a small in-memory product-plan cache for publish forms, expose a cache-clear helper and call it from the admin product catalog mutation success path.
+In real backend mode, product catalog state belongs to `GET /api/v1/product-categories`, `GET /api/v1/product-plans`, and admin catalog reads. Admin create/update and dedicated deprecate/block/reactivate/unblock mutations must invalidate admin queries and user-facing active catalog caches. If a backend adapter keeps a small in-memory product-plan cache for publish forms, expose a cache-clear helper and call it from the admin product catalog mutation success path.
 
 ## Scenario: Account Recovery Gate After OAuth Registration
 

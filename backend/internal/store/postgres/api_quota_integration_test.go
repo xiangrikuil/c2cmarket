@@ -46,7 +46,7 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
 	store := &Store{pool: pool}
 	manager := apiquota.NewManager(store, func() time.Time { return now })
 	user := auth.User{ID: sellerID}
@@ -237,7 +237,7 @@ func TestOwnerAPIServiceSalesProjectionTransitionsFromSellingToExpired(t *testin
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
 	t.Cleanup(func() {
 		cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
 	})
@@ -368,14 +368,14 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 		t.Fatalf("refusing to run inventory integration test against non-dedicated database %q", databaseName)
 	}
 
-	slotStartsAt := time.Date(2026, 7, 25, 1, 0, 0, 0, time.UTC)
+	slotStartsAt := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	currentTime := slotStartsAt.Add(-2 * time.Hour)
 	sellerID := uuid.NewString()
 	contactID := uuid.NewString()
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
 	t.Cleanup(func() {
 		cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
 	})
@@ -409,7 +409,7 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 			Copies:             2,
 			DeliveryMode:       apiquota.DeliveryModeManual,
 			DeliveryETAMinutes: 1,
-			SlotKey:            "2026-07-25@09:00",
+			SlotKey:            "2026-07-25@20:00",
 			ExpiresAt:          slotStartsAt.Add(90 * time.Minute),
 			SourceConfirmedAt:  currentTime,
 		},
@@ -517,7 +517,7 @@ func TestAPIQuotaPostgresPublicRoundsStayOfferSpecific(t *testing.T) {
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
 	store := &Store{pool: pool}
 	manager := apiquota.NewManager(store, func() time.Time { return now })
 	user := auth.User{ID: sellerID}
@@ -608,7 +608,7 @@ func TestAPIQuotaPostgresTimeoutAndRoundRetirementReturnAllowance(t *testing.T) 
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
 	store := &Store{pool: pool}
 	manager := apiquota.NewManager(store, func() time.Time { return currentTime })
 	user := auth.User{ID: sellerID}
@@ -784,7 +784,7 @@ func TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversHistoricalPreimportedC
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
 	store := &Store{pool: pool, contactCodec: codec}
 	manager := apiquota.NewManager(store, func() time.Time { return currentTime })
 	user := auth.User{ID: sellerID}
@@ -929,7 +929,7 @@ func TestAPIQuotaPostgresRush1500BuyersFor1000Copies(t *testing.T) {
 	serviceID := uuid.NewString()
 	firstBuyerID := uuid.NewString()
 	firstBuyerContactID := uuid.NewString()
-	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, firstBuyerID, firstBuyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, firstBuyerID, firstBuyerContactID, serviceID, now)
 
 	buyerIDs := make([]uuid.UUID, buyerCount)
 	buyerContactIDs := make([]string, buyerCount)
@@ -1155,6 +1155,14 @@ func seedOrderableQuotaServiceForTest(t *testing.T, ctx context.Context, pool *p
 	}
 }
 
+func seedLimitedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sellerID, contactID, buyerID, buyerContactID, serviceID string, now time.Time) {
+	t.Helper()
+	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	if _, err := pool.Exec(ctx, `UPDATE api_services SET available_usd_allowance = 0 WHERE id = $1`, serviceID); err != nil {
+		t.Fatalf("close flexible quota sales: %v", err)
+	}
+}
+
 func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sellerID, contactID, buyerID, buyerContactID, serviceID string, now time.Time) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
@@ -1209,6 +1217,18 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		VALUES ($1, 'buyer_dedicated_sub_key', '买家专属子 Key')
 	`, serviceID); err != nil {
 		t.Fatalf("seed access mode: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO api_service_models (
+			id, api_service_id, distribution_system, model_catalog_id,
+			model_key_snapshot, provider_snapshot, capabilities_snapshot,
+			merchant_multiplier, enabled, created_at, updated_at
+		) VALUES (
+			$1, $2, 'sub2api', '00000000-0000-0000-0000-000000000a01',
+			'gpt-4.1', 'OpenAI', ARRAY['text']::text[], 1, true, $3, $3
+		)
+	`, uuid.NewString(), serviceID, now); err != nil {
+		t.Fatalf("seed active API service model: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO api_service_payment_options (

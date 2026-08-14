@@ -124,19 +124,19 @@ func TestAPIModelCatalogSyncCommitsAndReplaysWithResourceIdentity(t *testing.T) 
 		t.Fatalf("apply catalog sync: completion=%+v error=%v", completion, appErr)
 	}
 
-	var active bool
+	var status string
 	var modelCount, priceVersionCount int
 	if err := store.pool.QueryRow(ctx, `
-		SELECT active,
+		SELECT status,
 		       (SELECT count(*)::int FROM api_model_catalog WHERE model_key = $1),
 		       (SELECT count(*)::int FROM api_model_price_versions WHERE model_catalog_id = api_model_catalog.id)
 		FROM api_model_catalog
 		WHERE id = $2
-	`, modelKey, completion.ResourceID).Scan(&active, &modelCount, &priceVersionCount); err != nil {
+	`, modelKey, completion.ResourceID).Scan(&status, &modelCount, &priceVersionCount); err != nil {
 		t.Fatalf("read committed catalog sync rows: %v", err)
 	}
-	if active || modelCount != 1 || priceVersionCount != 1 {
-		t.Fatalf("unexpected committed catalog state active=%t models=%d prices=%d", active, modelCount, priceVersionCount)
+	if status != catalog.StatusDeprecated || modelCount != 1 || priceVersionCount != 1 {
+		t.Fatalf("unexpected committed catalog state status=%s models=%d prices=%d", status, modelCount, priceVersionCount)
 	}
 
 	var state, resourceType, resourceID string
@@ -168,13 +168,34 @@ func TestAPIModelCatalogSyncCommitsAndReplaysWithResourceIdentity(t *testing.T) 
 		t.Fatalf("catalog sync replay duplicated rows models=%d prices=%d", modelCount, priceVersionCount)
 	}
 
-	activated, appErr := store.AdminSetAPIModelActive(ctx, catalog.APIModelMutationInput{ID: completion.ResourceID}, true)
-	if appErr != nil || !activated.Active || activated.ID != completion.ResourceID || activated.ModelKey != modelKey {
-		t.Fatalf("activate synced API model: model=%+v error=%v", activated, appErr)
+	current, appErr := service.AdminAPIModel(ctx, admin, completion.ResourceID)
+	if appErr != nil {
+		t.Fatalf("read synced API model: %v", appErr)
 	}
-	deactivated, appErr := store.AdminSetAPIModelActive(ctx, catalog.APIModelMutationInput{ID: completion.ResourceID}, false)
-	if appErr != nil || deactivated.Active || deactivated.ID != completion.ResourceID || deactivated.ModelKey != modelKey {
-		t.Fatalf("deactivate synced API model: model=%+v error=%v", deactivated, appErr)
+	lifecycleBuilder := func(result catalog.LifecycleMutationResult) (idempotency.Completion, *domain.AppError) {
+		body, err := json.Marshal(result.Model)
+		if err != nil || result.Model == nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "encode lifecycle result")
+		}
+		return idempotency.Completion{Status: http.StatusOK, ContentType: "application/json", Body: body, ResourceType: result.ResourceType, ResourceID: result.ResourceID()}, nil
+	}
+	reactivatedCompletion, appErr := service.ApplyCatalogLifecycleWithIdempotency(ctx, admin, "catalog-model-reactivate", "catalog-model-reactivate-"+suffix, "reactivate-"+suffix, catalog.LifecycleActionInput{
+		ResourceType: catalog.ResourceAPIModel, ResourceID: current.ID, Action: catalog.LifecycleActionReactivate,
+		Reason: "integration test reactivate", ExpectedVersion: current.Version, RequestID: "catalog-model-reactivate-" + suffix,
+	}, lifecycleBuilder)
+	if appErr != nil || reactivatedCompletion.ResourceID != current.ID {
+		t.Fatalf("reactivate synced API model: completion=%+v error=%v", reactivatedCompletion, appErr)
+	}
+	reactivated, appErr := service.AdminAPIModel(ctx, admin, current.ID)
+	if appErr != nil || !reactivated.Active {
+		t.Fatalf("read reactivated synced API model: model=%+v error=%v", reactivated, appErr)
+	}
+	deprecatedCompletion, appErr := service.ApplyCatalogLifecycleWithIdempotency(ctx, admin, "catalog-model-deprecate", "catalog-model-deprecate-"+suffix, "deprecate-"+suffix, catalog.LifecycleActionInput{
+		ResourceType: catalog.ResourceAPIModel, ResourceID: current.ID, Action: catalog.LifecycleActionDeprecate,
+		Reason: "integration test deprecate", ExpectedVersion: reactivated.Version, RequestID: "catalog-model-deprecate-" + suffix,
+	}, lifecycleBuilder)
+	if appErr != nil || deprecatedCompletion.ResourceID != current.ID {
+		t.Fatalf("deprecate synced API model: completion=%+v error=%v", deprecatedCompletion, appErr)
 	}
 }
 

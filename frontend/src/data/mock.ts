@@ -422,8 +422,8 @@ export type ProductQuotaPeriod = 'monthly'
 
 export type CarpoolProductCatalogItem = {
   id: string
-  categoryCode: 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other'
-  providerCode: 'openai' | 'anthropic' | 'other'
+  categoryCode: string
+  providerCode: string
   displayName: string
   slug: string
   description: string | null
@@ -524,6 +524,7 @@ export type ApiQuotaOrderabilityCode =
   | 'round_ended'
   | 'sold_out'
   | 'credential_unavailable'
+  | 'fulfillment_confirmation_required'
   | 'batch_expired'
 export type ApiPurchaseIntentStatus =
   | 'open'
@@ -600,7 +601,7 @@ export type ModelCapability = 'chat' | 'vision' | 'image_generation' | 'image_ed
 
 export type ModelCatalogItem = {
   id: string
-  provider: 'openai' | 'anthropic' | 'other'
+  provider: string
   name: string
   capabilities: ModelCapability[]
   officialInputPricePerMillion: number | null
@@ -668,6 +669,7 @@ export type ApiQuotaRound = {
   id: string
   batchId: string
   systemSlotKey?: string
+  fulfillmentConfirmedAt?: string
   name: string
   startsAt: string
   endsAt: string
@@ -890,7 +892,7 @@ export type PublicReviewRecord = {
   username: string
   date: string
   serviceType: string
-  rating?: number
+  rating: number
   tags: string[]
   note: string
   verified: boolean
@@ -1026,14 +1028,9 @@ export const categoryRows = [
 ]
 
 export const carpoolProductCatalog: CarpoolProductCatalogItem[] = [
-  { id: 'chatgpt-plus', categoryCode: 'gpt', providerCode: 'openai', displayName: 'ChatGPT Plus', slug: 'chatgpt-plus', description: '个人订阅费用分摊，高风险需确认', publishPolicy: 'allowed', accessMode: 'personal_account_cost_share', providerPolicyStatus: 'known_restricted', riskLevel: 'high', riskAckRequired: true, policyVersion: 1, policyNote: 'C2CMarket 当前开放该品类，不代表服务提供商认可。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', riskNoticeCode: 'openai_subscription_carpool', active: true, sortOrder: 10, allowCustomVariant: false, createdAt: '2026-06-21', updatedAt: '2026-06-21' },
-  { id: 'chatgpt-pro-5x-web', categoryCode: 'gpt', providerCode: 'openai', displayName: 'ChatGPT Pro 5x Web', slug: 'chatgpt-pro-5x-web', description: '个人订阅费用分摊，高风险需确认', publishPolicy: 'allowed', accessMode: 'personal_account_cost_share', providerPolicyStatus: 'known_restricted', riskLevel: 'high', riskAckRequired: true, policyVersion: 1, policyNote: 'C2CMarket 当前开放该品类，不代表服务提供商认可。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', riskNoticeCode: 'openai_subscription_carpool', active: true, sortOrder: 20, allowCustomVariant: false, createdAt: '2026-06-21', updatedAt: '2026-06-21' },
-  { id: 'chatgpt-pro-20x-web', categoryCode: 'gpt', providerCode: 'openai', displayName: 'ChatGPT Pro 20x Web', slug: 'chatgpt-pro-20x-web', description: '个人订阅费用分摊，高风险需确认', publishPolicy: 'allowed', accessMode: 'personal_account_cost_share', providerPolicyStatus: 'known_restricted', riskLevel: 'high', riskAckRequired: true, policyVersion: 1, policyNote: 'C2CMarket 当前开放该品类，不代表服务提供商认可。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', riskNoticeCode: 'openai_subscription_carpool', active: true, sortOrder: 30, allowCustomVariant: false, createdAt: '2026-06-21', updatedAt: '2026-06-21' },
-  { id: 'chatgpt-business', categoryCode: 'gpt', providerCode: 'openai', displayName: 'ChatGPT Business', slug: 'chatgpt-business', description: 'OpenAI Business workspace 成员邀请，需确认风险', publishPolicy: 'allowed', accessMode: 'provider_member_invitation', providerPolicyStatus: 'possibly_restricted', riskLevel: 'elevated', riskAckRequired: true, policyVersion: 1, policyNote: 'Business 按现有独立配置执行。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', riskNoticeCode: 'openai_subscription_carpool', active: true, sortOrder: 40, allowCustomVariant: false, createdAt: '2026-06-18', updatedAt: '2026-06-21' },
-  { id: 'claude-pro', categoryCode: 'claude', providerCode: 'anthropic', displayName: 'Claude Pro', slug: 'claude-pro', description: '社区 Claude Pro 拼车品类', publishPolicy: 'allowed', accessMode: 'owner_managed_access', providerPolicyStatus: 'unknown', riskLevel: 'elevated', riskAckRequired: false, policyVersion: 1, policyNote: '需说明成员、席位或站外访问安排。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', active: true, sortOrder: 50, allowCustomVariant: false, createdAt: '2026-06-18', updatedAt: '2026-06-18' },
-  { id: 'claude-pro-5x', categoryCode: 'claude', providerCode: 'anthropic', displayName: 'Claude Pro 5x', slug: 'claude-pro-5x', description: '社区 Claude Pro 5x 拼车品类', publishPolicy: 'allowed', accessMode: 'owner_managed_access', providerPolicyStatus: 'unknown', riskLevel: 'elevated', riskAckRequired: false, policyVersion: 1, policyNote: '需说明成员、席位或站外访问安排。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', active: true, sortOrder: 60, allowCustomVariant: false, createdAt: '2026-06-18', updatedAt: '2026-06-18' },
-  { id: 'claude-pro-20x', categoryCode: 'claude', providerCode: 'anthropic', displayName: 'Claude Pro 20x', slug: 'claude-pro-20x', description: '社区 Claude Pro 20x 拼车品类', publishPolicy: 'allowed', accessMode: 'owner_managed_access', providerPolicyStatus: 'unknown', riskLevel: 'elevated', riskAckRequired: false, policyVersion: 1, policyNote: '需说明成员、席位或站外访问安排。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', active: true, sortOrder: 70, allowCustomVariant: false, createdAt: '2026-06-18', updatedAt: '2026-06-18' },
-  { id: 'other-custom', categoryCode: 'other', providerCode: 'other', displayName: '其他 / 自定义', slug: 'other-custom', description: '提交后由管理员映射或新增目录项', publishPolicy: 'allowed', accessMode: 'other_off_platform', providerPolicyStatus: 'unknown', riskLevel: 'normal', riskAckRequired: false, policyVersion: 1, policyNote: '自定义产品需要管理员映射或新增目录项。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', active: true, sortOrder: 999, allowCustomVariant: true, createdAt: '2026-06-18', updatedAt: '2026-06-18' },
+  { id: '00000000-0000-0000-0000-000000000303', categoryCode: 'gpt', providerCode: 'openai', displayName: 'ChatGPT Pro 20x Web', slug: 'chatgpt-pro-20x-web', description: '个人订阅费用分摊，高风险需确认。', publishPolicy: 'allowed', accessMode: 'personal_account_cost_share', providerPolicyStatus: 'known_restricted', riskLevel: 'high', riskAckRequired: true, policyVersion: 1, policyNote: 'C2CMarket 当前开放该品类，不代表服务提供商认可。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', riskNoticeCode: 'openai_subscription_carpool', active: true, sortOrder: 30, allowCustomVariant: false, createdAt: '2026-08-14', updatedAt: '2026-08-14' },
+  { id: '00000000-0000-0000-0000-000000000401', categoryCode: 'claude', providerCode: 'anthropic', displayName: 'Claude Pro', slug: 'claude-pro', description: '社区 Claude Pro 拼车品类。', publishPolicy: 'allowed', accessMode: 'owner_managed_access', providerPolicyStatus: 'unknown', riskLevel: 'elevated', riskAckRequired: false, policyVersion: 1, policyNote: '需说明成员、席位或站外访问安排。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', active: true, sortOrder: 50, allowCustomVariant: false, createdAt: '2026-08-14', updatedAt: '2026-08-14' },
+  { id: '00000000-0000-0000-0000-000000000601', categoryCode: 'grok', providerCode: 'xai', displayName: 'Grok Premium', slug: 'grok-premium', description: '社区 Grok 订阅拼车品类', publishPolicy: 'allowed', accessMode: 'owner_managed_access', providerPolicyStatus: 'unknown', riskLevel: 'elevated', riskAckRequired: false, policyVersion: 1, policyNote: '需说明成员、席位或站外访问安排。', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', active: true, sortOrder: 60, allowCustomVariant: false, createdAt: '2026-08-14', updatedAt: '2026-08-14' },
 ]
 
 export const carpoolRegions: RegionOption[] = [
@@ -1424,7 +1421,7 @@ export const carpoolApplications: CarpoolApplication[] = [
     cancellationReasonText: null,
     responsibility: null,
     disputeReason: null,
-    ownerReview: { rating: 5, tags: ['付款及时', '确认及时'], note: '对方已经提交，双盲期内不应向买家显示。', createdAt: '2026-07-24 09:15' },
+    ownerReview: { rating: 5, tags: ['付款及时', '确认及时'], note: '付款和确认都很及时，沟通顺畅。', createdAt: '2026-07-24 09:15' },
     createdAt: '2026-07-23 17:55',
     updatedAt: '2026-07-24 09:15',
   },
@@ -2853,10 +2850,10 @@ export const publicCompletionRecords: PublicCompletionRecord[] = [
 ]
 
 export const publicReviewRecords: PublicReviewRecord[] = [
-  { id: 'review-orbit-1', username: 'orbit', date: '2026-06-18', serviceType: 'GPT / Claude API 服务', tags: ['响应及时', '说明清楚', '核对顺畅'], note: '站外确认节奏清楚，用量核对说明充分。', verified: true },
-  { id: 'review-orbit-2', username: 'orbit', date: '2026-06-12', serviceType: 'Claude Sonnet API 服务', tags: ['倍率一致', '售后正常'], note: '倍率和页面说明一致。', verified: true },
-  { id: 'review-qingning-1', username: 'qingning', date: '2026-06-19', serviceType: '轻量模型开发额度', tags: ['响应及时', '倍率一致'], note: '记录较少，但本单信息清楚。', verified: true },
-  { id: 'review-beifeng-1', username: 'beifeng-api', date: '2026-06-15', serviceType: '多模型备用池', tags: ['响应较慢', '用量不透明'], note: '已完成交易，用量展示需要提前说明。', verified: true },
+  { id: 'review-orbit-1', username: 'orbit', date: '2026-06-18', serviceType: 'GPT / Claude API 服务', rating: 5, tags: ['响应及时', '说明清楚', '核对顺畅'], note: '站外确认节奏清楚，用量核对说明充分。', verified: true },
+  { id: 'review-orbit-2', username: 'orbit', date: '2026-06-12', serviceType: 'Claude Sonnet API 服务', rating: 4, tags: ['倍率一致', '售后正常'], note: '倍率和页面说明一致。', verified: true },
+  { id: 'review-qingning-1', username: 'qingning', date: '2026-06-19', serviceType: '轻量模型开发额度', rating: 5, tags: ['响应及时', '倍率一致'], note: '记录较少，但本单信息清楚。', verified: true },
+  { id: 'review-beifeng-1', username: 'beifeng-api', date: '2026-06-15', serviceType: '多模型备用池', rating: 2, tags: ['响应较慢', '用量不透明'], note: '已完成交易，用量展示需要提前说明。', verified: true },
 ]
 
 export const publicDisputeRecords: PublicDisputeRecord[] = [

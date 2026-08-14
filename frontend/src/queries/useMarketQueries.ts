@@ -17,12 +17,16 @@ import {
   createApiQuotaOrder,
   createApiQuotaRushOffer,
   createApiQuotaRound,
+  confirmApiQuotaRoundFulfillment,
   createContactMethod,
   createContactReport,
   createPublicUserReport,
   confirmApiOrderComplete,
   confirmApiOrderPayment,
   reportApiOrderPaymentIssue,
+  reportLateApiOrderPayment,
+  resolveAdminApiOrderCatalogRiskHold,
+  resolveLateApiOrderPayment,
   createApiOrderFromIntent,
   confirmEmailVerification,
   deleteContactMethod,
@@ -585,6 +589,16 @@ export function useCreateApiQuotaRoundMutation() {
   })
 }
 
+export function useConfirmApiQuotaRoundFulfillmentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ roundId, version }: { roundId: string, version: number }) => confirmApiQuotaRoundFulfillment(roundId, version),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+    },
+  })
+}
+
 export function useApiQuotaBatchActionMutation() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -996,6 +1010,28 @@ export function useReportApiOrderPaymentIssueMutation() {
   })
 }
 
+export function useReportLateApiOrderPaymentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, note, version }: { id: string, note: string, version: number }) => reportLateApiOrderPayment(id, note, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useResolveLateApiOrderPaymentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status, note, version }: { id: string, status: 'not_received' | 'received_refund_pending', note: string, version: number }) => resolveLateApiOrderPayment(id, status, note, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'merchant', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
 export function useSubmitApiOrderDeliveryCredentialMutation() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -1296,6 +1332,23 @@ export function useAdminApiOrder(id: Ref<string> | string) {
     queryFn: () => getAdminApiOrderById(valueOf(id)),
     enabled: computed(() => Boolean(valueOf(id))),
     refetchOnMount: 'always',
+  })
+}
+
+export function useResolveAdminApiOrderCatalogRiskHoldMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action, resolutionNote, version }: {
+      id: string
+      action: 'restore' | 'refund-pending' | 'open-dispute'
+      resolutionNote: string
+      version: number
+    }) => resolveAdminApiOrderCatalogRiskHold(id, action, resolutionNote, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['admin-api-orders', data.id], data)
+      queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
   })
 }
 

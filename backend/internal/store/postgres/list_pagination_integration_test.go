@@ -454,7 +454,8 @@ func seedPublicServicePaginationFilters(t *testing.T, store *Store, ownerID stri
 		SELECT model.id::text, model.model_key, provider.display_name
 		FROM api_model_catalog model
 		JOIN api_model_providers provider ON provider.id = model.provider_id
-		WHERE model.active = true
+		WHERE model.status = 'active'
+		  AND provider.status = 'active'
 		ORDER BY model.sort_order, model.id
 		LIMIT 1
 	`).Scan(&modelCatalogID, &modelKey, &provider); err != nil {
