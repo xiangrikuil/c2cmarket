@@ -771,6 +771,21 @@ export type PasswordLoginRequest = {
     turnstileToken: string;
 };
 
+export type PasswordResetStartRequest = {
+    email: string;
+    turnstileToken: string;
+};
+
+export type PasswordResetStartResponse = {
+    accepted: true;
+};
+
+export type PasswordResetConfirmRequest = {
+    email: string;
+    code: string;
+    newPassword: string;
+};
+
 export type SetPasswordRequest = {
     /**
      * Required only when the account already has a backup password.
@@ -5254,6 +5269,68 @@ export type SetBackupPasswordResponses = {
 };
 
 export type SetBackupPasswordResponse = SetBackupPasswordResponses[keyof SetBackupPasswordResponses];
+
+export type StartPasswordResetData = {
+    body: PasswordResetStartRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-reset/start';
+};
+
+export type StartPasswordResetErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type StartPasswordResetError = StartPasswordResetErrors[keyof StartPasswordResetErrors];
+
+export type StartPasswordResetResponses = {
+    /**
+     * Request accepted regardless of account existence or eligibility.
+     */
+    202: PasswordResetStartResponse;
+};
+
+export type StartPasswordResetResponse = StartPasswordResetResponses[keyof StartPasswordResetResponses];
+
+export type ConfirmPasswordResetData = {
+    body: PasswordResetConfirmRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-reset/confirm';
+};
+
+export type ConfirmPasswordResetErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ConfirmPasswordResetError = ConfirmPasswordResetErrors[keyof ConfirmPasswordResetErrors];
+
+export type ConfirmPasswordResetResponses = {
+    /**
+     * Password replaced and eligible sessions revoked. No session is created.
+     */
+    204: void;
+};
+
+export type ConfirmPasswordResetResponse = ConfirmPasswordResetResponses[keyof ConfirmPasswordResetResponses];
 
 export type GetStudentEmailRegistrationConfigData = {
     body?: never;

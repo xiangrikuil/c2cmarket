@@ -40,6 +40,8 @@ func (s *Server) routes() {
 			r.Post("/dev/contact-sessions", s.limitHandler("dev_contact_session", 10, s.handleCreateDevContactSession))
 		}
 		r.Post("/auth/password/login", s.limitPolicy(passwordLoginRateLimit, s.handlePasswordLogin))
+		r.Post("/auth/password-reset/start", s.limitPolicy(passwordResetStartRateLimit, s.handleStartPasswordReset))
+		r.Post("/auth/password-reset/confirm", s.limitPolicy(passwordResetConfirmRateLimit, s.handleConfirmPasswordReset))
 		r.Post("/auth/password/reauthenticate", s.limitHandler("password_reauthenticate", 20, s.handlePasswordReauthenticate))
 		r.Post("/auth/password", s.limitHandler("password_set", 20, s.handleSetPassword))
 		r.Get("/auth/email-registration/config", s.handleEmailRegistrationConfig)

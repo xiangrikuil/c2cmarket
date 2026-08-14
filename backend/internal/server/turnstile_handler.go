@@ -12,6 +12,7 @@ import (
 const (
 	turnstileActionPasswordLogin = "password_login"
 	turnstileActionStudentSignup = "student_signup"
+	turnstileActionPasswordReset = "password_reset"
 )
 
 func (s *Server) verifyTurnstile(r *http.Request, token, action string) *domain.AppError {

@@ -192,6 +192,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		RealtimeListener: realtimeListener,
 		SlowQueryAfter:   cfg.DatabaseSlowQueryAfter,
 	})
+	service.ConfigurePasswordResetDeliveryRecorder(runtimeMetrics)
 	handler := server.NewServer(service, server.ServerOptions{
 		EnableDevAuth:      cfg.EnableDevAuth,
 		ReadinessChecker:   store,

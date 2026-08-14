@@ -50,32 +50,34 @@ const (
 )
 
 type Service struct {
-	mu                          sync.Mutex
-	now                         func() time.Time
-	repo                        Repository
-	idempotency                 *idempotency.Service
-	registrationEmailSender     RegistrationEmailSender
-	emailVerificationPepper     []byte
-	users                       map[string]User
-	adminUsers                  map[string]AdminUser
-	adminAuditEntries           map[string][]AdminAccountAuditEntry
-	adminAuditLogs              []AdminAuditLog
-	usersByUsername             map[string]string
-	usersByVerifiedEmail        map[string]string
-	oauthUserIDs                map[string]string
-	adminBootstrapRuns          map[string]adminBootstrapRun
-	sessions                    map[string]Session
-	accountAppealSessions       map[string]AccountAppealSession
-	restrictedBusinessSessions  map[string]RestrictedBusinessSession
-	adminReauthenticationGrants map[string]AdminReauthenticationGrant
-	adminReauthenticationStates map[string]adminReauthenticationOAuthState
-	governanceOAuthStates       map[string]governanceOAuthState
-	emailRegistrationCodes      map[string]emailRegistrationChallenge
-	studentRegistrationSetting  StudentRegistrationConfig
-	studentInstitutionDomains   map[string]StudentInstitutionDomain
-	studentClaimsByEmail        map[string]StudentEmailClaim
-	studentClaimsByUserID       map[string]StudentEmailClaim
-	passwordCredentialsByUserID map[string]PasswordCredential
+	mu                            sync.Mutex
+	now                           func() time.Time
+	repo                          Repository
+	idempotency                   *idempotency.Service
+	registrationEmailSender       RegistrationEmailSender
+	passwordResetDeliveryRecorder PasswordResetDeliveryRecorder
+	emailVerificationPepper       []byte
+	users                         map[string]User
+	adminUsers                    map[string]AdminUser
+	adminAuditEntries             map[string][]AdminAccountAuditEntry
+	adminAuditLogs                []AdminAuditLog
+	usersByUsername               map[string]string
+	usersByVerifiedEmail          map[string]string
+	oauthUserIDs                  map[string]string
+	adminBootstrapRuns            map[string]adminBootstrapRun
+	sessions                      map[string]Session
+	accountAppealSessions         map[string]AccountAppealSession
+	restrictedBusinessSessions    map[string]RestrictedBusinessSession
+	adminReauthenticationGrants   map[string]AdminReauthenticationGrant
+	adminReauthenticationStates   map[string]adminReauthenticationOAuthState
+	governanceOAuthStates         map[string]governanceOAuthState
+	emailRegistrationCodes        map[string]emailRegistrationChallenge
+	passwordResetCodes            map[string]passwordResetChallenge
+	studentRegistrationSetting    StudentRegistrationConfig
+	studentInstitutionDomains     map[string]StudentInstitutionDomain
+	studentClaimsByEmail          map[string]StudentEmailClaim
+	studentClaimsByUserID         map[string]StudentEmailClaim
+	passwordCredentialsByUserID   map[string]PasswordCredential
 }
 
 type RegistrationEmailSender interface {
@@ -131,6 +133,7 @@ func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now fu
 		adminReauthenticationStates: make(map[string]adminReauthenticationOAuthState),
 		governanceOAuthStates:       make(map[string]governanceOAuthState),
 		emailRegistrationCodes:      make(map[string]emailRegistrationChallenge),
+		passwordResetCodes:          make(map[string]passwordResetChallenge),
 		studentRegistrationSetting:  StudentRegistrationConfig{Enabled: false, Version: 1, Institutions: []StudentInstitutionDomain{}},
 		studentInstitutionDomains:   make(map[string]StudentInstitutionDomain),
 		studentClaimsByEmail:        make(map[string]StudentEmailClaim),

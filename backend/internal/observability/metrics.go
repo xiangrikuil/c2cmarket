@@ -73,14 +73,15 @@ type Sources struct {
 }
 
 type Metrics struct {
-	registry             *prometheus.Registry
-	requestsTotal        *prometheus.CounterVec
-	requestDuration      *prometheus.HistogramVec
-	operationFailures    *prometheus.CounterVec
-	securityFailures     *prometheus.CounterVec
-	idempotencyConflicts prometheus.Counter
-	failureLogger        *log.Logger
-	failureLogMu         sync.Mutex
+	registry              *prometheus.Registry
+	requestsTotal         *prometheus.CounterVec
+	requestDuration       *prometheus.HistogramVec
+	operationFailures     *prometheus.CounterVec
+	securityFailures      *prometheus.CounterVec
+	passwordResetDelivery *prometheus.CounterVec
+	idempotencyConflicts  prometheus.Counter
+	failureLogger         *log.Logger
+	failureLogMu          sync.Mutex
 }
 
 type recorderContextKey struct{}
@@ -117,6 +118,12 @@ func New(sources Sources) *Metrics {
 		Name:      "security_failures_total",
 		Help:      "Selected authentication, request-integrity, authorization, and rate-limit failures using bounded labels.",
 	}, []string{"category", "result", "route"})
+	passwordResetDelivery := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "auth",
+		Name:      "password_reset_email_total",
+		Help:      "Password reset email delivery attempts by bounded outcome.",
+	}, []string{"outcome"})
 	idempotencyConflicts := prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: "idempotency",
@@ -132,6 +139,7 @@ func New(sources Sources) *Metrics {
 		requestDuration,
 		operationFailures,
 		securityFailures,
+		passwordResetDelivery,
 		idempotencyConflicts,
 		newRuntimeCollector(sources),
 	)
@@ -140,14 +148,25 @@ func New(sources Sources) *Metrics {
 		failureLogger = log.Default()
 	}
 	return &Metrics{
-		registry:             registry,
-		requestsTotal:        requestsTotal,
-		requestDuration:      requestDuration,
-		operationFailures:    operationFailures,
-		securityFailures:     securityFailures,
-		idempotencyConflicts: idempotencyConflicts,
-		failureLogger:        failureLogger,
+		registry:              registry,
+		requestsTotal:         requestsTotal,
+		requestDuration:       requestDuration,
+		operationFailures:     operationFailures,
+		securityFailures:      securityFailures,
+		passwordResetDelivery: passwordResetDelivery,
+		idempotencyConflicts:  idempotencyConflicts,
+		failureLogger:         failureLogger,
 	}
+}
+
+func (m *Metrics) RecordPasswordResetDelivery(outcome string) {
+	if m == nil || m.passwordResetDelivery == nil {
+		return
+	}
+	if outcome != "sent" && outcome != "failed" {
+		outcome = "failed"
+	}
+	m.passwordResetDelivery.WithLabelValues(outcome).Inc()
 }
 
 func (m *Metrics) Handler() http.Handler {
@@ -282,6 +301,8 @@ func securityFailureRouteKey(r *http.Request) string {
 		return "auth_password_management"
 	case "/api/v1/auth/email-registration/start", "/api/v1/auth/email-registration/confirm":
 		return "auth_student_registration"
+	case "/api/v1/auth/password-reset/start", "/api/v1/auth/password-reset/confirm":
+		return "auth_password_reset"
 	case "/api/v1/auth/oauth/start", "/api/v1/auth/oauth/callback":
 		return "auth_oauth"
 	}

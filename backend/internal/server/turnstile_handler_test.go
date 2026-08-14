@@ -37,6 +37,7 @@ func TestProtectedAuthRoutesRejectFailedTurnstileBeforeExistingBehavior(t *testi
 	}{
 		{name: "password login", path: "/api/v1/auth/password/login", body: `{"username":"missing","password":"password","turnstileToken":"bad-token"}`, action: turnstileActionPasswordLogin},
 		{name: "student signup", path: "/api/v1/auth/email-registration/start", body: `{"email":"student@example.edu","turnstileToken":"bad-token"}`, action: turnstileActionStudentSignup},
+		{name: "password reset", path: "/api/v1/auth/password-reset/start", body: `{"email":"student@example.edu","turnstileToken":"bad-token"}`, action: turnstileActionPasswordReset},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

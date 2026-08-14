@@ -376,6 +376,119 @@ Load current durable identity facts, project the fixed vocabulary, reject before
 
 The replacement session is authoritative before active user state is refetched, and navigation sees the new profile.
 
+## Scenario: Student-Claim Password Reset
+
+### 1. Scope / Trigger
+
+- Trigger: changing public password reset, student-email identity lookup, password credentials, verification challenges, session revocation, or the login/reset frontend request lifecycle.
+- Owners: `internal/module/auth`, `internal/store/postgres/auth_password_reset.go`, password-reset handlers and email delivery, migration `000098`, OpenAPI generated types, and `/password-reset` frontend state.
+- Goal: let an eligible student-claim owner replace a password without disclosing account existence, changing governance state, or creating a session.
+
+### 2. Signatures
+
+```http
+POST /api/v1/auth/password-reset/start
+{
+  "email": "student@example.edu",
+  "turnstileToken": "one-time-token"
+}
+-> 202 { "accepted": true }
+
+POST /api/v1/auth/password-reset/confirm
+{
+  "email": "student@example.edu",
+  "code": "123456",
+  "newPassword": "Strong-password-1!"
+}
+-> 204 No Content
+```
+
+```sql
+CREATE UNIQUE INDEX ux_email_verification_codes_active_password_reset
+ON email_verification_codes(user_id, email)
+WHERE purpose = 'password_reset' AND consumed_at IS NULL;
+```
+
+```go
+VerificationCodeHash(
+    pepper []byte,
+    purpose, subject, normalizedEmail, code string,
+) string
+```
+
+### 3. Contracts
+
+- Canonicalize and validate the email with the shared strict email contract before rate-limit targeting or repository lookup. Identity resolution uses only `student_email_claims.normalized_email`; mutable profile email, username, linux.do profile data, and administrator identity are not reset authorities.
+- A permanent student claim remains eligible after linux.do binding or institution disablement. Active, suspended, and banned users may reset; archived or security-locked users do not receive or confirm a usable challenge.
+- Start verifies Turnstile action `password_reset`, applies separate IP/actor/normalized-email limits, and always returns the same `202 {"accepted":true}` for syntactically valid email input. Eligibility and delivery outcome never change that public shape.
+- Codes are six digits, expire after 15 minutes, allow five failed attempts, and use an HMAC bound to `password_reset + userID + normalizedEmail + code`. Starting again consumes every active reset challenge for the email before conditionally creating the replacement.
+- Confirmation atomically rechecks claim ownership and account eligibility, upserts the Argon2id password credential, consumes the challenge, revokes all live normal and restricted-business sessions, increments only `users.version`, and writes one secret-free `user.password_reset_completed` domain event. It creates no cookie or session and does not change governance state.
+- The frontend carries only normalized safe `returnTo` values between `/login` and `/password-reset`. Each form has a synchronous pending-action guard plus a request generation; stale responses cannot mutate the current email, step, error, navigation, or Turnstile state.
+- A submitted Turnstile token belongs to that request generation. The completion path may clear/reset the widget only while the captured generation is still current; an abandoned request must not erase a fresh token obtained after an email or step change.
+- Backend field errors render only when they map to a field owned by the current form. Unknown field names must produce a visible panel error instead of being stored under an unused reactive key.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Malformed email, code, password, JSON, or unknown JSON field | Stable strict validation problem; no challenge or credential mutation |
+| Turnstile missing, invalid, reused, or wrong action | Explicit Turnstile error; no identity lookup side effect |
+| Unknown, pure-linux.do, admin-only, archived, or security-locked identity at start | Same public `202 {"accepted":true}`; no usable challenge or eligibility signal |
+| Wrong, expired, exhausted, consumed, superseded, wrong-purpose, or newly ineligible challenge | `422 VERIFICATION_CODE_INVALID` on `code` |
+| Institution domain disabled after the immutable claim exists | Reset remains eligible when account status and security lock allow it |
+| Successful confirmation | `204`, password replaced, challenge consumed, normal/restricted sessions revoked, one safe event, no new session |
+| Request becomes stale before completion | Ignore its response and cleanup; preserve current fields and fresh Turnstile token |
+| Backend returns an unowned field name | Show a generic panel error; never hide the failure |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a student later linked to linux.do resets through the immutable claimed email, all old login sessions are revoked, and the next login uses the existing audience rules.
+- Good: a banned student resets the password but remains banned and receives only restricted-business access after a later successful login.
+- Base: an unknown syntactically valid email receives the same accepted response and no email/challenge.
+- Bad: resolve a reset subject through `users.email`, require the institution domain to remain enabled, or reveal that delivery was skipped.
+- Bad: clear the Turnstile widget in an unconditional `finally` after the user changed the email and completed a fresh challenge.
+
+### 6. Tests Required
+
+- Auth unit tests assert strict email normalization, password policy, HMAC purpose/user/email isolation, generic start responses, and five-attempt exhaustion.
+- PostgreSQL integration tests assert replacement challenge uniqueness, concurrent confirm succeeds once, active/suspended/banned and linked-student eligibility, pure OAuth/admin exclusion, disabled-domain recovery, archived/security-lock rechecks, and atomic credential/challenge/session/event/version mutation.
+- Handler/OpenAPI tests assert strict JSON, exact `202`/`204` responses, no confirmation cookie, stable field errors, route parity, and separate Turnstile/rate-limit actions.
+- Maintenance tests retain and delete reset rows through the common verification-code lifecycle without a purpose-specific leak.
+- Frontend tests assert safe `returnTo`, inline owned-field errors, visible unknown-field fallback, synchronous re-entry guards, request-generation isolation, stale-request Turnstile preservation, independent password visibility, and terminal completion without session initialization.
+- Browser acceptance covers `/login` and `/password-reset` on desktop and `390x844`, first-invalid focus, responsive institution directory, no horizontal overflow, and no console errors.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+try {
+  await startPasswordReset(input)
+} finally {
+  turnstileToken.value = ''
+  turnstileWidget.value?.reset()
+}
+```
+
+An older request can finish after the user changes the email and erase the fresh token for the new request generation.
+
+#### Correct
+
+```ts
+const generation = ++requestGeneration
+try {
+  await startPasswordReset(input)
+} finally {
+  if (generation === requestGeneration) {
+    turnstileToken.value = ''
+    turnstileWidget.value?.reset()
+    pendingAction.value = null
+  }
+}
+```
+
+The repository must apply the same generation-independent safety on the server: lock the normalized reset subject, consume prior active challenges, and recheck identity eligibility inside the confirmation transaction.
+
 ## Scenario: Account-Governance Session Audience Isolation
 
 Date: 2026-08-13

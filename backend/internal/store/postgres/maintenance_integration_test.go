@@ -33,6 +33,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	sessionActive := uuid.NewString()
 	sessionRecentlyRevoked := uuid.NewString()
 	verificationExpired := uuid.NewString()
+	passwordResetExpired := uuid.NewString()
 	verificationActive := uuid.NewString()
 	verificationRecentlyConsumed := uuid.NewString()
 	contactSessionID := uuid.NewString()
@@ -54,7 +55,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM notifications WHERE id = ANY($1::uuid[])`, []string{oldReadNotificationID, oldUnreadNotificationID, recentNotificationID})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM domain_events WHERE id = ANY($1::uuid[])`, []string{oldReadEventID, oldUnreadEventID, oldReferencedEventID})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM idempotency_keys WHERE id = ANY($1::uuid[])`, idempotencyIDs)
-		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM email_verification_codes WHERE id = ANY($1::uuid[])`, []string{verificationExpired, verificationActive, verificationRecentlyConsumed})
+		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM email_verification_codes WHERE id = ANY($1::uuid[])`, []string{verificationExpired, passwordResetExpired, verificationActive, verificationRecentlyConsumed})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM auth_sessions WHERE id = ANY($1::uuid[])`, []string{sessionExpired, sessionActive, sessionRecentlyRevoked})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM moderation_audit_logs WHERE id = $1`, moderationAuditID)
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM admin_audit_logs WHERE id = $1`, adminAuditID)
@@ -67,6 +68,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	insertLifecycleSession(t, store, sessionRecentlyRevoked, buyer.ID, "revoked-"+uuid.NewString(), now.Add(-20*24*time.Hour), now.Add(-8*24*time.Hour), &recentlyRevokedAt)
 
 	insertLifecycleVerification(t, store, verificationExpired, seller.ID, "expired@example.com", now.Add(-72*time.Hour), now.Add(-48*time.Hour), nil)
+	insertLifecycleVerificationForPurpose(t, store, passwordResetExpired, seller.ID, "reset-expired@example.com", "password_reset", now.Add(-72*time.Hour), now.Add(-48*time.Hour), nil)
 	insertLifecycleVerification(t, store, verificationActive, buyer.ID, "active@example.com", now.Add(-time.Hour), now.Add(time.Hour), nil)
 	recentlyConsumedAt := now.Add(-time.Hour)
 	insertLifecycleVerification(t, store, verificationRecentlyConsumed, buyer.ID, "consumed@example.com", now.Add(-72*time.Hour), now.Add(-48*time.Hour), &recentlyConsumedAt)
@@ -138,7 +140,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	}
 	if !result.LockAcquired ||
 		result.SessionsDeleted != 1 ||
-		result.VerificationCodesDeleted != 1 ||
+		result.VerificationCodesDeleted != 2 ||
 		result.IdempotencyEntriesDeleted != 2 ||
 		result.ContactSessionsExpired != 1 ||
 		result.NotificationsDeleted != 2 ||
@@ -150,6 +152,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	assertLifecycleRowExists(t, store, "auth_sessions", sessionActive)
 	assertLifecycleRowExists(t, store, "auth_sessions", sessionRecentlyRevoked)
 	assertLifecycleRowMissing(t, store, "email_verification_codes", verificationExpired)
+	assertLifecycleRowMissing(t, store, "email_verification_codes", passwordResetExpired)
 	assertLifecycleRowExists(t, store, "email_verification_codes", verificationActive)
 	assertLifecycleRowExists(t, store, "email_verification_codes", verificationRecentlyConsumed)
 	assertLifecycleRowExists(t, store, "contact_access_logs", accessLogID)
@@ -983,13 +986,17 @@ func insertLifecycleSession(t *testing.T, store *Store, id, userID, token string
 }
 
 func insertLifecycleVerification(t *testing.T, store *Store, id, userID, email string, createdAt, expiresAt time.Time, consumedAt *time.Time) {
+	insertLifecycleVerificationForPurpose(t, store, id, userID, email, "bind_email", createdAt, expiresAt, consumedAt)
+}
+
+func insertLifecycleVerificationForPurpose(t *testing.T, store *Store, id, userID, email, purpose string, createdAt, expiresAt time.Time, consumedAt *time.Time) {
 	t.Helper()
 	if _, err := store.pool.Exec(context.Background(), `
 		INSERT INTO email_verification_codes (
 			id, user_id, email, purpose, code_hash, expires_at, consumed_at, created_at
 		)
-		VALUES ($1, $2, $3, 'bind_email', $4, $5, $6, $7)
-	`, id, userID, email, "hash-"+id, expiresAt, consumedAt, createdAt); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, id, userID, email, purpose, "hash-"+id, expiresAt, consumedAt, createdAt); err != nil {
 		t.Fatalf("insert lifecycle verification %s: %v", id, err)
 	}
 }

@@ -241,6 +241,13 @@ func (s *Service) ConfigureAPIOrderDeliveryVerifier(timeout time.Duration) {
 	s.apiOrder.SetDeliveryCredentialVerifier(apiorder.NewOpenAIDeliveryCredentialVerifier(timeout))
 }
 
+func (s *Service) ConfigurePasswordResetDeliveryRecorder(recorder authmodule.PasswordResetDeliveryRecorder) {
+	if s == nil || s.authService == nil {
+		return
+	}
+	s.authService.SetPasswordResetDeliveryRecorder(recorder)
+}
+
 func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin bool) (User, Session, *domain.AppError) {
 	user, session, appErr := s.authService.CreateDevSession(ctx, username, isAdmin)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
@@ -365,6 +372,14 @@ func (s *Service) ConfirmEmailRegistration(ctx context.Context, input EmailRegis
 	user, session, appErr := s.authService.ConfirmEmailRegistration(ctx, input)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
 	return user, session, appErr
+}
+
+func (s *Service) StartPasswordReset(ctx context.Context, input authmodule.PasswordResetStartInput) (authmodule.PasswordResetStartResult, *domain.AppError) {
+	return s.authService.StartPasswordReset(ctx, input)
+}
+
+func (s *Service) ConfirmPasswordReset(ctx context.Context, input authmodule.PasswordResetConfirmInput) *domain.AppError {
+	return s.authService.ConfirmPasswordReset(ctx, input)
 }
 
 func (s *Service) SetPassword(ctx context.Context, input SetPasswordInput) *domain.AppError {

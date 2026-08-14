@@ -13,6 +13,12 @@ var (
 	passwordLoginRateLimit = rateLimitPolicy{
 		Group: "password_login", IPLimit: 20, UserLimit: 10,
 	}
+	passwordResetStartRateLimit = rateLimitPolicy{
+		Group: "password_reset_start", IPLimit: 20, UserLimit: 5, TargetLimit: 3,
+	}
+	passwordResetConfirmRateLimit = rateLimitPolicy{
+		Group: "password_reset_confirm", IPLimit: 30, UserLimit: 10, TargetLimit: 10,
+	}
 	oauthStartRateLimit = rateLimitPolicy{
 		Group: "oauth_start", IPLimit: 30, UserLimit: 15,
 	}

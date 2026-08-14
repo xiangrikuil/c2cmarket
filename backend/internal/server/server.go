@@ -216,6 +216,8 @@ type Service interface {
 	UpdateStudentInstitutionDomainWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.StudentInstitutionDomainUpdateInput, build auth.StudentInstitutionDomainCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
+	StartPasswordReset(ctx context.Context, input auth.PasswordResetStartInput) (auth.PasswordResetStartResult, *domain.AppError)
+	ConfirmPasswordReset(ctx context.Context, input auth.PasswordResetConfirmInput) *domain.AppError
 	ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError
 	ReauthenticatePasswordForPurpose(ctx context.Context, sessionID, csrfToken, password, purpose string) *domain.AppError
 	StartAdminReauthenticationOAuth(ctx context.Context, sessionID string) (string, *domain.AppError)
