@@ -1702,3 +1702,26 @@ Added authoritative seller deadlines, late-payment recovery facts, pending-order
 ### Status
 
 [OK] **Completed**
+
+
+## Session 55: Login and student registration redesign
+
+**Date**: 2026-08-14
+**Task**: Login and student registration redesign
+**Package**: frontend
+**Branch**: `codex/login-student-registration-redesign`
+
+### Summary
+
+Redesigned login and student registration, added student-claim password reset across migration/backend/OpenAPI/frontend, completed full regression and responsive browser QA.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `afc96ff` | (see git log) |
+| `23565ed` | (see git log) |
+
+### Status
+
+[OK] **Completed**
