@@ -210,6 +210,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		Metrics:            runtimeMetrics,
 		MetricsBearerToken: cfg.MetricsBearerToken,
 		TurnstileVerifier:  turnstileVerifier,
+		SentryEnabled:      cfg.Sentry.Enabled,
 		OAuth: server.OAuthOptions{
 			ProviderMode: cfg.OAuthProviderMode,
 			ClientID:     cfg.OAuthClientID,

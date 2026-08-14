@@ -214,6 +214,7 @@ func RecordProblem(r *http.Request, err error) {
 	if r == nil || err == nil {
 		return
 	}
+	captureServerProblem(r, err)
 	recorder, _ := r.Context().Value(recorderContextKey{}).(*requestProblemRecorder)
 	if recorder == nil || recorder.metrics == nil {
 		return

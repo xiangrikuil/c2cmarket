@@ -17,6 +17,7 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	t.Setenv("MAINTENANCE_INTERVAL", "")
 	t.Setenv("MAINTENANCE_BATCH_SIZE", "")
 	t.Setenv("API_DELIVERY_CREDENTIAL_RETENTION", "")
+	clearSentryEnv(t)
 	clearAPIHealthEnv(t)
 	clearDatabaseOptionEnv(t)
 
@@ -58,6 +59,62 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	}
 	if strings.Join(cfg.TurnstileHostnames, ",") != "localhost,127.0.0.1" {
 		t.Fatalf("unexpected local Turnstile hostnames: %v", cfg.TurnstileHostnames)
+	}
+	if cfg.Sentry.Enabled || cfg.Sentry.Environment != EnvDevelopment || cfg.Sentry.TracesSampleRate != 0.1 {
+		t.Fatalf("unexpected Sentry defaults: %+v", cfg.Sentry)
+	}
+}
+
+func TestLoadParsesSentryConfig(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("SENTRY_ENABLED", "true")
+	t.Setenv("SENTRY_DSN", "https://public@example.ingest.sentry.io/123")
+	t.Setenv("SENTRY_ENVIRONMENT", "staging")
+	t.Setenv("SENTRY_RELEASE", "0123456789abcdef")
+	t.Setenv("SENTRY_TRACES_SAMPLE_RATE", "0.25")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load Sentry config: %v", err)
+	}
+	if !cfg.Sentry.Enabled || cfg.Sentry.DSN == "" || cfg.Sentry.Environment != "staging" ||
+		cfg.Sentry.Release != "0123456789abcdef" || cfg.Sentry.TracesSampleRate != 0.25 {
+		t.Fatalf("unexpected Sentry config: %+v", cfg.Sentry)
+	}
+}
+
+func TestLoadRejectsInvalidSentryConfig(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "missing DSN", key: "SENTRY_ENABLED", value: "true"},
+		{name: "invalid DSN", key: "SENTRY_DSN", value: "not-a-dsn"},
+		{name: "invalid sample rate", key: "SENTRY_TRACES_SAMPLE_RATE", value: "1.1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearSentryEnv(t)
+			t.Setenv("APP_ENV", EnvDevelopment)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SENTRY_") {
+				t.Fatalf("expected Sentry configuration error, got %v", err)
+			}
+		})
+	}
+}
+
+func clearSentryEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"SENTRY_ENABLED",
+		"SENTRY_DSN",
+		"SENTRY_ENVIRONMENT",
+		"SENTRY_RELEASE",
+		"SENTRY_TRACES_SAMPLE_RATE",
+	} {
+		t.Setenv(name, "")
 	}
 }
 

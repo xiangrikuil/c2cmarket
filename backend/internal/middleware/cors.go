@@ -50,7 +50,7 @@ func setCORSHeaders(w http.ResponseWriter, origin string) {
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, X-Account-Appeal-CSRF, Idempotency-Key, If-Match, X-Request-Id")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, X-Account-Appeal-CSRF, Idempotency-Key, If-Match, X-Request-Id, Sentry-Trace, Baggage")
 	w.Header().Set("Access-Control-Expose-Headers", "ETag, Location, X-Request-Id")
 }
 

@@ -12,6 +12,10 @@
     "NUXT_PUBLIC_API_BASE_URL": "https://api-staging.c2cmarket.shop",
     "NUXT_PUBLIC_API_MODE": "real",
     "NUXT_PUBLIC_TURNSTILE_SITE_KEY": "0x4AAAAAAENOJxBZnePMzh-y",
-    "NUXT_API_BASE_URL": "https://api-staging.c2cmarket.shop"
+    "NUXT_API_BASE_URL": "https://api-staging.c2cmarket.shop",
+    "NUXT_PUBLIC_SENTRY_ENABLED": "true",
+    "NUXT_PUBLIC_SENTRY_DSN": "https://8901ac14cbe915a42461dee50b7bc987@o4511896757010432.ingest.us.sentry.io/4511896760287232",
+    "NUXT_PUBLIC_SENTRY_ENVIRONMENT": "staging",
+    "NUXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE": "0.05"
   }
 }

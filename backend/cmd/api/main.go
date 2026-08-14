@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/app"
+	"c2c-market/backend/internal/buildinfo"
 	"c2c-market/backend/internal/config"
+	"c2c-market/backend/internal/observability"
 )
 
 func main() {
@@ -25,6 +27,23 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("配置无效: %w", err)
 	}
+	release := cfg.Sentry.Release
+	if release == "" {
+		if commit := buildinfo.Current().GitCommit; commit != "unknown" {
+			release = commit
+		}
+	}
+	flushSentry, err := observability.InitSentry(observability.SentryOptions{
+		Enabled:          cfg.Sentry.Enabled,
+		DSN:              cfg.Sentry.DSN,
+		Environment:      cfg.Sentry.Environment,
+		Release:          release,
+		TracesSampleRate: cfg.Sentry.TracesSampleRate,
+	})
+	if err != nil {
+		return fmt.Errorf("初始化 Sentry 失败: %w", err)
+	}
+	defer flushSentry()
 
 	application, err := app.New(ctx, cfg)
 	if err != nil {

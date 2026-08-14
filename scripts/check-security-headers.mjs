@@ -47,7 +47,7 @@ const requiredDirectives = [
   "form-action 'self'",
   "script-src 'self' https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline'",
-  "connect-src 'self' https://api.c2cmarket.shop https://api-staging.c2cmarket.shop https://challenges.cloudflare.com",
+  "connect-src 'self' https://api.c2cmarket.shop https://api-staging.c2cmarket.shop https://challenges.cloudflare.com https://o4511896757010432.ingest.us.sentry.io",
   'frame-src https://challenges.cloudflare.com',
   'upgrade-insecure-requests',
 ]

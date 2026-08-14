@@ -70,6 +70,7 @@ type ServerOptions struct {
 	Metrics            *observability.Metrics
 	MetricsBearerToken string
 	TurnstileVerifier  turnstile.Verifier
+	SentryEnabled      bool
 }
 
 type OAuthOptions struct {
@@ -638,19 +639,21 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		turnstile:          option.TurnstileVerifier,
 	}
 	server.routes()
-	return middleware.WithRequestID(
-		middleware.WithClientIP(
-			server.clientIPResolver,
-			middleware.WithRequestLogging(
-				log.Default(),
-				middleware.WithSecurityHeaders(
-					middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
-						AllowedOrigins: server.allowedOrigins,
-						Production:     option.AppEnv == config.EnvProduction,
-					}),
-					middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
-				),
+	handler := middleware.WithClientIP(
+		server.clientIPResolver,
+		middleware.WithRequestLogging(
+			log.Default(),
+			middleware.WithSecurityHeaders(
+				middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
+					AllowedOrigins: server.allowedOrigins,
+					Production:     option.AppEnv == config.EnvProduction,
+				}),
+				middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
 			),
 		),
 	)
+	if option.SentryEnabled {
+		handler = observability.WithSentry(handler)
+	}
+	return middleware.WithRequestID(handler)
 }
