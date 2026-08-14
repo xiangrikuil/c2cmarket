@@ -25,8 +25,8 @@ export type CarpoolDistributionMethod =
   | 'sub2api'
   | 'other'
 
-export type CatalogProviderCode = 'openai' | 'anthropic' | 'other'
-export type CatalogCategoryCode = 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other'
+export type CatalogProviderCode = string
+export type CatalogCategoryCode = string
 export type ProductPublishPolicy = 'allowed' | 'info_only' | 'blocked'
 export type ProductAccessMode = 'personal_account_cost_share' | 'provider_member_invitation' | 'owner_managed_access' | 'other_off_platform'
 export type ProviderPolicyStatus = 'known_restricted' | 'possibly_restricted' | 'unknown'
@@ -100,8 +100,8 @@ export type CarpoolPublishForm = {
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  dailyQuotaAmount: number | null
   weeklyQuotaAmount: number | null
-  monthlyQuotaAmount: number | null
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string
   supportsMainlandChinaDirectConnection: boolean | null
@@ -140,8 +140,8 @@ export type PublishTaskKey =
   | 'product'
   | 'region'
   | 'monthlyPrice'
+  | 'dailyQuota'
   | 'weeklyQuota'
-  | 'monthlyQuota'
   | 'quotaReset'
   | 'connection'
   | 'openingChannel'

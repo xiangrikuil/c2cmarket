@@ -51,6 +51,13 @@ const form = reactive({
   description: '',
 })
 
+if (route.query.target === 'catalog-request') {
+  form.type = 'experience_suggestion'
+  form.title = '申请平台新增产品目录'
+  form.contextPageLabel = '产品目录选择器'
+  form.description = '希望平台新增：'
+}
+
 const rows = computed(() => tickets.value ?? [])
 const selectedTicket = computed(() => detailTicket.value ?? rows.value.find(item => item.id === activeId.value) ?? rows.value[0] ?? null)
 const unreadCount = computed(() => rows.value.filter(item => item.unread).length)

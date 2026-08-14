@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/reputation"
 
@@ -36,6 +37,7 @@ type myProfileResponse struct {
 	AvatarMode           string                  `json:"avatarMode"`
 	AccountStatus        string                  `json:"accountStatus"`
 	Permissions          []string                `json:"permissions"`
+	Capabilities         []string                `json:"capabilities"`
 	LinuxDoBinding       linuxDoBindingDTO       `json:"linuxDoBinding"`
 	Badges               []string                `json:"badges"`
 	Restrictions         []string                `json:"restrictions"`
@@ -90,11 +92,40 @@ type confirmEmailVerificationRequest struct {
 type publicUserProfileResponse struct {
 	Profile     publicUserProfileDTO            `json:"profile"`
 	Reputations []reputation.ReputationSnapshot `json:"reputations"`
-	Carpools    []any                           `json:"carpools"`
-	Services    []any                           `json:"services"`
-	Completions []any                           `json:"completions"`
-	Reviews     []any                           `json:"reviews"`
+	Carpools    []publicProfileCarpoolDTO       `json:"carpools"`
+	Services    []publicProfileAPIServiceDTO    `json:"services"`
+	Completions []publicProfileCompletionDTO    `json:"completions"`
+	Reviews     []publicReviewDTO               `json:"reviews"`
 	Disputes    []publicDisputeResponse         `json:"disputes"`
+}
+
+type publicProfileCarpoolDTO struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Summary         string `json:"summary"`
+	RegionName      string `json:"regionName"`
+	PriceMonthlyCNY string `json:"priceMonthlyCny"`
+	AvailableSeats  int    `json:"availableSeats"`
+	UpdatedAt       string `json:"updatedAt"`
+}
+
+type publicProfileAPIServiceDTO struct {
+	ID                    string `json:"id"`
+	Title                 string `json:"title"`
+	ShortDescription      string `json:"shortDescription"`
+	BillingMode           string `json:"billingMode"`
+	AvailableUSDAllowance string `json:"availableUsdAllowance"`
+	UsageVisibility       string `json:"usageVisibility"`
+	RefundCommitment      bool   `json:"refundCommitment"`
+	UpdatedAt             string `json:"updatedAt"`
+}
+
+type publicProfileCompletionDTO struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Title       string `json:"title"`
+	Role        string `json:"role"`
+	CompletedAt string `json:"completedAt"`
 }
 
 type publicUserProfileDTO struct {
@@ -144,14 +175,6 @@ type merchantProfileResponse struct {
 	CreatedAt   string  `json:"createdAt"`
 	UpdatedAt   string  `json:"updatedAt"`
 	Version     int64   `json:"version"`
-}
-
-type publicMerchantProfileResponse struct {
-	Profile     publicMerchantProfileDTO `json:"profile"`
-	Services    []any                    `json:"services"`
-	Completions []any                    `json:"completions"`
-	Reviews     []any                    `json:"reviews"`
-	Disputes    []any                    `json:"disputes"`
 }
 
 type publicMerchantProfileDTO struct {
@@ -268,33 +291,19 @@ func (s *Server) handleConfirmEmailVerification(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handlePublicUserProfile(w http.ResponseWriter, r *http.Request) {
-	username := chi.URLParam(r, "username")
-	publicProfile, appErr := s.app.PublicUserProfile(r.Context(), username)
+	bundle, appErr := s.publicProfiles.PublicUserProfileBundle(r.Context(), chi.URLParam(r, "username"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
-	}
-	disputes, appErr := s.app.PublicUserDisputes(r.Context(), username)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	var reputations []reputation.ReputationSnapshot
-	if s.reputation.ReputationAvailable() {
-		reputations, appErr = s.reputation.PublicUserReputation(r.Context(), username, reputation.ScopeOverall)
-		if appErr != nil {
-			writeProblem(w, r, appErr)
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, publicUserProfileResponse{
-		Profile:     toPublicUserProfileDTO(publicProfile),
-		Reputations: reputations,
-		Carpools:    []any{},
-		Services:    []any{},
-		Completions: []any{},
-		Reviews:     []any{},
-		Disputes:    toPublicDisputeResponses(disputes),
+		Profile:     toPublicUserProfileDTO(bundle.Profile),
+		Reputations: bundle.Reputations,
+		Carpools:    toPublicProfileCarpoolDTOs(bundle.Carpools),
+		Services:    toPublicProfileAPIServiceDTOs(bundle.Services),
+		Completions: toPublicProfileCompletionDTOs(bundle.Completions),
+		Reviews:     toPublicReviewDTOs(bundle.Reviews),
+		Disputes:    toPublicDisputeResponses(bundle.Disputes),
 	})
 }
 
@@ -302,6 +311,9 @@ func (s *Server) handleMyMerchantProfile(w http.ResponseWriter, r *http.Request)
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	merchant, appErr := s.app.MyMerchantProfile(r.Context(), user)
@@ -316,6 +328,9 @@ func (s *Server) handleUpsertMyMerchantProfile(w http.ResponseWriter, r *http.Re
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	req, appErr := decodeStrictJSONOnly[merchantProfileRequest](r)
@@ -341,13 +356,43 @@ func (s *Server) handlePublicMerchantProfile(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, publicMerchantProfileResponse{
-		Profile:     toPublicMerchantProfileDTO(merchant),
-		Services:    []any{},
-		Completions: []any{},
-		Reviews:     []any{},
-		Disputes:    []any{},
-	})
+	writeJSON(w, http.StatusOK, toPublicMerchantProfileDTO(merchant))
+}
+
+func toPublicProfileCarpoolDTOs(items []profile.PublicProfileCarpool) []publicProfileCarpoolDTO {
+	result := make([]publicProfileCarpoolDTO, 0, len(items))
+	for _, item := range items {
+		result = append(result, publicProfileCarpoolDTO{
+			ID: item.ID, Title: item.Title, Summary: item.Summary, RegionName: item.RegionName,
+			PriceMonthlyCNY: item.PriceMonthlyCNY, AvailableSeats: item.AvailableSeats,
+			UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return result
+}
+
+func toPublicProfileAPIServiceDTOs(items []profile.PublicProfileAPIService) []publicProfileAPIServiceDTO {
+	result := make([]publicProfileAPIServiceDTO, 0, len(items))
+	for _, item := range items {
+		result = append(result, publicProfileAPIServiceDTO{
+			ID: item.ID, Title: item.Title, ShortDescription: item.ShortDescription,
+			BillingMode: item.BillingMode, AvailableUSDAllowance: item.AvailableUSDAllowance,
+			UsageVisibility: item.UsageVisibility, RefundCommitment: item.RefundCommitment,
+			UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return result
+}
+
+func toPublicProfileCompletionDTOs(items []profile.PublicProfileCompletion) []publicProfileCompletionDTO {
+	result := make([]publicProfileCompletionDTO, 0, len(items))
+	for _, item := range items {
+		result = append(result, publicProfileCompletionDTO{
+			ID: item.ID, Kind: item.Kind, Title: item.Title, Role: item.Role,
+			CompletedAt: item.CompletedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return result
 }
 
 func toMyProfileResponse(value profile.UserProfile) myProfileResponse {
@@ -368,6 +413,7 @@ func toMyProfileResponse(value profile.UserProfile) myProfileResponse {
 		AvatarMode:         value.AvatarMode,
 		AccountStatus:      normalizeAccountStatus(value.AccountStatus),
 		Permissions:        permissionsFor(value.IsAdmin),
+		Capabilities:       stringList(value.Capabilities),
 		LinuxDoBinding: linuxDoBindingDTO{
 			Bound:            value.LinuxDoBound,
 			LinuxDoUserID:    stringPtrOrNil(value.LinuxDoUserID),

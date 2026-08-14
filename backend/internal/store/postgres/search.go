@@ -100,7 +100,8 @@ SELECT
 	l.title AS title,
 	'¥' || l.price_monthly_cny::text || '/月 · 可用席位 ' ||
 	GREATEST(l.buyer_seat_capacity - l.active_buyer_members - COALESCE(reserved.reserved_seats, 0), 0)::text ||
-	' · 每月' || l.quota_label || ' ' || l.monthly_quota_amount::text || ' ' || l.quota_unit AS subtitle,
+	' · 每天' || l.quota_label || ' ' || COALESCE(l.daily_quota_amount::text, '未声明') || ' ' || l.quota_unit ||
+	' · 每周' || l.quota_label || ' ' || l.weekly_quota_amount::text || ' ' || l.quota_unit AS subtitle,
 	l.status AS badge,
 	'/carpools/' || l.id::text AS to,
 	l.updated_at AS rank_time
@@ -118,7 +119,8 @@ WHERE ` + publicCarpoolListingPredicate("l") + `
 	OR LOWER(
 		COALESCE(l.source_url, '') || ' ' ||
 		l.price_monthly_cny::text || ' ' ||
-		l.monthly_quota_amount::text || ' ' ||
+		COALESCE(l.daily_quota_amount::text, '') || ' ' ||
+		l.weekly_quota_amount::text || ' ' ||
 		l.quota_label || ' ' ||
 		l.quota_unit
 	) ILIKE $1 ESCAPE '\'
@@ -140,7 +142,7 @@ SELECT
 FROM api_services s
 LEFT JOIN merchant_profiles mp ON mp.id = s.merchant_profile_id AND mp.owner_user_id = s.owner_user_id
 LEFT JOIN LATERAL (
-	SELECT string_agg(m.model_name_snapshot, ' / ' ORDER BY m.model_name_snapshot) AS model_names
+	SELECT string_agg(m.model_key_snapshot, ' / ' ORDER BY m.model_key_snapshot) AS model_names
 	FROM api_service_models m
 	WHERE m.api_service_id = s.id AND m.enabled = true
 ) models ON true
@@ -153,7 +155,7 @@ WHERE ` + publicAPIServiceOrderablePredicate("s") + `
 		FROM api_service_models search_model
 		WHERE search_model.api_service_id = s.id
 		  AND search_model.enabled = true
-		  AND LOWER(search_model.model_name_snapshot || ' ' || search_model.provider_snapshot) ILIKE $1 ESCAPE '\'
+		  AND LOWER(search_model.model_key_snapshot || ' ' || search_model.provider_snapshot) ILIKE $1 ESCAPE '\'
 	)
   )
 ORDER BY s.updated_at DESC

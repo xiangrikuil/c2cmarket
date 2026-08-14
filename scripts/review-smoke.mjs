@@ -1,4 +1,6 @@
 const baseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8080'
+const runSuffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+const userSuffix = runSuffix.replace(/[^a-z0-9]/gi, '').slice(-8).toLowerCase()
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -96,8 +98,10 @@ async function createCompletedMembership(owner, buyer) {
   const plan = plans.items.find(item => item.riskAckRequired && item.publishPolicy === 'allowed') ?? plans.items[0]
   assert(plan?.id, 'product plan catalog is empty')
 
-  const ownerContact = await createContact(owner, '@review_smoke_owner', 'Review smoke owner')
-  const buyerContact = await createContact(buyer, '@review_smoke_buyer', 'Review smoke buyer')
+  const ownerContactValue = `@review_owner_${runSuffix.replaceAll('-', '_')}`
+  const buyerContactValue = `@review_buyer_${runSuffix.replaceAll('-', '_')}`
+  const ownerContact = await createContact(owner, ownerContactValue, 'Review smoke owner')
+  const buyerContact = await createContact(buyer, buyerContactValue, 'Review smoke buyer')
   const listing = await request('/api/v1/carpools', {
     method: 'POST',
     idempotencyPrefix: 'review-smoke-listing',
@@ -121,8 +125,8 @@ async function createCompletedMembership(owner, buyer) {
       regionName: 'Smoke 测试区',
       priceMonthlyCny: '68.00',
       serviceMultiplier: '1.0000',
+      dailyQuotaAmount: '10.00',
       weeklyQuotaAmount: '50.00',
-      monthlyQuotaAmount: '200.00',
       followsOfficialQuotaReset: true,
       vpsRegion: '香港',
       supportsMainlandChinaDirectConnection: true,
@@ -202,14 +206,15 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const owner = await linuxDoSession('review-smoke-owner')
-  const buyer = await session('review-smoke-buyer')
+  const ownerUsername = `review-${userSuffix}`
+  const owner = await linuxDoSession(ownerUsername)
+  const buyer = await session(`rev-buy-${userSuffix}`)
 
   await request('/api/v1/me/profile', {
     method: 'PATCH',
     body: {
       displayName: 'Review Smoke Owner',
-      username: 'review-smoke-owner',
+      username: ownerUsername,
       bio: '评价 smoke 车主公开主页。',
       regionCode: 'cn',
       timezone: 'Asia/Shanghai',
@@ -251,12 +256,12 @@ async function main() {
   assert(after?.status === 'sealed', 'review center should show sealed status')
   assert(after.note.includes('服务稳定'), 'review center should keep note')
 
-  const publicReviews = await request('/api/v1/users/review-smoke-owner/reviews')
+  const publicReviews = await request(`/api/v1/users/${ownerUsername}/reviews`)
   const publicReview = publicReviews.items.find(item => item.id === firstReview.id)
   assert(publicReview === undefined, 'sealed review must not appear publicly')
 
-  const publicProfile = await request('/api/v1/users/review-smoke-owner/public-profile')
-  assert(!JSON.stringify(publicProfile).includes('@review_smoke_owner'), 'public profile must not leak owner contact')
+  const publicProfile = await request(`/api/v1/users/${ownerUsername}/public-profile`)
+  assert(!JSON.stringify(publicProfile).includes('@review_owner_'), 'public profile must not leak owner contact')
 
   const updatedReview = await request(`/api/v1/me/reviews/carpool-memberships/${membership.id}`, {
     method: 'PUT',
@@ -282,7 +287,7 @@ async function main() {
   }, owner)
   assert(ownerReview.visibility === 'published', 'counterparty review should publish both reviews')
 
-  const updatedPublicReviews = await request('/api/v1/users/review-smoke-owner/reviews')
+  const updatedPublicReviews = await request(`/api/v1/users/${ownerUsername}/reviews`)
   const updatedPublicReview = updatedPublicReviews.items.find(item => item.id === firstReview.id)
   assert(updatedPublicReview?.note.includes('修改后的评价'), 'public review should reflect updated note')
   assert(updatedPublicReview.rating === 4, 'public review should reflect updated rating')

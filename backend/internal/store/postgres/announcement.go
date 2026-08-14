@@ -237,18 +237,22 @@ func (s *Store) UpdateAnnouncement(ctx context.Context, input announcement.Updat
 	if err != nil {
 		return announcement.Announcement{}, internalStoreError()
 	}
+	contentUpdatedAt := before.ContentUpdatedAt
+	if announcement.UserVisibleContentChanged(before, input.Form) {
+		contentUpdatedAt = now
+	}
 	item, err := s.scanAnnouncement(ctx, tx, `
 		UPDATE announcements
 		SET title = $2, summary = $3, content_markdown = $4, category = $5, level = $6,
 		    channels = $7, is_pinned = $8, is_dismissible = $9, cta_label = $10, cta_url = $11,
 		    publish_at = $12, expire_at = $13, updated_by_user_id = $14, updated_at = $15,
-		    version = version + 1
+		    content_updated_at = $16, version = version + 1
 		WHERE id = $1
 		RETURNING `+announcementReturningColumns+`
 	`, input.ID, strings.TrimSpace(input.Form.Title), strings.TrimSpace(input.Form.Summary), strings.TrimSpace(input.Form.ContentMarkdown),
 		input.Form.Category, input.Form.Level, input.Form.Channels, input.Form.IsPinned, input.Form.IsDismissible,
 		nullText(input.Form.CTALabel), nullText(input.Form.CTAURL), input.Form.PublishAt, input.Form.ExpireAt,
-		input.OperatorID, now)
+		input.OperatorID, now, contentUpdatedAt)
 	if err != nil {
 		return announcement.Announcement{}, internalStoreError()
 	}
@@ -264,22 +268,51 @@ func (s *Store) UpdateAnnouncement(ctx context.Context, input announcement.Updat
 }
 
 func (s *Store) PublishAnnouncement(ctx context.Context, input announcement.ActionInput, now time.Time) (announcement.Announcement, *domain.AppError) {
-	status := announcement.StatusPublished
-	var publishAt time.Time
-	if err := s.pool.QueryRow(ctx, `SELECT publish_at FROM announcements WHERE id = $1`, input.ID).Scan(&publishAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return announcement.Announcement{}, announcementNotFound()
-		}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
 		return announcement.Announcement{}, internalStoreError()
 	}
-	if publishAt.After(now) {
-		status = announcement.StatusScheduled
+	defer rollback(ctx, tx)
+
+	current, err := s.scanAnnouncement(ctx, tx, `
+		SELECT `+announcementColumns+`
+		FROM announcements a
+		LEFT JOIN announcement_receipts r ON false
+		WHERE a.id = $1
+		FOR UPDATE OF a
+	`, input.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return announcement.Announcement{}, announcementNotFound()
+	}
+	if err != nil {
+		return announcement.Announcement{}, internalStoreError()
+	}
+
+	status, publishAt, appErr := announcement.ResolvePublishTransition(current, now)
+	if appErr != nil {
+		return announcement.Announcement{}, appErr
 	}
 	reason := "立即发布公告"
 	if status == announcement.StatusScheduled {
 		reason = "设置未来发布时间"
 	}
-	return s.updateAnnouncementStatusWithAudit(ctx, input, status, announcement.AuditPublished, reason, now)
+	item, err := s.scanAnnouncement(ctx, tx, `
+		UPDATE announcements
+		SET status = $2, publish_at = $3, updated_by_user_id = $4, updated_at = $5,
+		    version = version + 1
+		WHERE id = $1
+		RETURNING `+announcementReturningColumns+`
+	`, input.ID, status, publishAt, input.OperatorID, now)
+	if err != nil {
+		return announcement.Announcement{}, internalStoreError()
+	}
+	if appErr := insertAnnouncementAudit(ctx, tx, announcement.AuditPublished, item, input.OperatorID, input.OperatorName, reason, now); appErr != nil {
+		return announcement.Announcement{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return announcement.Announcement{}, internalStoreError()
+	}
+	return item, nil
 }
 
 func (s *Store) OfflineAnnouncement(ctx context.Context, input announcement.ActionInput, now time.Time) (announcement.Announcement, *domain.AppError) {
@@ -393,9 +426,9 @@ func (s *Store) insertAnnouncement(ctx context.Context, q queryer, form announce
 			INSERT INTO announcements (
 			  slug, title, summary, content_markdown, category, level, status, channels,
 			  audience_json, is_pinned, is_dismissible, cta_label, cta_url, publish_at, expire_at,
-			  created_by_user_id, updated_by_user_id, created_at, updated_at
+			  created_by_user_id, updated_by_user_id, created_at, updated_at, content_updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{"type":"all"}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{"type":"all"}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17, $17)
 			RETURNING `+announcementReturningColumns+`
 		`, slug, strings.TrimSpace(form.Title), strings.TrimSpace(form.Summary), strings.TrimSpace(form.ContentMarkdown),
 			form.Category, form.Level, status, form.Channels, form.IsPinned, form.IsDismissible,
@@ -451,7 +484,7 @@ func scanAnnouncementRow(row scanner) (announcement.Announcement, error) {
 		&item.ID, &item.Slug, &item.Title, &item.Summary, &item.ContentMarkdown,
 		&item.Category, &item.Level, &item.Status, &item.Channels, &audienceText,
 		&item.IsPinned, &item.IsDismissible, &ctaLabel, &ctaURL, &item.PublishAt, &item.ExpireAt,
-		&item.Version, &createdBy, &updatedBy, &item.CreatedAt, &item.UpdatedAt,
+		&item.ContentUpdatedAt, &item.Version, &createdBy, &updatedBy, &item.CreatedAt, &item.UpdatedAt,
 		&receiptID, &receiptVersion, &firstSeenAt, &readAt, &dismissedAt,
 	)
 	if err != nil {
@@ -533,7 +566,7 @@ const announcementColumns = `
 	a.id::text, a.slug, a.title, a.summary, a.content_markdown,
 	a.category, a.level, a.status, a.channels, a.audience_json::text,
 	a.is_pinned, a.is_dismissible, a.cta_label, a.cta_url, a.publish_at, a.expire_at,
-	a.version, a.created_by_user_id::text, a.updated_by_user_id::text, a.created_at, a.updated_at,
+	a.content_updated_at, a.version, a.created_by_user_id::text, a.updated_by_user_id::text, a.created_at, a.updated_at,
 	r.announcement_id::text, r.announcement_version, r.first_seen_at, r.read_at, r.dismissed_at
 `
 
@@ -541,7 +574,7 @@ const announcementReturningColumns = `
 	id::text, slug, title, summary, content_markdown,
 	category, level, status, channels, audience_json::text,
 	is_pinned, is_dismissible, cta_label, cta_url, publish_at, expire_at,
-	version, created_by_user_id::text, updated_by_user_id::text, created_at, updated_at,
+	content_updated_at, version, created_by_user_id::text, updated_by_user_id::text, created_at, updated_at,
 	NULL::text, NULL::bigint, NULL::timestamptz, NULL::timestamptz, NULL::timestamptz
 `
 

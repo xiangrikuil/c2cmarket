@@ -72,6 +72,8 @@ admin_bootstrap_runs(
   back its temporary user and reloads the committed winner.
 - Only `provider="linux_do"` writes `linux_do_bindings`. OAuth profile data never
   grants `user_permissions`; administrator authority is independent of OAuth.
+- `linux_do_bindings` is also the sole source for the account's transaction-contact identity. Reading account contacts lazily ensures one enabled versioned `contact_methods.type='linuxdo'` bridge with value `@linux_do_username`; login/transaction clients reuse that ID instead of creating a contact per transaction.
+- Public contact CRUD cannot create, change, convert, or delete a linux.do method. Historical duplicate enabled linux.do methods are deterministically consolidated to default-first/oldest-first canonical IDs, mutable service/carpool references move to the canonical ID, duplicates are disabled, and a partial unique index enforces at most one enabled linux.do method per user. Frozen purchase-intent versions and historical snapshots are never rewritten.
 - Bootstrap is create-only. With no marker, any existing administrator or
   occupied target username returns `ADMIN_BOOTSTRAP_CONFLICT` without mutation.
 - A matching marker rerun verifies the snapshot, user, active status, admin
@@ -90,6 +92,7 @@ admin_bootstrap_runs(
 | Existing identity arrives with a renamed provider username | Return the original user and local username |
 | Two first logins race for one identity | One `Created=true`; all calls return the same user |
 | Provider binding write fails | `INTERNAL_ERROR`; user and identity inserts roll back |
+| Public client creates, updates, converts, or deletes a linux.do contact | `409 INVALID_STATE_TRANSITION`; identity binding and contact history remain unchanged |
 | Bootstrap target username is occupied | `ADMIN_BOOTSTRAP_CONFLICT`; no account mutation |
 | Any unproven administrator exists | `ADMIN_BOOTSTRAP_CONFLICT`; no new administrator |
 | Marker exists with a different requested username | `ADMIN_BOOTSTRAP_CONFLICT`; existing password unchanged |

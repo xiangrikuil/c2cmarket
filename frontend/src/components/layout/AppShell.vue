@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
 import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
 import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
+import Cable from 'lucide-vue-next/dist/esm/icons/cable.js'
 import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
 import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
 import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import FlaskConical from 'lucide-vue-next/dist/esm/icons/flask-conical.js'
 import Home from 'lucide-vue-next/dist/esm/icons/house.js'
 import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
 import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
@@ -43,15 +45,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+import { useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
-import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
 import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
+import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
+import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
+import { logoutCurrentSession } from '@/lib/sessionActions'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,9 +70,6 @@ const isAuthenticated = computed(() => Boolean(myProfile.value))
 const authResolved = computed(() => import.meta.client && !profilePending.value)
 const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
 const { data: notifications } = useNotifications(isAuthenticated)
-const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
-const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
-const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
 const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
@@ -84,19 +85,32 @@ const currentUsername = computed(() => myProfile.value?.username ?? '')
 const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProfile.value?.username ?? '未登录')
 const currentAvatarURL = computed(() => myProfile.value?.avatarUrl ?? '')
 const currentAvatarText = computed(() => currentDisplayName.value.slice(0, 1).toUpperCase())
-const canViewAdminNav = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
+const canPublishCarpool = computed(() => hasCapability(myProfile.value, CAPABILITY.carpoolPublish))
+const canPublishApiService = computed(() => hasCapability(myProfile.value, CAPABILITY.apiServicePublish))
+const canManageApiProbe = computed(() => hasCapability(myProfile.value, CAPABILITY.apiProbeManage))
+const canViewAdminNav = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
+const canPublishAnything = computed(() => canPublishCarpool.value || canPublishApiService.value)
 const announcementCenterTo = '/my/notifications?tab=announcements'
 const accountSettingsPaths = ['/my/profile', '/my/contacts', '/my/account'] as const
 const currentLoginTo = computed(() => loginRoute(route.fullPath))
 const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
-const hasMerchantWorkspace = computed(() => Boolean(
-  (ownedCarpools.value?.length ?? 0) > 0
-  || (ownedApiServices.value?.length ?? 0) > 0
-  || ownerCarpoolActionCount.value > 0
-  || merchantApiActionCount.value > 0,
-))
+const apiMarketNavItems = [
+  { label: '限量额度包', view: 'limited' },
+  { label: '短期流量包', view: 'packages' },
+  { label: '自选额度', view: 'free' },
+] as const
+const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value, [
+  CAPABILITY.carpoolPublish,
+  CAPABILITY.apiServicePublish,
+  CAPABILITY.apiProbeManage,
+]))
+
+type NavigationGroup = {
+  title: string
+  items: Array<{ label: string, to: string, count: number | null, icon: Component }>
+}
 
 const navGroups = computed(() => {
   const browseGroup = {
@@ -111,8 +125,8 @@ const navGroups = computed(() => {
   const publishGroup = {
     title: '发布入口',
     items: [
-      { label: '发布车源', to: '/carpools/new', count: null, icon: CarFront },
-      { label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch },
+      ...(canPublishCarpool.value ? [{ label: '发布车源', to: '/carpools/new', count: null, icon: CarFront }] : []),
+      ...(canPublishApiService.value ? [{ label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch }] : []),
     ],
   }
   const userGroup = {
@@ -122,22 +136,34 @@ const navGroups = computed(() => {
       { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
       { label: '收藏', to: '/my/favorites', count: null, icon: Star },
       { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
+      { label: '平台公告', to: announcementCenterTo, count: importantAnnouncementUnreadCount.value, icon: Megaphone },
     ],
   }
   const merchantGroup = {
     title: '经营中心',
     items: [
-      { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
-      { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
-      { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-      { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+      ...(canPublishCarpool.value ? [
+        { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
+        { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+      ] : []),
+      ...(canPublishApiService.value ? [
+        { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
+        { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+      ] : []),
+      ...(canManageApiProbe.value ? [{ label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable }] : []),
+    ],
+  }
+  const toolsGroup = {
+    title: '工具',
+    items: [
+      { label: 'API 模型测试', to: '/tools/api-model-tester', count: null, icon: FlaskConical },
     ],
   }
   const accountGroup = {
     title: '账户',
     items: [
       { label: '个人中心', to: '/my', count: null, icon: UserRound },
-      { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
+      { label: canPublishApiService.value ? '联系与收款' : '联系方式', to: '/my/contacts', count: null, icon: MessageSquarePlus },
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
       ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
@@ -152,8 +178,11 @@ const navGroups = computed(() => {
 
   if (!isAuthenticated.value) return [browseGroup]
 
-  const groups = [browseGroup, publishGroup, userGroup]
-  if (hasMerchantWorkspace.value) groups.push(merchantGroup)
+  const groups: NavigationGroup[] = [browseGroup]
+  if (publishGroup.items.length > 0) groups.push(publishGroup)
+  groups.push(userGroup)
+  if (canViewMerchantWorkspace.value) groups.push(merchantGroup)
+  groups.push(toolsGroup)
   groups.push(accountGroup)
   if (canViewAdminNav.value) groups.push(adminEntryGroup)
   return groups
@@ -168,7 +197,13 @@ const activeNavItem = computed(() => {
     .sort((a, b) => b.to.length - a.to.length)[0]
 })
 
-const currentTitle = computed(() => activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket'))
+const currentTitle = computed(() => {
+  if (route.path === '/api-market') {
+    const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
+    return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '限量额度包'}`
+  }
+  return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
+})
 
 function isActive(to: string) {
   return activeNavItem.value?.to === to
@@ -177,7 +212,15 @@ function isActive(to: string) {
 function matchesRoute(to: string) {
   if (to === '/') return route.path === '/'
   if (to === '/my/profile') return accountSettingsPaths.includes(route.path as typeof accountSettingsPaths[number])
+  if (to === announcementCenterTo) return route.path === '/my/notifications' && route.query.tab === 'announcements'
+  if (to === '/my/notifications') return route.path === to && route.query.tab !== 'announcements'
   return route.path === to || route.path.startsWith(`${to}/`)
+}
+
+function isApiMarketViewActive(view: typeof apiMarketNavItems[number]['view']) {
+  if (route.path !== '/api-market') return false
+  const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
+  return currentView === view
 }
 
 watch(
@@ -214,8 +257,7 @@ async function logout() {
   if (logoutLoading.value) return
   logoutLoading.value = true
   try {
-    await logoutBackendSession()
-    queryClient.clear()
+    await logoutCurrentSession(queryClient)
     toast.success('已退出登录。')
     await router.replace('/login')
   } catch (error) {
@@ -269,39 +311,41 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             <span v-else>{{ group.title }}</span>
           </h2>
           <div class="mt-2 grid gap-1">
-            <RouterLink
-              v-for="item in group.items"
-              :key="item.to"
-              :to="item.to"
-              class="flex h-9 items-center rounded-md text-[14px] font-semibold text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              :title="sidebarCollapsed ? item.label : undefined"
-              :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
-            >
-              <span
-                class="flex min-w-0 items-center"
-                :class="sidebarCollapsed ? 'w-full justify-center' : 'gap-3 px-3'"
+            <div v-for="item in group.items" :key="item.to">
+              <RouterLink
+                :to="item.to"
+                class="flex h-9 items-center rounded-md text-[14px] font-semibold text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                :title="sidebarCollapsed ? item.label : undefined"
+                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
               >
-                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
-                <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
-              </span>
-              <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
-            </RouterLink>
+                <span
+                  class="flex min-w-0 items-center"
+                  :class="sidebarCollapsed ? 'w-full justify-center' : 'gap-3 px-3'"
+                >
+                  <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
+                  <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
+                </span>
+                <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
+              </RouterLink>
+              <div
+                v-if="item.to === '/api-market' && matchesRoute('/api-market') && !sidebarCollapsed"
+                class="ml-5 mt-1 grid gap-0.5 border-l border-sidebar-border pl-3"
+              >
+                <RouterLink
+                  v-for="child in apiMarketNavItems"
+                  :key="child.view"
+                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  class="flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                >
+                  {{ child.label }}
+                </RouterLink>
+              </div>
+            </div>
           </div>
         </section>
       </nav>
       <div class="border-t border-sidebar-border p-2">
-        <RouterLink
-          v-if="isAuthenticated && !sidebarCollapsed"
-          :to="announcementCenterTo"
-          class="mb-3 flex items-center justify-between rounded-md border border-sidebar-border bg-sidebar-accent/45 px-3 py-3 text-xs leading-5 text-sidebar-foreground/75 shadow-sm transition hover:border-sidebar-primary/30 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        >
-          <div>
-            <div class="font-medium text-sidebar-primary">平台公告</div>
-            <div class="mt-1">查看公告与更新</div>
-          </div>
-          <Badge v-if="importantAnnouncementUnreadCount" variant="secondary">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
-          <ChevronDown class="h-4 w-4 -rotate-90 text-sidebar-foreground/45" />
-        </RouterLink>
         <Button
           variant="ghost"
           size="sm"
@@ -351,33 +395,36 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         <section v-for="group in navGroups" :key="group.title">
           <h2 class="px-2 text-xs font-medium text-muted-foreground">{{ group.title }}</h2>
           <div class="mt-2 grid gap-1">
-            <RouterLink
-              v-for="item in group.items"
-              :key="item.to"
-              :to="item.to"
-              class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
-              @click="closeMenu"
-            >
-              <span class="flex min-w-0 items-center gap-2">
-                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
-                <span class="truncate">{{ item.label }}</span>
-              </span>
-              <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
-            </RouterLink>
+            <div v-for="item in group.items" :key="item.to">
+              <RouterLink
+                :to="item.to"
+                class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                @click="closeMenu"
+              >
+                <span class="flex min-w-0 items-center gap-2">
+                  <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
+                  <span class="truncate">{{ item.label }}</span>
+                </span>
+                <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
+              </RouterLink>
+              <div v-if="item.to === '/api-market'" class="ml-6 mt-1 grid gap-0.5 border-l border-border pl-3">
+                <RouterLink
+                  v-for="child in apiMarketNavItems"
+                  :key="child.view"
+                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  class="rounded-md px-3 py-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                  @click="closeMenu"
+                >
+                  {{ child.label }}
+                </RouterLink>
+              </div>
+            </div>
           </div>
         </section>
       </nav>
-      <RouterLink
-        v-if="isAuthenticated"
-        :to="announcementCenterTo"
-        class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        @click="closeMenu"
-      >
-        <span>平台公告 · 查看公告与更新</span>
-        <Badge v-if="importantAnnouncementUnreadCount" variant="secondary" class="ml-2">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
-      </RouterLink>
-      <div v-else-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
+      <div v-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
         <Button as-child class="w-full">
           <RouterLink :to="currentLoginTo" @click="closeMenu">
             <LogIn class="h-4 w-4" />登录
@@ -423,6 +470,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             </div>
           </div>
           <div class="flex-1" />
+          <DevPersonaSwitcher :current-username="currentUsername" />
           <DropdownMenu v-if="appThemes.length > 1">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" aria-label="切换主题">
@@ -465,7 +513,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu v-if="isAuthenticated">
+          <DropdownMenu v-if="canPublishAnything">
             <DropdownMenuTrigger as-child>
               <Button size="sm" class="hidden md:inline-flex">
                 发布
@@ -473,19 +521,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="w-48">
-              <DropdownMenuItem as-child>
+              <DropdownMenuItem v-if="canPublishCarpool" as-child>
                 <RouterLink to="/carpools/new" class="flex items-center gap-2">
                   <Upload class="h-4 w-4" />导入 / 发布车源
                 </RouterLink>
               </DropdownMenuItem>
-              <DropdownMenuItem as-child>
+              <DropdownMenuItem v-if="canPublishApiService" as-child>
                 <RouterLink to="/api-market/new" class="flex items-center gap-2">
                   <Code2 class="h-4 w-4" />发布 API 服务
                 </RouterLink>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu v-else-if="authResolved">
+          <DropdownMenu v-else-if="showLoginAction">
             <DropdownMenuTrigger as-child>
               <Button size="sm" class="hidden md:inline-flex">
                 登录后发布

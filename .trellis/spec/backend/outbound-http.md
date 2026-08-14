@@ -2,6 +2,7 @@
 
 Date: 2026-07-26
 Author: Codex
+Updated: 2026-08-08
 
 ## Scenario: Variable-Destination Outbound Requests
 
@@ -11,8 +12,9 @@ Author: Codex
   variable instead of being a fixed source-code constant.
 - Use `internal/platform/outboundhttp` for URL policy, DNS validation, bound
   dialing, redirect control, timeouts, and bounded response reads.
-- Model audit targets are the first enforced consumer. Fixed OAuth provider
-  endpoints remain outside this scenario until a task explicitly migrates them.
+- Current variable-destination consumers include model audit, reusable API probe connections,
+  API delivery verification, and the temporary API model tester. Fixed OAuth provider endpoints
+  remain outside this scenario until a task explicitly migrates them.
 
 ### 2. Signatures
 
@@ -45,9 +47,12 @@ config.Config.ModelAuditAllowedHosts []string
 ### 3. Contracts
 
 - Accept only absolute HTTPS URLs by default.
-- `WithInsecureHTTP` is a narrow opt-in owned by the API-health probe flow. It may be used only
-  after that flow has enforced `acknowledgeInsecureHttp=true` for every HTTP save and disclosed
-  the transport risk. Model audit and all other consumers remain HTTPS-only.
+- `WithInsecureHTTP` is a narrow per-client opt-in, never a shared/global default. Reusable API
+  probe connections require `acknowledgeInsecureHttp=true` for every new or changed HTTP target.
+  The API model tester requires the same acknowledgement on every manual or order-backed HTTP
+  request. API delivery verification may inherit the already acknowledged HTTP scheme from the
+  order-frozen probe target, but must still compare the submitted target exactly before dialing.
+  Model audit remains HTTPS-only.
 - Reject URL credentials, queries, fragments, opaque URLs, zone identifiers,
   malformed ports, alternative numeric IP forms, and invalid DNS labels.
 - Treat `MODEL_AUDIT_ALLOWED_HOSTS` as an optional exact-host allowlist. Do not
@@ -76,7 +81,7 @@ config.Config.ModelAuditAllowedHosts []string
 | Condition | Required result |
 | --- | --- |
 | Scheme is HTTP without `WithInsecureHTTP`, is neither HTTP nor HTTPS, URL is relative/opaque, or authority is malformed | `ErrInvalidTarget`; do not resolve or dial |
-| API-health HTTP request omits its request-layer acknowledgement | Reject before policy validation; do not resolve, persist, or dial |
+| Probe connection or model-tester HTTP request omits its request-layer acknowledgement | Reject before policy validation; do not resolve, persist, or dial |
 | URL contains credentials, query, fragment, zone ID, or invalid port | `ErrInvalidTarget`; do not persist |
 | Host is absent from a non-empty exact allowlist | `ErrHostNotAllowed`; do not resolve or dial |
 | Literal IP is private or special-use | `ErrUnsafeAddress`; do not dial |
@@ -92,8 +97,9 @@ config.Config.ModelAuditAllowedHosts []string
 - Good: `https://api.provider.example/v1` is allowlisted, all DNS answers are
   public, and the dialer receives an IP literal such as `93.184.216.34:443`.
   Documentation ranges are intentionally blocked.
-- Good: API health creates its own policy with `WithInsecureHTTP` only after owner acknowledgement;
-  `http://api.provider.example/v1` dials a validated public IP on port 80 with redirects disabled.
+- Good: an API probe or model-tester request creates its own policy with `WithInsecureHTTP` only
+  after caller acknowledgement; `http://api.provider.example/v1` dials a validated public IP on
+  port 80 with redirects disabled.
 - Base: `MODEL_AUDIT_ALLOWED_HOSTS` is empty. Any syntactically valid public
   HTTPS target may be saved, but private and special-use addresses still fail.
 - Bad: validating DNS only when saving, then letting `http.Transport` resolve
@@ -123,8 +129,9 @@ config.Config.ModelAuditAllowedHosts []string
 - HTTP tests: successful public HTTPS and explicitly enabled public HTTP, default HTTP rejection,
   private/mixed-DNS HTTP rejection, redirect rejection, slow response timeout, and oversized
   Chat/models bodies.
-- Consumer tests: model audit create and update both reject unsafe targets,
-  preserve a normalized `/v1` base path, and sanitize request errors.
+- Consumer tests: model audit remains HTTPS-only; probe connections, delivery verification, and
+  model tester reject unsafe targets, preserve the caller's Base URL path without adding `/v1`,
+  enforce their HTTP acknowledgement/source contracts, and sanitize request errors.
 - Final verification: focused tests and race tests for `outboundhttp` and
   `modelaudit`, then full backend tests, `go vet`, `gofmt`, Compose expansion,
   OpenAPI/migration guards, and `git diff --check`.
@@ -161,8 +168,8 @@ body, err := outboundhttp.ReadBody(response.Body, maxBody)
 Persistence validation improves feedback, while the same policy inside the
 transport remains the actual connection-time security boundary.
 
-For the API-health-only exception, construct a separate policy instance after request-layer
-acknowledgement:
+For an explicitly authorized HTTP consumer, construct a separate policy instance only after its
+request or frozen-order acknowledgement contract has passed:
 
 ```go
 if usesHTTP(input.BaseURL) && !input.AcknowledgeInsecureHTTP {

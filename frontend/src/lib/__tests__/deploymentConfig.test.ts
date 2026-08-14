@@ -30,6 +30,7 @@ describe('Cloudflare Worker deployment config', () => {
       directory: './frontend/.output/public',
     })
     expect(config.vars?.NUXT_PUBLIC_API_MODE).toBe('real')
+    expect(config.vars?.NUXT_PUBLIC_TURNSTILE_SITE_KEY).toBe('0x4AAAAAAENOJxBZnePMzh-y')
     expect(config.vars?.NUXT_PUBLIC_SITE_URL).toBe(environment === 'production'
       ? 'https://c2cmarket.shop'
       : 'https://staging.c2cmarket.shop')
@@ -49,6 +50,8 @@ describe('Cloudflare Worker deployment config', () => {
     expect(compose).toContain('image: ${BACKEND_IMAGE:-c2cmarket-backend:local}')
     expect(composeOverride).toContain('ports: !override')
     expect(composeOverride).toContain('127.0.0.1:${BACKEND_PORT:-8080}:${BACKEND_PORT:-8080}')
+    expect(composeOverride).toContain('TURNSTILE_SECRET: ${TURNSTILE_SECRET:?TURNSTILE_SECRET is required}')
+    expect(composeOverride).toContain('TURNSTILE_HOSTNAMES: ${TURNSTILE_HOSTNAMES:?TURNSTILE_HOSTNAMES is required}')
     expect(caddyfile).toContain('client_ip_headers CF-Connecting-IP X-Forwarded-For')
     expect(caddyfile).not.toContain('tls /etc/caddy/certs/')
     expect(caddyfile).toContain('reverse_proxy 127.0.0.1:8080')

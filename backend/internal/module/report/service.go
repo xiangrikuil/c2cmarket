@@ -19,20 +19,34 @@ import (
 )
 
 type Service struct {
-	mu              sync.Mutex
-	now             func() time.Time
-	repo            Repository
-	idempotency     *idempotency.Service
-	notifications   *notification.Service
-	reports         map[string]Report
-	disputes        map[string]DisputeCase
-	appeals         map[string]Appeal
-	infoRequests    map[string]InfoRequest
-	infoSupplements map[string][]InfoSupplement
+	mu                      sync.Mutex
+	now                     func() time.Time
+	repo                    Repository
+	idempotency             *idempotency.Service
+	notifications           *notification.Service
+	reports                 map[string]Report
+	disputes                map[string]DisputeCase
+	appeals                 map[string]Appeal
+	infoRequests            map[string]InfoRequest
+	infoSupplements         map[string][]InfoSupplement
+	disputeMessages         map[string][]DisputeMessage
+	settlementProposals     map[string][]SettlementProposal
+	disputeRemedies         map[string][]DisputeRemedy
+	disputeProjectionCloser DisputeProjectionCloser
+}
+
+type DisputeProjectionCloser interface {
+	CloseDisputeProjection(ctx context.Context, disputeCaseID, actorUserID, requestID string) *domain.AppError
+	SetDisputeProjection(ctx context.Context, disputeCaseID, status, actorUserID, requestID string) *domain.AppError
+	ValidateDisputeProposalAmount(ctx context.Context, disputeCaseID, resolution, amount string) *domain.AppError
 }
 
 func NewService(repo Repository, idempotencyService *idempotency.Service, now func() time.Time) *Service {
 	return NewServiceWithNotifications(repo, idempotencyService, nil, now)
+}
+
+func (s *Service) SetDisputeProjectionCloser(closer DisputeProjectionCloser) {
+	s.disputeProjectionCloser = closer
 }
 
 func NewServiceWithNotifications(repo Repository, idempotencyService *idempotency.Service, notifications *notification.Service, now func() time.Time) *Service {
@@ -43,15 +57,18 @@ func NewServiceWithNotifications(repo Repository, idempotencyService *idempotenc
 		idempotencyService = idempotency.NewService(nil, now)
 	}
 	return &Service{
-		now:             now,
-		repo:            repo,
-		idempotency:     idempotencyService,
-		notifications:   notifications,
-		reports:         make(map[string]Report),
-		disputes:        make(map[string]DisputeCase),
-		appeals:         make(map[string]Appeal),
-		infoRequests:    make(map[string]InfoRequest),
-		infoSupplements: make(map[string][]InfoSupplement),
+		now:                 now,
+		repo:                repo,
+		idempotency:         idempotencyService,
+		notifications:       notifications,
+		reports:             make(map[string]Report),
+		disputes:            make(map[string]DisputeCase),
+		appeals:             make(map[string]Appeal),
+		infoRequests:        make(map[string]InfoRequest),
+		infoSupplements:     make(map[string][]InfoSupplement),
+		disputeMessages:     make(map[string][]DisputeMessage),
+		settlementProposals: make(map[string][]SettlementProposal),
+		disputeRemedies:     make(map[string][]DisputeRemedy),
 	}
 }
 
@@ -122,7 +139,7 @@ func (s *Service) AdminReports(ctx context.Context, user auth.User, page domain.
 		items = append(items, item)
 	}
 	sortReports(items)
-	return domain.PageItems(items, page), nil
+	return domain.PageItems(items, page)
 }
 
 func (s *Service) AdminReport(ctx context.Context, user auth.User, id string) (Report, *domain.AppError) {
@@ -211,12 +228,395 @@ func (s *Service) MyDisputes(ctx context.Context, user auth.User) ([]DisputeCase
 	return items, nil
 }
 
+func (s *Service) DisputesForActor(ctx context.Context, actor auth.BusinessActor) ([]DisputeCase, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.MyDisputes(ctx, auth.User{ID: actor.UserID})
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return nil, disputeNotFound()
+	}
+	return s.repo.ListDisputesForActor(ctx, actor)
+}
+
+func (s *Service) MyDispute(ctx context.Context, user auth.User, id string) (DisputeCase, *domain.AppError) {
+	if strings.TrimSpace(user.ID) == "" {
+		return DisputeCase{}, sessionRequired()
+	}
+	if s.repo != nil {
+		return s.repo.GetDisputeForParticipant(ctx, strings.TrimSpace(id), user.ID)
+	}
+	id = strings.TrimSpace(id)
+	s.mu.Lock()
+	item, ok := s.disputes[id]
+	authorized := ok && isDisputeParticipant(item, user.ID)
+	s.mu.Unlock()
+	if !authorized {
+		return DisputeCase{}, disputeNotFound()
+	}
+	if appErr := s.normalizeExpiredDisputeRemedyMemory(ctx, id); appErr != nil {
+		return DisputeCase{}, appErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok = s.disputes[id]
+	if !ok || !isDisputeParticipant(item, user.ID) {
+		return DisputeCase{}, disputeNotFound()
+	}
+	return s.disputeDetailMemory(item), nil
+}
+
+func (s *Service) DisputeForActor(ctx context.Context, actor auth.BusinessActor, id string) (DisputeCase, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.MyDispute(ctx, auth.User{ID: actor.UserID}, id)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return DisputeCase{}, disputeNotFound()
+	}
+	return s.repo.GetDisputeForActor(ctx, actor, strings.TrimSpace(id))
+}
+
+func (s *Service) DisputeParticipantActionForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input DisputeParticipantActionInput, buildCompletion DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.DisputeParticipantActionWithIdempotency(ctx, auth.User{ID: actor.UserID, Status: auth.AccountStatusActive}, routeKey, key, requestHash, WithBusinessActor(input, actor), buildCompletion)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil {
+		return idempotency.Completion{}, disputeNotFound()
+	}
+	input = WithBusinessActor(input, actor)
+	return s.disputeParticipantAction(ctx, actor.UserID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) DisputeParticipantActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input DisputeParticipantActionInput, buildCompletion DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if strings.TrimSpace(user.ID) == "" || (user.Status != "" && user.Status != auth.AccountStatusActive) {
+		return idempotency.Completion{}, sessionRequired()
+	}
+	input.ActorUserID = user.ID
+	if input.ActorAudience == "" {
+		input.ActorAudience = auth.SessionAudienceNormal
+	}
+	return s.disputeParticipantAction(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) disputeParticipantAction(ctx context.Context, userID, routeKey, key, requestHash string, input DisputeParticipantActionInput, buildCompletion DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.DisputeID = strings.TrimSpace(input.DisputeID)
+	input.Action = strings.TrimSpace(input.Action)
+	input.Body = strings.TrimSpace(input.Body)
+	input.Resolution = strings.TrimSpace(input.Resolution)
+	input.AmountCNY = strings.TrimSpace(input.AmountCNY)
+	input.Terms = strings.TrimSpace(input.Terms)
+	input.ProposalID = strings.TrimSpace(input.ProposalID)
+	input.Note = strings.TrimSpace(input.Note)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if appErr := validateDisputeParticipantAction(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if input.Action == DisputeMessageActionPropose && s.repo == nil && s.disputeProjectionCloser != nil {
+		if appErr := s.disputeProjectionCloser.ValidateDisputeProposalAmount(ctx, input.DisputeID, input.Resolution, input.AmountCNY); appErr != nil {
+			return idempotency.Completion{}, appErr
+		}
+	}
+	entry, appErr := s.begin(ctx, userID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+			actor := auth.BusinessActor{UserID: userID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+			if _, appErr := s.repo.GetDisputeForActor(ctx, actor, input.DisputeID); appErr != nil {
+				return idempotency.Completion{}, appErr
+			}
+		}
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateDisputeParticipantWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	item, projectionStatus, rollbackMemory, appErr := s.updateDisputeParticipantMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if projectionStatus != "" && s.disputeProjectionCloser != nil {
+		if appErr := s.disputeProjectionCloser.SetDisputeProjection(ctx, item.ID, projectionStatus, input.ActorUserID, input.RequestID); appErr != nil {
+			rollbackMemory()
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+	}
+	completion, appErr := buildCompletion(item)
+	completion, appErr = s.complete(ctx, entry, completion, appErr)
+	if appErr == nil {
+		s.notifyDisputeRemedyMemory(item, input.Action)
+	}
+	return completion, appErr
+}
+
+func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionInput) (DisputeCase, string, func(), *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.disputes[input.DisputeID]
+	if !ok || !isDisputeParticipant(item, input.ActorUserID) || item.TargetType != TargetAPIOrder {
+		return DisputeCase{}, "", func() {}, disputeNotFound()
+	}
+	previousItem := item
+	previousMessages := append([]DisputeMessage(nil), s.disputeMessages[item.ID]...)
+	previousProposals := append([]SettlementProposal(nil), s.settlementProposals[item.ID]...)
+	previousRemedies := append([]DisputeRemedy(nil), s.disputeRemedies[item.ID]...)
+	rollback := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.disputes[item.ID] = previousItem
+		s.disputeMessages[item.ID] = previousMessages
+		s.settlementProposals[item.ID] = previousProposals
+		s.disputeRemedies[item.ID] = previousRemedies
+	}
+	now := s.now()
+	projectionStatus := ""
+	switch input.Action {
+	case DisputeMessageActionAppend:
+		if item.Status != DisputeStatusNegotiating && item.Status != DisputeStatusOpen && item.Status != DisputeStatusWaitingInfo {
+			return DisputeCase{}, "", func() {}, invalidState("当前纠纷状态不能继续留言。")
+		}
+		s.disputeMessages[item.ID] = append(s.disputeMessages[item.ID], DisputeMessage{
+			ID: uuid.NewString(), DisputeCaseID: item.ID, SenderUserID: input.ActorUserID,
+			Body: input.Body, CreatedAt: now,
+		})
+	case DisputeMessageActionPropose:
+		if item.Status != DisputeStatusNegotiating {
+			return DisputeCase{}, "", func() {}, invalidState("平台已介入或纠纷已结束，不能再提交协商方案。")
+		}
+		proposals := s.settlementProposals[item.ID]
+		for index := range proposals {
+			if proposals[index].Status == SettlementStatusPending {
+				proposals[index].Status = SettlementStatusSuperseded
+				proposals[index].UpdatedAt = now
+				proposals[index].Version++
+			}
+		}
+		proposals = append(proposals, SettlementProposal{
+			ID: uuid.NewString(), DisputeCaseID: item.ID, ProposedByUserID: input.ActorUserID,
+			Resolution: input.Resolution, AmountCNY: input.AmountCNY, Terms: input.Terms,
+			Status: SettlementStatusPending, CreatedAt: now, UpdatedAt: now, Version: 1,
+		})
+		s.settlementProposals[item.ID] = proposals
+	case DisputeMessageActionConfirm, DisputeMessageActionReject:
+		if item.Status != DisputeStatusNegotiating {
+			return DisputeCase{}, "", func() {}, invalidState("平台已介入或纠纷已结束，不能处理协商方案。")
+		}
+		proposals := s.settlementProposals[item.ID]
+		index := -1
+		for candidate := range proposals {
+			if proposals[candidate].ID == input.ProposalID {
+				index = candidate
+				break
+			}
+		}
+		if index < 0 {
+			return DisputeCase{}, "", func() {}, disputeNotFound()
+		}
+		proposal := proposals[index]
+		if proposal.Status != SettlementStatusPending || proposal.ProposedByUserID == input.ActorUserID {
+			return DisputeCase{}, "", func() {}, invalidState("只能由另一方确认或拒绝当前待确认方案。")
+		}
+		proposal.UpdatedAt = now
+		proposal.Version++
+		if input.Action == DisputeMessageActionReject {
+			proposal.Status = SettlementStatusRejected
+			proposal.RejectedByUserID = input.ActorUserID
+			proposal.RejectedAt = &now
+		} else {
+			proposal.Status = SettlementStatusAccepted
+			proposal.AcceptedByUserID = input.ActorUserID
+			proposal.AcceptedAt = &now
+			item.Status = DisputeStatusClosed
+			item.PublicResult = "双方已确认协商方案"
+			item.ClosedAt = &now
+			projectionStatus = apiorder.DisputeStatusClosed
+		}
+		proposals[index] = proposal
+		s.settlementProposals[item.ID] = proposals
+	case DisputeMessageActionEscalate:
+		if item.Status != DisputeStatusNegotiating {
+			return DisputeCase{}, "", func() {}, invalidState("当前纠纷已由平台处理或已经结案。")
+		}
+		proposals := s.settlementProposals[item.ID]
+		for index := range proposals {
+			if proposals[index].Status == SettlementStatusPending {
+				proposals[index].Status = SettlementStatusSuperseded
+				proposals[index].UpdatedAt = now
+				proposals[index].Version++
+			}
+		}
+		s.settlementProposals[item.ID] = proposals
+		item.Status = DisputeStatusOpen
+		item.PublicResult = "平台审核中"
+		projectionStatus = apiorder.DisputeStatusOpen
+	case DisputeRemedyActionClaim:
+		index := currentRemedyIndex(s.disputeRemedies[item.ID])
+		if item.Status != DisputeStatusResolved || index < 0 {
+			return DisputeCase{}, "", func() {}, invalidState("当前纠纷没有待履行的整改要求。")
+		}
+		remedies := s.disputeRemedies[item.ID]
+		remedy := remedies[index]
+		if remedy.Status != RemedyStatusPending || remedy.ResponsibleUserID != input.ActorUserID {
+			return DisputeCase{}, "", func() {}, invalidState("只有整改责任方可以声明已履行。")
+		}
+		confirmationDueAt := now.Add(RemedyConfirmationWindow)
+		remedy.Status = RemedyStatusClaimedFulfilled
+		remedy.ClaimNote = input.Note
+		remedy.ClaimedAt = &now
+		remedy.ConfirmationDueAt = &confirmationDueAt
+		remedy.UpdatedAt = now
+		remedy.Version++
+		remedies[index] = remedy
+		s.disputeRemedies[item.ID] = remedies
+		item.PublicResult = "责任方已声明履行，等待对方确认"
+		projectionStatus = apiorder.DisputeStatusFulfillmentConfirmation
+	case DisputeRemedyActionConfirm, DisputeRemedyActionContest:
+		index := currentRemedyIndex(s.disputeRemedies[item.ID])
+		if item.Status != DisputeStatusResolved || index < 0 {
+			return DisputeCase{}, "", func() {}, invalidState("当前纠纷没有待确认的履行声明。")
+		}
+		remedies := s.disputeRemedies[item.ID]
+		remedy := remedies[index]
+		if remedy.Status != RemedyStatusClaimedFulfilled || remedy.BeneficiaryUserID != input.ActorUserID {
+			return DisputeCase{}, "", func() {}, invalidState("只有整改受益方可以确认或否认履行结果。")
+		}
+		if remedy.ConfirmationDueAt != nil && !now.Before(*remedy.ConfirmationDueAt) {
+			remedy.Status = RemedyStatusConfirmationExpired
+			remedy.ResponseNote = RemedyConfirmationExpiredNote
+			remedy.ConfirmationExpiredAt = &now
+			remedy.UpdatedAt = now
+			remedy.Version++
+			remedies[index] = remedy
+			s.disputeRemedies[item.ID] = remedies
+			item.Status = DisputeStatusClosed
+			item.PublicResult = RemedyConfirmationExpiredPublicResult
+			item.ClosedAt = &now
+			projectionStatus = apiorder.DisputeStatusClosed
+			break
+		}
+		remedy.ResponseNote = input.Reason
+		remedy.UpdatedAt = now
+		remedy.Version++
+		if input.Action == DisputeRemedyActionContest {
+			remedy.Status = RemedyStatusContested
+			remedy.ContestedAt = &now
+			item.Status = DisputeStatusOpen
+			item.PublicResult = "履行结果有异议，平台重新审核中"
+			item.ResolvedAt = nil
+			projectionStatus = apiorder.DisputeStatusOpen
+		} else {
+			remedy.Status = RemedyStatusConfirmed
+			remedy.ConfirmedAt = &now
+			item.Status = DisputeStatusClosed
+			item.PublicResult = "对方已确认整改履行完成"
+			item.ClosedAt = &now
+			projectionStatus = apiorder.DisputeStatusClosed
+		}
+		remedies[index] = remedy
+		s.disputeRemedies[item.ID] = remedies
+	default:
+		return DisputeCase{}, "", func() {}, invalidState("纠纷协商动作不支持。")
+	}
+	item.UpdatedAt = now
+	item.Version++
+	s.disputes[item.ID] = item
+	return s.disputeDetailMemory(item), projectionStatus, rollback, nil
+}
+
+func (s *Service) disputeDetailMemory(item DisputeCase) DisputeCase {
+	item.Messages = append([]DisputeMessage(nil), s.disputeMessages[item.ID]...)
+	proposals := s.settlementProposals[item.ID]
+	item.SettlementProposals = make([]SettlementProposal, len(proposals))
+	for index := range proposals {
+		item.SettlementProposals[len(proposals)-1-index] = proposals[index]
+	}
+	remedies := s.disputeRemedies[item.ID]
+	item.Remedies = make([]DisputeRemedy, len(remedies))
+	for index := range remedies {
+		item.Remedies[len(remedies)-1-index] = remedies[index]
+	}
+	return item
+}
+
+func currentRemedyIndex(items []DisputeRemedy) int {
+	for index := len(items) - 1; index >= 0; index-- {
+		if items[index].Status == RemedyStatusPending || items[index].Status == RemedyStatusClaimedFulfilled {
+			return index
+		}
+	}
+	return -1
+}
+
+func (s *Service) normalizeExpiredDisputeRemedyMemory(ctx context.Context, disputeID string) *domain.AppError {
+	now := s.now()
+	s.mu.Lock()
+	item, ok := s.disputes[disputeID]
+	if !ok {
+		s.mu.Unlock()
+		return nil
+	}
+	previousItem := item
+	previousRemedies := append([]DisputeRemedy(nil), s.disputeRemedies[disputeID]...)
+	remedies := s.disputeRemedies[disputeID]
+	index := currentRemedyIndex(remedies)
+	if item.Status != DisputeStatusResolved || index < 0 || remedies[index].Status != RemedyStatusClaimedFulfilled ||
+		remedies[index].ConfirmationDueAt == nil || now.Before(*remedies[index].ConfirmationDueAt) {
+		s.mu.Unlock()
+		return nil
+	}
+	remedy := remedies[index]
+	remedy.Status = RemedyStatusConfirmationExpired
+	remedy.ResponseNote = RemedyConfirmationExpiredNote
+	remedy.ConfirmationExpiredAt = &now
+	remedy.UpdatedAt = now
+	remedy.Version++
+	remedies[index] = remedy
+	s.disputeRemedies[disputeID] = remedies
+	item.Status = DisputeStatusClosed
+	item.PublicResult = RemedyConfirmationExpiredPublicResult
+	item.ClosedAt = &now
+	item.UpdatedAt = now
+	item.Version++
+	s.disputes[disputeID] = item
+	expiredVersion := item.Version
+	s.mu.Unlock()
+
+	if s.disputeProjectionCloser == nil {
+		item.Remedies = []DisputeRemedy{remedy}
+		s.notifyDisputeRemedyMemory(item, "confirmation_expired")
+		return nil
+	}
+	requestID := "remedy-confirmation-timeout:" + remedy.ID
+	if appErr := s.disputeProjectionCloser.SetDisputeProjection(ctx, disputeID, apiorder.DisputeStatusClosed, "", requestID); appErr != nil {
+		s.mu.Lock()
+		if current, exists := s.disputes[disputeID]; exists && current.Version == expiredVersion {
+			s.disputes[disputeID] = previousItem
+			s.disputeRemedies[disputeID] = previousRemedies
+		}
+		s.mu.Unlock()
+		return appErr
+	}
+	item.Remedies = []DisputeRemedy{remedy}
+	s.notifyDisputeRemedyMemory(item, "confirmation_expired")
+	return nil
+}
+
 func (s *Service) AdminDispute(ctx context.Context, user auth.User, id string) (DisputeCase, *domain.AppError) {
 	if appErr := requireAdmin(user); appErr != nil {
 		return DisputeCase{}, appErr
 	}
 	if s.repo != nil {
 		return s.repo.GetAdminDispute(ctx, id)
+	}
+	if appErr := s.normalizeExpiredDisputeRemedyMemory(ctx, id); appErr != nil {
+		return DisputeCase{}, appErr
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,7 +625,7 @@ func (s *Service) AdminDispute(ctx context.Context, user auth.User, id string) (
 		return DisputeCase{}, disputeNotFound()
 	}
 	item.Supplements = append([]InfoSupplement(nil), s.infoSupplements[infoSupplementEntityKey(InfoRequestEntityDispute, id)]...)
-	return item, nil
+	return s.disputeDetailMemory(item), nil
 }
 
 func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input AdminActionInput, buildCompletion AdminCompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -236,6 +636,9 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user au
 	input.PublicResultCode = normalizePublicResultCode(input.PublicResultCode)
 	if appErr := validateDisputeAction(input); appErr != nil {
 		return idempotency.Completion{}, appErr
+	}
+	if input.Action == "resolve" && input.Remedy != nil && !input.Remedy.DueAt.After(s.now()) {
+		return idempotency.Completion{}, fieldError("remedy.dueAt", "整改期限必须晚于当前时间。")
 	}
 	entry, appErr := s.begin(ctx, user.ID, routeKey, key, requestHash)
 	if appErr != nil {
@@ -252,13 +655,95 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user au
 		}
 		return completion, nil
 	}
-	result, appErr := s.updateDisputeAdminMemory(input)
+	if input.Action == "resolve" && input.Remedy != nil {
+		if s.disputeProjectionCloser != nil {
+			if appErr := s.disputeProjectionCloser.ValidateDisputeProposalAmount(ctx, input.ID, input.Remedy.Action, input.Remedy.AmountCNY); appErr != nil {
+				return idempotency.Completion{}, appErr
+			}
+		}
+	}
+	result, rollbackMemory, appErr := s.updateDisputeAdminMemory(input)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
 	}
+	if result.Dispute != nil && result.Dispute.TargetType == TargetAPIOrder && s.disputeProjectionCloser != nil {
+		projectionStatus := ""
+		switch input.Action {
+		case "resolve":
+			projectionStatus = apiorder.DisputeStatusClosed
+			if input.Remedy != nil {
+				projectionStatus = apiorder.DisputeStatusAwaitingFulfillment
+			}
+		case "close", "mark_overdue":
+			projectionStatus = apiorder.DisputeStatusClosed
+		}
+		if projectionStatus != "" {
+			if appErr := s.disputeProjectionCloser.SetDisputeProjection(ctx, result.Dispute.ID, projectionStatus, input.AdminUserID, input.RequestID); appErr != nil {
+				rollbackMemory()
+				s.idempotency.Cancel(ctx, entry)
+				return idempotency.Completion{}, appErr
+			}
+		}
+	}
 	completion, appErr := buildCompletion(result)
-	return s.complete(ctx, entry, completion, appErr)
+	completion, appErr = s.complete(ctx, entry, completion, appErr)
+	if appErr == nil && result.Dispute != nil {
+		s.notifyDisputeRemedyMemory(*result.Dispute, input.Action)
+	}
+	return completion, appErr
+}
+
+func (s *Service) notifyDisputeRemedyMemory(item DisputeCase, action string) {
+	if s.notifications == nil || len(item.Remedies) == 0 {
+		return
+	}
+	remedy := item.Remedies[0]
+	title := ""
+	body := ""
+	recipients := []string{}
+	eventType := ""
+	switch {
+	case action == "resolve" && remedy.Status == RemedyStatusPending:
+		eventType, title = "dispute.remedy_created", "平台已下达整改要求"
+		body = "平台已作出裁决，请按整改要求和期限完成履行。"
+		recipients = []string{remedy.ResponsibleUserID, remedy.BeneficiaryUserID}
+	case action == DisputeRemedyActionClaim && remedy.Status == RemedyStatusClaimedFulfilled:
+		eventType, title = "dispute.remedy_claimed", "整改履行声明待确认"
+		body = "责任方已声明履行，请在 48 小时内确认是否收到或完成。"
+		recipients = []string{remedy.BeneficiaryUserID}
+	case remedy.Status == RemedyStatusConfirmationExpired:
+		eventType, title = "dispute.remedy_confirmation_expired", "整改确认期已结束"
+		body = "对方未在期限内反馈，流程已中性结案；平台未核验到账或履约事实。"
+		recipients = []string{remedy.ResponsibleUserID, remedy.BeneficiaryUserID}
+	case action == DisputeRemedyActionConfirm && remedy.Status == RemedyStatusConfirmed:
+		eventType, title = "dispute.remedy_confirmed", "整改结果已由对方确认"
+		body = "对方已确认整改履行完成，纠纷已结案。"
+		recipients = []string{remedy.ResponsibleUserID}
+	case action == DisputeRemedyActionContest && remedy.Status == RemedyStatusContested:
+		eventType, title = "dispute.remedy_contested", "整改结果已申请平台复核"
+		body = "对方反馈未收到或未完成，纠纷已重新进入平台审核。"
+		recipients = []string{remedy.ResponsibleUserID}
+	case action == "mark_overdue" && remedy.Status == RemedyStatusOverdue:
+		eventType, title = "dispute.remedy_overdue", "平台已确认整改逾期"
+		body = "平台已确认责任方未在裁决期限内履行，纠纷已结案。"
+		recipients = []string{remedy.ResponsibleUserID, remedy.BeneficiaryUserID}
+	default:
+		return
+	}
+	seen := make(map[string]bool, len(recipients))
+	for _, userID := range recipients {
+		userID = strings.TrimSpace(userID)
+		if userID == "" || seen[userID] {
+			continue
+		}
+		seen[userID] = true
+		s.notifications.Add(notification.Notification{
+			UserID: userID, Type: eventType, Title: title, Body: body,
+			TargetType: "dispute", TargetID: item.ID,
+			TargetURL: "/my/reports/dispute/" + item.ID, SourceEventType: eventType,
+		})
+	}
 }
 
 func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input SupplementInput, buildCompletion SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -269,6 +754,9 @@ func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user 
 		return idempotency.Completion{}, sessionRequired()
 	}
 	input.SubmittingUserID = user.ID
+	if input.ActorAudience == "" {
+		input.ActorAudience = auth.SessionAudienceNormal
+	}
 	input.SubmittingUsername = user.Username
 	input.SubmittingName = displayName(user)
 	input.EntityType = normalize(input.EntityType)
@@ -312,6 +800,41 @@ func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user 
 	}
 	completion, appErr := buildCompletion(result)
 	return s.complete(ctx, entry, completion, appErr)
+}
+
+func (s *Service) SubmitInfoSupplementForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input SupplementInput, buildCompletion SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		return s.SubmitInfoSupplementWithIdempotency(ctx, auth.User{
+			ID: actor.UserID, Username: actor.Username, DisplayName: actor.DisplayName, Status: auth.AccountStatusActive,
+		}, routeKey, key, requestHash, WithSupplementBusinessActor(input, actor), buildCompletion)
+	}
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || s.repo == nil || input.EntityType != InfoRequestEntityDispute {
+		return idempotency.Completion{}, disputeNotFound()
+	}
+	input = WithSupplementBusinessActor(input, actor)
+	input.EntityType = normalize(input.EntityType)
+	input.EntityID = strings.TrimSpace(input.EntityID)
+	input.InfoRequestID = strings.TrimSpace(input.InfoRequestID)
+	input.Body = strings.TrimSpace(input.Body)
+	if appErr := validateSupplement(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, appErr := s.begin(ctx, actor.UserID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		if _, appErr := s.repo.GetDisputeForActor(ctx, actor, input.EntityID); appErr != nil {
+			return idempotency.Completion{}, appErr
+		}
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	_, completion, appErr := s.repo.SubmitInfoSupplementWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
 }
 
 func (s *Service) CreateAppealWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input CreateAppealInput, buildCompletion AppealCompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -517,27 +1040,34 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 		counterpartyID = input.BuyerUserID
 	}
 	item := DisputeCase{
-		ID:                 uuid.NewString(),
-		TargetType:         TargetAPIOrder,
-		TargetID:           strings.TrimSpace(input.OrderID),
-		TargetLabel:        nonEmpty(input.ServiceTitle, "API 订单"),
-		PrimaryUserID:      strings.TrimSpace(input.ActorUserID),
-		CounterpartyUserID: strings.TrimSpace(counterpartyID),
-		SubjectUserID:      strings.TrimSpace(counterpartyID),
-		Status:             DisputeStatusOpen,
-		PublicSummary:      "API 订单纠纷",
-		PublicResultCode:   PublicResultNoAction,
-		PublicResult:       "已进入人工处理中",
-		AdminReason:        strings.TrimSpace(input.Reason),
-		OpenedByAdminID:    strings.TrimSpace(input.ActorUserID),
-		OpenedAt:           now,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-		Version:            1,
+		ID:                  uuid.NewString(),
+		TargetType:          TargetAPIOrder,
+		TargetID:            strings.TrimSpace(input.OrderID),
+		TargetLabel:         nonEmpty(input.ServiceTitle, "API 订单"),
+		PrimaryUserID:       strings.TrimSpace(input.ActorUserID),
+		CounterpartyUserID:  strings.TrimSpace(counterpartyID),
+		SubjectUserID:       strings.TrimSpace(counterpartyID),
+		Status:              DisputeStatusNegotiating,
+		IssueCode:           strings.TrimSpace(input.IssueCode),
+		RequestedResolution: strings.TrimSpace(input.RequestedResolution),
+		RequestedAmountCNY:  strings.TrimSpace(input.RequestedAmountCNY),
+		IssueOccurredAt:     input.IssueOccurredAt,
+		PublicSummary:       "API 订单纠纷",
+		PublicResultCode:    PublicResultNoAction,
+		PublicResult:        "双方协商中",
+		OpenedByAdminID:     strings.TrimSpace(input.ActorUserID),
+		OpenedAt:            now,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		Version:             1,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.disputes[item.ID] = item
+	s.disputeMessages[item.ID] = []DisputeMessage{{
+		ID: uuid.NewString(), DisputeCaseID: item.ID, SenderUserID: input.ActorUserID,
+		Body: strings.TrimSpace(input.Reason), CreatedAt: now,
+	}}
 	return item.ID, nil
 }
 
@@ -687,40 +1217,95 @@ func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResul
 	return MutationResult{Report: &item}, nil
 }
 
-func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResult, *domain.AppError) {
+func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResult, func(), *domain.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item, ok := s.disputes[input.ID]
 	if !ok {
-		return MutationResult{}, disputeNotFound()
+		return MutationResult{}, func() {}, disputeNotFound()
 	}
 	if input.ExpectedVersion > 0 && item.Version != input.ExpectedVersion {
-		return MutationResult{}, versionConflict()
+		return MutationResult{}, func() {}, versionConflict()
+	}
+	previousItem := item
+	previousRemedies := append([]DisputeRemedy(nil), s.disputeRemedies[item.ID]...)
+	rollback := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.disputes[item.ID] = previousItem
+		s.disputeRemedies[item.ID] = previousRemedies
 	}
 	now := s.now()
 	switch input.Action {
 	case "request_info":
 		if item.Status != DisputeStatusOpen {
-			return MutationResult{}, invalidState("只有打开中的纠纷可以要求补充信息。")
+			return MutationResult{}, func() {}, invalidState("只有打开中的纠纷可以要求补充信息。")
 		}
 		if !isDisputeParticipant(item, input.RequestedFromID) {
-			return MutationResult{}, infoRequestPermissionDenied()
+			return MutationResult{}, func() {}, infoRequestPermissionDenied()
 		}
 		item.Status = DisputeStatusWaitingInfo
 	case "resolve":
 		if item.Status != DisputeStatusOpen && item.Status != DisputeStatusWaitingInfo {
-			return MutationResult{}, invalidState("当前纠纷不能标记处理完成。")
+			return MutationResult{}, func() {}, invalidState("当前纠纷不能标记处理完成。")
 		}
 		item.Status = DisputeStatusResolved
+		if item.TargetType == TargetAPIOrder && input.Remedy == nil {
+			item.Status = DisputeStatusClosed
+			item.ClosedAt = &now
+		}
 		item.ResolvedAt = &now
+		if input.Remedy != nil {
+			if item.TargetType != TargetAPIOrder || !isDisputeParticipant(item, input.Remedy.ResponsibleUserID) {
+				return MutationResult{}, func() {}, invalidState("整改责任方必须是当前 API 订单纠纷参与者。")
+			}
+			beneficiaryID := item.PrimaryUserID
+			if beneficiaryID == input.Remedy.ResponsibleUserID {
+				beneficiaryID = item.CounterpartyUserID
+			}
+			if beneficiaryID == "" || beneficiaryID == input.Remedy.ResponsibleUserID {
+				return MutationResult{}, func() {}, invalidState("整改要求缺少有效受益方。")
+			}
+			s.disputeRemedies[item.ID] = append(s.disputeRemedies[item.ID], DisputeRemedy{
+				ID: uuid.NewString(), DisputeCaseID: item.ID, Action: input.Remedy.Action,
+				AmountCNY: input.Remedy.AmountCNY, Currency: "CNY",
+				ResponsibleUserID: input.Remedy.ResponsibleUserID, BeneficiaryUserID: beneficiaryID,
+				Instructions: input.Remedy.Instructions, Status: RemedyStatusPending,
+				DueAt: input.Remedy.DueAt, CreatedByAdminID: input.AdminUserID,
+				CreatedAt: now, UpdatedAt: now, Version: 1,
+			})
+		}
 	case "close":
 		if item.Status == DisputeStatusClosed {
-			return MutationResult{}, invalidState("纠纷已关闭。")
+			return MutationResult{}, func() {}, invalidState("纠纷已关闭。")
+		}
+		if item.TargetType == TargetAPIOrder && currentRemedyIndex(s.disputeRemedies[item.ID]) >= 0 {
+			return MutationResult{}, func() {}, invalidState("当前纠纷仍有进行中的整改要求，不能直接关闭。")
 		}
 		item.Status = DisputeStatusClosed
 		item.ClosedAt = &now
+	case "mark_overdue":
+		index := currentRemedyIndex(s.disputeRemedies[item.ID])
+		if item.Status != DisputeStatusResolved || index < 0 {
+			return MutationResult{}, func() {}, invalidState("当前纠纷没有可确认逾期的整改要求。")
+		}
+		remedies := s.disputeRemedies[item.ID]
+		remedy := remedies[index]
+		if remedy.Status != RemedyStatusPending || now.Before(remedy.DueAt) {
+			return MutationResult{}, func() {}, invalidState("整改尚未到期或已提交履行声明。")
+		}
+		remedy.Status = RemedyStatusOverdue
+		remedy.ResponseNote = input.Reason
+		remedy.OverdueAt = &now
+		remedy.UpdatedAt = now
+		remedy.Version++
+		remedies[index] = remedy
+		s.disputeRemedies[item.ID] = remedies
+		item.Status = DisputeStatusClosed
+		item.PublicResult = "责任方未在裁决期限内履行"
+		item.ClosedAt = &now
 	default:
-		return MutationResult{}, invalidState("纠纷处理动作不支持。")
+		return MutationResult{}, func() {}, invalidState("纠纷处理动作不支持。")
 	}
 	item.AdminReason = strings.TrimSpace(input.Reason)
 	item.PublicSummary = nonEmpty(input.PublicSummary, item.PublicSummary)
@@ -745,7 +1330,8 @@ func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResu
 		item.InfoRequestedFromID = ""
 	}
 	s.disputes[item.ID] = item
-	return MutationResult{Dispute: &item}, nil
+	detail := s.disputeDetailMemory(item)
+	return MutationResult{Dispute: &detail}, rollback, nil
 }
 
 func (s *Service) createInfoRequestMemory(entityType, entityID, requestedFromID, adminID, reason string, now time.Time) InfoRequest {
@@ -1015,7 +1601,7 @@ func validateReportAction(input AdminActionInput) *domain.AppError {
 
 func validateDisputeAction(input AdminActionInput) *domain.AppError {
 	switch input.Action {
-	case "request_info", "resolve", "close":
+	case "request_info", "resolve", "close", "mark_overdue":
 	default:
 		return invalidState("纠纷处理动作不支持。")
 	}
@@ -1041,8 +1627,90 @@ func validateDisputeAction(input AdminActionInput) *domain.AppError {
 	if input.Action == "resolve" && strings.TrimSpace(input.PublicResultCode) == "" {
 		return fieldError("publicResultCode", "处理完成必须选择公开结果代码。")
 	}
+	if input.Remedy != nil {
+		if input.Action != "resolve" {
+			return fieldError("remedy", "只有平台裁决可以创建整改要求。")
+		}
+		input.Remedy.Action = strings.TrimSpace(input.Remedy.Action)
+		input.Remedy.AmountCNY = strings.TrimSpace(input.Remedy.AmountCNY)
+		input.Remedy.ResponsibleUserID = strings.TrimSpace(input.Remedy.ResponsibleUserID)
+		input.Remedy.Instructions = strings.TrimSpace(input.Remedy.Instructions)
+		if !apiorder.IsDisputeResolution(input.Remedy.Action) {
+			return fieldError("remedy.action", "请选择有效的整改动作。")
+		}
+		if appErr := apiorder.ValidateRequestedDisputeAmount(input.Remedy.Action, input.Remedy.AmountCNY, ""); appErr != nil {
+			return appErr
+		}
+		if input.Remedy.ResponsibleUserID == "" {
+			return fieldError("remedy.responsibleUserId", "必须指定整改责任方。")
+		}
+		if input.Remedy.DueAt.IsZero() {
+			return fieldError("remedy.dueAt", "必须填写整改期限。")
+		}
+		if appErr := validateDisputeParticipantText("remedy.instructions", input.Remedy.Instructions, 2, 2000, "整改说明需为 2 至 2000 个字符。"); appErr != nil {
+			return appErr
+		}
+	}
 	if strings.TrimSpace(input.PublicResultCode) != "" && !validPublicResultCodes[normalizePublicResultCode(input.PublicResultCode)] {
 		return fieldError("publicResultCode", "公开结果代码不支持。")
+	}
+	return nil
+}
+
+func validateDisputeParticipantAction(input DisputeParticipantActionInput) *domain.AppError {
+	if input.DisputeID == "" {
+		return fieldError("disputeId", "必须提供纠纷记录。")
+	}
+	switch input.Action {
+	case DisputeMessageActionAppend:
+		return validateDisputeParticipantText("body", input.Body, 1, 2000, "留言需为 1 至 2000 个字符。")
+	case DisputeMessageActionPropose:
+		if !apiorder.IsDisputeResolution(input.Resolution) {
+			return fieldError("resolution", "请选择有效的协商处理方案。")
+		}
+		if appErr := apiorder.ValidateRequestedDisputeAmount(input.Resolution, input.AmountCNY, ""); appErr != nil {
+			return appErr
+		}
+		return validateDisputeParticipantText("terms", input.Terms, 1, 2000, "方案说明需为 1 至 2000 个字符。")
+	case DisputeMessageActionConfirm:
+		if input.ProposalID == "" {
+			return fieldError("proposalId", "必须提供待确认方案。")
+		}
+		return nil
+	case DisputeMessageActionReject:
+		if input.ProposalID == "" {
+			return fieldError("proposalId", "必须提供待拒绝方案。")
+		}
+		if input.Reason == "" {
+			return nil
+		}
+		return validateDisputeParticipantText("reason", input.Reason, 1, 500, "拒绝说明不能超过 500 个字符。")
+	case DisputeMessageActionEscalate:
+		return validateDisputeParticipantText("reason", input.Reason, 2, 500, "平台介入原因需为 2 至 500 个字符。")
+	case DisputeRemedyActionClaim:
+		return validateDisputeParticipantText("note", input.Note, 2, 2000, "履行说明需为 2 至 2000 个字符。")
+	case DisputeRemedyActionConfirm:
+		if input.Reason == "" {
+			return nil
+		}
+		return validateDisputeParticipantText("reason", input.Reason, 2, 500, "确认说明需为 2 至 500 个字符。")
+	case DisputeRemedyActionContest:
+		return validateDisputeParticipantText("reason", input.Reason, 2, 2000, "未收到或未履行说明需为 2 至 2000 个字符。")
+	default:
+		return invalidState("纠纷参与方动作不支持。")
+	}
+}
+
+func validateDisputeParticipantText(field, value string, min, max int, detail string) *domain.AppError {
+	count := utf8.RuneCountInString(strings.TrimSpace(value))
+	if count < min || count > max {
+		return fieldError(field, detail)
+	}
+	if strings.ContainsAny(value, "\x00") {
+		return fieldError(field, "文本内容包含非法字符。")
+	}
+	if domain.LooksLikeSecretContent(value) {
+		return secretError(field)
 	}
 	return nil
 }
@@ -1120,7 +1788,7 @@ func publicDisputeFromCase(item DisputeCase, username string) PublicDispute {
 		Type:       nonEmpty(item.PublicSummary, item.TargetLabel, "纠纷记录"),
 		Result:     nonEmpty(item.PublicResult, statusLabel(item.Status)),
 		HandledAt:  handledAt,
-		Unresolved: item.Status == DisputeStatusOpen || item.Status == DisputeStatusWaitingInfo,
+		Unresolved: isUnresolvedDisputeStatus(item.Status),
 	}
 }
 
@@ -1138,6 +1806,8 @@ func sortAppeals(items []Appeal) {
 
 func statusLabel(status string) string {
 	switch status {
+	case DisputeStatusNegotiating:
+		return "协商中"
 	case DisputeStatusOpen:
 		return "人工处理中"
 	case DisputeStatusWaitingInfo:
@@ -1148,6 +1818,15 @@ func statusLabel(status string) string {
 		return "已关闭"
 	default:
 		return status
+	}
+}
+
+func isUnresolvedDisputeStatus(status string) bool {
+	switch status {
+	case DisputeStatusNegotiating, DisputeStatusOpen, DisputeStatusWaitingInfo:
+		return true
+	default:
+		return false
 	}
 }
 

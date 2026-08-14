@@ -35,6 +35,8 @@ function serviceWithBilling(id: string, billingMode: unknown, state: ApiService[
     state,
     online: state === 'online',
     publiclyOrderable: true,
+    probeConnectionId: 'probe-connection-ready',
+    probeReady: true,
   }
 }
 
@@ -91,6 +93,7 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
   const requiredServiceDeclarations = {
     declaredMaxConcurrency: 1,
     promptAuditEnabled: false,
+    ownerContactMethodIds: ['contact-linuxdo-orbit'],
   }
   const metered = await settle(api.submitApiService({
     billingMode: 'metered_credit',

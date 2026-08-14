@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
@@ -21,30 +22,105 @@ type ActionChecker interface {
 }
 
 type Service struct {
-	mu               sync.Mutex
-	now              func() time.Time
-	repo             Repository
-	actionChecker    ActionChecker
-	methods          map[string]ContactMethod
-	versions         map[string]ContactMethodVersion
-	sessions         map[string]ContactSession
-	accessLogs       map[string]ContactAccessLog
-	methodsByUserKey map[string]string
+	mu                sync.Mutex
+	now               func() time.Time
+	repo              Repository
+	idempotency       *idempotency.Service
+	actionChecker     ActionChecker
+	methods           map[string]ContactMethod
+	versions          map[string]ContactMethodVersion
+	sessions          map[string]ContactSession
+	accessLogs        map[string]ContactAccessLog
+	methodsByUserKey  map[string]string
+	methodAuditEvents []ContactMethodAuditEvent
 }
 
 func NewService(repo Repository, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
+	var idempotencyRepo idempotency.Repository
+	if candidate, ok := repo.(idempotency.Repository); ok {
+		idempotencyRepo = candidate
+	}
 	return &Service{
 		now:              now,
 		repo:             repo,
+		idempotency:      idempotency.NewService(idempotencyRepo, now),
 		methods:          make(map[string]ContactMethod),
 		versions:         make(map[string]ContactMethodVersion),
 		sessions:         make(map[string]ContactSession),
 		accessLogs:       make(map[string]ContactAccessLog),
 		methodsByUserKey: make(map[string]string),
 	}
+}
+
+func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ContactMethodInput, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	if err := idempotency.ValidateKey(strings.TrimSpace(key)); err != nil {
+		return ContactMethod{}, idempotency.Completion{}, false, err
+	}
+	if buildCompletion == nil {
+		return ContactMethod{}, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.UserID = userID
+	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	usageScopes := DefaultUsageScopes()
+	var appErr *domain.AppError
+	if input.UsageScopes != nil {
+		usageScopes, appErr = normalizeUsageScopes(input.UsageScopes)
+	}
+	if appErr != nil {
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	input.UsageScopes = usageScopes
+	now := s.now()
+	method, version := NewMethodVersion(input, now)
+	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, strings.TrimSpace(key), requestHash)
+	if appErr != nil {
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	if entry.State == "completed" {
+		return ContactMethod{}, idempotency.CompletionFromEntry(entry), false, nil
+	}
+	if s.repo != nil {
+		method, completion, appErr := s.repo.CreateContactMethodWithIdempotency(ctx, *entry, input, method, version, buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return ContactMethod{}, idempotency.Completion{}, false, appErr
+		}
+		return method, completion, true, nil
+	}
+
+	s.mu.Lock()
+	if method.IsDefault {
+		for id, item := range s.methods {
+			if item.UserID == method.UserID && item.IsDefault {
+				item.IsDefault = false
+				item.UpdatedAt = now
+				item.Version++
+				s.methods[id] = cloneContactMethod(item)
+				s.appendMethodAuditEventLocked(item, "contact_method.default_changed", input.RequestID, []string{"isDefault"})
+			}
+		}
+	}
+	s.methods[method.ID] = cloneContactMethod(method)
+	s.versions[version.ID] = version
+	s.methodsByUserKey[methodKey(method.UserID, method.ID)] = method.ID
+	s.appendMethodAuditEventLocked(method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"})
+	s.mu.Unlock()
+
+	completion, appErr := buildCompletion(method)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	return method, completion, true, nil
 }
 
 func (s *Service) SetActionChecker(checker ActionChecker) {
@@ -55,6 +131,15 @@ func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (C
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
 	}
+	usageScopes := DefaultUsageScopes()
+	var appErr *domain.AppError
+	if input.UsageScopes != nil {
+		usageScopes, appErr = normalizeUsageScopes(input.UsageScopes)
+	}
+	if appErr != nil {
+		return ContactMethod{}, appErr
+	}
+	input.UsageScopes = usageScopes
 
 	now := s.now()
 	method, version := NewMethodVersion(input, now)
@@ -68,10 +153,22 @@ func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (C
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.methods[method.ID] = method
+	if method.IsDefault {
+		for id, item := range s.methods {
+			if item.UserID == method.UserID && item.IsDefault {
+				item.IsDefault = false
+				item.UpdatedAt = now
+				item.Version++
+				s.methods[id] = cloneContactMethod(item)
+				s.appendMethodAuditEventLocked(item, "contact_method.default_changed", input.RequestID, []string{"isDefault"})
+			}
+		}
+	}
+	s.methods[method.ID] = cloneContactMethod(method)
 	s.versions[version.ID] = version
 	s.methodsByUserKey[methodKey(method.UserID, method.ID)] = method.ID
-	return method, nil
+	s.appendMethodAuditEventLocked(method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"})
+	return cloneContactMethod(method), nil
 }
 
 func (s *Service) ListMethods(ctx context.Context, userID string) ([]ContactMethod, *domain.AppError) {
@@ -84,15 +181,88 @@ func (s *Service) ListMethods(ctx context.Context, userID string) ([]ContactMeth
 	methods := make([]ContactMethod, 0)
 	for _, method := range s.methods {
 		if method.UserID == userID {
-			methods = append(methods, method)
+			methods = append(methods, cloneContactMethod(method))
 		}
 	}
 	return methods, nil
 }
 
+// EnsureLinuxDoMethod 将权威 linux.do 身份绑定投影为交易快照使用的版本化联系方式。
+func (s *Service) EnsureLinuxDoMethod(ctx context.Context, userID, username string) (ContactMethod, *domain.AppError) {
+	userID = strings.TrimSpace(userID)
+	username = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(username), "@"))
+	if userID == "" || username == "" {
+		return ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeLinuxDoBindingRequired, "linux.do binding required", "当前账号尚未完成 linux.do 身份绑定。")
+	}
+
+	methods, appErr := s.ListMethods(ctx, userID)
+	if appErr != nil {
+		return ContactMethod{}, appErr
+	}
+	var current *ContactMethod
+	hasDefault := false
+	for index := range methods {
+		method := methods[index]
+		if !method.Enabled {
+			continue
+		}
+		hasDefault = hasDefault || method.IsDefault
+		if method.Type == "linuxdo" && (current == nil || (!current.IsDefault && method.IsDefault)) {
+			copy := method
+			current = &copy
+		}
+	}
+	expectedValue := "@" + username
+	expectedUsageScopes := AllUsageScopes()
+	if current != nil {
+		if strings.EqualFold(strings.TrimSpace(current.DisplayValue), expectedValue) &&
+			strings.TrimSpace(current.Label) == "linux.do 私信" &&
+			equalUsageScopes(current.UsageScopes, expectedUsageScopes) {
+			return *current, nil
+		}
+		return s.UpdateMethod(ctx, UpdateContactMethodInput{
+			UserID: userID, MethodID: current.ID, Type: "linuxdo", Label: "linux.do 私信",
+			Value: expectedValue, UsageScopes: expectedUsageScopes, IsDefault: current.IsDefault, Enabled: true,
+		})
+	}
+
+	created, appErr := s.CreateMethod(ctx, ContactMethodInput{
+		UserID: userID, Type: "linuxdo", Label: "linux.do 私信", Value: expectedValue,
+		UsageScopes: expectedUsageScopes, IsDefault: !hasDefault, Enabled: true,
+	})
+	if appErr == nil {
+		return created, nil
+	}
+	// 数据库唯一索引负责并发收敛；竞争失败后读取胜出的映射。
+	methods, retryErr := s.ListMethods(ctx, userID)
+	if retryErr == nil {
+		for _, method := range methods {
+			if method.Enabled && method.Type == "linuxdo" {
+				if strings.EqualFold(strings.TrimSpace(method.DisplayValue), expectedValue) &&
+					strings.TrimSpace(method.Label) == "linux.do 私信" &&
+					equalUsageScopes(method.UsageScopes, expectedUsageScopes) {
+					return method, nil
+				}
+				return s.UpdateMethod(ctx, UpdateContactMethodInput{
+					UserID: userID, MethodID: method.ID, Type: "linuxdo", Label: "linux.do 私信",
+					Value: expectedValue, UsageScopes: expectedUsageScopes, IsDefault: method.IsDefault, Enabled: true,
+				})
+			}
+		}
+	}
+	return ContactMethod{}, appErr
+}
+
 func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInput) (ContactMethod, *domain.AppError) {
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
+	}
+	if input.UsageScopes != nil {
+		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
+		if appErr != nil {
+			return ContactMethod{}, appErr
+		}
+		input.UsageScopes = usageScopes
 	}
 	now := s.now()
 	method, version := NewUpdatedMethodVersion(input, now)
@@ -109,26 +279,76 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	}
 	if input.IsDefault {
 		for id, item := range s.methods {
-			if item.UserID == input.UserID {
+			if item.UserID == input.UserID && item.ID != input.MethodID && item.IsDefault {
 				item.IsDefault = false
-				s.methods[id] = item
+				item.UpdatedAt = now
+				item.Version++
+				s.methods[id] = cloneContactMethod(item)
+				s.appendMethodAuditEventLocked(item, "contact_method.default_changed", input.RequestID, []string{"isDefault"})
 			}
 		}
 	}
 	method.ID = current.ID
 	method.UserID = current.UserID
 	method.CreatedAt = current.CreatedAt
+	if input.UsageScopes == nil {
+		method.UsageScopes = append([]string(nil), current.UsageScopes...)
+	}
 	method.Version = current.Version + 1
 	version.ContactMethodID = method.ID
 	method.CurrentVersionID = version.ID
-	s.methods[method.ID] = method
+	s.methods[method.ID] = cloneContactMethod(method)
 	s.versions[version.ID] = version
-	return method, nil
+	eventType := "contact_method.updated"
+	if current.Enabled && !method.Enabled {
+		eventType = "contact_method.disabled"
+	}
+	s.appendMethodAuditEventLocked(method, eventType, input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"})
+	return cloneContactMethod(method), nil
+}
+
+func (s *Service) UpdateMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input UpdateContactMethodInput, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	input.UserID = userID
+	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	if input.UsageScopes != nil {
+		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
+		if appErr != nil {
+			return ContactMethod{}, idempotency.Completion{}, false, appErr
+		}
+		input.UsageScopes = usageScopes
+	}
+	entry, completion, replay, appErr := s.beginMethodIdempotency(ctx, userID, routeKey, key, requestHash, buildCompletion)
+	if appErr != nil || replay {
+		return ContactMethod{}, completion, false, appErr
+	}
+	now := s.now()
+	method, version := NewUpdatedMethodVersion(input, now)
+	if s.repo != nil {
+		method, completion, appErr = s.repo.UpdateContactMethodWithIdempotency(ctx, *entry, input, method, version, buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return ContactMethod{}, idempotency.Completion{}, false, appErr
+		}
+		return method, completion, true, nil
+	}
+	method, appErr = s.UpdateMethod(ctx, input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	return s.completeMemoryMethodMutation(ctx, entry, method, buildCompletion)
 }
 
 func (s *Service) DeleteMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
+	return s.DeleteMethodWithRequestID(ctx, userID, methodID, "unknown")
+}
+
+func (s *Service) DeleteMethodWithRequestID(ctx context.Context, userID, methodID, requestID string) (ContactMethod, *domain.AppError) {
+	now := s.now()
 	if s.repo != nil {
-		return s.repo.DeleteContactMethod(ctx, userID, methodID)
+		return s.repo.DeleteContactMethod(ctx, userID, methodID, requestID, now)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -141,15 +361,42 @@ func (s *Service) DeleteMethod(ctx context.Context, userID, methodID string) (Co
 		return ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
 	}
 	method.Enabled = false
-	method.UpdatedAt = s.now()
+	method.UpdatedAt = now
 	method.Version++
-	s.methods[method.ID] = method
-	return method, nil
+	s.methods[method.ID] = cloneContactMethod(method)
+	s.appendMethodAuditEventLocked(method, "contact_method.disabled", requestID, []string{"enabled", "isDefault"})
+	return cloneContactMethod(method), nil
+}
+
+func (s *Service) DeleteMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash, methodID, requestID string, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	entry, completion, replay, appErr := s.beginMethodIdempotency(ctx, userID, routeKey, key, requestHash, buildCompletion)
+	if appErr != nil || replay {
+		return ContactMethod{}, completion, false, appErr
+	}
+	if s.repo != nil {
+		method, completion, appErr := s.repo.DeleteContactMethodWithIdempotency(ctx, *entry, userID, methodID, requestID, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return ContactMethod{}, idempotency.Completion{}, false, appErr
+		}
+		return method, completion, true, nil
+	}
+	method, appErr := s.DeleteMethodWithRequestID(ctx, userID, methodID, requestID)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	return s.completeMemoryMethodMutation(ctx, entry, method, buildCompletion)
 }
 
 func (s *Service) SetDefaultMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
+	return s.SetDefaultMethodWithRequestID(ctx, userID, methodID, "unknown")
+}
+
+func (s *Service) SetDefaultMethodWithRequestID(ctx context.Context, userID, methodID, requestID string) (ContactMethod, *domain.AppError) {
+	now := s.now()
 	if s.repo != nil {
-		return s.repo.SetDefaultContactMethod(ctx, userID, methodID)
+		return s.repo.SetDefaultContactMethod(ctx, userID, methodID, requestID, now)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -158,24 +405,50 @@ func (s *Service) SetDefaultMethod(ctx context.Context, userID, methodID string)
 	if !ok || method.UserID != userID || !method.Enabled {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 	}
-	now := s.now()
 	for id, item := range s.methods {
 		if item.UserID == userID {
+			wasDefault := item.IsDefault
 			item.IsDefault = item.ID == methodID
-			if item.ID == methodID {
+			if wasDefault != item.IsDefault || item.ID == methodID {
 				item.UpdatedAt = now
 				item.Version++
+				s.appendMethodAuditEventLocked(item, "contact_method.default_changed", requestID, []string{"isDefault"})
 			}
 			s.methods[id] = item
 		}
 	}
-	return s.methods[methodID], nil
+	return cloneContactMethod(s.methods[methodID]), nil
+}
+
+func (s *Service) SetDefaultMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash, methodID, requestID string, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	entry, completion, replay, appErr := s.beginMethodIdempotency(ctx, userID, routeKey, key, requestHash, buildCompletion)
+	if appErr != nil || replay {
+		return ContactMethod{}, completion, false, appErr
+	}
+	if s.repo != nil {
+		method, completion, appErr := s.repo.SetDefaultContactMethodWithIdempotency(ctx, *entry, userID, methodID, requestID, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return ContactMethod{}, idempotency.Completion{}, false, appErr
+		}
+		return method, completion, true, nil
+	}
+	method, appErr := s.SetDefaultMethodWithRequestID(ctx, userID, methodID, requestID)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	return s.completeMemoryMethodMutation(ctx, entry, method, buildCompletion)
 }
 
 func (s *Service) VerifyMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
+	return s.VerifyMethodWithRequestID(ctx, userID, methodID, "unknown")
+}
+
+func (s *Service) VerifyMethodWithRequestID(ctx context.Context, userID, methodID, requestID string) (ContactMethod, *domain.AppError) {
 	now := s.now()
 	if s.repo != nil {
-		return s.repo.VerifyContactMethod(ctx, userID, methodID, now)
+		return s.repo.VerifyContactMethod(ctx, userID, methodID, requestID, now)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,8 +460,60 @@ func (s *Service) VerifyMethod(ctx context.Context, userID, methodID string) (Co
 	method.VerifiedAt = &now
 	method.UpdatedAt = now
 	method.Version++
-	s.methods[method.ID] = method
-	return method, nil
+	s.methods[method.ID] = cloneContactMethod(method)
+	s.appendMethodAuditEventLocked(method, "contact_method.verified", requestID, []string{"verifiedAt"})
+	return cloneContactMethod(method), nil
+}
+
+func (s *Service) VerifyMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash, methodID, requestID string, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	entry, completion, replay, appErr := s.beginMethodIdempotency(ctx, userID, routeKey, key, requestHash, buildCompletion)
+	if appErr != nil || replay {
+		return ContactMethod{}, completion, false, appErr
+	}
+	if s.repo != nil {
+		method, completion, appErr := s.repo.VerifyContactMethodWithIdempotency(ctx, *entry, userID, methodID, requestID, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return ContactMethod{}, idempotency.Completion{}, false, appErr
+		}
+		return method, completion, true, nil
+	}
+	method, appErr := s.VerifyMethodWithRequestID(ctx, userID, methodID, requestID)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	return s.completeMemoryMethodMutation(ctx, entry, method, buildCompletion)
+}
+
+func (s *Service) beginMethodIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, buildCompletion MethodCompletionBuilder) (*idempotency.Entry, idempotency.Completion, bool, *domain.AppError) {
+	if appErr := idempotency.ValidateKey(strings.TrimSpace(key)); appErr != nil {
+		return nil, idempotency.Completion{}, false, appErr
+	}
+	if buildCompletion == nil {
+		return nil, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, strings.TrimSpace(key), requestHash)
+	if appErr != nil {
+		return nil, idempotency.Completion{}, false, appErr
+	}
+	if entry.State == "completed" {
+		return entry, idempotency.CompletionFromEntry(entry), true, nil
+	}
+	return entry, idempotency.Completion{}, false, nil
+}
+
+func (s *Service) completeMemoryMethodMutation(ctx context.Context, entry *idempotency.Entry, method ContactMethod, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	completion, appErr := buildCompletion(method)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
+	return method, completion, true, nil
 }
 
 func (s *Service) CreateSession(ctx context.Context, input CreateContactSessionInput) (ContactSession, *domain.AppError) {
@@ -211,13 +536,13 @@ func (s *Service) CreateSession(ctx context.Context, input CreateContactSessionI
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	buyerMethod, buyerVersion, ok := s.VersionForOwnerLocked(input.BuyerContactMethodID, input.BuyerUserID)
+	buyerMethod, buyerVersion, ok := s.VersionForOwnerAndScopeLocked(input.BuyerContactMethodID, input.BuyerUserID, UsageScopeBuyer)
 	if !ok || !buyerMethod.Enabled {
-		return ContactSession{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用或不属于当前用户。")
+		return ContactSession{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
 	}
-	sellerMethod, sellerVersion, ok := s.VersionForOwnerLocked(input.SellerContactMethodID, input.SellerUserID)
+	sellerMethod, sellerVersion, ok := s.VersionForOwnerAndScopeLocked(input.SellerContactMethodID, input.SellerUserID, UsageScopeCarpoolOwner)
 	if !ok || !sellerMethod.Enabled {
-		return ContactSession{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或归属不正确。")
+		return ContactSession{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、归属不正确或未允许拼车用途。")
 	}
 
 	session.BuyerVersionID = buyerVersion.ID
@@ -320,10 +645,41 @@ func (s *Service) AccessLogCount(ctx context.Context, sessionID string) int {
 	return len(s.sessions[sessionID].ContactAccessLogIDs)
 }
 
+func (s *Service) appendMethodAuditEventLocked(method ContactMethod, eventType, requestID string, changedFields []string) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		requestID = "unknown"
+	}
+	s.methodAuditEvents = append(s.methodAuditEvents, ContactMethodAuditEvent{
+		MethodID: method.ID, EventType: eventType, ActorUserID: method.UserID,
+		AggregateVersion: method.Version, RequestID: requestID,
+		ChangedFields: append([]string(nil), changedFields...), CreatedAt: method.UpdatedAt,
+	})
+}
+
+// MethodAuditEvents 返回内存模式的安全事件副本，仅用于一致性测试。
+func (s *Service) MethodAuditEvents() []ContactMethodAuditEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]ContactMethodAuditEvent, len(s.methodAuditEvents))
+	for index, event := range s.methodAuditEvents {
+		result[index] = event
+		result[index].ChangedFields = append([]string(nil), event.ChangedFields...)
+	}
+	return result
+}
+
 func (s *Service) VersionForOwner(methodID, ownerID string) (ContactMethod, ContactMethodVersion, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.VersionForOwnerLocked(methodID, ownerID)
+}
+
+// VersionForOwnerAndScope 只返回归属正确、已启用且明确允许指定业务用途的当前版本。
+func (s *Service) VersionForOwnerAndScope(methodID, ownerID, requiredScope string) (ContactMethod, ContactMethodVersion, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope)
 }
 
 func (s *Service) VersionForOwnerLocked(methodID, ownerID string) (ContactMethod, ContactMethodVersion, bool) {
@@ -333,6 +689,14 @@ func (s *Service) VersionForOwnerLocked(methodID, ownerID string) (ContactMethod
 	}
 	version, ok := s.versions[method.CurrentVersionID]
 	if !ok || version.OwnerUserID != ownerID {
+		return ContactMethod{}, ContactMethodVersion{}, false
+	}
+	return method, version, true
+}
+
+func (s *Service) VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope string) (ContactMethod, ContactMethodVersion, bool) {
+	method, version, ok := s.VersionForOwnerLocked(methodID, ownerID)
+	if !ok || !method.Enabled || !HasUsageScope(method.UsageScopes, requiredScope) {
 		return ContactMethod{}, ContactMethodVersion{}, false
 	}
 	return method, version, true
@@ -379,6 +743,7 @@ func NewMethodVersion(input ContactMethodInput, now time.Time) (ContactMethod, C
 		Label:        strings.TrimSpace(input.Label),
 		MaskedValue:  MaskValue(input.Value),
 		DisplayValue: strings.TrimSpace(input.Value),
+		UsageScopes:  append([]string(nil), input.UsageScopes...),
 		Enabled:      input.Enabled,
 		IsDefault:    input.IsDefault,
 		CreatedAt:    now,
@@ -405,6 +770,7 @@ func NewUpdatedMethodVersion(input UpdateContactMethodInput, now time.Time) (Con
 		Label:        strings.TrimSpace(input.Label),
 		MaskedValue:  MaskValue(input.Value),
 		DisplayValue: strings.TrimSpace(input.Value),
+		UsageScopes:  append([]string(nil), input.UsageScopes...),
 		Enabled:      input.Enabled,
 		IsDefault:    input.IsDefault,
 		UpdatedAt:    now,
@@ -455,6 +821,93 @@ func allowedMethodType(value string) bool {
 	default:
 		return false
 	}
+}
+
+// DefaultUsageScopes 返回新建联系方式省略使用范围时的最小默认集合。
+func DefaultUsageScopes() []string {
+	return []string{UsageScopeBuyer, UsageScopeDispute}
+}
+
+// HasUsageScope 使用规范化后的精确值判断联系方式能否进入对应业务快照。
+func HasUsageScope(scopes []string, requiredScope string) bool {
+	requiredScope = strings.TrimSpace(requiredScope)
+	if requiredScope == "" {
+		return true
+	}
+	for _, scope := range scopes {
+		if strings.TrimSpace(scope) == requiredScope {
+			return true
+		}
+	}
+	return false
+}
+
+// AllUsageScopes 返回身份绑定管理的 linux.do 联系方式使用范围全集。
+func AllUsageScopes() []string {
+	return []string{
+		UsageScopeCarpoolOwner,
+		UsageScopeAPIMerchant,
+		UsageScopeBuyer,
+		UsageScopeDispute,
+	}
+}
+
+func normalizeUsageScopes(input []string) ([]string, *domain.AppError) {
+	if len(input) == 0 {
+		return nil, domain.NewFieldError(
+			http.StatusUnprocessableEntity,
+			domain.CodeValidationFailed,
+			"Contact usage scopes required",
+			"联系方式至少需要一个使用范围。",
+			"usageScopes",
+			"required",
+			"联系方式至少需要一个使用范围。",
+		)
+	}
+
+	seen := make(map[string]struct{}, len(input))
+	for _, scope := range input {
+		switch scope {
+		case UsageScopeCarpoolOwner, UsageScopeAPIMerchant, UsageScopeBuyer, UsageScopeDispute:
+			seen[scope] = struct{}{}
+		default:
+			return nil, domain.NewFieldError(
+				http.StatusUnprocessableEntity,
+				domain.CodeValidationFailed,
+				"Contact usage scope invalid",
+				"联系方式使用范围不支持。",
+				"usageScopes",
+				"unsupported",
+				scope,
+			)
+		}
+	}
+
+	canonical := AllUsageScopes()
+	result := make([]string, 0, len(seen))
+	for _, scope := range canonical {
+		if _, ok := seen[scope]; ok {
+			result = append(result, scope)
+		}
+	}
+	return result, nil
+}
+
+func equalUsageScopes(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneContactMethod(method ContactMethod) ContactMethod {
+	method.UsageScopes = append([]string(nil), method.UsageScopes...)
+	return method
 }
 
 func methodKey(userID, methodID string) string {

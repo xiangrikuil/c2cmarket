@@ -73,7 +73,6 @@ describe('development first-page architecture', () => {
     expect(nuxtConfig).toContain("'/api-market': { cache: { maxAge: 120, swr: true } }")
 
     for (const dependency of [
-      '@radix-icons/vue',
       '@tanstack/vue-query',
       '@vueuse/core',
       'class-variance-authority',

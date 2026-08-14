@@ -44,6 +44,10 @@ func TestRunOnceReturnsPerRunCountsAndCumulativeStats(t *testing.T) {
 	if stats.ProbeSuccessTotal != 2 || stats.ProbeFailureTotal != 1 || stats.Inflight != 0 {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
+	status := runner.ProbeRunnerStatus()
+	if !status.Enabled || status.ScanInterval != time.Hour {
+		t.Fatalf("unexpected projected runner status: %+v", status)
+	}
 }
 
 func TestRunOnceFinalizesCredentialDecryptionFailureWithoutCallingProber(t *testing.T) {

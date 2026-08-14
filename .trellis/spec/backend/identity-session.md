@@ -26,14 +26,18 @@ GET  /api/v1/me/profile
 POST /api/v1/me/email-verification/start
 GET  /api/v1/api-services
 GET  /api/v1/api-services/{id}
+GET  /api/v1/api-quota-offers
+GET  /api/v1/api-quota-offers/{id}
 ```
 
 ```text
-PublicAPIService merchant identity projection:
+Public API-service and quota-offer merchant identity projection:
   merchantIdentityMode: public_profile | store_alias
   merchantDisplayName: string
-  merchantProfileSlug: string
   merchantAvatarUrl?: string
+
+PublicAPIService also projects:
+  merchantProfileSlug: string
 ```
 
 ```go
@@ -52,6 +56,7 @@ function logoutBackendSession(): Promise<void>
 - The normalized URL flows through `OAuthProfile.AvatarURL` and `OAuthProfile.LinuxDoAvatarURL`, persists in `users.avatar_url` / `linux_do_bindings.avatar_url`, and is projected as `UserProfile.avatarUrl` by `/api/v1/me/profile`.
 - Product UI uses the final `UserProfile.avatarUrl` projection. The account shell renders an image when it is non-empty and falls back to the display-name initial only when it is empty.
 - API-market public responses expose the final `merchantAvatarUrl` projection; frontend adapters must not discard it, and all market/detail merchant badges use the shared `ApiMerchantAvatar` component.
+- `PublicAPIQuotaOffer.merchantAvatarUrl` uses the same identity-mode branch as its linked public API service. Quota list and detail cards must not replace a non-empty image with seller initials.
 - `public_profile` projects the owner's current public display name, username, and selected user avatar (`custom_avatar_url` or linux.do avatar). `store_alias` projects only `merchant_profiles.display_name`, `slug`, and `avatar_url`; it must not fall back to the owner's personal/linux.do avatar because that can deanonymize a store alias.
 - Public merchant-profile DTOs expose `avatarUrl` from `merchant_profiles.avatar_url`. Empty avatar values remain empty and render the identity initial; the API must not invent a remote image URL.
 - Database and JSON API timestamps keep their existing `time.Time` / RFC3339 semantics. Only transaction-email HTML/text converts business times to fixed UTC+8 and formats them as `YYYY-MM-DD HH:mm:ss（北京时间）`.
@@ -66,6 +71,7 @@ function logoutBackendSession(): Promise<void>
 | All provider avatar fields are empty | Keep avatar empty; UI shows the display-name initial. |
 | API service uses `public_profile` | Return the owner's selected profile avatar and public username; market/detail UI renders the image. |
 | API service uses `store_alias` with a store avatar | Return only the store avatar/name/slug; do not expose the owner's user ID or personal avatar. |
+| Quota offer belongs to either identity mode | Return the linked service's public `merchantAvatarUrl`; render it through `ApiMerchantAvatar`. |
 | Store avatar is empty | Keep `merchantAvatarUrl` absent and render the store-name initial. |
 | Email time input is UTC | Email copy displays the equivalent UTC+8 wall time with `（北京时间）`, never a trailing `Z`. |
 | Logout returns `204` | Clear session/CSRF and all user-derived query data, then replace the route with `/login`. |
@@ -76,6 +82,7 @@ function logoutBackendSession(): Promise<void>
 
 - Good: linux.do returns `https://linux.do/user_avatar/linux.do/orbit/{size}/42_2.png`; the profile and account shell use `.../288/42_2.png`.
 - Good: a `public_profile` API service returns the same current profile avatar; a `store_alias` service returns its distinct store avatar.
+- Good: an API quota offer preserves that same public/store avatar through PostgreSQL, OpenAPI, the frontend adapter, and `ApiQuotaOfferCard`.
 - Base: a provider profile has no avatar; login succeeds and the shell shows the user's initial.
 - Base: a store alias has no configured avatar; cards show the store initial without leaking the owner's linux.do image.
 - Bad: AppShell uses a mock route jump for logout, or keeps `my-profile` cached after the backend cookie is cleared.
@@ -88,8 +95,8 @@ function logoutBackendSession(): Promise<void>
 - Backend logout route test; assert `204`, session revocation behavior, and the clear-cookie attributes.
 - Frontend session-client test; prime the session cache, logout, then assert the next session read performs a network request and uses the prior CSRF token for logout.
 - API-market router tests for both identity modes; assert public response name/slug/avatar fields and assert owner/contact identifiers stay absent.
-- PostgreSQL projection test must preserve the identity-mode branches, including selected user avatar resolution and the store-avatar-only rule.
-- Frontend adapter test must assert `merchantAvatarUrl` survives mapping; type-check/build must cover list, fixed-package, other-API, and detail consumers of `ApiMerchantAvatar`.
+- PostgreSQL API-service and quota-offer projection tests must preserve the identity-mode branches, including selected user avatar resolution and the store-avatar-only rule.
+- Frontend adapter tests must assert `merchantAvatarUrl` survives service and quota-offer mapping; type-check/build must cover quota list, fixed-package, other-API, and detail consumers of `ApiMerchantAvatar`.
 - Run `cd backend && go test ./...`, `cd frontend && pnpm test`, Vue type-check, real-mode production build, and `git diff --check`.
 
 ### 7. Wrong vs Correct
@@ -103,6 +110,7 @@ merchantAvatarURL := ownerProfile.AvatarURL // even when identity mode is store_
 ```
 
 ```ts
+const quotaCard = sellerInitial // even when the quota response contains merchantAvatarUrl
 router.push('/login')
 ```
 
@@ -116,6 +124,10 @@ if service.MerchantIdentityMode == "store_alias" {
 } else {
     service.MerchantAvatarURL = ownerProfile.AvatarURL
 }
+```
+
+```vue
+<ApiMerchantAvatar :service="sellerIdentity" class="api-product-card__merchant-avatar" />
 ```
 
 ```ts
@@ -223,4 +235,76 @@ const isAuthenticated = computed(() => Boolean(myProfile.value))
 if (!isAuthenticated.value) return [browseGroup]
 
 const groups = [browseGroup, transactionGroup, publishGroup, accountGroup]
+```
+
+## Scenario: Real Avatar Reset And Linux.do Profile Actions
+
+### 1. Scope / Trigger
+
+- Trigger: changing profile avatar shortcuts, linux.do profile links, or user-facing identity synchronization actions.
+- The contract spans the profile API, the frontend facade/query cache, and public/account profile pages.
+
+### 2. Signatures
+
+```text
+GET   /api/v1/me/profile
+PATCH /api/v1/me/profile
+```
+
+```ts
+function deleteCustomAvatar(): Promise<UserProfile>
+function useLinuxDoAvatar(): Promise<UserProfile>
+function linuxDoProfileSummaryUrl(username: string): string
+```
+
+### 3. Contracts
+
+- In real API mode, both avatar shortcuts first read the current profile and then reuse `PATCH /api/v1/me/profile`; the patch preserves all editable profile and privacy fields while setting `avatarMode="linuxdo"` and clearing the custom avatar URL.
+- A successful mutation replaces `['my-profile']` with the server response. A failed request must not mutate the query cache or any Mock store.
+- Mock-only profile mutation remains confined to explicitly selected Mock mode.
+- Public profile pages show the shared `https://linux.do/u/{username}/summary` link only when a linux.do username exists.
+- OAuth login/binding remains the identity synchronization boundary. Do not add a button that reports a successful linux.do sync without a backend request.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Real profile GET or PATCH fails | Surface the error; keep the previous cache value. |
+| Profile has a custom avatar | Reset through the real PATCH and return the server projection. |
+| linux.do username is blank | Omit the external profile link. |
+| Account page displays `lastSyncedAt` | Render it as read-only provider state; do not expose a fake refresh action. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: resetting a custom avatar sends GET plus PATCH and the account shell immediately renders the returned linux.do avatar.
+- Base: a user has no linux.do username, so the public page renders no provider link.
+- Bad: a real-mode shortcut mutates `mockProfileStore`, writes optimistic success into the query cache, or shows a sync-success toast without network activity.
+
+### 6. Tests Required
+
+- Frontend adapter tests for real GET/PATCH payload preservation, success mapping, and failed-request cache isolation.
+- Mock-mode regression for the retained local shortcut behavior.
+- Source/component assertions for the shared summary URL helper, conditional link visibility, and removal of fake synchronization controls.
+- Full Vitest, typecheck, real-mode build, and authenticated browser checks.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+profile.avatarUrl = null
+queryClient.setQueryData(['my-profile'], profile)
+toast.success('linux.do information synchronized')
+```
+
+#### Correct
+
+```ts
+const current = await backendMyProfile()
+const updated = await backendUpdateMyProfile({
+  ...editableProfilePayload(current),
+  avatarMode: 'linuxdo',
+  avatarUrl: null,
+})
+queryClient.setQueryData(['my-profile'], updated)
 ```

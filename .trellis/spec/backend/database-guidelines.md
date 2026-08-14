@@ -15,7 +15,7 @@ Target database is PostgreSQL. Migration SQL under `backend/migrations/` is the 
 The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool`. The current PostgreSQL repository slice covers users, auth identities, auth sessions, linux.do bindings, user permissions, idempotency, product categories, product plans, product plan policy history, official price leads, official price records, contact methods, contact sessions, contact session items, contact access logs, carpool listings, carpool cycle terms, carpool applications, carpool join confirmations, carpool memberships, carpool completion confirmations, API services, API service child tables, API purchase intents, API purchase intent contact access logs, API orders, API order events, API order payment-instruction access logs, API order delivery credentials, user profile privacy fields, merchant profiles, announcements, announcement receipts, announcement audit logs, favorites, legacy carpool reviews, unified transaction reviews and revisions, reports, dispute cases, appeals, dispute events, and moderation audit logs.
 
 - Preserve service-level contracts from `backend/internal/module/core` during the transition, and add or extend focused repository interfaces for the touched business domain. New durable storage work should not depend on one broad repository interface.
-- Database-backed high-volume list repositories must accept `domain.PageRequest` and return `domain.Page[T]`. Use keyset pagination that preserves the existing list order, add a deterministic `id DESC` tie-breaker, query `LIMIT page.Limit + 1`, and derive `nextCursor` from the last returned visible item. Invalid opaque cursors must return `422 VALIDATION_FAILED` instead of falling through to an internal PostgreSQL cast error. Do not load all rows and rely on `server.paginateSlice` for migrated PostgreSQL lists.
+- Database-backed high-volume list repositories must accept `domain.PageRequest` and return `domain.Page[T]`. Apply search, filters, and the requested sort in the repository query before the keyset predicate and `LIMIT`; otherwise a matching row beyond the current page can disappear from filtered results. Use keyset pagination that preserves the requested list order, add a deterministic ID tie-breaker in the same direction as the cursor comparison, query `LIMIT page.Limit + 1`, and derive `nextCursor` from the last returned visible item. Invalid opaque cursors, including invalid sort-field scalars, must return `422 VALIDATION_FAILED` instead of falling through to an internal PostgreSQL cast error. Do not load all rows and rely on `server.paginateSlice` for migrated PostgreSQL lists.
 - Use transactions for multi-row state changes such as official price approval, carpool application acceptance, contact session creation, and idempotency completion.
 - For durable create/action endpoints that produce multiple side effects, write the completed idempotency metadata or response cache inside the same transaction as the business rows. Official price approval is the first baseline pattern: lead update, price record, domain event, admin audit log, notification, and `idempotency_keys.status='completed'` commit together. Carpool application acceptance is the second baseline pattern: lock application/listing, check seats, create contact session and contact session items, update application, insert domain event and notification, and complete idempotency in one transaction. Carpool application cancel/withdraw is the paired reservation-ending pattern: lock application, validate actor/version/status, update application status/reason, revoke or expire the related contact session without clearing `contact_session_id`, write event/notification, and complete idempotency in one transaction. Carpool join confirmation is the third baseline pattern: lock application/listing, record the actor confirmation, create membership and increment `active_buyer_members` only when both sides have confirmed, write event/notification, and complete idempotency in one transaction. Carpool membership completion/exit is the fourth baseline pattern: lock membership/listing, record completion confirmations or ending reason, decrement `active_buyer_members` exactly once, revoke the membership application's contact session, write event/notification, and complete idempotency in one transaction. API purchase-intent creation and lifecycle actions are the fifth baseline pattern: lock the processing idempotency row, lock the public API service or intent row, create or update the intent, freeze buyer/owner contact method version IDs, write event/notification, and complete idempotency in one transaction. API order creation and lifecycle actions are the sixth baseline pattern: lock the processing idempotency row, lock the purchase intent or order row, create/update the API order, append `api_order_events`, insert payment-instruction access logs when reading private instructions, insert the one-time delivery credential when submitting delivery, and complete idempotency in one transaction. Report, dispute, and appeal creation/actions are the seventh baseline pattern: lock the processing idempotency row, create or update the report/dispute/appeal row, append a `dispute_events` row, write sanitized `moderation_audit_logs` for administrator actions, and complete idempotency in one transaction. API create responses contain `merchantContact.value`; API order responses can contain payment summaries, delivery notes, or delivery credentials. Idempotency rows for these sensitive responses must store resource identifiers and must not cache plaintext private values.
 - Use row-level locking or unique constraints for idempotency and active-offer conflicts; do not rely on application-only duplicate checks.
@@ -39,7 +39,7 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - `carpool_memberships` is the durable joined-buyer relationship. It must reference the exact `(application, listing, buyer, owner, product_plan)` tuple and can only be inserted for an application whose status is `joined` and `joined_at` is set. `active_buyer_members` is a listing cache that must be updated in the same transaction as membership creation.
 - `carpool_cycle_terms` stores structured billing period, exit policy, and usage rules for a listing. It is part of the listing contract and should be written when a listing is created or updated, not left as an unrelated optional table.
 - `carpool_listings.region_code` and `carpool_listings.region_name` store the owner-selected opening region and public display text. Custom regions use `region_code='other'` with the trimmed custom display name in `region_name`; reads must not remap that value back to a generic fallback.
-- `carpool_listings` stores weekly/monthly quota, official-reset, VPS-region, mainland-direct, opening-channel, one payment-method, distribution, and administrator-account public signals. Version 68 keeps newly added columns nullable for development rows, while service validation requires every signal on new writes. Carpool `service_multiplier` is the fixed compatibility value `1.0000`, not an owner declaration.
+- `carpool_listings` stores daily/weekly quota, official-reset, VPS-region, mainland-direct, opening-channel, one payment-method, distribution, and administrator-account public signals. Migration 83 preserves the former weekly value as `daily_quota_amount` and the former monthly value as `weekly_quota_amount`; service validation requires both signals on new writes. Carpool `service_multiplier` is the fixed compatibility value `1.0000`, not an owner declaration.
 - `carpool_completion_confirmations` records buyer/owner completion confirmation rows with actor constraints. Only the second confirmation may move membership to `completed`; buyer leave and owner remove must go through explicit `left` / `removed` transitions with a reason.
 - `carpool_listings.owner_contact_method_id` records the owner-selected contact method; `carpool_applications.buyer_contact_method_id` records the buyer-selected contact method. Accept freezes the current versions from those stored selections and must not depend on a mutable default contact method or accept-body contact method.
 - `carpool_applications.contact_session_id` must be one-to-one and participant-consistent with the contact session. Database constraints/triggers should enforce session buyer = application buyer and session seller = application owner.
@@ -198,7 +198,7 @@ backend/migrations/000064_contact_cipher_aad.{up,down}.sql
 backend/migrations/000065_remove_demands.{up,down}.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.{up,down}.sql
 backend/migrations/000067_api_account_payment_settings.{up,down}.sql
-database.ExpectedMigrationVersion = 80 (current repository target)
+database.ExpectedMigrationVersion = 98 (current repository target)
 ```
 
 Standard execution remains:
@@ -269,7 +269,7 @@ Correct:
 ```text
 backend/migrations/000066_api_service_multiplier_reconciliation.up.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.down.sql
-database.ExpectedMigrationVersion = 80 (current repository target)
+database.ExpectedMigrationVersion = 98 (current repository target)
 api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHECK (merchant_multiplier > 0)
 ```
 
@@ -328,7 +328,7 @@ DROP CONSTRAINT ck_api_service_models_sub2api_multiplier;
 ```text
 backend/migrations/000067_api_account_payment_settings.up.sql
 backend/migrations/000067_api_account_payment_settings.down.sql
-database.ExpectedMigrationVersion = 80 (current repository target)
+database.ExpectedMigrationVersion = 98 (current repository target)
 
 api_payment_account_options:
   PRIMARY KEY (user_id, payment_method)
@@ -461,6 +461,105 @@ WHERE status = 'delivery_submitted'
 FOR UPDATE SKIP LOCKED;
 ```
 
+## Scenario: Account Governance Business Disposition
+
+### 1. Scope / Trigger
+
+- Trigger: a `suspended` or `banned` account can own or participate in API services, quota inventory, API orders, purchase intents, carpool listings, applications, memberships, disputes, supplements, remedies, or appeals when the governance action becomes effective.
+- Migration 95 owns durable disposition jobs, one outcome per business resource, links from that outcome to every triggering governance action, structured governance-cancellation fields, and the seven-day payment-claim eligibility window. It does not implement payment-claim evidence submission.
+
+### 2. Signatures
+
+```text
+backend/migrations/000095_account_governance_business_disposition.{up,down}.sql
+database.ExpectedMigrationVersion = 95
+
+account_governance_jobs:
+  UNIQUE (governance_action_id)
+  status IN ('pending', 'processing', 'completed', 'failed')
+  phase IN ('sales', 'api_orders', 'api_intents', 'carpool', 'completed')
+
+account_governance_resource_dispositions:
+  UNIQUE (resource_type, resource_id)
+  result IN ('cancelled', 'preserved', 'sales_stopped')
+  reason_code = 'ACCOUNT_GOVERNANCE_CANCELLED'
+
+account_governance_disposition_actions:
+  PRIMARY KEY (disposition_id, governance_action_id)
+
+GET /api/v1/me/account-governance/business-center
+BusinessCenter(ctx, auth.BusinessActor) -> accountgovernance.Center
+MaterializeExpiredAPIOrders(ctx, now) -> includes governance disposition counters
+```
+
+### 3. Contracts
+
+- Committing a suspension or ban creates one job bound to the immutable `governance_action_id` and expected governance version. New publish, order, intent, application, payment, join, and contact-disclosure mutations check the current account projection immediately; they do not wait for the job.
+- The worker claims jobs with a lease, stable `(phase, cursor_resource_type, cursor_id)` progress, bounded batches, retry metadata, and stale-lease recovery. A governance version/action mismatch is a no-op for obsolete work, not authority to process a newer action.
+- There is exactly one disposition for `(resource_type, resource_id)`. If both participants are governed, insert a second action link and merge trigger roles into the existing outcome; never transition or release the same resource twice.
+- A preservation fact wins over ordinary closure: submitted/confirmed payment, joined or active membership, active dispute, open supplement request, active remedy, or related active appeal keeps the relation available for restricted continuity. `pending_payment`, `open|contacted`, `pending_owner`, and `accepted_reserved` without a preservation fact may be governance-cancelled.
+- Cancellation and inventory/allowance/seat release happen while holding the authoritative business row locks and commit with the disposition, action link, event, and participant notifications. Use `ACCOUNT_GOVERNANCE_CANCELLED`; exclude it from normal cancellation responsibility, fulfillment-rate, and reputation inputs.
+- Stopping sales closes future public access to API services, quota batches/offers, promotions, and carpool listings. Account recovery never republishes them, reopens cancelled relations, restores a contact window, or reallocates released resources.
+- Historical contact snapshots and access logs remain intact. Closing a relationship revokes future platform access only; it cannot retract information already viewed.
+- `restricted_business` access is checked per request: current audience, account status, governance action/version, participant identity, resource creation before governance effectiveness, a linked `preserved` disposition, and the original state machine must all agree. Unauthorized or stale access returns resource-not-found behavior. Restricted sessions cannot pay, confirm join, create a relationship, or disclose a new contact value.
+- The business-center response is the authority for UI grouping and actions. It returns `processingStatus`, current governance action, disposition result, original/final states, participant and trigger roles, released resource metadata, `paymentClaimDeadlineAt`, server-derived `paymentClaimEligible`, action codes, and target URL. The payment-claim action expires exactly seven days after governance effectiveness; submission and evidence storage belong to the follow-up task.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Suspension/ban transaction is committed | Insert one job for its governance action; duplicate enqueue replays without a second job. |
+| Job action/version no longer matches the user projection | Do not process resources under the obsolete authority. |
+| Both participants trigger disposition for one relation | Keep one disposition, link both actions/roles, and release inventory/allowance/seat at most once. |
+| A preservation fact exists | Record `preserved`; skip ordinary auto-close and keep only state-valid continuity actions. |
+| A closable relation has no preservation fact | Transition with `ACCOUNT_GOVERNANCE_CANCELLED`, release held resources once, emit one event and one notification per participant. |
+| Restricted actor is not a participant, uses a stale governance version, or lacks a current linked preserved disposition | Return resource-not-found behavior and perform no mutation. |
+| Restricted actor requests payment instructions, confirms join, or asks for a new contact disclosure | Reject the action even when the relation is preserved. |
+| Payment-claim deadline has passed | Keep the historical deadline but omit `payment_claim` from `actionCodes` and return `paymentClaimEligible=false`. |
+| Account becomes active again | Revoke restricted continuity through the session contract; do not reopen or republish disposed resources. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: buyer and seller jobs encounter the same `pending_payment` order. The first transaction locks and cancels it, releases the reserved allowance, writes one disposition/event and two notifications; the second transaction adds its action link/trigger role without repeating side effects.
+- Base: a paid order or joined membership is recorded as `preserved`. Its participants can view it, and a current restricted actor can perform only the original state machine actions explicitly allowed for that resource.
+- Bad: cancel every relation created before suspension, infer preservation from browser state, authorize the whole order module from session audience alone, or release inventory in a transaction separate from the durable disposition.
+
+### 6. Tests Required
+
+- Migration tests must assert Version 95 tables, unique keys, result/reason/lease/claim-window checks, structured relation columns, indexes, down migration, `ExpectedMigrationVersion`, and migration documentation.
+- PostgreSQL tests must cover one disposition with two governance-action links, buyer/seller trigger roles, one event, one notification per participant, and exactly-once package inventory, metered allowance, and carpool-seat release.
+- Worker tests must cover lease claim, stale-lease recovery, stable cursor progression, retry/failure metadata, empty-job completion, obsolete governance version/action, and replay no-op behavior.
+- State-matrix tests must cover closable and preserved API orders, purchase intents, carpool applications/memberships, and preservation through disputes, open supplements, remedies, and related appeals.
+- Authorization tests must cover normal/restricted audience isolation, participant checks, pre-effectiveness creation, current action/version, linked `preserved` disposition, stale replay revalidation, forbidden payment/join/contact actions, and uniform not-found concealment.
+- Cross-layer tests must assert OpenAPI route/type parity, server-derived business-center actions/deadlines, frontend audience selection and grouping, Go tests/vet, Vitest/typecheck/build, PostgreSQL migration up/down/up plus historical upgrade paths, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE api_orders
+SET status = 'cancelled'
+WHERE buyer_user_id = $1 OR seller_user_id = $1;
+
+UPDATE api_quota_offers
+SET remaining_allowance = remaining_allowance + $2;
+```
+
+This loses preservation facts, races the other participant and timeout paths, and can release the same reservation more than once.
+
+#### Correct
+
+```text
+lock governance job and validate action/version
+-> lock the authoritative business row and held inventory/allowance/seat rows
+-> query preservation facts in the same transaction
+-> create or load UNIQUE(resource_type, resource_id) disposition
+-> transition/release only when this transaction owns the first eligible outcome
+-> link every triggering governance action and merge trigger roles
+-> commit disposition, relation state, release, event, and notifications atomically
+```
+
 ## Docker Runtime
 
 - Root `compose.yaml` owns local PostgreSQL and the backend image definition.
@@ -485,6 +584,8 @@ FOR UPDATE SKIP LOCKED;
 ---
 
 ## Common Mistakes
+
+- When a shared PostgreSQL projection adds fields, update its `SELECT` list and `Scan` destinations as one ordered contract. In particular, authentication projections must carry `governance_version`, `current_governance_action_id`, and `security_locked_at` together across user-by-ID, OAuth identity, password credential, and session hydration queries. Compile-only tests cannot detect a runtime column/scan count mismatch; run a real PostgreSQL existing-OAuth-login regression.
 
 - Do not accept client-supplied authority fields such as `fx_rate`, `normalized_monthly_cny`, `fingerprint`, or `offer_key` for public low-price lead submissions. Those are service/admin-derived fields.
 - Do not model contact sessions as pointers to mutable contact methods only; store/freeze contact method version IDs.

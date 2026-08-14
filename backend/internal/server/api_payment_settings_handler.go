@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/module/apimarket"
+	"c2c-market/backend/internal/module/auth"
 )
 
 type apiAccountPaymentSettingsRequest struct {
@@ -31,6 +32,9 @@ func (s *Server) handleMyAPIAccountPaymentSettings(w http.ResponseWriter, r *htt
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
 	settings, appErr := s.apiPayment.GetAPIAccountPaymentSettings(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -43,6 +47,9 @@ func (s *Server) handleUpdateMyAPIAccountPaymentSettings(w http.ResponseWriter, 
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
 		return
 	}
 	req, appErr := decodeStrictJSONOnly[apiAccountPaymentSettingsRequest](r)

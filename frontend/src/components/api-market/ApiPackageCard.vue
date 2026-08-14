@@ -45,7 +45,7 @@ const modelSummary = [
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-1.5">
               <Badge v-if="promoted" variant="status"><Megaphone class="h-3 w-3" />推广</Badge>
-              <Badge variant="outline" class="api-product-card__category">限时流量包</Badge>
+              <Badge variant="outline" class="api-product-card__category">短期流量包</Badge>
               <Badge variant="verified">{{ row.package.durationDays }} 天</Badge>
               <Badge v-if="rank === 1 && !promoted" variant="trust">综合推荐</Badge>
             </div>

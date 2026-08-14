@@ -1,6 +1,6 @@
 # Nuxt SSR and Cloudflare Worker Contract
 
-Date: 2026-07-18
+Date: 2026-08-14
 Author: Codex
 
 ## Scenario: Hybrid rendering on Cloudflare Workers
@@ -23,7 +23,8 @@ build/deployment configuration.
 ### 3. Contracts
 
 - Public SSR runtime keys: `NUXT_PUBLIC_SITE_URL`,
-  `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_PUBLIC_API_MODE=real`.
+  `NUXT_PUBLIC_API_BASE_URL`, `NUXT_PUBLIC_API_MODE=real`, and the
+  `NUXT_PUBLIC_SENTRY_*` runtime fields.
 - Server-only API origin: `NUXT_API_BASE_URL`.
 - Production builds require complete public/server API configuration and must reject any mode other than explicit `real`.
 - Public market pages may prefetch anonymous queries only. Session, favorite,
@@ -33,6 +34,14 @@ build/deployment configuration.
 - Dynamic sitemap collection follows opaque `nextCursor` values without parsing
   them, emits `lastmod` when a valid public timestamp exists, excludes CSR/noindex
   routes, and fails visibly when an upstream list request fails.
+- Nuxt Sentry is disabled in local development and enabled explicitly by Worker
+  runtime configuration in staging/production. Frontend tracing samples 5%,
+  Session Replay and default PII remain disabled, and trace propagation targets
+  only the same-site API path plus the two committed API origins.
+- Sentry events and breadcrumbs remove query/fragment values, request bodies,
+  Cookie, authorization, CSRF, token, contact, and user data before delivery.
+  Hidden source maps upload only when the trusted build environment provides
+  `SENTRY_AUTH_TOKEN`; missing upload credentials must not break a normal build.
 
 ### 4. Validation & Error Matrix
 
@@ -225,7 +234,8 @@ onServerPrefetch(async () => {
   forbidden because request order would affect rendered IDs.
 - A dependent child query stays disabled until its authoritative parent
   selection exists. During SSR, await the parent, assign the same default
-  selection used by the client, then await the child.
+  selection used by the client, then await the child only when the same full
+  enable guard is true, including any active-view condition.
 - Server HTML and the client's first render must use the same selected key,
   loading branch, and data branch. Do not rely on a watcher scheduled after
   server prefetch to establish hydration-critical state.

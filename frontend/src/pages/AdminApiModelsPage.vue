@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { Building2, FilePenLine, Plus, RotateCcw, Save, ToggleLeft, ToggleRight, TriangleAlert } from 'lucide-vue-next'
+import { Ban, CloudDownload, FilePenLine, MoreHorizontal, Plus, RefreshCcw, RotateCcw, Save, Search, TriangleAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import AdminApiModelSyncDialog from '@/components/admin/AdminApiModelSyncDialog.vue'
 import PageTitle from '@/components/market/PageTitle.vue'
-import CompactStats from '@/components/market/CompactStats.vue'
-import StatusTabs from '@/components/market/StatusTabs.vue'
-import { Badge } from '@/components/ui/badge'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Dialog,
   DialogContent,
@@ -18,6 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -25,13 +32,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   useAdminAPIModelProviders,
   useAdminAPIModels,
   useCreateAPIModel,
   useCreateAPIModelProvider,
-  useSetAPIModelActive,
-  useSetAPIModelProviderActive,
+  useApplyAPIModelLifecycle,
+  useApplyAPIModelProviderLifecycle,
   useUpdateAPIModel,
   useUpdateAPIModelProvider,
 } from '@/queries/useApiModelCatalogQueries'
@@ -42,36 +50,51 @@ import {
   type AdminApiModelProvider,
   type ApiModelCapability,
   type ApiModelInput,
-  type ApiModelProviderCategory,
   type ApiModelProviderInput,
+  type CatalogLifecycleAction,
+  type CatalogStatus,
 } from '@/types/apiModelCatalog'
 
-type StatusFilter = '全部' | '启用' | '停用'
+type CatalogTab = 'models' | 'providers'
+type StatusFilter = 'all' | CatalogStatus
 
-const statusFilter = ref<StatusFilter>('全部')
+const activeCatalogTab = ref<CatalogTab>('models')
+const statusFilter = ref<StatusFilter>('all')
+const modelSearch = ref('')
+const providerFilter = ref('all')
 const editingModelId = ref('')
 const editingProviderId = ref('')
 const isModelFormOpen = ref(false)
 const isProviderFormOpen = ref(false)
+const isSyncDialogOpen = ref(false)
+const lifecycleTarget = ref<{ kind: 'provider' | 'model', item: AdminApiModelProvider | AdminApiModel, action: CatalogLifecycleAction } | null>(null)
+const lifecycleReason = ref('')
+const unblockTargetStatus = ref<'active' | 'deprecated'>('active')
 
 const providersQuery = useAdminAPIModelProviders()
 const modelsQuery = useAdminAPIModels()
 const createProviderMutation = useCreateAPIModelProvider()
 const updateProviderMutation = useUpdateAPIModelProvider()
-const providerActiveMutation = useSetAPIModelProviderActive()
+const providerLifecycleMutation = useApplyAPIModelProviderLifecycle()
 const createModelMutation = useCreateAPIModel()
 const updateModelMutation = useUpdateAPIModel()
-const modelActiveMutation = useSetAPIModelActive()
+const modelLifecycleMutation = useApplyAPIModelLifecycle()
 
 const providers = computed(() => providersQuery.data.value ?? [])
-const activeProviders = computed(() => providers.value.filter(item => item.active))
+const activeProviders = computed(() => providers.value.filter(item => item.effectiveStatus === 'active'))
 const rows = computed(() => modelsQuery.data.value ?? [])
 const providerForm = reactive<ApiModelProviderInput>(emptyProviderForm())
 const modelForm = reactive<ApiModelInput>(emptyModelForm())
-const visibleRows = computed(() => rows.value.filter(matchesStatusFilter))
-const activeCount = computed(() => rows.value.filter(item => item.active && item.providerActive).length)
-const inactiveCount = computed(() => rows.value.length - activeCount.value)
-const providerCount = computed(() => providers.value.length)
+const visibleRows = computed(() => {
+  const search = modelSearch.value.trim().toLowerCase()
+  return rows.value.filter((item) => {
+    if (!matchesStatusFilter(item)) return false
+    if (providerFilter.value !== 'all' && item.providerId !== providerFilter.value) return false
+    if (!search) return true
+    return [item.modelKey, item.provider, item.providerCode]
+      .some(value => value.toLowerCase().includes(search))
+  })
+})
 const isSavingProvider = computed(() => createProviderMutation.isPending.value || updateProviderMutation.isPending.value)
 const isSavingModel = computed(() => createModelMutation.isPending.value || updateModelMutation.isPending.value)
 const isLoading = computed(() => providersQuery.isLoading.value || modelsQuery.isLoading.value)
@@ -85,8 +108,7 @@ const modelFormTitle = computed(() => editingModelId.value ? '编辑 API 模型'
 const editingProvider = computed(() => providers.value.find(item => item.id === editingProviderId.value) ?? null)
 const editingModel = computed(() => rows.value.find(item => item.id === editingModelId.value) ?? null)
 
-const providerLabelMap = Object.fromEntries(apiModelProviderCategories.map(item => [item.value, item.label])) as Record<ApiModelProviderCategory, string>
-const capabilityLabelMap = Object.fromEntries(apiModelCapabilities.map(item => [item.value, item.label])) as Record<ApiModelCapability, string>
+const providerLabelMap = Object.fromEntries(apiModelProviderCategories.map(item => [item.value, item.label])) as Record<string, string>
 
 function openCreateProvider() {
   editingProviderId.value = ''
@@ -125,7 +147,6 @@ function emptyProviderForm(): ApiModelProviderInput {
     providerCategory: 'gpt',
     code: '',
     displayName: '',
-    active: true,
     sortOrder: nextProviderSortOrder(),
   }
 }
@@ -134,14 +155,12 @@ function emptyModelForm(): ApiModelInput {
   return {
     providerId: activeProviders.value[0]?.id ?? '',
     modelKey: '',
-    displayName: '',
     capabilities: ['chat'],
     inputTokenPrice: '',
     cachedInputTokenPrice: '',
     outputTokenPrice: '',
     sourceUrl: '',
     sourceVersion: '',
-    active: true,
     sortOrder: nextModelSortOrder(),
   }
 }
@@ -159,7 +178,6 @@ function inputFromProvider(provider: AdminApiModelProvider): ApiModelProviderInp
     providerCategory: provider.providerCategory,
     code: provider.code,
     displayName: provider.displayName,
-    active: provider.active,
     sortOrder: provider.sortOrder,
   }
 }
@@ -168,14 +186,12 @@ function inputFromModel(model: AdminApiModel): ApiModelInput {
   return {
     providerId: model.providerId,
     modelKey: model.modelKey,
-    displayName: model.displayName,
     capabilities: [...model.capabilities],
     inputTokenPrice: model.inputPricePerMillion ?? '',
     cachedInputTokenPrice: model.cachedInputPricePerMillion ?? '',
     outputTokenPrice: model.outputPricePerMillion ?? '',
     sourceUrl: model.currentPriceSourceUrl ?? '',
     sourceVersion: model.currentPriceSourceVersion ?? '',
-    active: model.active,
     sortOrder: model.sortOrder,
   }
 }
@@ -190,7 +206,6 @@ function validateModelForm() {
   if (!modelForm.providerId.trim()) return '请选择 API 提供商。'
   if (!activeProviders.value.some(item => item.id === modelForm.providerId)) return '请选择启用中的 API 提供商。'
   if (!modelForm.modelKey.trim()) return '请填写模型标识。'
-  if (!modelForm.displayName.trim()) return '请填写展示名。'
   if (modelForm.capabilities.length === 0) return '至少选择一种能力。'
   for (const field of [modelForm.inputTokenPrice, modelForm.cachedInputTokenPrice, modelForm.outputTokenPrice]) {
     if (!field.trim()) continue
@@ -242,24 +257,54 @@ async function saveModel() {
   }
 }
 
-async function setProviderActive(provider: AdminApiModelProvider, active: boolean) {
-  if (!active && !window.confirm(`停用提供商“${provider.displayName}”会使其关联模型无法用于新服务发布，已有订单仍使用快照。确认继续？`)) return
+function openLifecycle(kind: 'provider' | 'model', item: AdminApiModelProvider | AdminApiModel, action: CatalogLifecycleAction) {
+  lifecycleTarget.value = { kind, item, action }
+  lifecycleReason.value = ''
+  unblockTargetStatus.value = 'active'
+}
+
+async function applyLifecycle() {
+  const target = lifecycleTarget.value
+  if (!target) return
+  if (lifecycleReason.value.trim().length < 2) {
+    toast.warning('请填写至少 2 个字符的状态变更原因。')
+    return
+  }
+  const input = {
+    id: target.item.id,
+    version: target.item.version,
+    action: target.action,
+    reason: lifecycleReason.value,
+    targetStatus: target.action === 'unblock' ? unblockTargetStatus.value : undefined,
+  }
   try {
-    await providerActiveMutation.mutateAsync({ id: provider.id, active })
-    toast.success(active ? 'API 提供商已启用。' : 'API 提供商已停用。')
+    if (target.kind === 'provider') await providerLifecycleMutation.mutateAsync(input)
+    else await modelLifecycleMutation.mutateAsync(input)
+    toast.success('目录状态已更新。')
+    lifecycleTarget.value = null
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '提供商状态更新失败')
+    toast.error(error instanceof Error ? error.message : '目录状态更新失败')
   }
 }
 
-async function setModelActive(model: AdminApiModel, active: boolean) {
-  if (!active && !window.confirm(`停用模型“${model.displayName}”会将其从新服务发布选择中移除，已有订单仍使用快照。确认继续？`)) return
-  try {
-    await modelActiveMutation.mutateAsync({ id: model.id, active })
-    toast.success(active ? 'API 模型已启用。' : 'API 模型已停用。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '模型状态更新失败')
-  }
+function lifecycleActions(status: CatalogStatus): CatalogLifecycleAction[] {
+  if (status === 'active') return ['deprecate', 'block']
+  if (status === 'deprecated') return ['reactivate', 'block']
+  return ['unblock']
+}
+
+function lifecycleActionLabel(action: CatalogLifecycleAction) {
+  return { deprecate: '退役目录', block: '紧急阻断', reactivate: '重新启用', unblock: '解除阻断' }[action]
+}
+
+function statusLabel(status: CatalogStatus) {
+  return { active: '可用', deprecated: '已退役', blocked: '已阻断' }[status]
+}
+
+function statusClass(status: CatalogStatus) {
+  if (status === 'active') return 'border-success/30 bg-success/10 text-success'
+  if (status === 'blocked') return 'border-destructive/30 bg-destructive/10 text-destructive'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function setCapability(capability: ApiModelCapability, checked: boolean) {
@@ -269,9 +314,8 @@ function setCapability(capability: ApiModelCapability, checked: boolean) {
 }
 
 function matchesStatusFilter(item: AdminApiModel) {
-  if (statusFilter.value === '全部') return true
-  const effectiveActive = item.active && item.providerActive
-  return statusFilter.value === '启用' ? effectiveActive : !effectiveActive
+  if (statusFilter.value === 'all') return true
+  return item.effectiveStatus === statusFilter.value
 }
 
 function nextProviderSortOrder() {
@@ -284,93 +328,43 @@ function nextModelSortOrder() {
   return max + 10
 }
 
-function priceText(model: AdminApiModel) {
-  const input = model.inputPricePerMillion || '-'
-  const cached = model.cachedInputPricePerMillion || '-'
-  const output = model.outputPricePerMillion || '-'
-  return `输入 ${input} · 缓存 ${cached} · 输出 ${output}`
-}
-
-function capabilityText(model: AdminApiModel) {
-  return model.capabilities.map(item => capabilityLabelMap[item] ?? item).join(' / ')
-}
 </script>
 
 <template>
-  <div class="space-y-5">
-    <PageTitle
-      title="API 模型目录"
-      description="维护 API 提供商、具体模型、能力标签和官网公开价格版本。"
-    />
-
-    <CompactStats :items="[{ label: '全部模型', value: rows.length, hint: '含停用模型' }, { label: '可发布模型', value: activeCount, hint: `不可用 ${inactiveCount}` }, { label: '提供商', value: providerCount, hint: `启用 ${activeProviders.length}` }, { label: '当前筛选', value: visibleRows.length, hint: statusFilter }]" :loading="isLoading" />
-
-    <section class="space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 class="text-lg font-semibold">API 提供商</h2>
-          <p class="text-sm text-muted-foreground">模型从这里选择提供商，分类和展示名由提供商目录统一维护。</p>
+  <div class="min-w-0 space-y-4">
+    <PageTitle title="API 模型目录">
+      <template #action>
+        <div class="flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
+          <template v-if="activeCatalogTab === 'models'">
+            <Button size="sm" variant="outline" title="从 models.dev 同步价格" :disabled="providers.length === 0" @click="isSyncDialogOpen = true">
+              <CloudDownload class="h-4 w-4" />同步价格
+            </Button>
+            <Button size="sm" :disabled="activeProviders.length === 0" @click="openCreateModel">
+              <Plus class="h-4 w-4" />新建模型
+            </Button>
+          </template>
+          <Button v-else size="sm" @click="openCreateProvider">
+            <Plus class="h-4 w-4" />新建提供商
+          </Button>
         </div>
-        <Button size="sm" @click="openCreateProvider">
-          <Building2 class="h-4 w-4" />新建提供商
-        </Button>
+      </template>
+    </PageTitle>
+
+    <Tabs v-model="activeCatalogTab" class="min-w-0 gap-0">
+      <div class="overflow-x-auto border-b border-border">
+        <TabsList class="h-auto min-w-max rounded-none bg-transparent p-0">
+          <TabsTrigger value="models" class="rounded-none border-0 border-b-2 border-transparent px-4 py-2.5 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none">
+            模型 <span class="font-mono text-xs">{{ rows.length }}</span>
+          </TabsTrigger>
+          <TabsTrigger value="providers" class="rounded-none border-0 border-b-2 border-transparent px-4 py-2.5 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none">
+            提供商 <span class="font-mono text-xs">{{ providers.length }}</span>
+          </TabsTrigger>
+        </TabsList>
       </div>
 
-      <Card class="overflow-hidden p-0">
-        <div class="overflow-x-auto">
-          <table class="c2c-table w-full min-w-[760px] text-sm">
-            <thead>
-              <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                <th class="px-3 py-2 font-medium">提供商</th>
-                <th class="px-3 py-2 font-medium">分类</th>
-                <th class="px-3 py-2 font-medium">状态</th>
-                <th class="px-3 py-2 font-medium">排序</th>
-                <th class="px-3 py-2 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="provider in providers" :key="provider.id" class="border-b border-border/70 last:border-0">
-                <td class="px-3 py-3">
-                  <div class="font-medium">{{ provider.displayName }}</div>
-                  <div class="mt-1 text-xs text-muted-foreground">{{ provider.code }}</div>
-                </td>
-                <td class="px-3 py-3"><Badge variant="model">{{ providerLabelMap[provider.providerCategory] }}</Badge></td>
-                <td class="px-3 py-3"><Badge :variant="provider.active ? 'verified' : 'secondary'">{{ provider.active ? '启用' : '停用' }}</Badge></td>
-                <td class="px-3 py-3 text-sm text-muted-foreground">{{ provider.sortOrder }}</td>
-                <td class="px-3 py-3">
-                  <div class="flex flex-wrap justify-end gap-1.5">
-                    <Button size="sm" variant="outline" @click="openEditProvider(provider)">
-                      <FilePenLine class="h-4 w-4" />编辑
-                    </Button>
-                    <Button size="sm" variant="outline" :disabled="providerActiveMutation.isPending.value" @click="setProviderActive(provider, !provider.active)">
-                      <component :is="provider.active ? ToggleLeft : ToggleRight" class="h-4 w-4" />
-                      {{ provider.active ? '停用' : '启用' }}
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="providers.length === 0">
-                <td colspan="5" class="px-3 py-8 text-center text-sm text-muted-foreground">暂无 API 提供商。</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </section>
+      <SkeletonTable v-if="isLoading" class="mt-4" :rows="8" :columns="activeCatalogTab === 'models' ? 6 : 4" />
 
-    <section class="space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <StatusTabs v-model="statusFilter" :items="['全部', '启用', '停用']" class="mb-0" />
-        <Button size="sm" :disabled="activeProviders.length === 0" @click="openCreateModel">
-          <Plus class="h-4 w-4" />新建模型
-        </Button>
-      </div>
-
-      <div v-if="isLoading" class="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
-        API 模型目录加载中...
-      </div>
-
-      <Card v-else-if="hasError" class="border-destructive/30 p-5">
+      <Card v-else-if="hasError" class="mt-4 border-destructive/30 p-5">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
           <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive">
             <TriangleAlert class="h-5 w-5" />
@@ -383,66 +377,136 @@ function capabilityText(model: AdminApiModel) {
         </div>
       </Card>
 
-      <Card v-else class="overflow-hidden p-0">
-        <div class="overflow-x-auto">
-          <table class="c2c-table w-full min-w-[980px] text-sm">
-            <thead>
-              <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                <th class="px-3 py-2 font-medium">模型</th>
-                <th class="px-3 py-2 font-medium">提供商</th>
-                <th class="px-3 py-2 font-medium">能力</th>
-                <th class="px-3 py-2 font-medium">官网公开价格（每百万 tokens）</th>
-                <th class="px-3 py-2 font-medium">来源版本</th>
-                <th class="px-3 py-2 font-medium">状态</th>
-                <th class="px-3 py-2 font-medium">排序</th>
-                <th class="px-3 py-2 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="model in visibleRows" :key="model.id" class="border-b border-border/70 last:border-0">
-                <td class="max-w-[260px] px-3 py-3">
-                  <div class="font-medium">{{ model.displayName }}</div>
-                  <div class="mt-1 truncate text-xs text-muted-foreground">{{ model.modelKey }}</div>
-                </td>
-                <td class="px-3 py-3">
-                  <div class="font-medium">{{ model.provider }}</div>
-                  <div class="mt-1 flex flex-wrap gap-1">
-                    <Badge variant="model">{{ providerLabelMap[model.providerCategory] }}</Badge>
-                    <Badge v-if="!model.providerActive" variant="secondary">提供商停用</Badge>
-                  </div>
-                </td>
-                <td class="max-w-[180px] px-3 py-3 text-xs text-muted-foreground">{{ capabilityText(model) }}</td>
-                <td class="px-3 py-3 text-xs text-muted-foreground">{{ priceText(model) }}</td>
-                <td class="max-w-[180px] px-3 py-3 text-xs text-muted-foreground">
-                  <div class="truncate">{{ model.currentPriceSourceVersion || '-' }}</div>
-                  <div class="truncate">{{ model.currentPriceSourceUrl || '' }}</div>
-                </td>
-                <td class="px-3 py-3">
-                  <Badge :variant="model.active && model.providerActive ? 'verified' : 'secondary'">{{ model.active && model.providerActive ? '启用' : '停用' }}</Badge>
-                </td>
-                <td class="px-3 py-3 text-sm text-muted-foreground">{{ model.sortOrder }}</td>
-                <td class="px-3 py-3">
-                  <div class="flex flex-wrap justify-end gap-1.5">
-                    <Button size="sm" variant="outline" @click="openEditModel(model)">
-                      <FilePenLine class="h-4 w-4" />编辑
-                    </Button>
-                    <Button size="sm" variant="outline" :disabled="modelActiveMutation.isPending.value" @click="setModelActive(model, !model.active)">
-                      <component :is="model.active ? ToggleLeft : ToggleRight" class="h-4 w-4" />
-                      {{ model.active ? '停用' : '启用' }}
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="visibleRows.length === 0">
-                <td colspan="8" class="px-3 py-10 text-center text-sm text-muted-foreground">
-                  当前筛选下暂无 API 模型。
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </section>
+      <template v-else>
+        <TabsContent value="models" class="mt-4 min-w-0 space-y-3">
+          <div class="grid min-w-0 gap-2 lg:grid-cols-[minmax(240px,1fr)_auto_minmax(180px,220px)]">
+            <div class="relative min-w-0">
+              <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input v-model="modelSearch" class="pl-9" aria-label="搜索模型" placeholder="搜索模型" />
+            </div>
+
+            <div class="flex w-fit max-w-full items-center gap-1 overflow-x-auto rounded-lg border border-border bg-muted/40 p-1" aria-label="模型状态筛选">
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'all' ? 'default' : 'ghost'" @click="statusFilter = 'all'">全部</Button>
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'active' ? 'default' : 'ghost'" @click="statusFilter = 'active'">已启用</Button>
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'deprecated' ? 'default' : 'ghost'" @click="statusFilter = 'deprecated'">已退役</Button>
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'blocked' ? 'default' : 'ghost'" @click="statusFilter = 'blocked'">已阻断</Button>
+            </div>
+
+            <Select v-model="providerFilter">
+              <SelectTrigger class="w-full" aria-label="按提供商筛选">
+                <SelectValue placeholder="全部提供商" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部提供商</SelectItem>
+                <SelectItem v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.displayName }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
+            <div class="max-w-full overflow-x-auto">
+              <table class="c2c-table w-full min-w-[920px] text-sm">
+                <thead class="sticky top-0 z-10 bg-muted/95">
+                  <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                    <th class="px-3 py-2.5 font-medium">模型</th>
+                    <th class="px-3 py-2.5 font-medium">提供商</th>
+                    <th class="px-3 py-2.5 font-medium">官网价格</th>
+                    <th class="px-3 py-2.5 font-medium">状态</th>
+                    <th class="w-36 px-3 py-2.5 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="model in visibleRows" :key="model.id" class="border-b border-border/70 last:border-0">
+                    <td class="max-w-[280px] px-3 py-2.5">
+                      <div class="truncate font-mono font-medium" :title="model.modelKey">{{ model.modelKey }}</div>
+                      <div v-if="model.identityLocked" class="mt-1 text-xs text-muted-foreground" :title="model.identityLockReason">身份已锁定</div>
+                    </td>
+                    <td class="px-3 py-2.5">
+                      <div class="font-medium">{{ model.provider }}</div>
+                      <div class="mt-0.5 text-xs text-muted-foreground">{{ model.providerCode }}</div>
+                    </td>
+                    <td class="min-w-[340px] px-3 py-2.5">
+                      <div class="grid grid-cols-3 gap-3 text-xs">
+                        <span><span class="text-muted-foreground">输入</span> <span class="font-mono">{{ model.inputPricePerMillion || '-' }}</span></span>
+                        <span><span class="text-muted-foreground">缓存</span> <span class="font-mono">{{ model.cachedInputPricePerMillion || '-' }}</span></span>
+                        <span><span class="text-muted-foreground">输出</span> <span class="font-mono">{{ model.outputPricePerMillion || '-' }}</span></span>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2.5">
+                      <div class="space-y-1.5">
+                        <Badge variant="outline" :class="statusClass(model.status)">{{ statusLabel(model.status) }}</Badge>
+                        <div v-if="model.effectiveStatusSource === 'parent'" class="text-xs text-warning">因提供商{{ statusLabel(model.effectiveStatus) }}</div>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2.5 text-right">
+                      <div class="flex justify-end gap-1">
+                        <Button size="icon" variant="ghost" title="编辑模型" aria-label="编辑模型" @click="openEditModel(model)"><FilePenLine class="h-4 w-4" /></Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger as-child><Button size="icon" variant="ghost" title="目录状态操作" aria-label="目录状态操作"><MoreHorizontal class="h-4 w-4" /></Button></DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem v-for="action in lifecycleActions(model.status)" :key="action" :class="action === 'block' ? 'text-destructive' : ''" @select="openLifecycle('model', model, action)">
+                              <Ban v-if="action === 'block'" class="h-4 w-4" /><RefreshCcw v-else class="h-4 w-4" />{{ lifecycleActionLabel(action) }}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-if="visibleRows.length === 0">
+                    <td colspan="5" class="px-3 py-10 text-center text-sm text-muted-foreground">当前筛选下暂无 API 模型。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="providers" class="mt-4 min-w-0">
+          <div class="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
+            <div class="max-w-full overflow-x-auto">
+              <table class="c2c-table w-full min-w-[680px] text-sm">
+                <thead class="sticky top-0 z-10 bg-muted/95">
+                  <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                    <th class="px-3 py-2.5 font-medium">提供商</th>
+                    <th class="px-3 py-2.5 font-medium">分类</th>
+                    <th class="px-3 py-2.5 font-medium">状态</th>
+                    <th class="w-24 px-3 py-2.5 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="provider in providers" :key="provider.id" class="border-b border-border/70 last:border-0">
+                    <td class="px-3 py-2.5">
+                      <div class="font-medium">{{ provider.displayName }}</div>
+                      <div class="mt-0.5 font-mono text-xs text-muted-foreground">{{ provider.code }}</div>
+                    </td>
+                    <td class="px-3 py-2.5 text-muted-foreground">{{ providerLabelMap[provider.providerCategory] ?? provider.providerCategory }}</td>
+                    <td class="px-3 py-2.5">
+                      <Badge variant="outline" :class="statusClass(provider.status)">{{ statusLabel(provider.status) }}</Badge>
+                    </td>
+                    <td class="px-3 py-2.5 text-right">
+                      <div class="flex justify-end gap-1">
+                        <Button size="icon" variant="ghost" title="编辑提供商" aria-label="编辑提供商" @click="openEditProvider(provider)"><FilePenLine class="h-4 w-4" /></Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger as-child><Button size="icon" variant="ghost" title="目录状态操作" aria-label="目录状态操作"><MoreHorizontal class="h-4 w-4" /></Button></DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem v-for="action in lifecycleActions(provider.status)" :key="action" :class="action === 'block' ? 'text-destructive' : ''" @select="openLifecycle('provider', provider, action)">
+                              <Ban v-if="action === 'block'" class="h-4 w-4" /><RefreshCcw v-else class="h-4 w-4" />{{ lifecycleActionLabel(action) }}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-if="providers.length === 0">
+                    <td colspan="4" class="px-3 py-10 text-center text-sm text-muted-foreground">暂无 API 提供商。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+      </template>
+    </Tabs>
 
     <Dialog v-model:open="isProviderFormOpen">
       <DialogContent class="sm:max-w-xl">
@@ -459,33 +523,20 @@ function capabilityText(model: AdminApiModel) {
         <div class="space-y-4">
           <label class="space-y-2">
             <span class="text-sm font-medium">分类</span>
-            <Select v-model="providerForm.providerCategory">
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="item in apiModelProviderCategories" :key="item.value" :value="item.value">{{ item.label }}</SelectItem>
-              </SelectContent>
-            </Select>
+            <Input v-model="providerForm.providerCategory" :disabled="Boolean(editingProvider?.identityLocked)" placeholder="例如 deepseek" />
+            <span v-if="editingProvider?.identityLocked" class="block text-xs text-muted-foreground">{{ editingProvider.identityLockReason }}</span>
           </label>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="space-y-2">
               <span class="text-sm font-medium">Code</span>
-              <Input v-model="providerForm.code" placeholder="openai" />
+              <Input v-model="providerForm.code" :disabled="Boolean(editingProvider?.identityLocked)" placeholder="openai" />
             </label>
             <label class="space-y-2">
               <span class="text-sm font-medium">展示名</span>
               <Input v-model="providerForm.displayName" placeholder="OpenAI" />
             </label>
           </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">排序</span>
-              <Input v-model.number="providerForm.sortOrder" type="number" />
-            </label>
-            <label class="flex items-end gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <Checkbox v-model="providerForm.active" class="mb-1" />
-              <span>启用提供商</span>
-            </label>
-          </div>
+          <label class="block max-w-xs space-y-2"><span class="text-sm font-medium">排序</span><Input v-model.number="providerForm.sortOrder" type="number" /></label>
           <DialogFooter>
             <Button variant="outline" :disabled="isSavingProvider" @click="isProviderFormOpen = false">取消</Button>
             <Button :disabled="isSavingProvider" @click="saveProvider">
@@ -511,26 +562,21 @@ function capabilityText(model: AdminApiModel) {
         <div class="space-y-4">
           <label class="space-y-2">
             <span class="text-sm font-medium">API 提供商</span>
-            <Select v-model="modelForm.providerId">
+            <Select v-model="modelForm.providerId" :disabled="Boolean(editingModel?.identityLocked)">
               <SelectTrigger><SelectValue placeholder="选择提供商" /></SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="provider in activeProviders" :key="provider.id" :value="provider.id">
-                  {{ provider.displayName }} · {{ providerLabelMap[provider.providerCategory] }}
+                  {{ provider.displayName }} · {{ providerLabelMap[provider.providerCategory] ?? provider.providerCategory }}
                 </SelectItem>
               </SelectContent>
             </Select>
           </label>
 
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">模型标识</span>
-              <Input v-model="modelForm.modelKey" placeholder="gpt-4o-mini" />
-            </label>
-            <label class="space-y-2">
-              <span class="text-sm font-medium">展示名</span>
-              <Input v-model="modelForm.displayName" placeholder="GPT-4o mini" />
-            </label>
-          </div>
+          <label class="block max-w-md space-y-2">
+            <span class="text-sm font-medium">模型标识</span>
+            <Input v-model="modelForm.modelKey" :disabled="Boolean(editingModel?.identityLocked)" placeholder="gpt-4.1-mini" />
+            <span v-if="editingModel?.identityLocked" class="block text-xs text-muted-foreground">{{ editingModel.identityLockReason }}</span>
+          </label>
 
           <div class="space-y-2">
             <span class="text-sm font-medium">能力</span>
@@ -573,16 +619,7 @@ function capabilityText(model: AdminApiModel) {
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">排序</span>
-              <Input v-model.number="modelForm.sortOrder" type="number" />
-            </label>
-            <label class="flex items-end gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <Checkbox v-model="modelForm.active" class="mb-1" />
-              <span>启用模型</span>
-            </label>
-          </div>
+          <label class="block max-w-xs space-y-2"><span class="text-sm font-medium">排序</span><Input v-model.number="modelForm.sortOrder" type="number" /></label>
 
           <DialogFooter>
             <Button variant="outline" :disabled="isSavingModel" @click="isModelFormOpen = false">取消</Button>
@@ -591,6 +628,37 @@ function capabilityText(model: AdminApiModel) {
             </Button>
           </DialogFooter>
         </div>
+      </DialogContent>
+    </Dialog>
+
+    <AdminApiModelSyncDialog
+      v-model:open="isSyncDialogOpen"
+      :providers="providers"
+    />
+
+    <Dialog :open="Boolean(lifecycleTarget)" @update:open="open => { if (!open) lifecycleTarget = null }">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ lifecycleTarget ? lifecycleActionLabel(lifecycleTarget.action) : '目录状态操作' }}</DialogTitle>
+          <DialogDescription>该操作会立即影响新发布和新订单资格，历史正式订单仍按快照继续处理。</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-4">
+          <label v-if="lifecycleTarget?.action === 'unblock'" class="block space-y-2">
+            <span class="text-sm font-medium">解除后状态</span>
+            <Select v-model="unblockTargetStatus">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="active">恢复可用</SelectItem><SelectItem value="deprecated">保持退役</SelectItem></SelectContent>
+            </Select>
+          </label>
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">操作原因</span>
+            <Textarea v-model="lifecycleReason" maxlength="500" class="min-h-24" placeholder="说明本次目录治理依据，至少 2 个字符。" />
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="lifecycleTarget = null">取消</Button>
+          <Button :variant="lifecycleTarget?.action === 'block' ? 'destructive' : 'default'" :disabled="providerLifecycleMutation.isPending.value || modelLifecycleMutation.isPending.value" @click="applyLifecycle">确认执行</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   </div>

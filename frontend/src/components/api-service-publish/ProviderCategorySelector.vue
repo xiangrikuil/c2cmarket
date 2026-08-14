@@ -1,49 +1,29 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Blocks } from 'lucide-vue-next'
-import type { AcceptableValue } from 'reka-ui'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
+import type { ModelCatalogItem } from '@/lib/api'
+import { modelProviderCategory, providerCategoryLabel } from './utils'
 import type { ApiProviderCategory } from './types'
-
-defineProps<{
-  modelValue: ApiProviderCategory
-  selectedCount: number
-}>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: ApiProviderCategory]
 }>()
 
-function selectCategory(value: AcceptableValue) {
-  if (value === 'gpt' || value === 'claude' || value === 'other') emit('update:modelValue', value)
+function selectCategory(value: unknown) {
+  if (typeof value === 'string' && value) emit('update:modelValue', value)
 }
 
 const fallbackCategoryIcons = new Map<string, string>()
-const options: Array<{ value: ApiProviderCategory, title: string, description: string, detail: string, iconSrc: string | null }> = [
-  {
-    value: 'gpt',
-    title: 'GPT',
-    description: '可选择多个 GPT / OpenAI 模型。',
-    detail: '适合出售 OpenAI 兼容额度。',
-    iconSrc: getProductCategoryIconSrc('gpt', fallbackCategoryIcons),
-  },
-  {
-    value: 'claude',
-    title: 'Claude',
-    description: '可选择多个 Claude 模型。',
-    detail: '适合出售 Anthropic 兼容额度。',
-    iconSrc: getProductCategoryIconSrc('claude', fallbackCategoryIcons),
-  },
-  {
-    value: 'other',
-    title: '其他',
-    description: '适用于 Gemini、其他代理模型或人工审核目录。',
-    detail: '接入细节在备注中说明。',
-    iconSrc: getProductCategoryIconSrc('other', fallbackCategoryIcons),
-  },
-]
+const props = defineProps<{ modelValue: ApiProviderCategory, selectedCount: number, catalog: ModelCatalogItem[] }>()
+const options = computed(() => Array.from(new Set(props.catalog.map(item => modelProviderCategory(item.provider)))).map(value => ({
+  value,
+  title: providerCategoryLabel(value),
+  iconSrc: getProductCategoryIconSrc(value, fallbackCategoryIcons),
+})))
 </script>
 
 <template>
@@ -56,7 +36,7 @@ const options: Array<{ value: ApiProviderCategory, title: string, description: s
           </span>
           <div>
             <h2>模型范围</h2>
-            <p>GPT 与 Claude 需分开发；切换大类会校正不兼容模型。</p>
+            <p>不同提供商的模型需分开发；切换大类会校正不兼容模型。</p>
           </div>
         </div>
         <Badge variant="model">已选 {{ selectedCount }} 个模型</Badge>

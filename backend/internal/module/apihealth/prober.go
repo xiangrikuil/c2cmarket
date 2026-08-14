@@ -1,262 +1,305 @@
 package apihealth
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/json"
-	"errors"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
+	cryptorand "crypto/rand"
+	"math/big"
 	"strings"
 	"time"
 
-	"c2c-market/backend/internal/platform/outboundhttp"
-)
-
-const probeResponseLimit = 64 * 1024
-
-var (
-	errEmptyProbeResponse = errors.New("probe stream contained no content")
-	errInvalidProbeStream = errors.New("probe stream is invalid")
+	"c2c-market/backend/internal/platform/openaiapi"
 )
 
 type Prober interface {
 	Probe(ctx context.Context, job ProbeJob) ProbeResult
 }
 
-type OpenAIStreamingProber struct {
-	client        *http.Client
-	clientFactory HTTPClientFactory
-	now           func() time.Time
+type openAIProbeClient interface {
+	DiscoverModels(ctx context.Context) ([]string, openaiapi.Result)
+	StreamProbe(ctx context.Context, protocol, model string) openaiapi.StreamResult
 }
 
-func NewOpenAIStreamingProberWithClientFactory(factory HTTPClientFactory, now func() time.Time) *OpenAIStreamingProber {
-	if now == nil {
-		now = time.Now
-	}
-	return &OpenAIStreamingProber{clientFactory: factory, now: now}
+type openAIProbeClientFactory func(baseURL, credential string, options openaiapi.Options) (openAIProbeClient, error)
+
+type OpenAIRealModelProber struct {
+	timeout    time.Duration
+	now        func() time.Time
+	sleep      func(context.Context, time.Duration) error
+	randomWait func() time.Duration
+	newClient  openAIProbeClientFactory
 }
 
-func NewOpenAIStreamingProber(client *http.Client, now func() time.Time) *OpenAIStreamingProber {
-	if now == nil {
-		now = time.Now
+func NewOpenAIRealModelProber(timeout time.Duration) *OpenAIRealModelProber {
+	if timeout <= 0 || timeout > 30*time.Second {
+		timeout = 30 * time.Second
 	}
-	return &OpenAIStreamingProber{client: client, now: now}
+	return &OpenAIRealModelProber{
+		timeout: timeout,
+		now:     time.Now,
+		sleep: func(ctx context.Context, duration time.Duration) error {
+			timer := time.NewTimer(duration)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+				return nil
+			}
+		},
+		randomWait: func() time.Duration {
+			value, err := cryptorand.Int(cryptorand.Reader, big.NewInt(3))
+			if err != nil {
+				return 2 * time.Second
+			}
+			return time.Duration(value.Int64()+1) * time.Second
+		},
+		newClient: func(baseURL, credential string, options openaiapi.Options) (openAIProbeClient, error) {
+			return openaiapi.NewClient(baseURL, credential, options)
+		},
+	}
 }
 
-func (p *OpenAIStreamingProber) Probe(ctx context.Context, job ProbeJob) ProbeResult {
-	if p == nil {
-		return ProbeResult{ErrorCode: ErrorInternal}
+func (prober *OpenAIRealModelProber) Verify(ctx context.Context, baseURL, credential, requestedModel string, allowInsecureHTTP bool) VerificationResult {
+	if prober == nil {
+		return VerificationResult{ErrorCode: ErrorInternal}
 	}
-	now := p.now
-	if now == nil {
-		now = time.Now
-	}
-	startedAt := now()
-	fail := func(code string, statusClass int) ProbeResult {
-		duration := int(now().Sub(startedAt).Milliseconds())
-		if duration < 0 {
-			duration = 0
-		}
-		return ProbeResult{TotalDurationMS: duration, HTTPStatusClass: statusClass, ErrorCode: code}
-	}
-	if strings.TrimSpace(job.Credential) == "" {
-		return fail(ErrorAuthorizationInvalid, 0)
-	}
-	client := p.client
-	if p.clientFactory != nil {
-		var err error
-		client, err = p.clientFactory.ClientFor(job.Config)
-		if err != nil {
-			return fail(classifyRequestError(ctx, err), 0)
-		}
-	}
-	if client == nil {
-		return fail(ErrorInternal, 0)
-	}
-	body, err := json.Marshal(map[string]any{
-		"model":      job.Config.Model,
-		"messages":   []map[string]string{{"role": "user", "content": "Reply with exactly OK."}},
-		"max_tokens": 8,
-		"stream":     true,
+	client, err := prober.newClient(baseURL, credential, openaiapi.Options{
+		AllowInsecureHTTP: allowInsecureHTTP,
+		Timeout:           prober.timeout,
 	})
 	if err != nil {
-		return fail(ErrorInternal, 0)
+		return VerificationResult{ErrorCode: mapOpenAIError(openaiapi.ErrorBlockedTarget)}
 	}
-	endpoint, err := url.JoinPath(job.Config.BaseURL, "chat/completions")
-	if err != nil {
-		return fail(ErrorInternal, 0)
+	models, discovery := client.DiscoverModels(ctx)
+	if !discovery.Succeeded() {
+		return VerificationResult{TotalDurationMS: discovery.DurationMS, HTTPStatus: discovery.HTTPStatus, ErrorCode: mapOpenAIError(discovery.ErrorCode)}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return fail(ErrorInternal, 0)
+	model := strings.TrimSpace(requestedModel)
+	if model == "" && containsModel(models, DefaultGPTProbeModel) {
+		model = DefaultGPTProbeModel
 	}
-	request.Header.Set("Authorization", "Bearer "+job.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "text/event-stream")
-	response, err := client.Do(request)
-	if err != nil {
-		return fail(classifyRequestError(ctx, err), 0)
+	if model == "" || !containsModel(models, model) {
+		return VerificationResult{TotalDurationMS: discovery.DurationMS, HTTPStatus: discovery.HTTPStatus, ErrorCode: ErrorModelUnavailable, AvailableModels: models}
 	}
-	defer response.Body.Close()
-	statusClass := response.StatusCode / 100
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fail(classifyHTTPStatus(response.StatusCode), statusClass)
-	}
-	ttft, parseErr := readFirstStreamingContent(ctx, response.Body, startedAt, now)
-	if parseErr != nil {
-		if errors.Is(parseErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fail(ErrorTimeout, statusClass)
+	responses := prober.streamAttempt(ctx, client, ProtocolResponsesV1, model, 1)
+	if responses.Succeeded {
+		return VerificationResult{
+			TotalDurationMS: discovery.DurationMS + responses.TotalDurationMS, HTTPStatus: responses.HTTPStatus,
+			AvailableModels: models, ProbeModel: model, ProbeProtocol: ProtocolResponsesV1, Attempt: responses,
 		}
-		if errors.Is(parseErr, outboundhttp.ErrResponseTooLarge) {
-			return fail(ErrorResponseTooLarge, statusClass)
-		}
-		if errors.Is(parseErr, errEmptyProbeResponse) {
-			return fail(ErrorEmptyResponse, statusClass)
-		}
-		return fail(ErrorInvalidStream, statusClass)
 	}
-	duration := int(now().Sub(startedAt).Milliseconds())
-	if duration < ttft {
-		duration = ttft
+	if responses.ErrorCode != ErrorProtocolUnavailable {
+		return VerificationResult{
+			TotalDurationMS: discovery.DurationMS + responses.TotalDurationMS, HTTPStatus: responses.HTTPStatus,
+			ErrorCode: responses.ErrorCode, AvailableModels: models, ProbeModel: model, Attempt: responses,
+		}
 	}
-	return ProbeResult{TTFTMS: ttft, TotalDurationMS: duration, HTTPStatusClass: statusClass}
+	chat := prober.streamAttempt(ctx, client, ProtocolChatCompletionsV1, model, 1)
+	if !chat.Succeeded {
+		return VerificationResult{
+			TotalDurationMS: discovery.DurationMS + responses.TotalDurationMS + chat.TotalDurationMS, HTTPStatus: chat.HTTPStatus,
+			ErrorCode: chat.ErrorCode, AvailableModels: models, ProbeModel: model, Attempt: chat,
+		}
+	}
+	return VerificationResult{
+		TotalDurationMS: discovery.DurationMS + responses.TotalDurationMS + chat.TotalDurationMS, HTTPStatus: chat.HTTPStatus,
+		AvailableModels: models, ProbeModel: model, ProbeProtocol: ProtocolChatCompletionsV1, Attempt: chat,
+	}
 }
 
-func readFirstStreamingContent(ctx context.Context, body io.Reader, startedAt time.Time, now func() time.Time) (int, error) {
-	if body == nil || now == nil {
-		return 0, errInvalidProbeStream
+func (prober *OpenAIRealModelProber) Probe(ctx context.Context, job ProbeJob) ProbeResult {
+	if prober == nil || job.CredentialError {
+		return ProbeResult{Outcome: OutcomeFinalFailure, ErrorCode: ErrorDecryptFailed}
 	}
-	scanner := bufio.NewScanner(io.LimitReader(body, probeResponseLimit+1))
-	scanner.Buffer(make([]byte, 4096), probeResponseLimit+1)
-	total := 0
-	dataLines := make([]string, 0, 1)
-	sawInvalidLine := false
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-		line := scanner.Text()
-		total += len(line) + 1
-		if total > probeResponseLimit {
-			return 0, outboundhttp.ErrResponseTooLarge
-		}
-		if line == "" {
-			ttft, found, err := parseStreamingEvent(dataLines, startedAt, now)
-			if err != nil || found {
-				return ttft, err
-			}
-			dataLines = dataLines[:0]
-			continue
-		}
-		if strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") || strings.HasPrefix(line, "id:") || strings.HasPrefix(line, "retry:") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			sawInvalidLine = true
-			continue
-		}
-		dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+	now := prober.now
+	if now == nil {
+		now = time.Now
 	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return 0, outboundhttp.ErrResponseTooLarge
+	cycleStartedAt := now()
+	first := prober.executeAttempt(ctx, job, 1)
+	first.CostUSD = AttemptCostUSD(job.Connection.Price, first.Usage)
+	result := ProbeResult{Attempts: []ProbeAttempt{first}, HTTPStatus: first.HTTPStatus, HTTPStatusClass: first.HTTPStatus / 100, ErrorCode: first.ErrorCode}
+	firstDuration := first.TotalDurationMS
+	result.FirstAttemptTotalDurationMS = &firstDuration
+	if first.Succeeded {
+		result.Outcome = OutcomeFirstSuccess
+		result.ErrorCode = ""
+		result.FirstAttemptTTFTMS = first.TTFTMS
+		if job.LatencyRule != nil && first.TTFTMS != nil && *first.TTFTMS > job.LatencyRule.SlowTTFTMS {
+			result.Outcome = OutcomeFirstSuccessSlow
 		}
-		return 0, err
+		result.BaseCostUSD = first.CostUSD
+		result.Usage = first.Usage
+		result.UsageComplete = first.Usage.Complete()
+		result.TotalDurationMS = elapsedMilliseconds(now().Sub(cycleStartedAt))
+		return result
 	}
-	if len(dataLines) > 0 {
-		ttft, found, err := parseStreamingEvent(dataLines, startedAt, now)
-		if err != nil || found {
-			return ttft, err
-		}
+	if !first.Retryable {
+		result.Outcome = OutcomeFinalFailure
+		result.BaseCostUSD = first.CostUSD
+		result.Usage = first.Usage
+		result.UsageComplete = first.Usage.Complete()
+		result.TotalDurationMS = elapsedMilliseconds(now().Sub(cycleStartedAt))
+		return result
 	}
-	if sawInvalidLine {
-		return 0, errInvalidProbeStream
+	wait := time.Duration(first.RetryAfterMS) * time.Millisecond
+	if wait <= 0 || wait > 3*time.Second {
+		wait = prober.randomWait()
 	}
-	return 0, errEmptyProbeResponse
+	if err := prober.sleep(ctx, wait); err != nil {
+		result.Outcome = OutcomeFinalFailure
+		result.TotalDurationMS = elapsedMilliseconds(now().Sub(cycleStartedAt))
+		return result
+	}
+	second := prober.executeAttempt(ctx, job, 2)
+	second.CostUSD = AttemptCostUSD(job.Connection.Price, second.Usage)
+	result.Attempts = append(result.Attempts, second)
+	result.HTTPStatus = second.HTTPStatus
+	result.HTTPStatusClass = second.HTTPStatus / 100
+	result.ErrorCode = second.ErrorCode
+	result.BaseCostUSD = first.CostUSD
+	result.RetryCostUSD = second.CostUSD
+	result.TotalDurationMS = elapsedMilliseconds(now().Sub(cycleStartedAt))
+	result.Usage, result.UsageComplete = aggregateUsage(result.Attempts)
+	if second.Succeeded {
+		result.Outcome = OutcomeRetryRecovered
+		result.ErrorCode = ""
+		recovery := result.TotalDurationMS
+		result.RecoveryDurationMS = &recovery
+		return result
+	}
+	result.Outcome = OutcomeFinalFailure
+	return result
 }
 
-func parseStreamingEvent(dataLines []string, startedAt time.Time, now func() time.Time) (int, bool, error) {
-	if len(dataLines) == 0 {
-		return 0, false, nil
-	}
-	data := strings.Join(dataLines, "\n")
-	if data == "[DONE]" {
-		return 0, false, errEmptyProbeResponse
-	}
-	var event struct {
-		Choices []struct {
-			Delta struct {
-				Content string `json:"content"`
-			} `json:"delta"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal([]byte(data), &event); err != nil {
-		return 0, false, errInvalidProbeStream
-	}
-	for _, choice := range event.Choices {
-		if choice.Delta.Content != "" {
-			ttft := int(now().Sub(startedAt).Milliseconds())
-			if ttft < 0 {
-				ttft = 0
-			}
-			return ttft, true, nil
+func (prober *OpenAIRealModelProber) executeAttempt(ctx context.Context, job ProbeJob, number int) ProbeAttempt {
+	timeout := prober.timeout
+	if job.LatencyRule != nil && job.LatencyRule.HardTimeoutMS > 0 {
+		ruleTimeout := time.Duration(job.LatencyRule.HardTimeoutMS) * time.Millisecond
+		if ruleTimeout < timeout {
+			timeout = ruleTimeout
 		}
 	}
-	return 0, false, nil
+	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client, err := prober.newClient(job.Connection.BaseURL, job.Credential, openaiapi.Options{
+		AllowInsecureHTTP: UsesInsecureHTTP(job.Connection.BaseURL),
+		Timeout:           timeout,
+	})
+	if err != nil {
+		now := prober.now().UTC()
+		return ProbeAttempt{AttemptNumber: number, StartedAt: now, FinishedAt: now, ErrorCode: ErrorBlockedTarget}
+	}
+	return prober.streamAttempt(attemptCtx, client, job.Connection.ProbeProtocol, job.Connection.ProbeModel, number)
 }
 
-func classifyHTTPStatus(status int) string {
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+func (prober *OpenAIRealModelProber) streamAttempt(ctx context.Context, client openAIProbeClient, protocol, model string, number int) ProbeAttempt {
+	startedAt := prober.now().UTC()
+	stream := client.StreamProbe(ctx, protocol, model)
+	finishedAt := prober.now().UTC()
+	usage := TokenUsage{
+		InputTokens: stream.Usage.InputTokens, CachedInputTokens: stream.Usage.CachedInputTokens,
+		OutputTokens: stream.Usage.OutputTokens, ReasoningTokens: stream.Usage.ReasoningTokens,
+	}
+	errorCode := mapOpenAIError(stream.ErrorCode)
+	return ProbeAttempt{
+		AttemptNumber: number, StartedAt: startedAt, FirstTextAt: stream.FirstTextAt, FinishedAt: finishedAt,
+		HTTPStatus: stream.HTTPStatus, TTFTMS: stream.TTFTMS, TotalDurationMS: stream.DurationMS,
+		Succeeded: stream.Succeeded(), Retryable: retryableStreamResult(stream), ErrorCode: errorCode,
+		RetryAfterMS: stream.RetryAfterMS, Usage: usage,
+	}
+}
+
+func containsModel(models []string, target string) bool {
+	for _, model := range models {
+		if model == target {
+			return true
+		}
+	}
+	return false
+}
+
+func retryableStreamResult(result openaiapi.StreamResult) bool {
+	switch result.ErrorCode {
+	case openaiapi.ErrorDNS, openaiapi.ErrorConnect, openaiapi.ErrorTimeout, openaiapi.ErrorRateLimited, openaiapi.ErrorStreamInterrupted:
+		return true
+	case openaiapi.ErrorUpstream:
+		return result.HTTPStatus == 500 || result.HTTPStatus == 502 || result.HTTPStatus == 503 || result.HTTPStatus == 504
+	default:
+		return false
+	}
+}
+
+func aggregateUsage(attempts []ProbeAttempt) (TokenUsage, bool) {
+	var input, cached, output, reasoning int64
+	cacheKnown := true
+	reasoningKnown := true
+	for _, attempt := range attempts {
+		if !attempt.Usage.Complete() {
+			return TokenUsage{}, false
+		}
+		input += *attempt.Usage.InputTokens
+		output += *attempt.Usage.OutputTokens
+		if attempt.Usage.CachedInputTokens == nil {
+			cacheKnown = false
+		} else {
+			cached += *attempt.Usage.CachedInputTokens
+		}
+		if attempt.Usage.ReasoningTokens == nil {
+			reasoningKnown = false
+		} else {
+			reasoning += *attempt.Usage.ReasoningTokens
+		}
+	}
+	usage := TokenUsage{InputTokens: &input, OutputTokens: &output}
+	if cacheKnown {
+		usage.CachedInputTokens = &cached
+	}
+	if reasoningKnown {
+		usage.ReasoningTokens = &reasoning
+	}
+	return usage, true
+}
+
+func elapsedMilliseconds(duration time.Duration) int {
+	value := int(duration.Milliseconds())
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func mapOpenAIError(code openaiapi.ErrorCode) string {
+	switch code {
+	case openaiapi.ErrorNone:
+		return ""
+	case openaiapi.ErrorAuthentication:
 		return ErrorAuthorizationInvalid
-	}
-	if status >= 400 && status < 500 {
-		return ErrorHTTP4xx
-	}
-	if status >= 500 && status < 600 {
-		return ErrorHTTP5xx
-	}
-	return ErrorInvalidStream
-}
-
-func classifyRequestError(ctx context.Context, err error) string {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
-		return ErrorTimeout
-	}
-	if errors.Is(err, outboundhttp.ErrInvalidTarget) || errors.Is(err, outboundhttp.ErrHostNotAllowed) ||
-		errors.Is(err, outboundhttp.ErrUnsafeAddress) || errors.Is(err, outboundhttp.ErrRedirectNotAllowed) ||
-		errors.Is(err, ErrTargetIdentityMismatch) {
+	case openaiapi.ErrorBlockedTarget:
 		return ErrorBlockedTarget
-	}
-	if errors.Is(err, outboundhttp.ErrResolutionFailed) {
+	case openaiapi.ErrorDNS:
 		return ErrorDNSFailed
-	}
-	if errors.Is(err, outboundhttp.ErrDialFailed) {
+	case openaiapi.ErrorConnect:
 		return ErrorConnectFailed
-	}
-	if errors.Is(err, outboundhttp.ErrResponseTooLarge) {
-		return ErrorResponseTooLarge
-	}
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return ErrorDNSFailed
-	}
-	var certificateErr *tls.CertificateVerificationError
-	var unknownAuthorityErr x509.UnknownAuthorityError
-	var hostnameErr x509.HostnameError
-	var recordHeaderErr tls.RecordHeaderError
-	if errors.As(err, &certificateErr) || errors.As(err, &unknownAuthorityErr) ||
-		errors.As(err, &hostnameErr) || errors.As(err, &recordHeaderErr) {
+	case openaiapi.ErrorTLS:
 		return ErrorTLSFailed
+	case openaiapi.ErrorTimeout:
+		return ErrorTimeout
+	case openaiapi.ErrorRateLimited:
+		return ErrorRateLimited
+	case openaiapi.ErrorUpstream:
+		return ErrorHTTP5xx
+	case openaiapi.ErrorProtocolUnsupported:
+		return ErrorProtocolUnavailable
+	case openaiapi.ErrorRequestRejected:
+		return ErrorHTTP4xx
+	case openaiapi.ErrorResponseTooLarge:
+		return ErrorResponseTooLarge
+	case openaiapi.ErrorInvalidResponse:
+		return ErrorInvalidResponse
+	case openaiapi.ErrorStreamInterrupted:
+		return ErrorStreamInterrupted
+	default:
+		return ErrorInternal
 	}
-	var networkErr *net.OpError
-	if errors.As(err, &networkErr) {
-		return ErrorConnectFailed
-	}
-	return ErrorInternal
 }

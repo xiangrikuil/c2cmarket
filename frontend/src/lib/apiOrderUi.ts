@@ -84,3 +84,7 @@ export function matchesApiOrderSearch(query: string, values: readonly string[]) 
   return values.some(value => value.toLowerCase().includes(normalizedQuery)
     || (compactQuery.length > 0 && compactOrderSearchValue(value).includes(compactQuery)))
 }
+
+export function normalizeApiOrderAmountFilter(value: string | number | null | undefined) {
+  return String(value ?? '').trim()
+}

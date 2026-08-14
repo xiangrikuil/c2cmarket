@@ -1,6 +1,6 @@
 # Runtime Security And Observability
 
-Date: 2026-07-27
+Date: 2026-08-14
 Author: Codex
 
 ## Scenario: API/Pages Headers And Protected Runtime Metrics
@@ -8,8 +8,8 @@ Author: Codex
 ### 1. Scope / Trigger
 
 - Trigger: changing backend response-header middleware,
-  `frontend/public/_headers`, `/metrics`, `METRICS_BEARER_TOKEN`, metric labels,
-  or public/operator route exposure.
+  `frontend/public/_headers`, `/metrics`, `METRICS_BEARER_TOKEN`, Sentry SDK or
+  DSN configuration, metric labels, or public/operator route exposure.
 - This is a cross-layer infrastructure contract. The Go API policy and the
   Cloudflare Pages policy serve different content and must not be collapsed
   into one permissive CSP.
@@ -34,6 +34,14 @@ ServerOptions{
 METRICS_BEARER_TOKEN=<distinct secret, at least 32 bytes in production>
 frontend/public/_headers
 node scripts/check-security-headers.mjs
+```
+
+```text
+SENTRY_ENABLED=true
+SENTRY_DSN=<public backend project DSN>
+SENTRY_ENVIRONMENT=production|staging
+SENTRY_RELEASE=<deployed Git commit>
+SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
 
 ### 3. Contracts
@@ -70,6 +78,16 @@ node scripts/check-security-headers.mjs
   authentication and a network/authenticated-proxy boundary in production.
 - Outside production, an empty token may leave `/metrics` open for local tests.
   This is a local convenience, not a production fallback.
+- Go Sentry is disabled by default outside deployment environments. Its HTTP
+  middleware runs after request-ID assignment, reports panics and 5xx Problem
+  Details, and does not report expected business 4xx responses.
+- Sentry events keep bounded `request_id`, status, error-code, route-pattern,
+  environment, and release context. They must remove request URL, query, body,
+  Cookie, headers, remote address, user PII, contacts, and delivery credentials.
+- Browser-to-API trace continuation uses only `Sentry-Trace` and `Baggage` CORS
+  headers. The Pages CSP adds only the exact Sentry ingest origin.
+- `SENTRY_AUTH_TOKEN` is build-only and must never enter Compose, Wrangler,
+  source-controlled env files, runtime config, logs, or browser bundles.
 
 ### 4. Validation & Error Matrix
 
@@ -84,6 +102,9 @@ node scripts/check-security-headers.mjs
 | Development response contains HSTS | Middleware test fails |
 | Pages CSP gains wildcard, HTTP, or `unsafe-eval` | Header guard fails |
 | Metric label contains raw URL/user/request/secret data | Review and observability tests fail |
+| Sentry enabled without a valid DSN or with an out-of-range sample rate | Configuration load fails |
+| Expected 4xx Problem Details response | No Sentry error event |
+| Panic or 5xx Problem Details response | Redacted event with request ID and route trace |
 
 ### 5. Good / Base / Bad Cases
 
@@ -95,6 +116,8 @@ node scripts/check-security-headers.mjs
   bearer token and no network boundary.
 - Bad: reusing the API deny-by-default CSP for the SPA, or weakening the SPA
   policy with `script-src *` to make a new asset load.
+- Bad: sending AppError detail, raw URL, query, body, Cookie, authorization
+  header, contact data, or user identity to Sentry.
 
 ### 6. Tests Required
 
@@ -119,6 +142,8 @@ Assertions:
   sources are absent.
 - Production/staging Compose keep the backend loopback-only and PostgreSQL
   private.
+- Sentry configuration parsing, event redaction, request-ID tagging, 5xx-only
+  reporting, trace CORS headers, and exact ingest CSP origin are covered.
 
 ### 7. Wrong vs Correct
 

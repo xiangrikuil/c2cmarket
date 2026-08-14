@@ -2,12 +2,10 @@
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import type { AcceptableValue } from 'reka-ui'
 import { computed } from 'vue'
 import type { CarpoolProductCatalogItem, CarpoolPublishForm, PublishFieldState, RegionOption } from './types'
 import CarpoolProductCombobox from './CarpoolProductCombobox.vue'
 import PublishSectionCard from './PublishSectionCard.vue'
-import { quotaFieldLabel } from '@/lib/quota'
 
 const props = defineProps<{
   form: CarpoolPublishForm
@@ -19,7 +17,6 @@ const props = defineProps<{
 }>()
 
 const selectedProduct = computed(() => props.catalog.find(item => item.id === props.form.productId) ?? null)
-const quotaLabel = computed(() => quotaFieldLabel(selectedProduct.value))
 const quotaUnit = computed(() => selectedProduct.value?.quotaUnit || 'USD')
 
 function booleanSelectValue(value: boolean | null) {
@@ -27,7 +24,7 @@ function booleanSelectValue(value: boolean | null) {
   return value ? 'true' : 'false'
 }
 
-function selectedBoolean(value: AcceptableValue) {
+function selectedBoolean(value: unknown) {
   if (value === 'true') return true
   if (value === 'false') return false
   return null
@@ -130,6 +127,25 @@ function stateLabelClass(key: string) {
         <p v-else class="text-xs" :class="fieldState('monthlyPrice') === 'pendingRequired' ? 'text-warning' : 'text-muted-foreground'">默认按人民币 / 月展示。</p>
       </label>
 
+      <div id="carpool-task-dailyQuota" class="space-y-2" :class="fieldShellClass('dailyQuota')">
+        <span class="flex items-center justify-between gap-2 text-sm font-medium">
+          <span>每天{{ selectedProduct?.quotaLabel || '额度' }} <span class="text-xs text-primary">必填</span></span>
+          <span v-if="stateLabel('dailyQuota')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('dailyQuota')">{{ stateLabel('dailyQuota') }}</span>
+        </span>
+        <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_80px]">
+          <Input
+            :model-value="form.dailyQuotaAmount ?? ''"
+            type="number"
+            min="0.01"
+            step="1"
+            placeholder="50"
+            @update:model-value="value => form.dailyQuotaAmount = value === '' ? null : Number(value)"
+          />
+          <Input :model-value="quotaUnit" readonly />
+        </div>
+        <p v-if="errors.dailyQuota" class="text-xs text-destructive">{{ errors.dailyQuota }}</p>
+      </div>
+
       <div id="carpool-task-weeklyQuota" class="space-y-2" :class="fieldShellClass('weeklyQuota')">
         <span class="flex items-center justify-between gap-2 text-sm font-medium">
           <span>每周{{ selectedProduct?.quotaLabel || '额度' }} <span class="text-xs text-primary">必填</span></span>
@@ -141,31 +157,12 @@ function stateLabelClass(key: string) {
             type="number"
             min="0.01"
             step="1"
-            placeholder="50"
+            placeholder="200"
             @update:model-value="value => form.weeklyQuotaAmount = value === '' ? null : Number(value)"
           />
           <Input :model-value="quotaUnit" readonly />
         </div>
         <p v-if="errors.weeklyQuota" class="text-xs text-destructive">{{ errors.weeklyQuota }}</p>
-      </div>
-
-      <div id="carpool-task-monthlyQuota" class="space-y-2" :class="fieldShellClass('monthlyQuota')">
-        <span class="flex items-center justify-between gap-2 text-sm font-medium">
-          <span>{{ quotaLabel }} <span class="text-xs text-primary">必填</span></span>
-          <span v-if="stateLabel('monthlyQuota')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('monthlyQuota')">{{ stateLabel('monthlyQuota') }}</span>
-        </span>
-        <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_80px]">
-          <Input
-            :model-value="form.monthlyQuotaAmount ?? ''"
-            type="number"
-            min="0.01"
-            step="1"
-            placeholder="200"
-            @update:model-value="value => form.monthlyQuotaAmount = value === '' ? null : Number(value)"
-          />
-          <Input :model-value="quotaUnit" readonly />
-        </div>
-        <p v-if="errors.monthlyQuota" class="text-xs text-destructive">{{ errors.monthlyQuota }}</p>
       </div>
 
       <label id="carpool-task-quotaReset" class="space-y-2" :class="fieldShellClass('quotaReset')">

@@ -14,6 +14,8 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/platform/modelsdev"
 
 	"github.com/google/uuid"
 )
@@ -22,6 +24,8 @@ type Service struct {
 	mu            sync.Mutex
 	now           func() time.Time
 	repo          Repository
+	idempotency   *idempotency.Service
+	modelsDev     modelsdev.Source
 	categories    map[string]ProductCategory
 	productPlans  map[string]ProductPlan
 	apiProviders  map[string]APIModelProvider
@@ -30,13 +34,15 @@ type Service struct {
 	apiModelOrder []string
 }
 
-func NewService(repo Repository, now func() time.Time) *Service {
+func NewService(repo Repository, idempotencyService *idempotency.Service, modelsDevSource modelsdev.Source, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	service := &Service{
 		now:          now,
 		repo:         repo,
+		idempotency:  idempotencyService,
+		modelsDev:    modelsDevSource,
 		categories:   make(map[string]ProductCategory),
 		productPlans: make(map[string]ProductPlan),
 		apiProviders: make(map[string]APIModelProvider),
@@ -49,6 +55,15 @@ func NewService(repo Repository, now func() time.Time) *Service {
 	return service
 }
 
+func (s *Service) SetModelsDevSource(source modelsdev.Source) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modelsDev = source
+}
+
 func (s *Service) ProductCategories(ctx context.Context) ([]ProductCategory, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.ListProductCategories(ctx)
@@ -58,7 +73,7 @@ func (s *Service) ProductCategories(ctx context.Context) ([]ProductCategory, *do
 
 	categories := make([]ProductCategory, 0, len(s.categories))
 	for _, category := range s.categories {
-		if category.Active {
+		if category.IsEffectiveActive() {
 			categories = append(categories, category)
 		}
 	}
@@ -77,10 +92,10 @@ func (s *Service) ProductPlans(ctx context.Context, categoryCode string) ([]Prod
 	plans := make([]ProductPlan, 0, len(s.productPlans))
 	for _, plan := range s.productPlans {
 		category, ok := s.categories[plan.CategoryID]
-		if !ok || !category.Active {
+		if !ok || !category.IsEffectiveActive() {
 			continue
 		}
-		if !plan.Active {
+		if !plan.IsEffectiveActive() {
 			continue
 		}
 		if categoryCode != "" && plan.CategoryCode != categoryCode {
@@ -103,9 +118,10 @@ func (s *Service) ProductPlan(ctx context.Context, planID string) (ProductPlan, 
 
 	plan, ok := s.productPlans[strings.TrimSpace(planID)]
 	category, categoryOK := s.categories[plan.CategoryID]
-	if !ok || !plan.Active || !categoryOK || !category.Active {
+	if !ok || !categoryOK {
 		return ProductPlan{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Product plan not found", "产品套餐不存在。")
 	}
+	plan = withProductPlanCategory(plan, category)
 	return plan, nil
 }
 
@@ -163,12 +179,13 @@ func (s *Service) CreateProductCategory(ctx context.Context, user auth.User, inp
 		return ProductCategory{}, fieldError(http.StatusConflict, "code", "分类 code 已被占用。")
 	}
 	category := ProductCategory{
+		Lifecycle:   activeLifecycle(""),
 		ID:          uuid.NewString(),
 		Code:        normalized.Code,
 		DisplayName: normalized.DisplayName,
 		IconDataURL: normalized.IconDataURL,
 		SortOrder:   normalized.SortOrder,
-		Active:      normalized.Active,
+		Active:      true,
 	}
 	s.categories[category.ID] = category
 	return category, nil
@@ -193,6 +210,9 @@ func (s *Service) UpdateProductCategory(ctx context.Context, user auth.User, cat
 	if !ok {
 		return ProductCategory{}, productCategoryNotFound()
 	}
+	if category.IdentityLocked && category.Code != normalized.Code {
+		return ProductCategory{}, catalogIdentityLocked(category.IdentityLockReason)
+	}
 	if s.productCategoryCodeExistsLocked(category.ID, normalized.Code) {
 		return ProductCategory{}, fieldError(http.StatusConflict, "code", "分类 code 已被占用。")
 	}
@@ -200,7 +220,7 @@ func (s *Service) UpdateProductCategory(ctx context.Context, user auth.User, cat
 	category.DisplayName = normalized.DisplayName
 	category.IconDataURL = normalized.IconDataURL
 	category.SortOrder = normalized.SortOrder
-	category.Active = normalized.Active
+	category.Active = category.IsEffectiveActive()
 	s.categories[category.ID] = category
 	for id, plan := range s.productPlans {
 		if plan.CategoryID == category.ID {
@@ -208,26 +228,6 @@ func (s *Service) UpdateProductCategory(ctx context.Context, user auth.User, cat
 			s.productPlans[id] = plan
 		}
 	}
-	return category, nil
-}
-
-func (s *Service) SetProductCategoryActive(ctx context.Context, user auth.User, categoryID string, active bool) (ProductCategory, *domain.AppError) {
-	if appErr := requireAdmin(user); appErr != nil {
-		return ProductCategory{}, appErr
-	}
-	mutation := ProductCategoryMutationInput{ID: categoryID, OperatorID: user.ID}
-	if s.repo != nil {
-		return s.repo.AdminSetProductCategoryActive(ctx, mutation, active)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	category, ok := s.categories[strings.TrimSpace(categoryID)]
-	if !ok {
-		return ProductCategory{}, productCategoryNotFound()
-	}
-	category.Active = active
-	s.categories[category.ID] = category
 	return category, nil
 }
 
@@ -294,6 +294,7 @@ func (s *Service) CreateProductPlan(ctx context.Context, user auth.User, input P
 	}
 	now := s.now()
 	plan := ProductPlan{
+		Lifecycle:            activeLifecycle(""),
 		ID:                   uuid.NewString(),
 		CategoryID:           normalized.CategoryID,
 		CategoryCode:         category.Code,
@@ -312,7 +313,7 @@ func (s *Service) CreateProductPlan(ctx context.Context, user auth.User, input P
 		QuotaLabel:           normalized.QuotaLabel,
 		QuotaUnit:            normalized.QuotaUnit,
 		QuotaPeriod:          normalized.QuotaPeriod,
-		Active:               normalized.Active,
+		Active:               true,
 		AllowCustomVariant:   normalized.AllowCustomVariant,
 		SortOrder:            normalized.SortOrder,
 		CreatedAt:            now,
@@ -345,6 +346,9 @@ func (s *Service) UpdateProductPlan(ctx context.Context, user auth.User, planID 
 	if !ok {
 		return ProductPlan{}, productPlanNotFound()
 	}
+	if plan.IdentityLocked && (plan.CategoryID != normalized.CategoryID || plan.ProviderCode != normalized.ProviderCode || plan.Slug != normalized.Slug) {
+		return ProductPlan{}, catalogIdentityLocked(plan.IdentityLockReason)
+	}
 	if s.productPlanSlugExistsLocked(plan.ID, normalized.Slug) {
 		return ProductPlan{}, fieldError(http.StatusConflict, "slug", "套餐 slug 已被占用。")
 	}
@@ -367,30 +371,9 @@ func (s *Service) UpdateProductPlan(ctx context.Context, user auth.User, planID 
 	plan.QuotaLabel = normalized.QuotaLabel
 	plan.QuotaUnit = normalized.QuotaUnit
 	plan.QuotaPeriod = normalized.QuotaPeriod
-	plan.Active = normalized.Active
+	plan.Active = plan.IsEffectiveActive()
 	plan.AllowCustomVariant = normalized.AllowCustomVariant
 	plan.SortOrder = normalized.SortOrder
-	plan.UpdatedAt = s.now()
-	s.productPlans[plan.ID] = plan
-	return plan, nil
-}
-
-func (s *Service) SetProductPlanActive(ctx context.Context, user auth.User, planID string, active bool) (ProductPlan, *domain.AppError) {
-	if appErr := requireAdmin(user); appErr != nil {
-		return ProductPlan{}, appErr
-	}
-	mutation := ProductPlanMutationInput{ID: planID, OperatorID: user.ID}
-	if s.repo != nil {
-		return s.repo.AdminSetProductPlanActive(ctx, mutation, active)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	plan, ok := s.productPlans[strings.TrimSpace(planID)]
-	if !ok {
-		return ProductPlan{}, productPlanNotFound()
-	}
-	plan.Active = active
 	plan.UpdatedAt = s.now()
 	s.productPlans[plan.ID] = plan
 	return plan, nil
@@ -407,14 +390,14 @@ func (s *Service) APIModels(ctx context.Context) ([]APIModelCatalog, *domain.App
 	for _, id := range s.apiModelOrder {
 		model := s.apiModels[id]
 		provider, providerOK := s.apiProviders[model.ProviderID]
-		if model.Active && providerOK && provider.Active {
+		if model.IsEffectiveActive() && providerOK && provider.IsEffectiveActive() {
 			model = withAPIModelProvider(model, provider)
 			models = append(models, model)
 		}
 	}
 	sort.Slice(models, func(i, j int) bool {
 		if models[i].SortOrder == models[j].SortOrder {
-			return models[i].DisplayName < models[j].DisplayName
+			return models[i].ModelKey < models[j].ModelKey
 		}
 		return models[i].SortOrder < models[j].SortOrder
 	})
@@ -430,7 +413,7 @@ func (s *Service) APIModel(ctx context.Context, modelID string) (APIModelCatalog
 
 	model, ok := s.apiModels[strings.TrimSpace(modelID)]
 	provider, providerOK := s.apiProviders[model.ProviderID]
-	if !ok || !model.Active || !providerOK || !provider.Active {
+	if !ok || !providerOK {
 		return APIModelCatalog{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API model not found", "API 模型不存在。")
 	}
 	return withAPIModelProvider(model, provider), nil
@@ -491,11 +474,12 @@ func (s *Service) CreateAPIModelProvider(ctx context.Context, user auth.User, in
 	}
 	now := s.now()
 	provider := APIModelProvider{
+		Lifecycle:        activeLifecycle(""),
 		ID:               uuid.NewString(),
 		ProviderCategory: normalized.ProviderCategory,
 		Code:             normalized.Code,
 		DisplayName:      normalized.DisplayName,
-		Active:           normalized.Active,
+		Active:           true,
 		SortOrder:        normalized.SortOrder,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -524,40 +508,17 @@ func (s *Service) UpdateAPIModelProvider(ctx context.Context, user auth.User, pr
 	if !ok {
 		return APIModelProvider{}, apiModelProviderNotFound()
 	}
+	if provider.IdentityLocked && (provider.ProviderCategory != normalized.ProviderCategory || provider.Code != normalized.Code) {
+		return APIModelProvider{}, catalogIdentityLocked(provider.IdentityLockReason)
+	}
 	if s.apiModelProviderCodeExistsLocked(provider.ID, normalized.Code) {
 		return APIModelProvider{}, fieldError(http.StatusConflict, "code", "提供商 code 已被占用。")
 	}
 	provider.ProviderCategory = normalized.ProviderCategory
 	provider.Code = normalized.Code
 	provider.DisplayName = normalized.DisplayName
-	provider.Active = normalized.Active
+	provider.Active = provider.IsEffectiveActive()
 	provider.SortOrder = normalized.SortOrder
-	provider.UpdatedAt = s.now()
-	s.apiProviders[provider.ID] = provider
-	for id, model := range s.apiModels {
-		if model.ProviderID == provider.ID {
-			s.apiModels[id] = withAPIModelProvider(model, provider)
-		}
-	}
-	return provider, nil
-}
-
-func (s *Service) SetAPIModelProviderActive(ctx context.Context, user auth.User, providerID string, active bool) (APIModelProvider, *domain.AppError) {
-	if appErr := requireAdmin(user); appErr != nil {
-		return APIModelProvider{}, appErr
-	}
-	mutation := APIModelProviderMutationInput{ID: providerID, OperatorID: user.ID}
-	if s.repo != nil {
-		return s.repo.AdminSetAPIModelProviderActive(ctx, mutation, active)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	provider, ok := s.apiProviders[strings.TrimSpace(providerID)]
-	if !ok {
-		return APIModelProvider{}, apiModelProviderNotFound()
-	}
-	provider.Active = active
 	provider.UpdatedAt = s.now()
 	s.apiProviders[provider.ID] = provider
 	for id, model := range s.apiModels {
@@ -634,6 +595,7 @@ func (s *Service) CreateAPIModel(ctx context.Context, user auth.User, input APIM
 	}
 	now := s.now()
 	model := APIModelCatalog{
+		Lifecycle:                  activeLifecycle(""),
 		ID:                         uuid.NewString(),
 		ProviderID:                 provider.ID,
 		ProviderCategory:           provider.ProviderCategory,
@@ -641,9 +603,8 @@ func (s *Service) CreateAPIModel(ctx context.Context, user auth.User, input APIM
 		Provider:                   provider.DisplayName,
 		ProviderActive:             provider.Active,
 		ModelKey:                   normalized.ModelKey,
-		DisplayName:                normalized.DisplayName,
 		Capabilities:               append([]string(nil), normalized.Capabilities...),
-		Active:                     normalized.Active,
+		Active:                     provider.IsEffectiveActive(),
 		SortOrder:                  normalized.SortOrder,
 		CurrentPriceSourceURL:      normalized.SourceURL,
 		CurrentPriceSourceVersion:  normalized.SourceVersion,
@@ -685,6 +646,9 @@ func (s *Service) UpdateAPIModel(ctx context.Context, user auth.User, modelID st
 	if !ok {
 		return APIModelCatalog{}, apiModelNotFound()
 	}
+	if model.IdentityLocked && (model.ProviderID != normalized.ProviderID || model.ModelKey != normalized.ModelKey) {
+		return APIModelCatalog{}, catalogIdentityLocked(model.IdentityLockReason)
+	}
 	if s.apiModelKeyExistsLocked(model.ID, normalized.ModelKey) {
 		return APIModelCatalog{}, fieldError(http.StatusConflict, "modelKey", "模型标识已被占用。")
 	}
@@ -696,9 +660,8 @@ func (s *Service) UpdateAPIModel(ctx context.Context, user auth.User, modelID st
 	model.Provider = provider.DisplayName
 	model.ProviderActive = provider.Active
 	model.ModelKey = normalized.ModelKey
-	model.DisplayName = normalized.DisplayName
 	model.Capabilities = append([]string(nil), normalized.Capabilities...)
-	model.Active = normalized.Active
+	model.Active = model.IsEffectiveActive()
 	model.SortOrder = normalized.SortOrder
 	model.UpdatedAt = now
 	if priceChanged {
@@ -710,27 +673,6 @@ func (s *Service) UpdateAPIModel(ctx context.Context, user auth.User, modelID st
 		model.CachedInputPricePerMillion = normalized.CachedInputTokenPrice
 		model.OutputPricePerMillion = normalized.OutputTokenPrice
 	}
-	s.apiModels[model.ID] = model
-	return model, nil
-}
-
-func (s *Service) SetAPIModelActive(ctx context.Context, user auth.User, modelID string, active bool) (APIModelCatalog, *domain.AppError) {
-	if appErr := requireAdmin(user); appErr != nil {
-		return APIModelCatalog{}, appErr
-	}
-	mutation := APIModelMutationInput{ID: modelID, OperatorID: user.ID}
-	if s.repo != nil {
-		return s.repo.AdminSetAPIModelActive(ctx, mutation, active)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	model, ok := s.apiModels[strings.TrimSpace(modelID)]
-	if !ok {
-		return APIModelCatalog{}, apiModelNotFound()
-	}
-	model.Active = active
-	model.UpdatedAt = s.now()
 	s.apiModels[model.ID] = model
 	return model, nil
 }
@@ -901,7 +843,6 @@ func normalizeAPIModelProviderInput(input APIModelProviderInput) (APIModelProvid
 func normalizeAPIModelInput(input APIModelInput) (APIModelInput, *domain.AppError) {
 	input.ProviderID = strings.TrimSpace(input.ProviderID)
 	input.ModelKey = strings.TrimSpace(input.ModelKey)
-	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.SourceURL = strings.TrimSpace(input.SourceURL)
 	input.SourceVersion = strings.TrimSpace(input.SourceVersion)
 
@@ -910,9 +851,6 @@ func normalizeAPIModelInput(input APIModelInput) (APIModelInput, *domain.AppErro
 	}
 	if utf8.RuneCountInString(input.ModelKey) < 1 || utf8.RuneCountInString(input.ModelKey) > 120 {
 		return APIModelInput{}, fieldError(http.StatusUnprocessableEntity, "modelKey", "模型标识需为 1 至 120 个字符。")
-	}
-	if utf8.RuneCountInString(input.DisplayName) < 1 || utf8.RuneCountInString(input.DisplayName) > 80 {
-		return APIModelInput{}, fieldError(http.StatusUnprocessableEntity, "displayName", "展示名需为 1 至 80 个字符。")
 	}
 	capabilities, appErr := normalizeAPIModelCapabilities(input.Capabilities)
 	if appErr != nil {
@@ -1050,7 +988,7 @@ func (s *Service) apiModelProviderForModelMutation(ctx context.Context, provider
 			}
 			return APIModelProvider{}, appErr
 		}
-		if !provider.Active {
+		if !provider.IsEffectiveActive() {
 			return APIModelProvider{}, fieldError(http.StatusUnprocessableEntity, "providerId", "API 提供商已停用。")
 		}
 		return provider, nil
@@ -1062,7 +1000,7 @@ func (s *Service) apiModelProviderForModelMutation(ctx context.Context, provider
 	if !ok {
 		return APIModelProvider{}, fieldError(http.StatusUnprocessableEntity, "providerId", "API 提供商不存在。")
 	}
-	if !provider.Active {
+	if !provider.IsEffectiveActive() {
 		return APIModelProvider{}, fieldError(http.StatusUnprocessableEntity, "providerId", "API 提供商已停用。")
 	}
 	return provider, nil
@@ -1073,8 +1011,73 @@ func withAPIModelProvider(model APIModelCatalog, provider APIModelProvider) APIM
 	model.ProviderCategory = provider.ProviderCategory
 	model.ProviderCode = provider.Code
 	model.Provider = provider.DisplayName
-	model.ProviderActive = provider.Active
+	model.ProviderStatus = provider.EffectiveStatus
+	model.ProviderActive = provider.IsEffectiveActive()
+	model.EffectiveStatus = effectiveStatus(model.Status, provider.EffectiveStatus)
+	model.EffectiveStatusSource = effectiveStatusSource(model.Status, provider.EffectiveStatus)
+	model.Active = model.IsEffectiveActive()
 	return model
+}
+
+func withProductPlanCategory(plan ProductPlan, category ProductCategory) ProductPlan {
+	plan.CategoryCode = category.Code
+	plan.EffectiveStatus = effectiveStatus(plan.Status, category.EffectiveStatus)
+	plan.EffectiveStatusSource = effectiveStatusSource(plan.Status, category.EffectiveStatus)
+	plan.Active = plan.IsEffectiveActive()
+	return plan
+}
+
+func lifecycleStatusFromActive(active bool) string {
+	if active {
+		return StatusActive
+	}
+	return StatusDeprecated
+}
+
+func effectiveStatus(self, parent string) string {
+	if lifecycleSeverity(parent) > lifecycleSeverity(self) {
+		return parent
+	}
+	return self
+}
+
+func effectiveStatusSource(self, parent string) string {
+	if lifecycleSeverity(parent) > lifecycleSeverity(self) {
+		return EffectiveStatusSourceParent
+	}
+	return EffectiveStatusSourceSelf
+}
+
+func lifecycleSeverity(status string) int {
+	switch status {
+	case StatusBlocked:
+		return 3
+	case StatusDeprecated:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func catalogIdentityLocked(reason string) *domain.AppError {
+	if strings.TrimSpace(reason) == "" {
+		reason = "目录身份已被业务引用，不能直接修改。"
+	}
+	return domain.NewError(http.StatusConflict, "CATALOG_IDENTITY_LOCKED", "Catalog identity locked", reason)
+}
+
+func categoryStatusForPlanLocked(categories map[string]ProductCategory, categoryID string) string {
+	if category, ok := categories[categoryID]; ok {
+		return category.EffectiveStatus
+	}
+	return StatusBlocked
+}
+
+func providerStatusForModelLocked(providers map[string]APIModelProvider, providerID string) string {
+	if provider, ok := providers[providerID]; ok {
+		return provider.EffectiveStatus
+	}
+	return StatusBlocked
 }
 
 func (s *Service) productCategoryCodeExistsLocked(currentID, code string) bool {
@@ -1189,8 +1192,8 @@ func sortAPIModels(models []APIModelCatalog) {
 		if models[i].SortOrder != models[j].SortOrder {
 			return models[i].SortOrder < models[j].SortOrder
 		}
-		if models[i].DisplayName != models[j].DisplayName {
-			return models[i].DisplayName < models[j].DisplayName
+		if models[i].ModelKey != models[j].ModelKey {
+			return models[i].ModelKey < models[j].ModelKey
 		}
 		return models[i].ID < models[j].ID
 	})
@@ -1256,6 +1259,7 @@ var validRiskNoticeCodes = map[string]bool{
 var validAPIModelProviderCategories = map[string]bool{
 	"gpt":        true,
 	"claude":     true,
+	"grok":       true,
 	"cursor":     true,
 	"gemini":     true,
 	"perplexity": true,

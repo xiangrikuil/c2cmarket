@@ -14,6 +14,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiquota"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/go-chi/chi/v5"
@@ -128,15 +129,16 @@ type apiQuotaAllocationResponse struct {
 }
 
 type apiQuotaRoundResponse struct {
-	ID            string                       `json:"id"`
-	BatchID       string                       `json:"batchId"`
-	SystemSlotKey string                       `json:"systemSlotKey,omitempty"`
-	Name          string                       `json:"name"`
-	StartsAt      string                       `json:"startsAt"`
-	EndsAt        string                       `json:"endsAt"`
-	Status        string                       `json:"status"`
-	Allocations   []apiQuotaAllocationResponse `json:"allocations"`
-	Version       int64                        `json:"version"`
+	ID                     string                       `json:"id"`
+	BatchID                string                       `json:"batchId"`
+	SystemSlotKey          string                       `json:"systemSlotKey,omitempty"`
+	Name                   string                       `json:"name"`
+	StartsAt               string                       `json:"startsAt"`
+	EndsAt                 string                       `json:"endsAt"`
+	Status                 string                       `json:"status"`
+	FulfillmentConfirmedAt *string                      `json:"fulfillmentConfirmedAt,omitempty"`
+	Allocations            []apiQuotaAllocationResponse `json:"allocations"`
+	Version                int64                        `json:"version"`
 }
 
 type apiQuotaSystemSaleSlotResponse struct {
@@ -158,6 +160,7 @@ type publicAPIQuotaOfferResponse struct {
 	ServiceTitle              string                          `json:"serviceTitle"`
 	SellerDisplayName         string                          `json:"sellerDisplayName"`
 	SellerIdentityType        string                          `json:"sellerIdentityType"`
+	MerchantAvatarURL         string                          `json:"merchantAvatarUrl,omitempty"`
 	SellerLinuxDOBound        bool                            `json:"sellerLinuxDoBound"`
 	DeclaredMaxConcurrency    int                             `json:"declaredMaxConcurrency"`
 	PromptAuditEnabled        *bool                           `json:"promptAuditEnabled"`
@@ -210,11 +213,22 @@ func (s *Server) handlePublicAPIQuotaOffers(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
+	excludeSystemSlots, appErr := parseOptionalQueryBool(r, "excludeSystemSlots")
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 	result, appErr := s.apiQuotas.PublicAPIQuotaOffers(r.Context(), apiquota.PublicOfferFilter{
 		DistributionSystem: r.URL.Query().Get("distributionSystem"),
+		ModelCatalogID:     r.URL.Query().Get("modelCatalogId"),
 		OnlyOneMultiplier:  oneMultiplier,
+		MaxMultiplier:      r.URL.Query().Get("maxMultiplier"),
 		OnlyOrderable:      onlyOrderable,
+		SaleMode:           r.URL.Query().Get("saleMode"),
 		SystemSlotKey:      r.URL.Query().Get("slotKey"),
+		Search:             r.URL.Query().Get("search"),
+		ExcludeSystemSlots: excludeSystemSlots,
+		Sort:               r.URL.Query().Get("sort"),
 	}, page)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -269,6 +283,9 @@ func (s *Server) handleCreateAPIQuotaOrder(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIOrderCreate) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[createAPIQuotaOrderRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -276,7 +293,7 @@ func (s *Server) handleCreateAPIQuotaOrder(w http.ResponseWriter, r *http.Reques
 	}
 	offerID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/api-quota-offers/{id}/orders"
-	completion, appErr := s.apiQuotas.CreateAPIQuotaOrderWithIdempotency(r.Context(), user.ID, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey+":"+offerID, body), apiquota.CreateOrderInput{
+	completion, appErr := s.apiQuotas.CreateAPIQuotaOrderWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey+":"+offerID, body), apiquota.CreateOrderInput{
 		OfferID: offerID, SaleRoundID: req.SaleRoundID, BuyerContactMethodID: req.BuyerContactMethodID,
 		SelectedAccessMode: req.SelectedAccessMode, PaymentMethod: req.PaymentMethod,
 		BuyerNote: req.BuyerNote, RequestID: requestIDFrom(r),
@@ -293,6 +310,9 @@ func (s *Server) handleOwnerAPIQuotaBatches(w http.ResponseWriter, r *http.Reque
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	page, appErr := parsePageRequest(r)
@@ -318,6 +338,9 @@ func (s *Server) handleCreateAPIQuotaBatch(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[apiQuotaBatchRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -340,20 +363,30 @@ func (s *Server) handleCreateAPIQuotaBatch(w http.ResponseWriter, r *http.Reques
 	}
 	serviceID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/api-services/{id}/quota-batches:" + serviceID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		item, runErr := s.apiQuotas.CreateAPIQuotaBatch(r.Context(), user, apiquota.CreateBatchInput{
+	completion, appErr := s.apiQuotas.CreateAPIQuotaBatchWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		apiquota.CreateBatchInput{
 			APIServiceID: serviceID, SourceType: req.SourceType, SourceLabel: req.SourceLabel,
 			DeclaredTotalUSDAllowance: req.DeclaredTotalUSDAllowance,
 			SaleCutoffAt:              saleCutoffAt, ExpiresAt: expiresAt, SourceConfirmedAt: confirmedAt,
-		})
-		return http.StatusCreated, toAPIQuotaBatchResponse(item), "api_quota_batch", item.ID, runErr
-	})
+			RequestID: requestIDFrom(r),
+		},
+		apiQuotaBatchCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleCreateAPIQuotaRushOffer(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	body, req, file, appErr := decodeRushOfferMultipart(w, r)
@@ -396,6 +429,7 @@ func (s *Server) handleCreateAPIQuotaRushOffer(w http.ResponseWriter, r *http.Re
 			DeliveryMode: req.DeliveryMode, DeliveryETAMinutes: req.DeliveryETAMinutes,
 			SlotKey: req.SlotKey, ExpiresAt: expiresAt, SourceConfirmedAt: sourceConfirmedAt,
 			DeliveryKind: req.DeliveryKind, CredentialRows: credentialRows,
+			RequestID: requestIDFrom(r),
 		},
 		apiQuotaRushOfferCompletionBuilder,
 	)
@@ -411,6 +445,9 @@ func (s *Server) handleOwnerAPIQuotaOffers(w http.ResponseWriter, r *http.Reques
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	items, appErr := s.apiQuotas.OwnerAPIQuotaOffers(r.Context(), user, chi.URLParam(r, "id"))
@@ -431,6 +468,9 @@ func (s *Server) handleCreateAPIQuotaOffer(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[apiQuotaOfferRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -438,21 +478,30 @@ func (s *Server) handleCreateAPIQuotaOffer(w http.ResponseWriter, r *http.Reques
 	}
 	batchID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/api-quota-batches/{id}/offers:" + batchID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		item, runErr := s.apiQuotas.CreateAPIQuotaOffer(r.Context(), user, apiquota.CreateOfferInput{
+	completion, appErr := s.apiQuotas.CreateAPIQuotaOfferWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		apiquota.CreateOfferInput{
 			BatchID: batchID, Name: req.Name, USDAllowance: req.USDAllowance, PriceCNY: req.PriceCNY,
 			ModelMultiplier: req.ModelMultiplier, QuotaUsagePolicy: toAPIQuotaUsagePolicy(req.QuotaUsagePolicy), DeliveryMode: req.DeliveryMode,
 			DeliveryETAMinutes: req.DeliveryETAMinutes, SaleMode: req.SaleMode,
-			ContinuousCopies: req.ContinuousCopies, SortOrder: req.SortOrder,
-		})
-		return http.StatusCreated, toAPIQuotaOfferResponse(item), "api_quota_offer", item.ID, runErr
-	})
+			ContinuousCopies: req.ContinuousCopies, SortOrder: req.SortOrder, RequestID: requestIDFrom(r),
+		},
+		apiQuotaOfferCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleOwnerAPIQuotaRounds(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	items, appErr := s.apiQuotas.OwnerAPIQuotaRounds(r.Context(), user, chi.URLParam(r, "id"))
@@ -471,6 +520,9 @@ func (s *Server) handleCreateAPIQuotaRound(w http.ResponseWriter, r *http.Reques
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	body, req, appErr := decodeStrictJSON[apiQuotaRoundRequest](r)
@@ -494,18 +546,58 @@ func (s *Server) handleCreateAPIQuotaRound(w http.ResponseWriter, r *http.Reques
 	}
 	batchID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/api-quota-batches/{id}/rounds:" + batchID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		item, runErr := s.apiQuotas.CreateAPIQuotaRound(r.Context(), user, apiquota.CreateRoundInput{
-			BatchID: batchID, Name: req.Name, StartsAt: startsAt, EndsAt: endsAt, Offers: offers,
-		})
-		return http.StatusCreated, toAPIQuotaRoundResponse(item), "api_quota_sale_round", item.ID, runErr
-	})
+	completion, appErr := s.apiQuotas.CreateAPIQuotaRoundWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		apiquota.CreateRoundInput{BatchID: batchID, Name: req.Name, StartsAt: startsAt, EndsAt: endsAt, Offers: offers, RequestID: requestIDFrom(r)},
+		apiQuotaRoundCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
+}
+
+func (s *Server) handleConfirmAPIQuotaRoundFulfillment(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
+		return
+	}
+	body, _, appErr := decodeStrictJSON[emptyRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	roundID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/owner/api-quota-rounds/{id}/confirm-fulfillment"
+	completion, appErr := s.apiQuotas.ConfirmAPIQuotaRoundFulfillmentWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey+":"+roundID, body),
+		apiquota.SaleRoundActionInput{SaleRoundID: roundID, ExpectedVersion: version, RequestID: requestIDFrom(r)},
+		apiQuotaRoundCompletionBuilder(http.StatusOK),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleAPIQuotaBatchAction(w http.ResponseWriter, r *http.Request, action string) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	body, _, appErr := decodeStrictJSON[emptyRequest](r)
@@ -520,23 +612,29 @@ func (s *Server) handleAPIQuotaBatchAction(w http.ResponseWriter, r *http.Reques
 	}
 	batchID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/api-quota-batches/{id}/" + action + ":" + batchID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		input := apiquota.BatchActionInput{BatchID: batchID, ExpectedVersion: version, RequestID: requestIDFrom(r)}
-		var item apiquota.Batch
-		var runErr *domain.AppError
-		if action == "publish" {
-			item, runErr = s.apiQuotas.PublishAPIQuotaBatch(r.Context(), user, input)
-		} else {
-			item, runErr = s.apiQuotas.UpdateAPIQuotaBatchStatus(r.Context(), user, input, action)
-		}
-		return http.StatusOK, toAPIQuotaBatchResponse(item), "api_quota_batch", item.ID, runErr
-	})
+	input := apiquota.BatchActionInput{BatchID: batchID, ExpectedVersion: version, RequestID: requestIDFrom(r)}
+	key := r.Header.Get("Idempotency-Key")
+	hash := requestHash(http.MethodPost, routeKey, body)
+	var completion idempotency.Completion
+	if action == "publish" {
+		completion, appErr = s.apiQuotas.PublishAPIQuotaBatchWithIdempotency(r.Context(), user, routeKey, key, hash, input, apiQuotaBatchCompletionBuilder(http.StatusOK))
+	} else {
+		completion, appErr = s.apiQuotas.UpdateAPIQuotaBatchStatusWithIdempotency(r.Context(), user, routeKey, key, hash, input, action, apiQuotaBatchCompletionBuilder(http.StatusOK))
+	}
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleImportAPIQuotaCredentials(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	body, deliveryKind, file, appErr := decodeCredentialMultipart(w, r)
@@ -546,20 +644,25 @@ func (s *Server) handleImportAPIQuotaCredentials(w http.ResponseWriter, r *http.
 	}
 	offerID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/api-quota-offers/{id}/credentials/import:" + offerID
-	w.Header().Set("Cache-Control", "private, no-store")
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		result, runErr := s.apiQuotas.ImportAPIQuotaCredentials(r.Context(), user, apiquota.CredentialImportInput{
-			OfferID: offerID, DeliveryKind: deliveryKind, CSV: bytes.NewReader(file),
-		})
-		response := apiQuotaCredentialImportResponse{Imported: result.Imported, Summary: toAPIQuotaCredentialSummaryResponse(result.Summary)}
-		return http.StatusCreated, response, "api_quota_offer", offerID, runErr
-	})
+	completion, appErr := s.apiQuotas.ImportAPIQuotaCredentialsWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		apiquota.CredentialImportInput{OfferID: offerID, DeliveryKind: deliveryKind, CSV: bytes.NewReader(file), RequestID: requestIDFrom(r)},
+		apiQuotaCredentialImportCompletionBuilder,
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleAPIQuotaCredentialSummary(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIQuotaPublish) {
 		return
 	}
 	item, appErr := s.apiQuotas.APIQuotaCredentialSummary(r.Context(), user, chi.URLParam(r, "id"))
@@ -697,6 +800,47 @@ func invalidRushOfferMultipart(message string) *domain.AppError {
 	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Rush offer upload invalid", message, "payload", "invalid", message)
 }
 
+func apiQuotaBatchCompletionBuilder(status int) apiquota.BatchCompletionBuilder {
+	return func(item apiquota.Batch) (idempotency.Completion, *domain.AppError) {
+		return apiQuotaCompletion(status, "api_quota_batch", item.ID, item.Version, toAPIQuotaBatchResponse(item))
+	}
+}
+
+func apiQuotaOfferCompletionBuilder(status int) apiquota.OfferCompletionBuilder {
+	return func(item apiquota.Offer) (idempotency.Completion, *domain.AppError) {
+		return apiQuotaCompletion(status, "api_quota_offer", item.ID, item.Version, toAPIQuotaOfferResponse(item))
+	}
+}
+
+func apiQuotaRoundCompletionBuilder(status int) apiquota.SaleRoundCompletionBuilder {
+	return func(item apiquota.SaleRound) (idempotency.Completion, *domain.AppError) {
+		return apiQuotaCompletion(status, "api_quota_sale_round", item.ID, item.Version, toAPIQuotaRoundResponse(item))
+	}
+}
+
+func apiQuotaCredentialImportCompletionBuilder(result apiquota.CredentialImportResult) (idempotency.Completion, *domain.AppError) {
+	body, err := json.Marshal(apiQuotaCredentialImportResponse{Imported: result.Imported, Summary: toAPIQuotaCredentialSummaryResponse(result.Summary)})
+	if err != nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "额度凭据导入响应编码失败。")
+	}
+	return idempotency.Completion{
+		Status: http.StatusCreated, ContentType: "application/json; charset=utf-8", Body: body,
+		ResourceType: "api_quota_offer", ResourceID: result.Summary.OfferID,
+	}, nil
+}
+
+func apiQuotaCompletion(status int, resourceType, resourceID string, version int64, payload any) (idempotency.Completion, *domain.AppError) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "额度包响应编码失败。")
+	}
+	return idempotency.Completion{
+		Status: status, ContentType: "application/json; charset=utf-8", Body: body,
+		ResourceType: resourceType, ResourceID: resourceID,
+		Headers: map[string]string{"ETag": `"` + strconv.FormatInt(version, 10) + `"`},
+	}, nil
+}
+
 func apiQuotaRushOfferCompletionBuilder(publication apiquota.RushOfferPublication) (idempotency.Completion, *domain.AppError) {
 	body, err := json.Marshal(apiQuotaRushOfferResponse{
 		Batch:              toAPIQuotaBatchResponse(publication.Batch),
@@ -748,7 +892,7 @@ func toAPIQuotaRoundResponse(item apiquota.SaleRound) apiQuotaRoundResponse {
 	return apiQuotaRoundResponse{
 		ID: item.ID, BatchID: item.BatchID, SystemSlotKey: item.SystemSlotKey, Name: item.Name,
 		StartsAt: item.StartsAt.UTC().Format(time.RFC3339), EndsAt: item.EndsAt.UTC().Format(time.RFC3339),
-		Status: item.Status, Allocations: allocations, Version: item.Version,
+		Status: item.Status, FulfillmentConfirmedAt: formatOptionalTime(item.FulfillmentConfirmedAt), Allocations: allocations, Version: item.Version,
 	}
 }
 
@@ -770,6 +914,7 @@ func toPublicAPIQuotaOfferResponseWithHealth(item apiquota.OfferCard, health api
 		apiQuotaOfferResponse: toAPIQuotaOfferResponse(item.Offer),
 		BatchStatus:           item.BatchStatus, ServiceTitle: item.ServiceTitle,
 		SellerDisplayName: item.SellerDisplayName, SellerIdentityType: item.SellerIdentityType,
+		MerchantAvatarURL:      item.MerchantAvatarURL,
 		SellerLinuxDOBound:     item.SellerLinuxDOBound,
 		DeclaredMaxConcurrency: item.DeclaredMaxConcurrency, PromptAuditEnabled: item.PromptAuditEnabled,
 		HealthSummary: toAPIServiceHealthSummaryResponse(health),

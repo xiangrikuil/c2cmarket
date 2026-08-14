@@ -147,7 +147,7 @@ function save() {
     return
   }
   if (containsSensitiveContent(form.paymentOptions.map(option => option.paymentInstructions))) {
-    toast.warning('收款说明不能包含 API Key、token、密码、Session、Cookie、付款码或面板凭据。')
+    toast.warning('收款核对说明不能包含 API Key、token、密码、Session、Cookie、付款码或面板凭据。')
     return
   }
   updateMutation.mutate({
@@ -225,7 +225,7 @@ function save() {
       {{ complete ? 'API 发布页将直接读取这组设置，不需要每次重新填写。' : missingReason }}
     </p>
     <p class="text-xs leading-5 text-muted-foreground">
-      收款资料只在买家创建订单后用于站外确认。请勿填写银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
+      收款资料只在买家创建订单后用于站外确认。收款方名称可以脱敏，请勿填写完整实名、银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
     </p>
 
     <div

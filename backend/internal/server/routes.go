@@ -3,8 +3,26 @@ package server
 import (
 	"net/http"
 
+	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/catalog"
+
 	"github.com/go-chi/chi/v5"
 )
+
+func registerCatalogLifecycleRoutes(r chi.Router, basePath, resourceType string, s *Server) {
+	actions := []string{
+		catalog.LifecycleActionDeprecate,
+		catalog.LifecycleActionBlock,
+		catalog.LifecycleActionReactivate,
+		catalog.LifecycleActionUnblock,
+	}
+	for _, action := range actions {
+		action := action
+		r.Post(basePath+"/"+action, func(w http.ResponseWriter, request *http.Request) {
+			s.handleCatalogLifecycle(w, request, resourceType, action)
+		})
+	}
+}
 
 func (s *Server) routes() {
 	if s.metrics != nil {
@@ -18,10 +36,16 @@ func (s *Server) routes() {
 	s.mux.Route("/api/v1", func(r chi.Router) {
 		if s.enableDevAuth {
 			r.Post("/auth/dev-session", s.limitHandler("auth_dev_session", 60, s.handleDevSession))
+			r.Post("/auth/dev-persona-session", s.limitHandler("auth_dev_persona_session", 60, s.handleDevPersonaSession))
 			r.Post("/dev/contact-sessions", s.limitHandler("dev_contact_session", 10, s.handleCreateDevContactSession))
 		}
 		r.Post("/auth/password/login", s.limitPolicy(passwordLoginRateLimit, s.handlePasswordLogin))
+		r.Post("/auth/password-reset/start", s.limitPolicy(passwordResetStartRateLimit, s.handleStartPasswordReset))
+		r.Post("/auth/password-reset/confirm", s.limitPolicy(passwordResetConfirmRateLimit, s.handleConfirmPasswordReset))
+		r.Post("/auth/password/reauthenticate", s.limitHandler("password_reauthenticate", 20, s.handlePasswordReauthenticate))
 		r.Post("/auth/password", s.limitHandler("password_set", 20, s.handleSetPassword))
+		r.Get("/auth/email-registration/config", s.handleEmailRegistrationConfig)
+		r.Get("/auth/username-availability", s.limitHandler("auth_username_availability", 60, s.handleUsernameAvailability))
 		r.Post("/auth/email-registration/start", s.limitPolicy(emailRegistrationStartRateLimit, s.handleStartEmailRegistration))
 		r.Post("/auth/email-registration/confirm", s.limitPolicy(emailRegistrationConfirmRateLimit, s.handleConfirmEmailRegistration))
 		r.Get("/auth/oauth/start", s.limitPolicy(oauthStartRateLimit, s.handleOAuthStart))
@@ -31,8 +55,11 @@ func (s *Server) routes() {
 		r.Post("/account-appeal/appeals", s.limitPolicy(accountAppealCreateRateLimit, s.handleCreateAccountGovernanceAppeal))
 		r.Get("/auth/session", s.handleGetSession)
 		r.Post("/auth/logout", s.handleLogout)
+		r.Get("/auth/restricted-business/session", s.handleGetRestrictedBusinessSession)
+		r.Post("/auth/restricted-business/logout", s.handleRestrictedBusinessLogout)
 		r.Get("/search", s.limitHandler("search", 60, s.handleSearch))
 		r.Get("/me/profile", s.handleMyProfile)
+		r.Get("/me/account-governance/business-center", s.handleAccountGovernanceBusinessCenter)
 		r.Get("/me/api-payment-settings", s.handleMyAPIAccountPaymentSettings)
 		r.Put("/me/api-payment-settings", s.handleUpdateMyAPIAccountPaymentSettings)
 		r.Get("/me/navigation-badges", s.handleNavigationBadges)
@@ -63,6 +90,9 @@ func (s *Server) routes() {
 		r.Get("/api-service-promotions", s.handlePublicAPIPromotions)
 		r.Get("/promotion-rewards/public-config", s.handlePromotionRewardPublicConfig)
 		r.Get("/api-services/{id}", s.handlePublicAPIService)
+		r.Get("/tools/api-model-tester/order-sources", s.handleAPIModelTesterOrderSources)
+		r.Post("/tools/api-model-tester/discover", s.handleAPIModelTesterDiscover)
+		r.Post("/tools/api-model-tester/test", s.handleAPIModelTesterTest)
 		r.Post("/api-services/{id}/purchase-intents", s.limitPolicy(apiPurchaseIntentRateLimit, s.handleCreateAPIPurchaseIntent))
 		r.Get("/api-quota-sale-slots", s.handleAPIQuotaSystemSaleSlots)
 		r.Get("/api-quota-offers", s.handlePublicAPIQuotaOffers)
@@ -103,10 +133,20 @@ func (s *Server) routes() {
 		r.Get("/me/reports", s.handleMyReports)
 		r.Post("/me/reports/{id}/supplements", s.limitPolicy(reportSupplementRateLimit, s.handleSubmitReportSupplement))
 		r.Get("/me/disputes", s.handleMyDisputes)
+		r.Get("/me/disputes/{id}", s.handleMyDispute)
+		r.Post("/me/disputes/{id}/messages", s.handleAppendDisputeMessage)
+		r.Post("/me/disputes/{id}/settlement-proposals", s.handleCreateDisputeSettlementProposal)
+		r.Post("/me/disputes/{id}/settlement-proposals/{proposalId}/confirm", s.handleConfirmDisputeSettlementProposal)
+		r.Post("/me/disputes/{id}/settlement-proposals/{proposalId}/reject", s.handleRejectDisputeSettlementProposal)
+		r.Post("/me/disputes/{id}/escalate", s.handleEscalateDispute)
+		r.Post("/me/disputes/{id}/remedy/claim", s.handleClaimDisputeRemedy)
+		r.Post("/me/disputes/{id}/remedy/confirm", s.handleConfirmDisputeRemedy)
+		r.Post("/me/disputes/{id}/remedy/contest", s.handleContestDisputeRemedy)
 		r.Post("/me/disputes/{id}/supplements", s.limitPolicy(reportSupplementRateLimit, s.handleSubmitDisputeSupplement))
 		r.Post("/me/appeals", s.limitPolicy(appealCreateRateLimit, s.handleCreateAppeal))
 		r.Get("/me/appeals", s.handleMyAppeals)
 		r.Get("/me/carpools", s.handleMyCarpools)
+		r.Get("/me/carpools/{id}", s.handleMyCarpool)
 		r.Get("/me/carpool-applications", s.handleMyCarpoolApplications)
 		r.Get("/me/carpool-applications/{id}", s.handleMyCarpoolApplication)
 		r.Post("/me/carpool-applications/{id}/cancel", s.handleCancelCarpoolApplication)
@@ -125,6 +165,7 @@ func (s *Server) routes() {
 		r.Post("/me/api-orders/{id}/cancel", s.handleCancelAPIOrder)
 		r.Post("/me/api-orders/{id}/confirm-complete", s.handleConfirmAPIOrderComplete)
 		r.Post("/me/api-orders/{id}/dispute", s.handleOpenAPIOrderDispute)
+		r.Post("/me/api-orders/{id}/report-late-payment", s.handleReportLateAPIOrderPayment)
 		r.Get("/me/notifications", s.handleMyNotifications)
 		r.Get("/me/notifications/unread-count", s.handleNotificationUnreadCount)
 		r.Post("/me/notifications/{id}/read", s.handleMarkNotificationRead)
@@ -146,13 +187,17 @@ func (s *Server) routes() {
 		r.Post("/owner/carpool-memberships/{id}/remove", s.handleOwnerRemoveCarpoolMembership)
 		r.Get("/owner/api-services", s.handleOwnerAPIServices)
 		r.Get("/owner/api-services/{id}", s.handleOwnerAPIService)
-		r.Get("/owner/api-services/{id}/health-probe", s.handleOwnerAPIHealthProbe)
-		r.Put("/owner/api-services/{id}/health-probe", s.handlePutOwnerAPIHealthProbe)
-		r.Delete("/owner/api-services/{id}/health-probe", s.handleDeleteOwnerAPIHealthProbe)
-		r.Post("/owner/api-services/{id}/health-probe/challenges", s.handleCreateOwnerAPIHealthProbeChallenge)
-		r.Post("/owner/api-services/{id}/health-probe/verify", s.handleVerifyOwnerAPIHealthProbe)
+		r.Get("/owner/api-probe-connections", s.handleOwnerAPIProbeConnections)
+		r.Post("/owner/api-probe-connections/preflight", s.handlePreflightOwnerAPIProbeConnection)
+		r.Post("/owner/api-probe-connections", s.handleCreateOwnerAPIProbeConnection)
+		r.Get("/owner/api-probe-connections/{id}", s.handleOwnerAPIProbeConnection)
+		r.Put("/owner/api-probe-connections/{id}", s.handleUpdateOwnerAPIProbeConnection)
+		r.Delete("/owner/api-probe-connections/{id}", s.handleDeleteOwnerAPIProbeConnection)
+		r.Post("/owner/api-probe-connections/{id}/verify", s.handleVerifyOwnerAPIProbeConnection)
+		r.Post("/owner/api-probe-connections/{id}/preflight", s.handlePreflightExistingOwnerAPIProbeConnection)
 		r.Post("/owner/api-services", s.handleCreateAPIService)
 		r.Patch("/owner/api-services/{id}", s.handleUpdateAPIService)
+		r.Patch("/owner/api-services/{id}/probe-connection", s.handleUpdateAPIServiceProbeConnection)
 		r.Post("/owner/api-services/{id}/submit-review", s.handleSubmitAPIServiceReview)
 		r.Post("/owner/api-services/{id}/publish", s.handlePublishAPIService)
 		r.Post("/owner/api-services/{id}/pause", s.handlePauseAPIService)
@@ -166,6 +211,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-quota-batches/{id}/offers", s.handleCreateAPIQuotaOffer)
 		r.Get("/owner/api-quota-batches/{id}/rounds", s.handleOwnerAPIQuotaRounds)
 		r.Post("/owner/api-quota-batches/{id}/rounds", s.handleCreateAPIQuotaRound)
+		r.Post("/owner/api-quota-rounds/{id}/confirm-fulfillment", s.handleConfirmAPIQuotaRoundFulfillment)
 		r.Post("/owner/api-quota-batches/{id}/publish", func(w http.ResponseWriter, r *http.Request) {
 			s.handleAPIQuotaBatchAction(w, r, "publish")
 		})
@@ -190,6 +236,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-orders/{id}/report-payment-issue", s.handleReportAPIOrderPaymentIssue)
 		r.Post("/owner/api-orders/{id}/submit-delivery", s.handleSubmitAPIOrderDelivery)
 		r.Post("/owner/api-orders/{id}/dispute", s.handleOwnerOpenAPIOrderDispute)
+		r.Post("/owner/api-orders/{id}/resolve-late-payment", s.handleResolveLateAPIOrderPayment)
 
 		r.Get("/admin/official-price-leads", s.handleAdminOfficialPriceLeads)
 		r.Get("/admin/official-price-leads/{id}", s.handleAdminOfficialPriceLead)
@@ -212,6 +259,12 @@ func (s *Server) routes() {
 		r.Post("/admin/carpools/{id}/pause", s.handlePauseCarpool)
 		r.Post("/admin/carpools/{id}/restore", s.handleRestoreCarpool)
 		r.Get("/admin/users", s.handleAdminUsers)
+		r.Get("/admin/audit-logs", s.handleAdminOperationAuditLogs)
+		r.Get("/admin/student-registration", s.handleAdminStudentRegistration)
+		r.Patch("/admin/student-registration", s.handleUpdateAdminStudentRegistration)
+		r.Get("/admin/student-institution-domains", s.handleAdminStudentInstitutionDomains)
+		r.Post("/admin/student-institution-domains", s.handleCreateAdminStudentInstitutionDomain)
+		r.Patch("/admin/student-institution-domains/{id}", s.handleUpdateAdminStudentInstitutionDomain)
 		r.Get("/admin/growth-overview", s.handleAdminGrowthOverview)
 		r.Get("/admin/promotion-reward-campaign", s.handleAdminPromotionRewardCampaign)
 		r.Patch("/admin/promotion-reward-campaign", s.handleUpdateAdminPromotionRewardCampaign)
@@ -224,9 +277,6 @@ func (s *Server) routes() {
 		r.Post("/admin/users/{id}/status", s.handleUpdateAdminUserStatus)
 		r.Post("/admin/users/{id}/admin-permission", s.handleUpdateAdminUserPermission)
 		r.Get("/admin/api-services", s.handleAdminAPIServices)
-		r.Get("/admin/api-service-health-probes", s.handleAdminAPIHealthProbes)
-		r.Post("/admin/api-service-health-probes/{id}/approve", s.handleApproveAdminAPIHealthProbe)
-		r.Post("/admin/api-service-health-probes/{id}/reject", s.handleRejectAdminAPIHealthProbe)
 		r.Get("/admin/api-service-promotions", s.handleAdminAPIPromotions)
 		r.Get("/admin/api-service-promotions/availability", s.handleAPIPromotionAvailability)
 		r.Post("/admin/api-service-promotions", s.handleCreateAPIPromotion)
@@ -242,30 +292,41 @@ func (s *Server) routes() {
 		r.Get("/admin/api-purchase-intents/{id}", s.handleAdminAPIPurchaseIntent)
 		r.Get("/admin/api-orders", s.handleAdminAPIOrders)
 		r.Get("/admin/api-orders/{id}", s.handleAdminAPIOrder)
+		r.Post("/admin/api-orders/{id}/catalog-risk-hold/restore", func(w http.ResponseWriter, r *http.Request) {
+			s.handleResolveAPIOrderCatalogRiskHold(w, r, apiorder.CatalogRiskHoldRestored)
+		})
+		r.Post("/admin/api-orders/{id}/catalog-risk-hold/refund-pending", func(w http.ResponseWriter, r *http.Request) {
+			s.handleResolveAPIOrderCatalogRiskHold(w, r, apiorder.CatalogRiskHoldRefundPending)
+		})
+		r.Post("/admin/api-orders/{id}/catalog-risk-hold/open-dispute", func(w http.ResponseWriter, r *http.Request) {
+			s.handleResolveAPIOrderCatalogRiskHold(w, r, apiorder.CatalogRiskHoldDisputeOpened)
+		})
 		r.Get("/admin/product-categories", s.handleAdminProductCategories)
 		r.Post("/admin/product-categories", s.handleCreateProductCategory)
 		r.Get("/admin/product-categories/{id}", s.handleAdminProductCategory)
 		r.Patch("/admin/product-categories/{id}", s.handleUpdateProductCategory)
-		r.Post("/admin/product-categories/{id}/activate", s.handleActivateProductCategory)
-		r.Post("/admin/product-categories/{id}/deactivate", s.handleDeactivateProductCategory)
+		registerCatalogLifecycleRoutes(r, "/admin/product-categories/{id}", catalog.ResourceProductCategory, s)
 		r.Get("/admin/product-plans", s.handleAdminProductPlans)
 		r.Post("/admin/product-plans", s.handleCreateProductPlan)
 		r.Get("/admin/product-plans/{id}", s.handleAdminProductPlan)
 		r.Patch("/admin/product-plans/{id}", s.handleUpdateProductPlan)
-		r.Post("/admin/product-plans/{id}/activate", s.handleActivateProductPlan)
-		r.Post("/admin/product-plans/{id}/deactivate", s.handleDeactivateProductPlan)
+		registerCatalogLifecycleRoutes(r, "/admin/product-plans/{id}", catalog.ResourceProductPlan, s)
 		r.Get("/admin/api-model-providers", s.handleAdminAPIModelProviders)
 		r.Post("/admin/api-model-providers", s.handleCreateAPIModelProvider)
 		r.Get("/admin/api-model-providers/{id}", s.handleAdminAPIModelProvider)
 		r.Patch("/admin/api-model-providers/{id}", s.handleUpdateAPIModelProvider)
-		r.Post("/admin/api-model-providers/{id}/activate", s.handleActivateAPIModelProvider)
-		r.Post("/admin/api-model-providers/{id}/deactivate", s.handleDeactivateAPIModelProvider)
+		registerCatalogLifecycleRoutes(r, "/admin/api-model-providers/{id}", catalog.ResourceAPIProvider, s)
 		r.Get("/admin/api-models", s.handleAdminAPIModels)
+		r.Get("/admin/api-health/latency-calibration", s.handleAdminAPIProbeLatencyCalibration)
+		r.Get("/admin/api-health/latency-rules", s.handleAdminAPIProbeLatencyRules)
+		r.Post("/admin/api-health/latency-rules/preview", s.handlePreviewAdminAPIProbeLatencyRule)
+		r.Post("/admin/api-health/latency-rules", s.handlePublishAdminAPIProbeLatencyRule)
 		r.Post("/admin/api-models", s.handleCreateAPIModel)
+		r.Post("/admin/api-models/models-dev/preview", s.handlePreviewAPIModelSync)
+		r.Post("/admin/api-models/models-dev/apply", s.handleApplyAPIModelSync)
 		r.Get("/admin/api-models/{id}", s.handleAdminAPIModel)
 		r.Patch("/admin/api-models/{id}", s.handleUpdateAPIModel)
-		r.Post("/admin/api-models/{id}/activate", s.handleActivateAPIModel)
-		r.Post("/admin/api-models/{id}/deactivate", s.handleDeactivateAPIModel)
+		registerCatalogLifecycleRoutes(r, "/admin/api-models/{id}", catalog.ResourceAPIModel, s)
 		r.Get("/admin/model-audit/targets", s.handleAdminModelAuditTargets)
 		r.Post("/admin/model-audit/targets", s.handleCreateModelAuditTarget)
 		r.Get("/admin/model-audit/targets/{id}", s.handleAdminModelAuditTarget)
@@ -294,7 +355,10 @@ func (s *Server) routes() {
 		r.Post("/admin/disputes/{id}/request-info", s.handleRequestDisputeInfo)
 		r.Post("/admin/disputes/{id}/resolve", s.handleResolveDispute)
 		r.Post("/admin/disputes/{id}/close", s.handleCloseDispute)
+		r.Post("/admin/disputes/{id}/remedy/mark-overdue", s.handleMarkDisputeRemedyOverdue)
 		r.Post("/admin/disputes/{id}/reputation-outcome", s.handleCreateDisputeReputationOutcome)
+		r.Get("/admin/disputes/{id}/sanction-recommendation", s.handleAPIOrderSanctionRecommendation)
+		r.Post("/admin/disputes/{id}/sanction", s.handleApplyAPIOrderSanction)
 		r.Post("/admin/users/{id}/reputation-restrictions", s.handleCreateUserReputationRestriction)
 		r.Get("/admin/users/{id}/reputation", s.handleAdminUserReputation)
 		r.Post("/admin/users/{id}/reputation/recalculate", s.handleAdminRecalculateUserReputation)

@@ -5,6 +5,9 @@ const detail = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue'
 const buyerList = readFileSync(new URL('../../pages/MyApiOrdersPage.vue', import.meta.url), 'utf8')
 const merchantList = readFileSync(new URL('../../pages/MerchantApiOrdersPage.vue', import.meta.url), 'utf8')
 const adminDetail = readFileSync(new URL('../../pages/AdminApiOrderDetailPage.vue', import.meta.url), 'utf8')
+const backendAdapter = readFileSync(new URL('../apiMarketBackend.ts', import.meta.url), 'utf8')
+const contactSelector = readFileSync(new URL('../../components/api-service-publish/MerchantContactMethodsSection.vue', import.meta.url), 'utf8')
+const refundEvidence = readFileSync(new URL('../../components/api-order/ApiRefundPolicyEvidence.vue', import.meta.url), 'utf8')
 const router = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
 
 describe('API 订单角色视图', () => {
@@ -34,6 +37,13 @@ describe('API 订单角色视图', () => {
     expect(adminDetail).not.toContain('order.apiKey')
     expect(adminDetail).not.toContain('order.password')
   })
+
+  it('uses the shared dispute projection labels in the admin detail', () => {
+    expect(adminDetail).toContain('getApiOrderDisputeStatusLabel(order.disputeStatus)')
+    expect(adminDetail).toContain('getApiOrderDisputeStatusDescription(order.disputeStatus)')
+    expect(adminDetail).toContain("order.disputeStatus !== 'none'")
+    expect(adminDetail).not.toContain("order.disputeStatus || '无纠纷'")
+  })
 })
 
 const source = detail
@@ -56,6 +66,25 @@ describe('API 订单详情 UI 契约', () => {
     expect(source).toContain('历史订单未冻结')
     expect(source).toContain('平台交易边界')
     expect(source).not.toContain("order.intentSnapshot.models.join(' / ')")
+  })
+
+  it('uses frozen contacts and the server-owned completed-order after-sales projection', () => {
+    expect(contactSelector).toContain('建议同时选择微信和 linux.do')
+    expect(contactSelector).toContain('form.ownerContactMethodIds')
+    expect(backendAdapter).toContain('intent.merchantContacts.flatMap(contactToChannel)')
+    expect(backendAdapter).toContain('afterSalesExpiresAt: order.afterSalesExpiresAt')
+    expect(backendAdapter).toContain('canOpenDispute: order.canOpenDispute')
+    expect(backendAdapter).toContain('disputeEligibilityReason: order.disputeEligibilityReason')
+    expect(source).toContain('仍在 24 小时补报期内')
+    expect(source).toContain('v-model="disputeIssueOccurredAt"')
+    expect(source).toContain('disputeValidityExpiresAt')
+  })
+
+  it('shows the frozen refund-policy version and full evidence dialog', () => {
+    expect(refundEvidence).toContain('API 商户退款规则 v1')
+    expect(refundEvidence).toContain('下单时已锁定')
+    expect(refundEvidence).toContain('商户售后承诺')
+    expect(refundEvidence).toContain('平台交易边界')
   })
 
   it('为五步流程提供可见且有状态的连接线', () => {

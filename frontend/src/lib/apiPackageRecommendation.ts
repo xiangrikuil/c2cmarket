@@ -14,6 +14,11 @@ export type ApiPackageRecommendation = {
 
 type RecommendationCandidate = Omit<ApiPackageRecommendation, 'score' | 'valueScore' | 'fulfillmentScore' | 'responseScore' | 'freshnessScore'>
 
+export type ApiPackageFilterSelection = {
+  modelCatalogId: string
+  durationDays: number
+}
+
 const finiteOr = (value: number, fallback: number) => Number.isFinite(value) ? value : fallback
 
 const fulfillmentScore = (service: ApiService) => {
@@ -34,6 +39,21 @@ const freshnessScore = (service: ApiService, now: Date) => {
   if (Number.isNaN(updatedAt.getTime())) return 0
   const ageDays = Math.max(0, now.getTime() - updatedAt.getTime()) / 86_400_000
   return 100 * Math.exp(-ageDays / 30)
+}
+
+export const getDefaultApiPackageFilter = (
+  services: ApiService[],
+  availableModelCatalogIds?: ReadonlySet<string>,
+): ApiPackageFilterSelection | null => {
+  for (const service of services) {
+    if (!service.publiclyOrderable || service.billingMode !== 'fixed_package') continue
+    for (const item of service.packages ?? []) {
+      if (!item.enabled || item.stockAvailable <= 0 || ![1, 3, 7, 30].includes(item.durationDays) || item.panelAllowance <= 0) continue
+      const model = item.models.find(candidate => !availableModelCatalogIds || availableModelCatalogIds.has(candidate.modelCatalogId))
+      if (model) return { modelCatalogId: model.modelCatalogId, durationDays: item.durationDays }
+    }
+  }
+  return null
 }
 
 export const rankApiPackages = (

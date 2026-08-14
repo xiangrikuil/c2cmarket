@@ -39,7 +39,7 @@ const selectedRows = computed(() => props.form.selectedModels
         </tr>
         <tr v-for="row in selectedRows" :key="row.model.id" class="border-b border-border last:border-b-0">
           <td class="px-3 py-3">
-            <div class="font-semibold">{{ row.model.displayName }}</div>
+            <div class="font-semibold">{{ row.model.name }}</div>
             <div class="text-xs text-muted-foreground">{{ row.model.provider }}</div>
           </td>
           <td class="px-3 py-3">

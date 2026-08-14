@@ -15,6 +15,8 @@ import { beijingDateTimeInputToISOString } from '@/lib/apiQuotaExpiration'
 
 test('applies simplified API quota publish defaults', () => {
   const form: ApiServicePublishForm = {
+    probeConnectionId: 'probe-connection-1',
+		ownerContactMethodIds: ['contact-1'],
     merchantIdentityMode: 'store_alias',
     merchantDisplayName: '小葵 API',
     distributionSystem: 'other',
@@ -95,10 +97,10 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(form.packages[0].id, 'pkg')
   assert.deepEqual(form.packages[0].modelCatalogIds, ['gpt-5-mini'])
   assert.equal(form.manualBillingNote, '')
-  assert.equal(generatedTitle(form, new Map()), 'GPT · 限时流量包')
+  assert.equal(generatedTitle(form, new Map()), 'GPT · 短期流量包')
 
   form.billingMode = 'metered_credit'
-  assert.equal(generatedTitle(form, new Map()), 'GPT · 其他 API 接入 自由额度')
+  assert.equal(generatedTitle(form, new Map()), 'GPT · 其他 API 接入 自选额度')
 
   assert.doesNotMatch(merchantNoteTemplate, new RegExp('接入' + '方式：'))
   assert.match(apiQuotaBoundaryNotice, /不托管支付/)

@@ -47,6 +47,8 @@ pnpm dev:mock
 
 Mock 数据不写入 PostgreSQL，不能作为账号、订单或交易持久化的验收环境。
 
+真实 API 模式的开发构建会在用户端和管理端页头显示开发账号切换器，可在 `dev-buyer`、`dev-seller`、`dev-admin` 三个固定身份之间切换。切换器调用本地后端的开发专用接口，替换正常 Cookie/CSRF 会话并清理用户查询缓存；不会修改前端角色，也不会回退到 Mock。同名账号已存在时，后端会为固定开发身份使用带稳定后缀的隔离用户名，不会接管原账号。先在仓库根目录运行 `node scripts/dev-personas.mjs` 可以准备账号并生成受保护的 API 调试会话文件。生产构建不显示该控件，后端关闭开发认证时接口返回 404。
+
 本地初始管理员账号来自 migration `000025_native_admin_login`，用户名为 `admin`。初始密码只在交付记录中提供，不写入仓库文档。
 
 ## 渲染与索引策略
@@ -64,6 +66,7 @@ Mock 数据不写入 PostgreSQL，不能作为账号、订单或交易持久化�
 NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_PUBLIC_TURNSTILE_SITE_KEY=0x4AAAAAAENOJxBZnePMzh-y \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \
 pnpm build
 ```

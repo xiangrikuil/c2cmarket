@@ -323,7 +323,7 @@ isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 - Buyer/seller order detail may render `deliveryCredential` with copy buttons and long-term visibility. Lists, public API service pages, notifications, reports, admin summaries, and search rows must not render raw API keys or passwords.
 - UI wording should say `交付凭证`, `买家专属`, and `提交后不可修改`; do not claim platform revocation support, and avoid `自动发货`, `平台担保`, `平台验真`, and `主账号密码`.
 - Real backend mode must call API order endpoints through `apiMarketBackend.ts` and must not catch failures to return mock orders.
-- Intent creation freezes `pricingSnapshot.models[].modelNameSnapshot`, each model's `merchantMultiplier`, `usageVisibility`, `merchantNote`, and seller-authored `merchantSupportNote`. Order creation copies that JSON unchanged.
+- Intent creation freezes `pricingSnapshot.models[].modelKey`, each model's `merchantMultiplier`, `usageVisibility`, `merchantNote`, and seller-authored `merchantSupportNote`. Order creation copies that JSON unchanged. Service/package API DTOs separately use `modelKeySnapshot`; neither contract uses the removed `modelNameSnapshot`.
 - `mapBackendAPIOrder` must project `order.pricingSnapshot`, not a current service response, `serviceTitleSnapshot`, or the separately fetched intent projection. The order record is the authority after creation even when the intent usually contains the same bytes.
 - Order detail renders every non-empty frozen model name in snapshot order with duplicates removed. A missing snapshot shows explicit historical-missing copy; malformed JSON shows an explicit unavailable state. Neither path may substitute the service title or current service models.
 - Order information labels seller-authored frozen content as `商户售后说明`. The fixed platform copy is a separate `平台交易边界` field and must not be written into or presented as seller input.
@@ -346,7 +346,7 @@ isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 | Order list receives a delivered order | It may show status and submitted time, but must not render raw `apiKey` or `password`. |
 | `pricingSnapshot` is empty on a historical order | Render historical-missing model/usage/seller-support copy; do not query mutable service values as a fallback. |
 | `pricingSnapshot` is malformed JSON | Render snapshot-unavailable model/multiplier/seller-support copy; do not display `serviceTitleSnapshot` as a model. |
-| `pricingSnapshot.models` contains several valid models | Render all unique `modelNameSnapshot` values and show one multiplier or `按模型分别计算` as appropriate. |
+| `pricingSnapshot.models` contains several valid models | Render all unique `modelKey` values and show one multiplier or `按模型分别计算` as appropriate. |
 | Merchant opens the cancelled status tab | Table rows show only cancelled orders; operating metrics retain the same search/time/service population. |
 | Merchant cancelled an unpaid order | `已取消订单` increments, while `已确认收款金额` remains unchanged. |
 | Merchant confirms receipt, delivers, or completes | The order amount is counted exactly once in `已确认收款金额`. |
@@ -355,7 +355,7 @@ isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 
 - Good: buyer detail in `pending_payment` calls `readApiOrderPaymentInstructions()` and renders the frozen WeChat QR code plus merchant contact snapshot.
 - Good: seller detail in `paid_confirmed` submits `{ deliveryKind: 'api_key_endpoint', apiBaseUrl, apiKey, instructions }`, receives `deliveryCredential`, and the form becomes read-only.
-- Good: an order frozen with `GPT-4.1`, `GPT-4.1 mini`, and `GPT-4o` shows those three names even after the merchant edits the service title or enabled models.
+- Good: an order frozen with `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4o` shows those exact canonical keys even after the merchant edits the service title or enabled models.
 - Base: a delivered order list row shows `已交付` and `deliverySubmittedAt`, but no raw `apiKey` or `password` text.
 - Base: an older order without seller-support fields says `历史订单未冻结商户售后说明` beside the separate fixed platform boundary.
 - Good: one cancelled `¥10.00` order shows `已取消订单 1` and `已确认收款金额 ¥0.00`, including while the cancelled tab is active.
@@ -432,14 +432,107 @@ const confirmedReceiptAmount = baseFilteredRows.value
 
 ---
 
-## Scenario: Permission-Driven User/Admin Shells And Progressive Navigation
+## Scenario: API Merchant Contacts And Frozen Refund Evidence
 
 ### 1. Scope / Trigger
 
-- Trigger: frontend mock exposes user, merchant-workspace, and admin routes before real auth and permissions exist.
+- Trigger: frontend work touching API-service or quota publication, personal contact settings, purchase-intent contact disclosure, API-order dispute entry, or refund-policy evidence.
+- The UI helps participants contact each other and inspect frozen evidence. It does not provide in-platform chat, payment, refund execution, API verification, or compensation.
+
+### 2. Signatures
+
+```ts
+type APIServiceRequest = {
+  ownerContactMethodId?: string
+  ownerContactMethodIds: string[]
+}
+
+type BackendAPIPurchaseIntent = {
+  merchantContact?: ContactDisclosure | null
+  merchantContacts?: ContactDisclosure[]
+}
+
+type ApiOrder = {
+  afterSalesExpiresAt?: string
+  canOpenDispute?: boolean
+  disputeEligibilityReason?: string
+}
+
+type OpenApiOrderDisputeInput = {
+  issueOccurredAt?: string | null
+}
+```
+
+### 3. Contracts
+
+- Publish pages list only enabled personal contact methods whose usage scope includes `api_merchant`. Selection uses checkboxes because one or more methods are allowed, preserves visible order, and requires at least one method.
+- When available, first-party defaults recommend/select WeChat plus linux.do. Otherwise the enabled default or first eligible method may be selected. An empty state links to `/my/contacts`; publication must never silently create `@merchant` or another placeholder.
+- Real and Mock submit paths trim IDs, reject duplicates, and send `ownerContactMethodIds`; the first ID populates the legacy single field. The backend remains authoritative for ownership and enabled-state validation.
+- Authorized intent/order detail renders every frozen `merchantContacts[]` item in snapshot order. It falls back to legacy `merchantContact` only when the array is absent, never to the mutable current service or profile.
+- Buyer and merchant detail trust `canOpenDispute` and `afterSalesExpiresAt`. A completed eligible order shows the reporting-grace explanation and requires `issueOccurredAt`; the input maximum is the earlier of browser-now and the frozen service validity end.
+- Refund evidence labels `api-merchant-refund-v1` as `API 商户退款规则 v1`, states `下单时已锁定`, and opens the frozen merchant commitment, applicability, exclusions, and platform boundary. Unknown historical versions show their literal value without borrowing current policy copy.
+- Copy must say that 24 hours is a reporting window only and the issue must have occurred during service validity. It must not claim extended validity, automatic refunds, platform custody, verification, advance payment, or compensation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| No eligible merchant contact | Disable/block publication and link to `/my/contacts` |
+| Duplicate selected contact IDs | Reject before Mock persistence; backend returns field validation in real mode |
+| Contact becomes unavailable before real submit | Show backend error; do not create a placeholder or report success |
+| Intent contains `merchantContacts[]` | Render all frozen items in returned order |
+| Array absent but legacy contact exists | Render the single frozen legacy contact |
+| Completed order is eligible | Show dispute action, reporting deadline, occurrence input, and reporting-only copy |
+| Completed order is ineligible | Hide the dispute action and do not recompute eligibility from browser time |
+| Known v1 refund rule | Show readable name plus frozen applicability, exclusions, commitment, and platform boundary |
+| Unknown historical rule version | Show literal version and only evidence actually frozen on the order |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a merchant selects WeChat and linux.do, the buyer later sees both frozen labels/values even after the merchant edits the profile, and the seller sees the same ordered evidence.
+- Good: an order completed inside the grace period asks when the outage occurred and clearly says that API validity has not been extended.
+- Base: a historical intent with only `merchantContact` still renders one contact without fabricating an array or reading a current service.
+- Bad: silently create `@merchant`, use radio buttons for multi-select, show only the first new contact, or call the current contact API to repair an old order.
+- Bad: display only `api-merchant-refund-v1`, omit exclusions/platform boundary, or describe `补报截止` as a guaranteed refund deadline.
+
+### 6. Tests Required
+
+- Component tests cover eligible contact filtering, checkbox order, WeChat/linux.do recommendation, empty-state settings link, duplicate rejection, and no placeholder creation.
+- Adapter tests cover new arrays plus legacy fallbacks, all participant after-sales fields, administrator contact omission, and frozen snapshot mapping in normal and limited-quota paths.
+- Order-detail tests cover completed eligible/ineligible states, earlier-of-now-and-validity occurrence maximum, occurrence payload serialization, grace-period copy, rule display name, lock label, applicability, exclusions, and platform boundary.
+- Mock/real contract tests prove equivalent contact validation, frozen refund evidence, after-sales eligibility fields, and completed-order occurrence validation.
+- Run full Vitest, OpenAPI generated-type check, Nuxt typecheck/build, and desktop/mobile browser checks for both publish flows and buyer/merchant order detail.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (!ownerContactMethodId) {
+  await createContactMethod({ type: 'linuxdo', displayValue: '@merchant' })
+}
+const canOpenDispute = order.status !== 'completed'
+```
+
+#### Correct
+
+```ts
+const ownerContactMethodIds = selectedEligibleContacts.value.map(item => item.id)
+const canOpenDispute = order.canOpenDispute
+```
+
+Selection is explicit, historical disclosure is frozen, and eligibility comes from the server's order projection.
+
+---
+
+## Scenario: Capability-Driven Student, Seller, And Administrator Navigation
+
+### 1. Scope / Trigger
+
+- Trigger: changing authenticated navigation, route metadata, query enablement, student/linux.do mock identities, merchant workspaces, probe entry points, or administrator routes.
 - The UI shell must not make ordinary users feel that full admin tooling is part of their normal workspace.
-- User and merchant are the same account permission class: a normal user can be a buyer, carpool owner, and API service merchant at the same time.
-- Sidebar visibility must be derived from the current user profile returned by the API facade, not a manual role switch in the shell.
+- Student-email and linux.do users are different identity facts with different deterministic capabilities; neither is a frontend-selectable role.
+- Sidebar, route, mutation, and owner-query visibility derive from the canonical capability array returned by the profile API, never from owned-resource or pending-count heuristics.
 - Admin moderation rows must provide enough context for local mock review before backend integration.
 
 ### 2. Signatures
@@ -447,7 +540,17 @@ const confirmedReceiptAmount = baseFilteredRows.value
 ```ts
 type UserProfile = {
   permissions: Array<'admin'>
+  capabilities: Capability[]
 }
+
+type Capability =
+  | 'api_order.create'
+  | 'carpool.apply'
+  | 'carpool.publish'
+  | 'api_service.publish'
+  | 'api_quota.publish'
+  | 'api_probe.manage'
+  | 'admin.access'
 
 export type AdminRow = {
   id: string
@@ -474,10 +577,13 @@ export function initialSidebarCollapsed(
 ### 3. Contracts
 
 - `App.vue` selects exactly one layout: standalone routes render directly, `/admin/**` uses `AdminShell`, and all other authenticated pages use `AppShell`.
-- `AppShell` always shows browse, transaction, publish, and account entry points for normal users.
-- Merchant workspace links are normal user-permission links, not a separate account role.
-- Owner/merchant management links are progressive: show the management group only when the account owns a carpool/API service or has a real owner/merchant pending count. Publish entry points remain visible without ownership records.
-- When `getMyProfile()` / `useMyProfileQuery()` returns `permissions` containing `admin`, `AppShell` exposes one `进入管理台` link only; it must not append the administration directory.
+- `AppShell` always shows public browse, authenticated buyer transactions, notifications, and account settings. It shows carpool apply/publish, API service/quota publishing, merchant workspaces, and probes only for their exact capabilities.
+- A student profile has only `api_order.create`; it can buy quota/API service offers and use order-scoped after-sales, dispute, review, buyer contacts, and eligible model testing, but it must not trigger carpool/seller/probe owner queries.
+- A linux.do-bound profile has all six non-admin business capabilities even with zero owned resources. In particular, `api_probe.manage` always exposes `/my/api-probe-connections` and its first-create empty state.
+- `admin.access` controls one `进入管理台` entry plus `/admin/**`; legacy `permissions: ['admin']` remains a displayed identity fact but is not a second route authority.
+- Route records use typed `meta.capability`; global middleware loads the current profile, rejects missing capability to `/forbidden`, and cannot authorize from stale mock/resource state.
+- TanStack owner/merchant/probe queries use `enabled: hasCapability(...)`. A hidden component with an active query is still a capability leak and is not acceptable.
+- Real backend failures remain visible and never fall back to mock authorization/data. Mock mode has explicit anonymous, student, linux.do, and administrator sessions and uses the same capability helper.
 - `AdminShell` owns the grouped administration directory, global search, pending total, administrator identity, and a clear return-to-user-side action.
 - Both shells persist desktop collapse state independently. With no stored preference, widths below 1024 pixels default to collapsed.
 - Mobile navigation is a modal drawer with dialog semantics, a close action, Escape support, and enough width/scrolling to avoid obscuring navigation content.
@@ -497,10 +603,11 @@ export function initialSidebarCollapsed(
 
 | Condition | Expected behavior |
 | --- | --- |
-| Profile has no `admin` permission | User routes remain in `AppShell`; the management-console entry is hidden |
-| Profile has `admin` permission | `AppShell` shows one management-console entry; `/admin/**` switches to `AdminShell` |
-| Profile owns no listing and has no owner pending work | Management group stays hidden; publish links remain visible |
-| Profile owns a carpool or API service | Relevant owner/merchant links appear in the management group |
+| Student has only `api_order.create` | Buyer/order/account links remain; carpool, publish, merchant, payment, and probe links/queries stay absent |
+| Linux.do seller has zero owned resources | All applicable publish/merchant/probe entries remain visible, including probe first-create |
+| Route has `meta.capability` absent from profile | Redirect to `/forbidden`; do not start its owner query |
+| Profile has `admin.access` | `AppShell` shows one management-console entry; `/admin/**` switches to `AdminShell` |
+| Profile lacks `admin.access` even if local state says admin | Administration route and API query remain blocked |
 | No stored collapse preference and viewport is below 1024px | Desktop shell initializes collapsed |
 | Mobile drawer is open and user presses Escape | Drawer closes and page content remains unobscured |
 | User opens `/merchant/api-orders` | Sidebar still shows personal plus merchant workspace groups |
@@ -511,14 +618,16 @@ export function initialSidebarCollapsed(
 
 ### 5. Good/Base/Bad Cases
 
-- Good: profile with `permissions: ['admin']` sees one `进入管理台` entry in `AppShell`, then the complete grouped directory inside `AdminShell`.
-- Good: a first-time profile sees publish actions but no permanently empty management group.
-- Good: a carpool owner or API merchant sees only the relevant progressive management links.
+- Good: a student sees API buying and order after-sales but no carpool, publish, payment settings, merchant order, or probe request.
+- Good: a first-time linux.do seller sees publish actions and the zero-resource probe onboarding without manufacturing a resource first.
+- Good: a profile with `admin.access` sees one `进入管理台` entry in `AppShell`, then the complete grouped directory inside `AdminShell`.
 - Good: admin official-price panel shows `来源`, `历史价格`, `汇率时间`, `重复 offer`, `地区限制`, and `操作记录`.
 - Base: direct `/admin/price-leads` redirects to `/admin/official-prices` for compatibility.
 - Bad: ordinary user sidebar always lists `用户管理`, `低价线索审核`, and `举报纠纷`.
 - Bad: administration pages render inside the ordinary user shell.
 - Bad: hiding publish actions until the account already owns a listing.
+- Bad: use listing/service/order counts, pending badges, or `permissions` as a replacement for the matching business capability.
+- Bad: hide a link but let its query execute, or catch a real `403` and substitute mock owner data.
 - Bad: ordinary user sidebar hides merchant workspace links behind a separate `商户` role switch.
 - Bad: sidebar has a manual `用户 / 管理员` role toggle.
 
@@ -529,9 +638,11 @@ export function initialSidebarCollapsed(
 - Product-boundary scan for official-price and API-intent wording drift.
 - Browser/DOM smoke:
   - sidebar has no manual role switch,
-  - profile-driven admin permission exposes exactly one management-console entry,
+  - student has no seller/carpool/probe links or owner requests,
+  - zero-resource linux.do profile still exposes probe/publish workspaces,
+  - profile-driven `admin.access` exposes exactly one management-console entry,
   - `/admin/**` renders the independent admin layout,
-  - publish actions remain visible while owner/merchant groups are progressive,
+  - route metadata and query `enabled` predicates use the same typed capability helper,
   - `/merchant/...` keeps the user permission sidebar,
   - persisted collapse preference overrides the viewport default,
   - mobile drawers expose dialog semantics and close with Escape,
@@ -552,13 +663,166 @@ const navGroups = [
 #### Correct
 
 ```ts
-const userShellGroups = [browseGroup, transactionGroup, publishGroup, accountGroup]
-if (hasOwnerObjectsOrPendingWork.value) userShellGroups.splice(3, 0, managementGroup)
-if (myProfile.value?.permissions.includes('admin')) userShellGroups.push(managementConsoleEntry)
+const userShellGroups = [browseGroup, buyerTransactionGroup, accountGroup]
+if (hasCapability(profile, CAPABILITY.apiServicePublish)) userShellGroups.push(merchantGroup)
+if (hasCapability(profile, CAPABILITY.apiProbeManage)) userShellGroups.push(probeEntry)
+if (hasCapability(profile, CAPABILITY.adminAccess)) userShellGroups.push(managementConsoleEntry)
 
 const layout = route.meta.standalone
   ? null
   : route.path.startsWith('/admin')
     ? AdminShell
     : AppShell
+```
+
+## Scenario: API Probe Connections And Model Tester State
+
+### 1. Scope / Trigger
+
+- Trigger: frontend types, adapters, queries, routes, forms, or tests for seller probe connections,
+  service binding, public health, order credential import, or `/tools/api-model-tester`.
+- Backend/OpenAPI fields remain the authority. Handwritten UI types must mirror generated DTO
+  names and must not restore deleted service-level probe fields.
+
+### 2. Signatures
+
+```ts
+type ApiModelTesterCredentialSource =
+  | { kind: 'manual'; baseUrl: string; apiKey: string; acknowledgeInsecureHttp: boolean }
+  | { kind: 'order'; orderId: string; acknowledgeInsecureHttp: boolean }
+
+type ApiModelTesterRowState = {
+  state: 'pending' | 'completed' | 'cancelled' | 'failed'
+  result?: ApiModelTesterModelResult
+  message?: string
+}
+
+type ApiProbeConnectionPreflight = {
+  errorCode: string | null
+  availableModels: string[]
+  probeModel: string | null
+  probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null
+  probeEnvironment: 'us-west-v1'
+  dailyBaseCostUpperBoundUsd: string | null
+  priceUnavailable: boolean
+  preflightToken: string | null
+}
+```
+
+```text
+/my/api-probe-connections
+/tools/api-model-tester
+/admin/api-health
+```
+
+### 3. Contracts
+
+- `/my/api-probe-connections` owns reusable seller connection management. Connection forms send
+  name, Base URL, optional write-only credential, exact probe model, enabled state, and HTTP
+  acknowledgement. Measurement-changing writes first use the create/existing preflight endpoint,
+  then send its one-time `preflightToken`; save must not repeat the paid real-model verification.
+- Preflight model options are only the current `/models` IDs. The form defaults to exact
+  `gpt-5.6-luna` when the backend selected it, shows the fixed Responses/Chat result and the 1.00x
+  daily estimate, and invalidates its token when Base URL, credential, or model changes.
+- The connection table and public market card reuse the same 24-hour health component. The compact
+  surface shows 24 fixed-size hourly cells, stability, average TTFT, coverage, and runner warnings;
+  the tooltip owns protocol, environment, P50/P95, retry/failure, and cost detail.
+- Re-enabling a disabled connection is measurement-changing: the quick switch first performs an
+  existing-credential preflight, then updates with its token. Disabling remains a direct update.
+- Create, update, verify, and delete send a fresh `Idempotency-Key`. Completed replay returns the
+  stored response; frontend retry must reuse the same key for the same submitted mutation and must
+  not start another preflight/verify call.
+- API service create/edit sends `probeConnectionId`; it never duplicates Base URL or key in the
+  service form. The selector shows only the current seller's connections and explains unavailable
+  binding state without exposing credentials.
+- Public market types contain only `healthSummary`. Owner connection ID/name/readiness fields must
+  not leak into public DTO adapters or cards.
+- `/admin/api-health` reads exact model/protocol/environment calibration facts, allows X/Y preview,
+  and enables publication only when the backend reports at least seven complete UTC days and five
+  independent connections. The page never derives or auto-publishes thresholds from percentiles.
+- Model tester `ApiModelTesterCredentialSource` is a strict manual/order union. Both variants carry
+  `acknowledgeInsecureHttp`; manual carries Base URL and Key, order carries only order ID.
+- The HTTP warning is conditional on the current manual or selected-order Base URL. It starts
+  unchecked, resets when the target changes, and blocks discovery until checked. The acknowledgement
+  travels with discover and every subsequent model-test request but is not persisted.
+- Discovery results, selected models, per-row protocol results, cancellation controllers, and the
+  manual key are component-memory state. Source changes and unmount cancel work and clear all
+  transient data. Never use route query, local/session storage, analytics, or a global store for keys.
+- The UI renders every unique `/models` ID exactly as returned. It does not title-case or map IDs to
+  catalog display names. Single, selected, and all-model tests operate only on the current discovery
+  list; at most three model requests run concurrently and each row has stable Responses/Chat columns.
+- Order import uses only backend-authorized order-source items. The frontend never receives or
+  reconstructs the delivered key. Opening from an order detail may preselect an order ID only when
+  that ID exists in the authorized source list.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Manual Base URL or Key missing | Disable/get-model action and retain no test state |
+| Current target is HTTP and acknowledgement is false | Show warning and block discover/test |
+| Probe preflight did not return a usable one-time token | Keep connection save disabled |
+| Probe Base URL, credential, or model changes after preflight | Invalidate token and require preflight again |
+| Disabled probe connection is switched on | Preflight stored credential, then update with returned token |
+| Health runner is disabled or stale | Show the backend `runner_disabled`/`stale` explanation, not silent grey |
+| Fewer than three current-version health samples | Show sample accumulation and grey cells |
+| Calibration readiness is false | Disable rule publication while retaining observed percentiles |
+| Source Base URL/order changes | Cancel active work, clear discovery/results, reset HTTP acknowledgement |
+| `/models` returns zero IDs | Show an empty discovered state; do not invent catalog models |
+| One protocol fails while the other succeeds | Render two independent cells for the same model |
+| User cancels an all-model run | Abort active requests and mark unfinished rows cancelled |
+| User leaves the page | Abort requests and clear the manual Key from memory |
+
+### 5. Good / Base / Bad Cases
+
+- Good: seller selects one existing verified connection on several publish forms; no form asks for
+  the endpoint or key again and public cards expose only the shared health result.
+- Good: seller preflights `gpt-5.6-luna`, receives a one-time token, saves once, and the connection
+  plus every bound service display the same 24-hour health strip without duplicate model calls.
+- Base: the runner is disabled. The enabled connection displays a clear operational warning while
+  retaining its configuration and old immutable samples.
+- Good: buyer selects an HTTP order, checks the warning, discovers `gpt-4.1-mini`, then runs either
+  one row or all rows with separate Responses and Chat results.
+- Base: an HTTPS source keeps acknowledgement false and performs the same discovery/test workflow
+  without showing an HTTP warning.
+- Base: a source change during an all-model run aborts active requests and returns the page to an
+  empty discovery state.
+- Bad: storing the manual key, allowing free-form probe/test model IDs, title-casing model IDs,
+  saving without a matching preflight token, dynamically ranking health colors, or showing seller
+  connection IDs/Base URLs on public service cards.
+
+### 6. Tests Required
+
+- Adapter request-body tests for both credential-source variants, trimming, HTTP acknowledgement,
+  cancellation signal, CSRF-backed mutation, and absence of keys in URLs.
+- Probe adapter/component tests for preflight token transport, token invalidation, default Luna,
+  re-enable preflight, exact model IDs, 24 fixed cells, coverage, runner warnings, Chat fallback,
+  cost unknown state, and no public connection internals.
+- Calibration tests for dimension queries, invalid X/Y, not-ready publication, preview, published
+  immutable rule history, and generated OpenAPI type parity.
+- Component/source tests for conditional HTTP warning, target-change reset, authorized order
+  preselection, discovery-only model selection, three-worker concurrency, cancellation, and unmount
+  cleanup.
+- Projection scans that reject `modelNameSnapshot`, public probe connection internals, challenge
+  copy, local/session storage, and tester analytics.
+- Run OpenAPI generation/check, full Vitest, Nuxt typecheck, and production build.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: persistent secret and a model name rewritten for display.
+localStorage.setItem('testerKey', apiKey)
+const visibleModel = titleCase(modelId)
+
+// Correct: component-memory secret and provider-returned ID.
+const manual = reactive({ baseUrl: '', apiKey: '' })
+const visibleModel = modelId
+```
+
+```ts
+// Wrong: order import reconstructs credentials in the browser.
+const source = { kind: 'manual', baseUrl: order.baseUrl, apiKey: order.apiKey }
+
+// Correct: submit the authorized order reference only.
+const source = { kind: 'order', orderId: order.orderId, acknowledgeInsecureHttp }
 ```

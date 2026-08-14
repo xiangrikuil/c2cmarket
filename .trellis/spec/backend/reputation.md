@@ -294,6 +294,13 @@ review status:
 review window:
   [transaction.completed_at, transaction.completed_at + 14 days)
 
+GET /api/v1/me/reviews:
+  ReviewCenterRow.allowedTags[] = { code, label, polarity }
+  ReviewCenterRow does not expose counterparty submission state
+
+POST|PUT /api/v1/me/transactions/{transactionType}/{transactionId}/review:
+  { rating: 1..5, tags: tag-code[0..5], note: string[0..600] }
+
 PostgreSQL:
   transaction_reviews
   transaction_review_revisions
@@ -304,10 +311,15 @@ PostgreSQL:
 - A verified review points to one platform-confirmed completed carpool membership or API order and to the actual buyer/seller participants. Purchase intents, applications, payment submission, and delivery submission are not verified review sources.
 - Buyer and seller may each create one review of the other participant. Direction and role are preserved so future reputation aggregation can keep buyer and seller behavior separate.
 - The first review remains sealed. The author can edit it before the deadline, but the counterparty and public surfaces cannot read its rating, tags, or note.
+- Before publication, ordinary-user responses must not expose whether the counterparty submitted. Do not return a counterparty-submission boolean or a received sealed row; both are observable signals even when content is null.
 - When both participants submit, both reviews publish and freeze atomically. When only one submits, eligible reads publish and freeze it at the 14-day deadline.
 - Published content is immutable. Administrator removal is a visible-state transition with actor, reason, version, and append-only revision; it cannot rewrite the frozen content.
 - An active `reputation_transaction_exclusions` row makes the transaction ineligible and removes its published reviews from public reads. Restore makes the transaction eligible again without rewriting review history.
 - Only `published` and non-removed reviews are public verified facts. Sealed, removed, excluded, mock, inferred, or unavailable reviews must not affect public review counts or future score inputs.
+- Rating is required. A review is valid when it has at least one allowed tag or a non-empty note; validation friction must not vary by star value.
+- Tags use a backend-owned typed catalog. New writes persist stable codes, review-center rows return scenario-filtered `allowedTags`, and submission validates transaction type plus reviewer/reviewee roles. Public DTOs convert codes and supported historical Chinese aliases to current labels.
+- Historical `与描述不符` remains readable but displays as `实际体验与描述有差异`. Adding or renaming a code requires updating reputation SQL classification and its regression test in the same change.
+- Public review lists expose each raw rating. Bayesian/weighted rating remains a reputation-engine input and is not a second public review average.
 - Review notes reject contact- and credential-shaped content. Reviews remain experience notes and do not prove payment, fulfillment, dispute responsibility, refund eligibility, guarantee, or platform endorsement.
 
 ### 4. Validation & Error Matrix
@@ -315,24 +327,28 @@ PostgreSQL:
 | Condition | Required result |
 | --- | --- |
 | Unsupported type, malformed ID, rating/tag/note validation failure | `422 VALIDATION_FAILED` |
+| Rating outside 1-5 | `422 VALIDATION_FAILED`, field `rating` |
+| More than five tags or a tag not allowed for the resolved roles | `422 VALIDATION_FAILED`, field `tags` |
+| Both tags and trimmed note are empty | `422 VALIDATION_FAILED`, field `content` |
 | Current user is not a participant | `404 OBJECT_NOT_FOUND` |
 | Transaction is not completed or is actively excluded | `409 INVALID_STATE_TRANSITION` |
 | Submission/edit at or after the deadline | `409 INVALID_STATE_TRANSITION` |
 | Edit targets a published, removed, or otherwise frozen review | `409 INVALID_STATE_TRANSITION` |
-| Received review is sealed | Return metadata with hidden content |
+| Received review is sealed | Omit the row so submission itself is not observable |
 | Non-admin removal | `403 PERMISSION_DENIED` |
 | Missing/stale removal precondition | `428 PRECONDITION_REQUIRED` / `412 VERSION_CONFLICT` |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: an API buyer and seller both submit; both reviews become verified public facts with opposite role directions in one commit.
+- Good: seller-to-buyer `quick_payment` is stored as a code, rendered as `付款及时`, and included in the positive reputation-tag aggregate.
 - Good: one carpool review reaches its deadline, materializes as published, and remains immutable while its revision history records the transition.
 - Base: an administrator removes abusive published text. Public reads omit it, while frozen content and audited removal history remain stored.
-- Bad: treat a sealed row as a zero-star review, count an excluded transaction, infer a review from a completion, or let an administrator edit published wording.
+- Bad: return `counterpartySubmitted`, return a received sealed placeholder row, accept a tag in the wrong role direction, or display weighted rating as the ordinary public average.
 
 ### 6. Tests Required
 
-- Service and repository tests must cover both transaction types, both directions, the 14-day boundary, active exclusion, sealed non-disclosure, and post-publication immutability.
+- Service and repository tests must cover both transaction types, both directions, no counterparty-submission signal, the 14-day boundary, tag-or-note validation, scenario tag rejection, historical aliases, active exclusion, and post-publication immutability.
 - PostgreSQL integration must prove second-submit atomic publication, deadline materialization, append-only revisions, legacy review preservation, and audited removal.
 - Public-profile tests must prove only published, non-removed, non-excluded rows appear and role/type fields survive the API boundary.
 - Run the full backend suite, vet, OpenAPI parsing and route parity, migration documentation checks, and `git diff --check`.
@@ -341,25 +357,18 @@ PostgreSQL:
 
 #### Wrong
 
-```sql
-SELECT rating FROM transaction_reviews
-WHERE reviewee_user_id = $1;
+```go
+response.CounterpartySubmitted = counterpartyReview != nil
+response.Items = append(response.Items, receivedSealedPlaceholder)
 ```
 
 #### Correct
 
-```sql
-SELECT rating FROM transaction_reviews review
-WHERE review.reviewee_user_id = $1
-  AND review.status = 'published'
-  AND NOT EXISTS (
-    SELECT 1
-    FROM reputation_transaction_exclusions exclusion
-    WHERE exclusion.transaction_type = review.transaction_type
-      AND exclusion.transaction_id =
-          COALESCE(review.carpool_membership_id, review.api_order_id)
-      AND exclusion.restored_at IS NULL
-  );
+```go
+if row.Direction == DirectionReceived && row.Visibility == VisibilitySealed {
+    continue
+}
+row.AllowedTags = AllowedTags(row.TransactionType, row.ReviewerRole, row.RevieweeRole)
 ```
 
 ## Scenario: Versioned Reputation Snapshots, History, And Cache Invalidation

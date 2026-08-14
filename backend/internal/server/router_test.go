@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,7 +21,9 @@ import (
 	"c2c-market/backend/internal/health"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/auth"
 	app "c2c-market/backend/internal/module/core"
+	"c2c-market/backend/internal/platform/modelsdev"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -157,6 +160,56 @@ func TestDevSessionCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestDevPersonaSessionCanBeDisabled(t *testing.T) {
+	server := NewServer(app.NewService(), ServerOptions{EnableDevAuth: false})
+	request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-persona-session", `{"persona":"buyer"}`)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected dev persona session disabled as not found, got %d body %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDevPersonaSessionPreparesStrictFixedPersonas(t *testing.T) {
+	server := NewServer(app.NewService(), ServerOptions{EnableDevAuth: true})
+	tests := []struct {
+		persona string
+		admin   bool
+	}{
+		{persona: "buyer"},
+		{persona: "seller"},
+		{persona: "admin", admin: true},
+		{persona: "buyer"},
+	}
+	for _, test := range tests {
+		request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-persona-session", `{"persona":"`+test.persona+`"}`)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("prepare %s status %d body %s", test.persona, response.Code, response.Body.String())
+		}
+		var payload devPersonaSessionResponse
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode %s persona session: %v", test.persona, err)
+		}
+		if string(payload.Persona) != test.persona || payload.User.Username != "dev-"+test.persona || payload.User.IsAdmin != test.admin {
+			t.Fatalf("unexpected %s persona session: %+v", test.persona, payload)
+		}
+		if payload.CSRFToken == "" || responseSessionCookie(response) == nil {
+			t.Fatalf("persona %s did not receive a normal session", test.persona)
+		}
+	}
+
+	request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-persona-session", `{"persona":"buyer","admin":true}`)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected strict persona payload rejection, got %d body %s", response.Code, response.Body.String())
+	}
+}
+
 func TestProductionRoutesMatchOpenAPI(t *testing.T) {
 	server := &Server{
 		app:           app.NewService(),
@@ -169,7 +222,7 @@ func TestProductionRoutesMatchOpenAPI(t *testing.T) {
 
 	assertRouteSetsEqual(t, runtimeRoutes, openAPIRoutes)
 	for route := range runtimeRoutes {
-		if strings.Contains(route, "/dev/") || strings.Contains(route, "/auth/dev-session") {
+		if strings.Contains(route, "/dev/") || strings.Contains(route, "/auth/dev-session") || strings.Contains(route, "/auth/dev-persona-session") {
 			t.Fatalf("production route must not include dev endpoint: %s", route)
 		}
 	}
@@ -223,7 +276,7 @@ func TestAdminUsersListsAllAccountsWithoutReportData(t *testing.T) {
 			break
 		}
 	}
-	if member == nil || member.AccountStatus != "active" || member.LinuxDoBound || member.CreatedAt == "" {
+	if member == nil || member.AccountStatus != "active" || !member.LinuxDoBound || member.CreatedAt == "" {
 		t.Fatalf("unexpected directory user: %#v", member)
 	}
 	if strings.Contains(response.Body.String(), "password") || strings.Contains(response.Body.String(), "reporter") {
@@ -344,6 +397,48 @@ func TestEmailRegistrationDisabled(t *testing.T) {
 			t.Fatalf("disabled email registration must not set session cookie: %+v", cookie)
 		}
 	}
+}
+
+func TestUsernameAvailability(t *testing.T) {
+	server := newTestServer(time.Now())
+	createSession(t, server, "taken_student", false)
+
+	for _, testCase := range []struct {
+		name      string
+		username  string
+		available bool
+	}{
+		{name: "existing username", username: "taken_student", available: false},
+		{name: "new username", username: "new_student", available: true},
+		{name: "reserved username", username: "admin", available: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/username-availability?username="+testCase.username, nil)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("username availability status %d body %s", response.Code, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("username availability must not be cached, got %q", response.Header().Get("Cache-Control"))
+			}
+			var payload usernameAvailabilityResponse
+			if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode username availability: %v", err)
+			}
+			if payload.Username != testCase.username || payload.Available != testCase.available {
+				t.Fatalf("username availability = %+v, want username=%q available=%t", payload, testCase.username, testCase.available)
+			}
+		})
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/v1/auth/username-availability?username=Not-Valid", nil)
+	invalidResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid username status %d body %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+	assertProblemCode(t, invalidResponse, domain.CodeUsernameInvalid)
 }
 
 func TestPublicResourceIDsAreUUIDs(t *testing.T) {
@@ -600,8 +695,8 @@ func TestAdminProductPlanCRUD(t *testing.T) {
 		t.Fatalf("expected policy update to increment version, got %+v", updated)
 	}
 
-	deactivateRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/product-plans/"+created.ID+"/deactivate", `{}`)
-	addAuth(deactivateRequest, adminSession, "product-plan-deactivate")
+	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/product-plans/"+created.ID, updated.Version)
+	addAuth(deactivateRequest, adminSession, "product-plan-deprecate")
 	deactivateResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateResponse, deactivateRequest)
 	if deactivateResponse.Code != http.StatusOK {
@@ -712,8 +807,8 @@ func TestAdminAPIModelCRUDAndPublicVisibility(t *testing.T) {
 		t.Fatalf("expected clearing prices to create current null version, got %+v", cleared)
 	}
 
-	deactivateRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/"+created.ID+"/deactivate", `{}`)
-	addAuth(deactivateRequest, adminSession, "api-model-deactivate")
+	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/api-models/"+created.ID, cleared.Version)
+	addAuth(deactivateRequest, adminSession, "api-model-deprecate")
 	deactivateResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateResponse, deactivateRequest)
 	if deactivateResponse.Code != http.StatusOK {
@@ -742,11 +837,261 @@ func TestAdminAPIModelCRUDAndPublicVisibility(t *testing.T) {
 	}
 }
 
+func TestAdminAPIModelModelsDevSyncAndLifecycle(t *testing.T) {
+	now := time.Date(2026, 8, 8, 8, 0, 0, 0, time.UTC)
+	service := app.NewServiceWithClock(func() time.Time { return now })
+	service.ConfigureModelsDevSource(staticModelsDevSource{catalog: modelsdev.Catalog{
+		"openai": {
+			ID: "openai", Name: "OpenAI",
+			Models: map[string]modelsdev.Model{
+				"gpt-sync-test": {
+					ID: "gpt-sync-test", LastUpdated: "2026-08-08", Reasoning: true,
+					Modalities: modelsdev.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+					Cost:       &modelsdev.Cost{Input: "0.4", CacheRead: "0.1", Output: "1.6"},
+				},
+				"gpt-4.1-mini": {
+					ID: "gpt-4.1-mini", LastUpdated: "2026-08-08",
+					Modalities: modelsdev.Modalities{Input: []string{"text"}, Output: []string{"text"}},
+					Cost:       &modelsdev.Cost{Input: "0.5", CacheRead: "0.1", Output: "1.8"},
+				},
+				"gpt-invalid-price": {
+					ID: "gpt-invalid-price", LastUpdated: "2026-08-08",
+					Modalities: modelsdev.Modalities{Input: []string{"text"}, Output: []string{"text"}},
+				},
+			},
+		},
+		"xai": {
+			ID: "xai", Name: "xAI",
+			Models: map[string]modelsdev.Model{
+				"grok-sync-test": {
+					ID: "grok-sync-test", LastUpdated: "2026-08-08", Reasoning: true,
+					Modalities: modelsdev.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+					Cost:       &modelsdev.Cost{Input: "2", CacheRead: "0.3", Output: "6"},
+				},
+			},
+		},
+	}})
+	server := NewServer(service)
+	adminSession := createSession(t, server, "admin-models-dev-sync", true)
+
+	providersRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-model-providers", nil)
+	addCookie(providersRequest, adminSession.cookie)
+	providersResponse := httptest.NewRecorder()
+	server.ServeHTTP(providersResponse, providersRequest)
+	if providersResponse.Code != http.StatusOK {
+		t.Fatalf("list providers status %d body %s", providersResponse.Code, providersResponse.Body.String())
+	}
+	var providers listResponse[apiModelProviderResponse]
+	if err := json.NewDecoder(providersResponse.Body).Decode(&providers); err != nil {
+		t.Fatalf("decode providers: %v", err)
+	}
+	providerID := ""
+	xaiProviderID := ""
+	for _, provider := range providers.Items {
+		if provider.Code == "openai" {
+			providerID = provider.ID
+		}
+		if provider.Code == "xai" {
+			xaiProviderID = provider.ID
+		}
+	}
+	if providerID == "" || xaiProviderID == "" {
+		t.Fatal("expected seeded openai and xai providers")
+	}
+
+	xaiPreviewBody := `{"providerIds":["` + xaiProviderID + `"]}`
+	xaiPreviewRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/preview", xaiPreviewBody)
+	addCookie(xaiPreviewRequest, adminSession.cookie)
+	xaiPreviewRecorder := httptest.NewRecorder()
+	server.ServeHTTP(xaiPreviewRecorder, xaiPreviewRequest)
+	if xaiPreviewRecorder.Code != http.StatusOK {
+		t.Fatalf("xAI preview status %d body %s", xaiPreviewRecorder.Code, xaiPreviewRecorder.Body.String())
+	}
+	var xaiPreview apiModelSyncPreviewResponse
+	if err := json.NewDecoder(xaiPreviewRecorder.Body).Decode(&xaiPreview); err != nil {
+		t.Fatalf("decode xAI preview: %v", err)
+	}
+	var xaiCandidate apiModelSyncItemResponse
+	for _, item := range xaiPreview.Items {
+		if item.ModelKey == "grok-sync-test" {
+			xaiCandidate = item
+			break
+		}
+	}
+	if xaiCandidate.Status != "new" || xaiCandidate.ProviderCode != "xai" || xaiCandidate.Fingerprint == "" {
+		t.Fatalf("unexpected xAI preview candidate=%+v", xaiCandidate)
+	}
+	xaiApplyBodyBytes, err := json.Marshal(apiModelSyncApplyRequest{Items: []apiModelSyncSelectionRequest{{
+		Fingerprint: xaiCandidate.Fingerprint, Status: xaiCandidate.Status,
+		ProviderID: xaiCandidate.ProviderID, ProviderCode: xaiCandidate.ProviderCode,
+		ModelKey: xaiCandidate.ModelKey, Capabilities: xaiCandidate.Capabilities,
+		SourceURL: xaiCandidate.SourceURL, SourceVersion: xaiCandidate.SourceVersion,
+		InputPricePerMillion:       xaiCandidate.InputPricePerMillion,
+		CachedInputPricePerMillion: xaiCandidate.CachedInputPricePerMillion,
+		OutputPricePerMillion:      xaiCandidate.OutputPricePerMillion, Active: false,
+	}}})
+	if err != nil {
+		t.Fatalf("marshal xAI apply request: %v", err)
+	}
+	xaiApplyRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", string(xaiApplyBodyBytes))
+	addAuth(xaiApplyRequest, adminSession, "models-dev-apply-xai")
+	xaiApplyResponse := httptest.NewRecorder()
+	server.ServeHTTP(xaiApplyResponse, xaiApplyRequest)
+	if xaiApplyResponse.Code != http.StatusOK || !strings.Contains(xaiApplyResponse.Body.String(), `"created":1`) {
+		t.Fatalf("xAI apply status %d body %s", xaiApplyResponse.Code, xaiApplyResponse.Body.String())
+	}
+
+	previewBody := `{"providerIds":["` + providerID + `"]}`
+	previewRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/preview", previewBody)
+	addCookie(previewRequest, adminSession.cookie)
+	previewResponseRecorder := httptest.NewRecorder()
+	server.ServeHTTP(previewResponseRecorder, previewRequest)
+	if previewResponseRecorder.Code != http.StatusOK {
+		t.Fatalf("preview status %d body %s", previewResponseRecorder.Code, previewResponseRecorder.Body.String())
+	}
+	var preview apiModelSyncPreviewResponse
+	if err := json.NewDecoder(previewResponseRecorder.Body).Decode(&preview); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	var candidate apiModelSyncItemResponse
+	var changedCandidate apiModelSyncItemResponse
+	for _, item := range preview.Items {
+		if item.ModelKey == "gpt-sync-test" {
+			candidate = item
+		}
+		if item.ModelKey == "gpt-4.1-mini" {
+			changedCandidate = item
+		}
+	}
+	if candidate.Status != "new" || candidate.Fingerprint == "" || changedCandidate.Status != "price_changed" || changedCandidate.Fingerprint == "" || preview.Counts.New != 1 || preview.Counts.PriceChanged != 1 || preview.Counts.SourceMissing != 1 || preview.Counts.Unavailable != 1 {
+		t.Fatalf("unexpected preview candidate=%+v counts=%+v", candidate, preview.Counts)
+	}
+
+	applyPayload := apiModelSyncApplyRequest{Items: []apiModelSyncSelectionRequest{
+		{
+			Fingerprint: candidate.Fingerprint, Status: candidate.Status, ProviderID: candidate.ProviderID,
+			ProviderCode: candidate.ProviderCode, ModelKey: candidate.ModelKey,
+			Capabilities: candidate.Capabilities, SourceURL: candidate.SourceURL,
+			SourceVersion: candidate.SourceVersion, InputPricePerMillion: candidate.InputPricePerMillion,
+			CachedInputPricePerMillion: candidate.CachedInputPricePerMillion,
+			OutputPricePerMillion:      candidate.OutputPricePerMillion, Active: false,
+		},
+		{
+			Fingerprint: changedCandidate.Fingerprint, Status: changedCandidate.Status,
+			ProviderID: changedCandidate.ProviderID, ProviderCode: changedCandidate.ProviderCode,
+			ModelKey: changedCandidate.ModelKey, Capabilities: changedCandidate.Capabilities,
+			SourceURL: changedCandidate.SourceURL, SourceVersion: changedCandidate.SourceVersion,
+			InputPricePerMillion:       changedCandidate.InputPricePerMillion,
+			CachedInputPricePerMillion: changedCandidate.CachedInputPricePerMillion,
+			OutputPricePerMillion:      changedCandidate.OutputPricePerMillion,
+			LocalModelID:               changedCandidate.LocalModelID, LocalPriceVersionID: changedCandidate.LocalPriceVersionID,
+			Active: false,
+		},
+	}}
+	applyBodyBytes, err := json.Marshal(applyPayload)
+	if err != nil {
+		t.Fatalf("marshal apply request: %v", err)
+	}
+	applyBody := string(applyBodyBytes)
+	tamperedPayload := applyPayload
+	tamperedPayload.Items = append([]apiModelSyncSelectionRequest(nil), applyPayload.Items...)
+	tamperedPayload.Items[0].OutputPricePerMillion = "0.000001"
+	tamperedBodyBytes, err := json.Marshal(tamperedPayload)
+	if err != nil {
+		t.Fatalf("marshal tampered apply request: %v", err)
+	}
+	tamperedRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", string(tamperedBodyBytes))
+	addAuth(tamperedRequest, adminSession, "models-dev-apply-tampered")
+	tamperedResponse := httptest.NewRecorder()
+	server.ServeHTTP(tamperedResponse, tamperedRequest)
+	if tamperedResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("tampered apply status %d body %s", tamperedResponse.Code, tamperedResponse.Body.String())
+	}
+
+	applyRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", applyBody)
+	addAuth(applyRequest, adminSession, "models-dev-apply")
+	applyResponse := httptest.NewRecorder()
+	server.ServeHTTP(applyResponse, applyRequest)
+	if applyResponse.Code != http.StatusOK || !strings.Contains(applyResponse.Body.String(), `"created":1`) || !strings.Contains(applyResponse.Body.String(), `"updated":1`) {
+		t.Fatalf("apply status %d body %s", applyResponse.Code, applyResponse.Body.String())
+	}
+
+	replayRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", applyBody)
+	addAuth(replayRequest, adminSession, "models-dev-apply")
+	replayResponse := httptest.NewRecorder()
+	server.ServeHTTP(replayResponse, replayRequest)
+	if replayResponse.Code != http.StatusOK || replayResponse.Body.String() != applyResponse.Body.String() {
+		t.Fatalf("replay status %d body %s", replayResponse.Code, replayResponse.Body.String())
+	}
+
+	modelsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-models", nil)
+	addCookie(modelsRequest, adminSession.cookie)
+	modelsResponse := httptest.NewRecorder()
+	server.ServeHTTP(modelsResponse, modelsRequest)
+	var models listResponse[apiModelResponse]
+	if err := json.NewDecoder(modelsResponse.Body).Decode(&models); err != nil {
+		t.Fatalf("decode models: %v", err)
+	}
+	modelID := ""
+	modelVersion := int64(0)
+	priceUpdated := false
+	for _, model := range models.Items {
+		if model.ModelKey == "gpt-sync-test" {
+			if model.Active {
+				t.Fatalf("new synced model must default inactive: %+v", model)
+			}
+			modelID = model.ID
+			modelVersion = model.Version
+		}
+		if model.ModelKey == "gpt-4.1-mini" {
+			priceUpdated = model.Active && model.InputPricePerMillion == "0.500000" && model.OutputPricePerMillion == "1.800000" && model.CurrentPriceVersionID != changedCandidate.LocalPriceVersionID
+		}
+	}
+	if modelID == "" {
+		t.Fatal("expected synced model in admin catalog")
+	}
+	if !priceUpdated {
+		t.Fatal("expected existing model price version to update without deactivation")
+	}
+
+	lifecycleRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/"+modelID+"/reactivate", `{"reason":"确认同步结果后启用模型"}`)
+	lifecycleRequest.Header.Set("If-Match", fmt.Sprintf(`"%d"`, modelVersion))
+	addAuth(lifecycleRequest, adminSession, "models-dev-reactivate")
+	lifecycleResponse := httptest.NewRecorder()
+	server.ServeHTTP(lifecycleResponse, lifecycleRequest)
+	if lifecycleResponse.Code != http.StatusOK || !strings.Contains(lifecycleResponse.Body.String(), `"status":"active"`) {
+		t.Fatalf("reactivate synced model %d body %s", lifecycleResponse.Code, lifecycleResponse.Body.String())
+	}
+
+	publicRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-models", nil)
+	publicResponse := httptest.NewRecorder()
+	server.ServeHTTP(publicResponse, publicRequest)
+	if publicResponse.Code != http.StatusOK || !strings.Contains(publicResponse.Body.String(), `"modelKey":"gpt-sync-test"`) {
+		t.Fatalf("public catalog status %d body %s", publicResponse.Code, publicResponse.Body.String())
+	}
+
+	service.ConfigureModelsDevSource(staticModelsDevSource{err: modelsdev.ErrUnavailable})
+	unavailableRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/preview", previewBody)
+	addCookie(unavailableRequest, adminSession.cookie)
+	unavailableResponse := httptest.NewRecorder()
+	server.ServeHTTP(unavailableResponse, unavailableRequest)
+	if unavailableResponse.Code != http.StatusBadGateway || !strings.Contains(unavailableResponse.Body.String(), `"code":"EXTERNAL_SOURCE_UNAVAILABLE"`) {
+		t.Fatalf("unavailable preview status %d body %s", unavailableResponse.Code, unavailableResponse.Body.String())
+	}
+}
+
 func TestAdminAPIModelValidationAndAuth(t *testing.T) {
 	server := newTestServer(time.Now())
 	adminSession := createSession(t, server, "admin-api-model-validation", true)
 	userSession := createSession(t, server, "user-api-model-validation", false)
 	provider := createAdminAPIModelProvider(t, server, adminSession, "validation-openai", "api-model-validation-provider-create")
+	grokProviderRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-model-providers", apiModelProviderPayload("grok", "validation-xai", "xAI Validation", true))
+	addAuth(grokProviderRequest, adminSession, "api-model-validation-grok-provider-create")
+	grokProviderResponse := httptest.NewRecorder()
+	server.ServeHTTP(grokProviderResponse, grokProviderRequest)
+	if grokProviderResponse.Code != http.StatusCreated || !strings.Contains(grokProviderResponse.Body.String(), `"providerCategory":"grok"`) {
+		t.Fatalf("create Grok provider status %d body %s", grokProviderResponse.Code, grokProviderResponse.Body.String())
+	}
 
 	nonAdminList := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-models", nil)
 	addCookie(nonAdminList, userSession.cookie)
@@ -778,7 +1123,6 @@ func TestAdminAPIModelValidationAndAuth(t *testing.T) {
 		body string
 	}{
 		{name: "invalid-provider", body: apiModelPayload("00000000-0000-0000-0000-00000000ffff", "bad-provider-model", "Bad Provider", "0.1", "", "0.2", "pricing", true)},
-		{name: "empty-display-name", body: apiModelPayload(provider.ID, "empty-display-model", "", "0.1", "", "0.2", "pricing", true)},
 		{name: "empty-capabilities", body: apiModelPayloadWithCapabilities(provider.ID, "empty-cap-model", "Empty Cap", []string{}, "0.1", "", "0.2", "pricing", true)},
 		{name: "invalid-capabilities", body: apiModelPayloadWithCapabilities(provider.ID, "bad-cap-model", "Bad Cap", []string{"chat", "audio"}, "0.1", "", "0.2", "pricing", true)},
 		{name: "negative-price", body: apiModelPayload(provider.ID, "negative-price-model", "Negative Price", "-0.1", "", "0.2", "pricing", true)},
@@ -796,8 +1140,8 @@ func TestAdminAPIModelValidationAndAuth(t *testing.T) {
 		}
 	}
 
-	deactivateProviderRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-model-providers/"+provider.ID+"/deactivate", `{}`)
-	addAuth(deactivateProviderRequest, adminSession, "api-model-provider-deactivate-validation")
+	deactivateProviderRequest := catalogDeprecateRequest("/api/v1/admin/api-model-providers/"+provider.ID, provider.Version)
+	addAuth(deactivateProviderRequest, adminSession, "api-model-provider-deprecate-validation")
 	deactivateProviderResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateProviderResponse, deactivateProviderRequest)
 	if deactivateProviderResponse.Code != http.StatusOK {
@@ -819,8 +1163,8 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Inactive API Owner TG", "@inactive_api_owner")
 	model := createAdminAPIModel(t, server, adminSession, "inactive-service-model", "inactive-model-create")
 
-	deactivateRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/"+model.ID+"/deactivate", `{}`)
-	addAuth(deactivateRequest, adminSession, "inactive-model-deactivate")
+	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/api-models/"+model.ID, model.Version)
+	addAuth(deactivateRequest, adminSession, "inactive-model-deprecate")
 	deactivateResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateResponse, deactivateRequest)
 	if deactivateResponse.Code != http.StatusOK {
@@ -831,7 +1175,7 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	addAuth(createWithInactive, ownerSession, "api-service-inactive-model-create")
 	createWithInactiveResponse := httptest.NewRecorder()
 	server.ServeHTTP(createWithInactiveResponse, createWithInactive)
-	if createWithInactiveResponse.Code != http.StatusNotFound {
+	if createWithInactiveResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(createWithInactiveResponse.Body.String(), `"code":"INVALID_STATE_TRANSITION"`) {
 		t.Fatalf("inactive model create should fail, got %d body %s", createWithInactiveResponse.Code, createWithInactiveResponse.Body.String())
 	}
 
@@ -841,7 +1185,7 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	updateWithInactive.Header.Set("If-Match", `"`+strconv.FormatInt(service.Version, 10)+`"`)
 	updateWithInactiveResponse := httptest.NewRecorder()
 	server.ServeHTTP(updateWithInactiveResponse, updateWithInactive)
-	if updateWithInactiveResponse.Code != http.StatusNotFound {
+	if updateWithInactiveResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(updateWithInactiveResponse.Body.String(), `"code":"INVALID_STATE_TRANSITION"`) {
 		t.Fatalf("inactive model update should fail, got %d body %s", updateWithInactiveResponse.Code, updateWithInactiveResponse.Body.String())
 	}
 }
@@ -869,8 +1213,8 @@ func TestInactiveAPIModelProviderHidesPublicModels(t *testing.T) {
 		t.Fatalf("public list should include model before provider deactivate, got %s", publicBeforeDeactivateResponse.Body.String())
 	}
 
-	deactivateProviderRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-model-providers/"+provider.ID+"/deactivate", `{}`)
-	addAuth(deactivateProviderRequest, adminSession, "provider-hide-public-deactivate")
+	deactivateProviderRequest := catalogDeprecateRequest("/api/v1/admin/api-model-providers/"+provider.ID, provider.Version)
+	addAuth(deactivateProviderRequest, adminSession, "provider-hide-public-deprecate")
 	deactivateProviderResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateProviderResponse, deactivateProviderRequest)
 	if deactivateProviderResponse.Code != http.StatusOK {
@@ -907,8 +1251,7 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 		"code":"vpn",
 		"displayName":"VPN",
 		"iconDataUrl":"data:image/png;base64,aGVsbG8=",
-		"sortOrder":60,
-		"active":true
+		"sortOrder":60
 	}`)
 	addAuth(createCategoryRequest, adminSession, "product-category-create")
 	createCategoryResponse := httptest.NewRecorder()
@@ -928,8 +1271,7 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 		"code":"invalid-icon",
 		"displayName":"Invalid icon",
 		"iconDataUrl":"data:image/svg+xml;base64,PHN2Zz4=",
-		"sortOrder":61,
-		"active":true
+		"sortOrder":61
 	}`)
 	addAuth(invalidIconRequest, adminSession, "product-category-invalid-icon")
 	invalidIconResponse := httptest.NewRecorder()
@@ -953,8 +1295,8 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 		t.Fatalf("expected plan to use created category, got %+v", plan)
 	}
 
-	deactivateCategoryRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/product-categories/"+category.ID+"/deactivate", `{}`)
-	addAuth(deactivateCategoryRequest, adminSession, "product-category-deactivate")
+	deactivateCategoryRequest := catalogDeprecateRequest("/api/v1/admin/product-categories/"+category.ID, category.Version)
+	addAuth(deactivateCategoryRequest, adminSession, "product-category-deprecate")
 	deactivateCategoryResponse := httptest.NewRecorder()
 	server.ServeHTTP(deactivateCategoryResponse, deactivateCategoryRequest)
 	if deactivateCategoryResponse.Code != http.StatusOK {
@@ -1183,7 +1525,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	if listing.Status != app.CarpoolListingStatusDraft || listing.Version != 1 {
 		t.Fatalf("unexpected created listing: %+v", listing)
 	}
-	if listing.ServiceMultiplier != "1.0000" || listing.WeeklyQuotaAmount == nil || *listing.WeeklyQuotaAmount != "50.00" || listing.MonthlyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
+	if listing.ServiceMultiplier != "1.0000" || listing.DailyQuotaAmount == nil || *listing.DailyQuotaAmount != "50.00" || listing.WeeklyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
 		t.Fatalf("expected structured multiplier and quota fields, got %+v", listing)
 	}
 	if listing.RegionCode != "other" || listing.RegionName != "印度区" {
@@ -1311,6 +1653,60 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 }
 
+func TestMyCarpoolViewsAndOwnerDetail(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "owner-listing-view")
+	otherSession := createLinuxDoSession(t, server, "other-listing-view")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Owner Listing View", "@owner_listing_view")
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "owner-listing-view-create")
+
+	needsEdit := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=needs_edit&limit=1", nil)
+	addCookie(needsEdit, ownerSession.cookie)
+	needsEditResponse := httptest.NewRecorder()
+	server.ServeHTTP(needsEditResponse, needsEdit)
+	if needsEditResponse.Code != http.StatusOK || !strings.Contains(needsEditResponse.Body.String(), listing.ID) {
+		t.Fatalf("expected draft in needs-edit view, got %d body %s", needsEditResponse.Code, needsEditResponse.Body.String())
+	}
+
+	recruiting := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=recruiting&limit=1", nil)
+	addCookie(recruiting, ownerSession.cookie)
+	recruitingResponse := httptest.NewRecorder()
+	server.ServeHTTP(recruitingResponse, recruiting)
+	if recruitingResponse.Code != http.StatusOK || strings.Contains(recruitingResponse.Body.String(), listing.ID) {
+		t.Fatalf("draft must not appear in recruiting view, got %d body %s", recruitingResponse.Code, recruitingResponse.Body.String())
+	}
+
+	detail := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools/"+listing.ID, nil)
+	addCookie(detail, ownerSession.cookie)
+	detailResponse := httptest.NewRecorder()
+	server.ServeHTTP(detailResponse, detail)
+	if detailResponse.Code != http.StatusOK || !strings.Contains(detailResponse.Body.String(), listing.ID) {
+		t.Fatalf("expected owner detail, got %d body %s", detailResponse.Code, detailResponse.Body.String())
+	}
+	if detailResponse.Header().Get("ETag") != `"1"` {
+		t.Fatalf("expected owner detail ETag, got %q", detailResponse.Header().Get("ETag"))
+	}
+
+	otherDetail := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools/"+listing.ID, nil)
+	addCookie(otherDetail, otherSession.cookie)
+	otherDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(otherDetailResponse, otherDetail)
+	if otherDetailResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected non-owner detail 404, got %d body %s", otherDetailResponse.Code, otherDetailResponse.Body.String())
+	}
+
+	invalidView := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=unknown", nil)
+	addCookie(invalidView, ownerSession.cookie)
+	invalidViewResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidViewResponse, invalidView)
+	if invalidViewResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected invalid view 422, got %d body %s", invalidViewResponse.Code, invalidViewResponse.Body.String())
+	}
+	assertProblemCode(t, invalidViewResponse, "VALIDATION_FAILED")
+}
+
 func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
 	ownerSession := createLinuxDoSession(t, server, "review-route-owner")
@@ -1371,9 +1767,14 @@ func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	}
 
 	ownerCenter := listTransactionReviewsHTTP(t, server, ownerSession)
-	sealedReceived := findReviewDTO(t, ownerCenter.Items, "received", membership.ID)
-	if sealedReceived.Visibility != "sealed" || sealedReceived.Rating != nil || sealedReceived.Note != nil || len(sealedReceived.Tags) != 0 {
-		t.Fatalf("sealed review leaked through HTTP response: %+v", sealedReceived)
+	ownerPending := findReviewDTO(t, ownerCenter.Items, "pending", membership.ID)
+	if !ownerPending.CanCreate || !containsReviewTagDTO(ownerPending.AllowedTags, "quick_payment") {
+		t.Fatalf("owner pending row did not include seller-to-buyer tags: %+v", ownerPending)
+	}
+	for _, item := range ownerCenter.Items {
+		if item.TransactionID == membership.ID && item.Direction == "received" {
+			t.Fatalf("sealed counterparty submission must not be observable through HTTP: %+v", item)
+		}
 	}
 
 	ownerReview := submitTransactionReviewHTTP(
@@ -1439,6 +1840,15 @@ func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	if removedReceived.Visibility != "removed" || removedReceived.Rating != nil || removedReceived.Note != nil || len(removedReceived.Tags) != 0 {
 		t.Fatalf("removed review content remained visible: %+v", removedReceived)
 	}
+}
+
+func containsReviewTagDTO(items []reviewTagDTO, code string) bool {
+	for _, item := range items {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {
@@ -1538,46 +1948,44 @@ func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
 
 func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testing.T) {
 	server := newTestServer(time.Now())
-	ownerSession := createSession(t, server, "direct-publish-unbound-owner", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Unbound Direct Publish TG", "@direct_unbound_owner")
+	ownerSession := createStudentSession(t, server, "direct-publish-student")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Direct Publish TG", "@direct_student_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", carpoolPayloadWithRiskAck(ownerContact.ID))
-	addAuth(request, ownerSession, "carpool-direct-publish-unbound")
+	addAuth(request, ownerSession, "carpool-direct-publish-student")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected unbound direct publish failure, got %d body %s", response.Code, response.Body.String())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected student direct publish failure, got %d body %s", response.Code, response.Body.String())
 	}
-	assertProblemCode(t, response, "VALIDATION_FAILED")
+	assertProblemCode(t, response, domain.CodeCapabilityRequired)
 
-	mine := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools", nil)
-	addCookie(mine, ownerSession.cookie)
-	mineResponse := httptest.NewRecorder()
-	server.ServeHTTP(mineResponse, mine)
-	if mineResponse.Code != http.StatusOK {
-		t.Fatalf("list my carpools status %d body %s", mineResponse.Code, mineResponse.Body.String())
+	adminSession := createSession(t, server, "direct-publish-audit-admin", true)
+	all := httptest.NewRequest(http.MethodGet, "/api/v1/admin/carpools", nil)
+	addCookie(all, adminSession.cookie)
+	allResponse := httptest.NewRecorder()
+	server.ServeHTTP(allResponse, all)
+	if allResponse.Code != http.StatusOK {
+		t.Fatalf("list admin carpools status %d body %s", allResponse.Code, allResponse.Body.String())
 	}
-	if strings.Contains(mineResponse.Body.String(), "ChatGPT Pro 20x Web 费用分摊") {
-		t.Fatalf("failed direct publish must not leave draft residue, got %s", mineResponse.Body.String())
+	if strings.Contains(allResponse.Body.String(), "ChatGPT Pro 20x Web 费用分摊") {
+		t.Fatalf("failed student direct publish must not leave draft residue, got %s", allResponse.Body.String())
 	}
 }
 
 func TestCarpoolPublishRequiresLinuxDoBinding(t *testing.T) {
 	server := newTestServer(time.Now())
-	ownerSession := createSession(t, server, "carpool-unbound-owner", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Unbound Owner TG", "@unbound_owner")
-	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "carpool-unbound-create")
+	ownerSession := createStudentSession(t, server, "carpool-student-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Owner TG", "@student_owner")
 
-	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+listing.ID+"/submit-review", `{}`)
-	addAuth(request, ownerSession, "carpool-unbound-publish")
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(listing.Version, 10)+`"`)
+	request := newJSONRequest(http.MethodPost, "/api/v1/carpools", carpoolPayloadWithRiskAck(ownerContact.ID))
+	addAuth(request, ownerSession, "carpool-student-create")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected unbound linux.do publish failure, got %d body %s", response.Code, response.Body.String())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected student carpool create failure, got %d body %s", response.Code, response.Body.String())
 	}
-	assertProblemCode(t, response, "VALIDATION_FAILED")
-	assertPublicCarpoolVisible(t, server, listing.ID, false)
+	assertProblemCode(t, response, domain.CodeCapabilityRequired)
 }
 
 func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
@@ -1649,22 +2057,16 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 		t.Fatalf("draft API service must not be public, got %d body %s", publicBeforeResponse.Code, publicBeforeResponse.Body.String())
 	}
 
-	unboundSession := createSession(t, server, "api-unbound-owner", false)
-	unboundContact := createContactMethod(t, server, unboundSession, "telegram", "API Unbound Owner TG", "@api_unbound_owner")
-	unboundService := createAPIService(t, server, unboundSession, unboundContact.ID, "api-service-unbound-create")
-	unboundSubmit := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services/"+unboundService.ID+"/submit-review", `{}`)
-	addAuth(unboundSubmit, unboundSession, "api-service-unbound-submit")
-	unboundSubmit.Header.Set("If-Match", `"`+strconv.FormatInt(unboundService.Version, 10)+`"`)
-	unboundResponse := httptest.NewRecorder()
-	server.ServeHTTP(unboundResponse, unboundSubmit)
-	if unboundResponse.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected unbound linux.do submit failure, got %d body %s", unboundResponse.Code, unboundResponse.Body.String())
+	studentSession := createStudentSession(t, server, "api-student-owner")
+	studentContact := createContactMethod(t, server, studentSession, "telegram", "API Student Owner TG", "@api_student_owner")
+	studentCreate := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", apiServicePayload(studentContact.ID, "1.0000"))
+	addAuth(studentCreate, studentSession, "api-service-student-create")
+	studentResponse := httptest.NewRecorder()
+	server.ServeHTTP(studentResponse, studentCreate)
+	if studentResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected student API service create failure, got %d body %s", studentResponse.Code, studentResponse.Body.String())
 	}
-	assertProblemCode(t, unboundResponse, "VALIDATION_FAILED")
-	unboundCurrent := getOwnerAPIService(t, server, unboundSession, unboundService.ID)
-	if unboundCurrent.ReviewStatus != app.APIServiceReviewStatusDraft || unboundCurrent.Version != unboundService.Version {
-		t.Fatalf("unbound submit must keep draft state, got %+v", unboundCurrent)
-	}
+	assertProblemCode(t, studentResponse, domain.CodeCapabilityRequired)
 
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-service-submit")
 	if submitted.ReviewStatus != app.APIServiceReviewStatusApproved ||
@@ -1909,7 +2311,7 @@ func TestAPIPurchaseIntentCreateContactAndLifecycleFlow(t *testing.T) {
 func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-order-owner")
-	buyerSession := createSession(t, server, "api-order-buyer", false)
+	buyerSession := createStudentSession(t, server, "api-order-buyer")
 	adminSession := createSession(t, server, "api-order-admin", true)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Order Owner TG", "@api_order_owner")
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Order Buyer TG", "@api_order_buyer")
@@ -2014,9 +2416,24 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	disputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-dispute-intent")
 	disputeOrder := createAPIOrder(t, server, buyerSession, disputeIntent.ID, "wechat", "api-order-dispute-create")
 	disputePaid := apiOrderAction(t, server, buyerSession, "me", disputeOrder.ID, "submit-payment", disputeOrder.Version, "api-order-dispute-submit-payment", `{"paymentSummary":"已付款但站外确认存在争议。"}`)
-	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"reason":"付款后商户未按站外确认说明继续处理。"}`)
-	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "open" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
+	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"issueCode":"not_delivered","requestedResolution":"full_refund","requestedAmountCny":"","reason":"付款后商户未按站外确认说明继续处理。"}`)
+	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "negotiating" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
+	}
+	buyerDisputeDetail := getMyDispute(t, server, buyerSession, disputed.DisputeCaseID)
+	ownerDisputeDetail := getMyDispute(t, server, ownerSession, disputed.DisputeCaseID)
+	if buyerDisputeDetail.IssueCode != "not_delivered" ||
+		buyerDisputeDetail.RequestedResolution != "full_refund" ||
+		buyerDisputeDetail.RequestedAmountCNY != "" ||
+		len(buyerDisputeDetail.Messages) != 1 ||
+		buyerDisputeDetail.Messages[0].SenderUserID != buyerSession.userID ||
+		buyerDisputeDetail.Messages[0].Body != "付款后商户未按站外确认说明继续处理。" {
+		t.Fatalf("unexpected buyer dispute detail: %+v", buyerDisputeDetail)
+	}
+	if ownerDisputeDetail.IssueCode != buyerDisputeDetail.IssueCode ||
+		ownerDisputeDetail.RequestedResolution != buyerDisputeDetail.RequestedResolution ||
+		len(ownerDisputeDetail.Messages) != len(buyerDisputeDetail.Messages) {
+		t.Fatalf("participants must read the same dispute facts: buyer=%+v owner=%+v", buyerDisputeDetail, ownerDisputeDetail)
 	}
 
 	buyerDisputes, buyerDisputesBody := listMyDisputes(t, server, buyerSession)
@@ -2042,6 +2459,40 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	outsiderDisputes, _ := listMyDisputes(t, server, outsiderSession)
 	if len(outsiderDisputes.Items) != 0 {
 		t.Fatalf("expected outsider dispute list to be empty, got %+v", outsiderDisputes.Items)
+	}
+	outsiderDetailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/disputes/"+disputed.DisputeCaseID, nil)
+	addCookie(outsiderDetailRequest, outsiderSession.cookie)
+	outsiderDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(outsiderDetailResponse, outsiderDetailRequest)
+	if outsiderDetailResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected outsider dispute detail to be hidden, got %d body %s", outsiderDetailResponse.Code, outsiderDetailResponse.Body.String())
+	}
+	assertProblemCode(t, outsiderDetailResponse, domain.CodeObjectNotFound)
+
+	withOwnerMessage := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "messages", "api-order-dispute-owner-message", `{"body":"已核对订单，当前交付仍需补充处理。"}`)
+	if len(withOwnerMessage.Messages) != 2 || withOwnerMessage.Messages[1].SenderUserID != ownerSession.userID {
+		t.Fatalf("expected immutable owner message in dispute history, got %+v", withOwnerMessage.Messages)
+	}
+	pendingProposal := disputeParticipantAction(t, server, buyerSession, disputed.DisputeCaseID, "settlement-proposals", "api-order-dispute-buyer-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"请商户继续完成本订单交付。"}`)
+	if len(pendingProposal.SettlementProposals) != 1 || pendingProposal.SettlementProposals[0].Status != "pending" {
+		t.Fatalf("expected pending buyer proposal, got %+v", pendingProposal.SettlementProposals)
+	}
+	pendingProposalID := pendingProposal.SettlementProposals[0].ID
+	escalatedDispute := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "escalate", "api-order-dispute-owner-escalate", `{"reason":"双方对交付时点仍无法达成一致。"}`)
+	if escalatedDispute.Status != "open" || len(escalatedDispute.SettlementProposals) != 1 || escalatedDispute.SettlementProposals[0].Status != "superseded" {
+		t.Fatalf("platform escalation must preserve and supersede pending proposal history: %+v", escalatedDispute)
+	}
+	confirmAfterEscalation := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputed.DisputeCaseID+"/settlement-proposals/"+pendingProposalID+"/confirm", `{}`)
+	addAuth(confirmAfterEscalation, ownerSession, "api-order-dispute-confirm-after-escalation")
+	confirmAfterEscalationResponse := httptest.NewRecorder()
+	server.ServeHTTP(confirmAfterEscalationResponse, confirmAfterEscalation)
+	if confirmAfterEscalationResponse.Code != http.StatusConflict {
+		t.Fatalf("expected proposal confirmation after escalation to fail, got %d body %s", confirmAfterEscalationResponse.Code, confirmAfterEscalationResponse.Body.String())
+	}
+	assertProblemCode(t, confirmAfterEscalationResponse, domain.CodeInvalidStateTransition)
+	escalatedOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
+	if escalatedOrder.DisputeStatus != "open" || escalatedOrder.Status != disputed.Status || escalatedOrder.Version != disputed.Version+1 {
+		t.Fatalf("platform escalation must only advance the dispute projection: before=%+v after=%+v", disputed, escalatedOrder)
 	}
 
 	openAppealRequest := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
@@ -2083,16 +2534,53 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	assertProblemCode(t, outsiderAppealResponse, domain.CodeObjectNotFound)
 
-	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
+	blockedIntentRequest := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+orderable.ID+"/purchase-intents", apiPurchaseIntentPayload(buyerContact.ID))
+	addAuth(blockedIntentRequest, buyerSession, "api-order-active-dispute-blocks-new-intent")
+	blockedIntentResponse := httptest.NewRecorder()
+	server.ServeHTTP(blockedIntentResponse, blockedIntentRequest)
+	if blockedIntentResponse.Code != http.StatusConflict {
+		t.Fatalf("expected active seller dispute to block new purchase intent, got %d body %s", blockedIntentResponse.Code, blockedIntentResponse.Body.String())
+	}
+	assertProblemCode(t, blockedIntentResponse, domain.CodeActiveAPIOrderDispute)
+
+	merchantOwnerSession := createLinuxDoSession(t, server, "api-order-merchant-dispute-owner")
+	merchantOwnerContact := createContactMethod(t, server, merchantOwnerSession, "telegram", "Merchant Dispute Owner TG", "@merchant_dispute_owner")
+	merchantService := createAPIService(t, server, merchantOwnerSession, merchantOwnerContact.ID, "api-order-merchant-dispute-service-create")
+	merchantSubmitted := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantService.ID, "submit-review", merchantService.Version, "api-order-merchant-dispute-service-submit")
+	merchantPublished := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantSubmitted.ID, "publish", merchantSubmitted.Version, "api-order-merchant-dispute-service-publish")
+	merchantOrderable := updateAPIServiceOrderSettings(t, server, merchantOwnerSession, merchantPublished.ID, merchantPublished.Version, true, "api-order-merchant-dispute-service-settings")
+	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, merchantOrderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
 	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
 	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
-	merchantDisputed := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", `{"reason":"收款记录与买家提交的信息不一致，需要平台协助核对。"}`)
-	if merchantDisputed.DisputeStatus != "open" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
+	merchantDisputeBody := `{"issueCode":"payment_dispute","requestedResolution":"other","requestedAmountCny":"","reason":"收款记录与买家提交的信息不一致，需要双方协商核对。"}`
+	merchantDisputed := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
+	if merchantDisputed.DisputeStatus != "negotiating" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
 		t.Fatalf("unexpected merchant-opened API order dispute: %+v", merchantDisputed)
 	}
-	merchantDisputeReplay := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", `{"reason":"收款记录与买家提交的信息不一致，需要平台协助核对。"}`)
+	merchantDisputeReplay := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
 	if merchantDisputeReplay.DisputeCaseID != merchantDisputed.DisputeCaseID || merchantDisputeReplay.Version != merchantDisputed.Version {
 		t.Fatalf("expected idempotent merchant dispute replay, got %+v and %+v", merchantDisputed, merchantDisputeReplay)
+	}
+	merchantProposal := disputeParticipantAction(t, server, merchantOwnerSession, merchantDisputed.DisputeCaseID, "settlement-proposals", "api-order-merchant-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"商户将在约定时间内继续完成交付。"}`)
+	if len(merchantProposal.SettlementProposals) != 1 || merchantProposal.SettlementProposals[0].ProposedByUserID != merchantOwnerSession.userID {
+		t.Fatalf("expected seller proposal, got %+v", merchantProposal.SettlementProposals)
+	}
+	merchantProposalID := merchantProposal.SettlementProposals[0].ID
+	selfConfirm := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+merchantDisputed.DisputeCaseID+"/settlement-proposals/"+merchantProposalID+"/confirm", `{}`)
+	addAuth(selfConfirm, merchantOwnerSession, "api-order-merchant-self-confirm")
+	selfConfirmResponse := httptest.NewRecorder()
+	server.ServeHTTP(selfConfirmResponse, selfConfirm)
+	if selfConfirmResponse.Code != http.StatusConflict {
+		t.Fatalf("expected proposal creator self-confirmation to fail, got %d body %s", selfConfirmResponse.Code, selfConfirmResponse.Body.String())
+	}
+	assertProblemCode(t, selfConfirmResponse, domain.CodeInvalidStateTransition)
+	merchantAgreement := disputeParticipantAction(t, server, buyerSession, merchantDisputed.DisputeCaseID, "settlement-proposals/"+merchantProposalID+"/confirm", "api-order-buyer-confirm-merchant-proposal", `{}`)
+	if merchantAgreement.Status != "closed" || len(merchantAgreement.SettlementProposals) != 1 || merchantAgreement.SettlementProposals[0].Status != "accepted" {
+		t.Fatalf("counterparty confirmation must close the agreed dispute, got %+v", merchantAgreement)
+	}
+	merchantAgreedOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", merchantDisputed.ID)
+	if merchantAgreedOrder.DisputeStatus != "closed" || merchantAgreedOrder.Status != merchantDisputed.Status || merchantAgreedOrder.Version != merchantDisputed.Version+1 {
+		t.Fatalf("agreement must only close the dispute projection: before=%+v after=%+v", merchantDisputed, merchantAgreedOrder)
 	}
 	adminDisputes := listAdminDisputes(t, server, adminSession)
 	foundDispute := false
@@ -2134,8 +2622,16 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if err := json.NewDecoder(resolveDisputeResponse.Body).Decode(&resolvedDispute); err != nil {
 		t.Fatalf("decode resolved API order dispute: %v", err)
 	}
-	if resolvedDispute.Dispute == nil || resolvedDispute.Dispute.Status != "resolved" || resolvedDispute.Dispute.Version != adminDispute.Version+1 {
+	if resolvedDispute.Dispute == nil || resolvedDispute.Dispute.Status != "closed" || resolvedDispute.Dispute.Version != adminDispute.Version+1 {
 		t.Fatalf("unexpected resolved API order dispute: %#v", resolvedDispute.Dispute)
+	}
+	resolvedBuyerOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
+	resolvedOwnerOrder := getAPIOrder(t, server, ownerSession, "owner", disputed.ID)
+	if resolvedBuyerOrder.DisputeStatus != "closed" || resolvedOwnerOrder.DisputeStatus != "closed" {
+		t.Fatalf("resolved dispute must project closed to both participants: buyer=%+v owner=%+v", resolvedBuyerOrder, resolvedOwnerOrder)
+	}
+	if resolvedBuyerOrder.Status != disputed.Status || resolvedOwnerOrder.Status != disputed.Status || resolvedBuyerOrder.Version != escalatedOrder.Version+1 || resolvedOwnerOrder.Version != escalatedOrder.Version+1 {
+		t.Fatalf("dispute projection must preserve order lifecycle and increment once: before=%+v buyer=%+v owner=%+v", disputed, resolvedBuyerOrder, resolvedOwnerOrder)
 	}
 	resolvedBuyerDisputes, _ := listMyDisputes(t, server, buyerSession)
 	resolvedBuyerDispute, foundResolvedBuyerDispute := findCreatedDispute(resolvedBuyerDisputes.Items, disputed.DisputeCaseID)
@@ -2201,6 +2697,25 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	assertProblemCode(t, missingOutcomeVersionResponse, domain.CodePreconditionRequired)
 
+	blockedFaultOutcome := newJSONRequest(http.MethodPost, outcomePath, outcomeBody)
+	addAuth(blockedFaultOutcome, adminSession, "api-order-create-fault-outcome-without-overdue")
+	blockedFaultOutcome.Header.Set("If-Match", `"`+strconv.FormatInt(resolvedDispute.Dispute.Version, 10)+`"`)
+	blockedFaultOutcomeResponse := httptest.NewRecorder()
+	server.ServeHTTP(blockedFaultOutcomeResponse, blockedFaultOutcome)
+	if blockedFaultOutcomeResponse.Code != http.StatusConflict {
+		t.Fatalf("fault outcome without overdue remedy status %d body %s", blockedFaultOutcomeResponse.Code, blockedFaultOutcomeResponse.Body.String())
+	}
+	assertProblemCode(t, blockedFaultOutcomeResponse, domain.CodeInvalidStateTransition)
+
+	outcomeBody = `{
+		"subjectUserId":"` + adminDispute.SubjectUserID + `",
+		"responsibility":"not_responsible",
+		"severity":"none",
+		"roleScope":"seller",
+		"reasonCode":"invalid_claim",
+		"publicReason":"根据现有记录未认定商户承担责任。",
+		"internalReason":"管理员复核后认定现有事实不支持责任结论。"
+	}`
 	createOutcome := newJSONRequest(http.MethodPost, outcomePath, outcomeBody)
 	addAuth(createOutcome, adminSession, "api-order-create-outcome")
 	createOutcome.Header.Set("If-Match", `"`+strconv.FormatInt(resolvedDispute.Dispute.Version, 10)+`"`)
@@ -2216,7 +2731,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if outcomeMutation.Outcome == nil ||
 		outcomeMutation.Outcome.DisputeCaseID != adminDispute.ID ||
 		outcomeMutation.Outcome.SubjectUserID != adminDispute.SubjectUserID ||
-		outcomeMutation.Outcome.Responsibility != "responsible" ||
+		outcomeMutation.Outcome.Responsibility != "not_responsible" ||
 		outcomeMutation.Outcome.RoleScope != "seller" ||
 		outcomeMutation.Outcome.DisputeVersion != resolvedDispute.Dispute.Version+1 {
 		t.Fatalf("unexpected dispute reputation outcome: %#v", outcomeMutation.Outcome)
@@ -2342,6 +2857,52 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		t.Fatalf("expected duplicate order conflict, got %d body %s", duplicateResponse.Code, duplicateResponse.Body.String())
 	}
 	assertProblemCode(t, duplicateResponse, "API_PURCHASE_INTENT_HAS_ORDER")
+}
+
+func TestCarpoolEligibilityReturnsCapabilityReasonForStudent(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "eligibility-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Eligibility Owner TG", "@eligibility_owner")
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "eligibility-listing-create")
+	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "eligibility-listing-publish")
+	studentSession := createStudentSession(t, server, "eligibility-student")
+
+	eligibility := getCarpoolEligibility(t, server, studentSession, published.ID)
+	if eligibility.Code != "capability_required" || eligibility.CanApply || eligibility.ResolutionAction != "link_linuxdo" || eligibility.Reason == "" {
+		t.Fatalf("expected stable student capability eligibility, got %+v", eligibility)
+	}
+}
+
+func TestDisputeParticipantMutationsAuthenticateBeforeJSONDecoding(t *testing.T) {
+	server := newTestServer(time.Now())
+	session := createSession(t, server, "dispute-auth-order", false)
+	paths := []string{
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/messages",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals/00000000-0000-4000-8000-000000000002/confirm",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals/00000000-0000-4000-8000-000000000002/reject",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/escalate",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			unauthenticated := newJSONRequest(http.MethodPost, path, `{`)
+			unauthenticatedResponse := httptest.NewRecorder()
+			server.ServeHTTP(unauthenticatedResponse, unauthenticated)
+			if unauthenticatedResponse.Code != http.StatusUnauthorized {
+				t.Fatalf("expected session validation before JSON decoding, got %d body %s", unauthenticatedResponse.Code, unauthenticatedResponse.Body.String())
+			}
+			assertProblemCode(t, unauthenticatedResponse, domain.CodeSessionExpired)
+
+			missingCSRF := newJSONRequest(http.MethodPost, path, `{`)
+			addCookie(missingCSRF, session.cookie)
+			missingCSRFResponse := httptest.NewRecorder()
+			server.ServeHTTP(missingCSRFResponse, missingCSRF)
+			if missingCSRFResponse.Code != http.StatusForbidden {
+				t.Fatalf("expected CSRF validation before JSON decoding, got %d body %s", missingCSRFResponse.Code, missingCSRFResponse.Body.String())
+			}
+			assertProblemCode(t, missingCSRFResponse, domain.CodeCSRFTokenInvalid)
+		})
+	}
 }
 
 func TestConcurrentAPIOrderCreateForSameIntentReturnsStableConflict(t *testing.T) {
@@ -2650,7 +3211,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		"isDefault":true,
 		"enabled":true
 	}`)
-	addAuth(updateContact, session, "")
+	addAuth(updateContact, session, "update-profile-contact")
 	updateContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(updateContactResponse, updateContact)
 	if updateContactResponse.Code != http.StatusOK {
@@ -2661,7 +3222,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 
 	verifyContact := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/verify", `{}`)
-	addAuth(verifyContact, session, "")
+	addAuth(verifyContact, session, "verify-profile-contact")
 	verifyContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(verifyContactResponse, verifyContact)
 	if verifyContactResponse.Code != http.StatusOK || !strings.Contains(verifyContactResponse.Body.String(), `"verified":true`) {
@@ -2669,7 +3230,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 
 	deleteContact := newJSONRequest(http.MethodDelete, "/api/v1/contact-methods/"+first.ID, `{}`)
-	addAuth(deleteContact, session, "")
+	addAuth(deleteContact, session, "delete-profile-contact")
 	deleteContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(deleteContactResponse, deleteContact)
 	if deleteContactResponse.Code != http.StatusOK || !strings.Contains(deleteContactResponse.Body.String(), `"enabled":false`) {
@@ -2729,6 +3290,11 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if strings.Contains(publicMerchantBody, session.userID) || strings.Contains(publicMerchantBody, "updated-profile@example.com") {
 		t.Fatalf("public merchant profile leaked owner/contact data: %s", publicMerchantBody)
 	}
+	for _, forbidden := range []string{`"profile":`, `"services":`, `"completions":`, `"reviews":`, `"disputes":`} {
+		if strings.Contains(publicMerchantBody, forbidden) {
+			t.Fatalf("public merchant profile retained removed bundle field %s: %s", forbidden, publicMerchantBody)
+		}
+	}
 	if !strings.Contains(publicMerchantBody, `"username":"profile-store"`) || !strings.Contains(publicMerchantBody, `"avatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public merchant slug as username field, got %s", publicMerchantBody)
 	}
@@ -2776,6 +3342,107 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if !strings.Contains(publicIdentityBody, `"merchantDisplayName":"Profile Owner"`) || !strings.Contains(publicIdentityBody, `"merchantProfileSlug":"profile-owner"`) || !strings.Contains(publicIdentityBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-owner.webp"`) {
 		t.Fatalf("expected public API service to expose public profile identity and avatar, got %s", publicIdentityBody)
 	}
+
+	publicUserAfterServices := httptest.NewRequest(http.MethodGet, "/api/v1/users/profile-owner/public-profile", nil)
+	publicUserAfterServicesResponse := httptest.NewRecorder()
+	server.ServeHTTP(publicUserAfterServicesResponse, publicUserAfterServices)
+	if publicUserAfterServicesResponse.Code != http.StatusOK {
+		t.Fatalf("public user after services status %d body %s", publicUserAfterServicesResponse.Code, publicUserAfterServicesResponse.Body.String())
+	}
+	publicUserAfterServicesBody := publicUserAfterServicesResponse.Body.String()
+	if !strings.Contains(publicUserAfterServicesBody, publicIdentityOrderable.ID) {
+		t.Fatalf("public user profile omitted public-identity API service %s: %s", publicIdentityOrderable.ID, publicUserAfterServicesBody)
+	}
+	if strings.Contains(publicUserAfterServicesBody, orderable.ID) {
+		t.Fatalf("public user profile exposed store-alias API service %s: %s", orderable.ID, publicUserAfterServicesBody)
+	}
+	for _, forbidden := range []string{
+		`"ownerUserId":`, `"buyerUserId":`, `"sellerUserId":`, `"ownerContactMethodId":`,
+		`"paymentInstructions":`, `"deliveryCredential":`, `"apiKey":`, `"password":`,
+	} {
+		if strings.Contains(publicUserAfterServicesBody, forbidden) {
+			t.Fatalf("public user profile leaked sensitive field %s: %s", forbidden, publicUserAfterServicesBody)
+		}
+	}
+}
+
+func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotency(t *testing.T) {
+	server := newTestServer(time.Now())
+	student := createStudentSession(t, server, "contact-scope-student")
+
+	sellerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["api_merchant"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(sellerScope, student, "student-contact-scope")
+	sellerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(sellerScopeResponse, sellerScope)
+	if sellerScopeResponse.Code != http.StatusForbidden {
+		t.Fatalf("student seller contact scope status %d body %s", sellerScopeResponse.Code, sellerScopeResponse.Body.String())
+	}
+	assertProblemCode(t, sellerScopeResponse, domain.CodeCapabilityRequired)
+
+	buyerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["dispute","buyer","dispute"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	// 复用被拒绝请求的 key，证明 capability 拒绝发生在幂等 Begin 之前。
+	addAuth(buyerScope, student, "student-contact-scope")
+	buyerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(buyerScopeResponse, buyerScope)
+	if buyerScopeResponse.Code != http.StatusCreated {
+		t.Fatalf("student buyer contact scope status %d body %s", buyerScopeResponse.Code, buyerScopeResponse.Body.String())
+	}
+	var created struct {
+		ID          string   `json:"id"`
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(buyerScopeResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode student contact: %v", err)
+	}
+	if created.ID == "" || len(created.UsageScopes) != 2 || created.UsageScopes[0] != "buyer" || created.UsageScopes[1] != "dispute" {
+		t.Fatalf("unexpected canonical student contact scopes: %+v", created)
+	}
+
+	updateSellerScope := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["carpool_owner","buyer"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(updateSellerScope, student, "")
+	updateSellerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateSellerScopeResponse, updateSellerScope)
+	if updateSellerScopeResponse.Code != http.StatusForbidden {
+		t.Fatalf("student update seller scope status %d body %s", updateSellerScopeResponse.Code, updateSellerScopeResponse.Body.String())
+	}
+	assertProblemCode(t, updateSellerScopeResponse, domain.CodeCapabilityRequired)
+
+	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"未知范围",
+		"value":"unknown-scope",
+		"usageScopes":["unknown_scope"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(unknownScope, student, "student-contact-unknown-scope")
+	unknownScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(unknownScopeResponse, unknownScope)
+	if unknownScopeResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown contact scope status %d body %s", unknownScopeResponse.Code, unknownScopeResponse.Body.String())
+	}
+	assertProblemCode(t, unknownScopeResponse, domain.CodeValidationFailed)
 }
 
 func TestAccountIdentityProfilePasswordEmailAndAvatarFlow(t *testing.T) {
@@ -2897,9 +3564,19 @@ func TestAccountIdentityProfilePasswordEmailAndAvatarFlow(t *testing.T) {
 }
 
 type testSession struct {
-	cookie string
-	csrf   string
-	userID string
+	cookie  string
+	csrf    string
+	userID  string
+	student bool
+}
+
+type staticModelsDevSource struct {
+	catalog modelsdev.Catalog
+	err     error
+}
+
+func (s staticModelsDevSource) Fetch(context.Context) (modelsdev.Catalog, error) {
+	return s.catalog, s.err
 }
 
 type createdLead struct {
@@ -2920,7 +3597,8 @@ type approveResponse struct {
 }
 
 type createdContact struct {
-	ID string `json:"id"`
+	ID          string   `json:"id"`
+	UsageScopes []string `json:"usageScopes"`
 }
 
 type createdMerchantProfile struct {
@@ -2939,8 +3617,8 @@ type createdCarpool struct {
 	RegionCode                            string                    `json:"regionCode"`
 	RegionName                            string                    `json:"regionName"`
 	ServiceMultiplier                     string                    `json:"serviceMultiplier"`
-	WeeklyQuotaAmount                     *string                   `json:"weeklyQuotaAmount"`
-	MonthlyQuotaAmount                    string                    `json:"monthlyQuotaAmount"`
+	DailyQuotaAmount                      *string                   `json:"dailyQuotaAmount"`
+	WeeklyQuotaAmount                     string                    `json:"weeklyQuotaAmount"`
 	FollowsOfficialQuotaReset             *bool                     `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                   `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                     `json:"supportsMainlandChinaDirectConnection"`
@@ -2984,6 +3662,8 @@ type createdCarpoolMembership struct {
 
 type createdAPIService struct {
 	ID                     string                          `json:"id"`
+	OwnerContactMethodIDs  []string                        `json:"ownerContactMethodIds"`
+	ProbeConnectionID      string                          `json:"probeConnectionId"`
 	SourceURL              string                          `json:"sourceUrl"`
 	ReviewStatus           string                          `json:"reviewStatus"`
 	PublicationStatus      string                          `json:"publicationStatus"`
@@ -3016,34 +3696,35 @@ type createdAPIService struct {
 }
 
 type createdAPIPurchaseIntent struct {
-	ID                                       string           `json:"id"`
-	APIServiceID                             string           `json:"apiServiceId"`
-	BuyerUserID                              string           `json:"buyerUserId"`
-	OwnerUserID                              string           `json:"ownerUserId"`
-	BuyerContactMethodID                     string           `json:"buyerContactMethodId"`
-	OwnerContactMethodID                     string           `json:"ownerContactMethodId"`
-	Status                                   string           `json:"status"`
-	RequestedCNYAmount                       string           `json:"requestedCnyAmount"`
-	RequestedUSDAllowance                    string           `json:"requestedUsdAllowance"`
-	SelectedAccessMode                       string           `json:"selectedAccessMode"`
-	ServiceVersionSnapshot                   int64            `json:"serviceVersionSnapshot"`
-	ServiceTitleSnapshot                     string           `json:"serviceTitleSnapshot"`
-	DistributionSystemSnapshot               string           `json:"distributionSystemSnapshot"`
-	BillingModeSnapshot                      string           `json:"billingModeSnapshot"`
-	DeclaredCNYPerUSDAllowanceSnapshot       string           `json:"declaredCnyPerUsdAllowanceSnapshot"`
-	DeclaredMaxUSDAllowancePerIntentSnapshot string           `json:"declaredMaxUsdAllowancePerIntentSnapshot"`
-	MinimumIntentCNYSnapshot                 string           `json:"minimumIntentCnySnapshot"`
-	MaximumIntentCNYSnapshot                 string           `json:"maximumIntentCnySnapshot"`
-	PricingSnapshot                          string           `json:"pricingSnapshot"`
-	BuyerNote                                string           `json:"buyerNote"`
-	ContactedAt                              *string          `json:"contactedAt"`
-	BuyerCancelledAt                         *string          `json:"buyerCancelledAt"`
-	BuyerCancelReason                        string           `json:"buyerCancelReason"`
-	OwnerClosedAt                            *string          `json:"ownerClosedAt"`
-	OwnerCloseReason                         string           `json:"ownerCloseReason"`
-	Version                                  int64            `json:"version"`
-	MerchantContact                          *testContactItem `json:"merchantContact"`
-	BuyerContact                             *testContactItem `json:"buyerContact"`
+	ID                                       string            `json:"id"`
+	APIServiceID                             string            `json:"apiServiceId"`
+	BuyerUserID                              string            `json:"buyerUserId"`
+	OwnerUserID                              string            `json:"ownerUserId"`
+	BuyerContactMethodID                     string            `json:"buyerContactMethodId"`
+	OwnerContactMethodID                     string            `json:"ownerContactMethodId"`
+	Status                                   string            `json:"status"`
+	RequestedCNYAmount                       string            `json:"requestedCnyAmount"`
+	RequestedUSDAllowance                    string            `json:"requestedUsdAllowance"`
+	SelectedAccessMode                       string            `json:"selectedAccessMode"`
+	ServiceVersionSnapshot                   int64             `json:"serviceVersionSnapshot"`
+	ServiceTitleSnapshot                     string            `json:"serviceTitleSnapshot"`
+	DistributionSystemSnapshot               string            `json:"distributionSystemSnapshot"`
+	BillingModeSnapshot                      string            `json:"billingModeSnapshot"`
+	DeclaredCNYPerUSDAllowanceSnapshot       string            `json:"declaredCnyPerUsdAllowanceSnapshot"`
+	DeclaredMaxUSDAllowancePerIntentSnapshot string            `json:"declaredMaxUsdAllowancePerIntentSnapshot"`
+	MinimumIntentCNYSnapshot                 string            `json:"minimumIntentCnySnapshot"`
+	MaximumIntentCNYSnapshot                 string            `json:"maximumIntentCnySnapshot"`
+	PricingSnapshot                          string            `json:"pricingSnapshot"`
+	BuyerNote                                string            `json:"buyerNote"`
+	ContactedAt                              *string           `json:"contactedAt"`
+	BuyerCancelledAt                         *string           `json:"buyerCancelledAt"`
+	BuyerCancelReason                        string            `json:"buyerCancelReason"`
+	OwnerClosedAt                            *string           `json:"ownerClosedAt"`
+	OwnerCloseReason                         string            `json:"ownerCloseReason"`
+	Version                                  int64             `json:"version"`
+	MerchantContact                          *testContactItem  `json:"merchantContact"`
+	MerchantContacts                         []testContactItem `json:"merchantContacts"`
+	BuyerContact                             *testContactItem  `json:"buyerContact"`
 }
 
 type createdAPIOrder struct {
@@ -3092,26 +3773,46 @@ type createdAPIOrderDeliveryCredential struct {
 }
 
 type createdDispute struct {
-	ID                   string `json:"id"`
-	ReportID             string `json:"reportId"`
-	TargetType           string `json:"targetType"`
-	TargetID             string `json:"targetId"`
-	TargetLabel          string `json:"targetLabel"`
-	PrimaryUserID        string `json:"primaryUserId"`
-	PrimaryUsername      string `json:"primaryUsername"`
-	PrimaryDisplayName   string `json:"primaryDisplayName"`
-	CounterpartyUserID   string `json:"counterpartyUserId"`
-	CounterpartyUsername string `json:"counterpartyUsername"`
-	CounterpartyName     string `json:"counterpartyName"`
-	SubjectUserID        string `json:"subjectUserId"`
-	SubjectUsername      string `json:"subjectUsername"`
-	SubjectName          string `json:"subjectName"`
-	Status               string `json:"status"`
-	PublicSummary        string `json:"publicSummary"`
-	PublicResult         string `json:"publicResult"`
-	OpenedByAdminID      string `json:"openedByAdminId"`
-	Version              int64  `json:"version"`
-	CanAppeal            bool   `json:"canAppeal"`
+	ID                   string                      `json:"id"`
+	ReportID             string                      `json:"reportId"`
+	TargetType           string                      `json:"targetType"`
+	TargetID             string                      `json:"targetId"`
+	TargetLabel          string                      `json:"targetLabel"`
+	PrimaryUserID        string                      `json:"primaryUserId"`
+	PrimaryUsername      string                      `json:"primaryUsername"`
+	PrimaryDisplayName   string                      `json:"primaryDisplayName"`
+	CounterpartyUserID   string                      `json:"counterpartyUserId"`
+	CounterpartyUsername string                      `json:"counterpartyUsername"`
+	CounterpartyName     string                      `json:"counterpartyName"`
+	SubjectUserID        string                      `json:"subjectUserId"`
+	SubjectUsername      string                      `json:"subjectUsername"`
+	SubjectName          string                      `json:"subjectName"`
+	Status               string                      `json:"status"`
+	IssueCode            string                      `json:"issueCode"`
+	RequestedResolution  string                      `json:"requestedResolution"`
+	RequestedAmountCNY   string                      `json:"requestedAmountCny"`
+	PublicSummary        string                      `json:"publicSummary"`
+	PublicResult         string                      `json:"publicResult"`
+	OpenedByAdminID      string                      `json:"openedByAdminId"`
+	Version              int64                       `json:"version"`
+	CanAppeal            bool                        `json:"canAppeal"`
+	Messages             []createdDisputeMessage     `json:"messages"`
+	SettlementProposals  []createdSettlementProposal `json:"settlementProposals"`
+}
+
+type createdDisputeMessage struct {
+	ID           string `json:"id"`
+	SenderUserID string `json:"senderUserId"`
+	Body         string `json:"body"`
+}
+
+type createdSettlementProposal struct {
+	ID               string `json:"id"`
+	ProposedByUserID string `json:"proposedByUserId"`
+	Resolution       string `json:"resolution"`
+	AmountCNY        string `json:"amountCny"`
+	Terms            string `json:"terms"`
+	Status           string `json:"status"`
 }
 
 type createdAppeal struct {
@@ -3140,7 +3841,10 @@ type testContactItem struct {
 }
 
 func newTestServer(now time.Time) http.Handler {
-	return NewServer(app.NewServiceWithClock(func() time.Time { return now }))
+	return NewServer(
+		app.NewServiceWithClock(func() time.Time { return now }),
+		ServerOptions{EnableDevAuth: true, TurnstileVerifier: &recordingTurnstileVerifier{}},
+	)
 }
 
 func createSession(t *testing.T, server http.Handler, username string, admin bool) testSession {
@@ -3158,6 +3862,84 @@ func createSession(t *testing.T, server http.Handler, username string, admin boo
 	}
 	cookie := response.Result().Cookies()[0]
 	return testSession{cookie: cookie.Value, csrf: payload.CSRFToken, userID: payload.User.ID}
+}
+
+func createStudentSession(t *testing.T, server http.Handler, username string) testSession {
+	t.Helper()
+	admin := createSession(t, server, "student-bootstrap-"+username, true)
+	domainValue := "students.example.edu"
+	createDomain := newJSONRequest(http.MethodPost, "/api/v1/admin/student-institution-domains", `{"domain":"`+domainValue+`","institutionName":"Example Students","enabled":true,"reason":"配置学生测试域名"}`)
+	addAuth(createDomain, admin, "student-domain-"+username)
+	createDomain.Header.Set("If-Match", `"0"`)
+	createDomainResponse := httptest.NewRecorder()
+	server.ServeHTTP(createDomainResponse, createDomain)
+	if createDomainResponse.Code != http.StatusCreated {
+		t.Fatalf("create student domain status %d body %s", createDomainResponse.Code, createDomainResponse.Body.String())
+	}
+
+	readConfig := httptest.NewRequest(http.MethodGet, "/api/v1/admin/student-registration", nil)
+	addAuth(readConfig, admin, "")
+	readConfigResponse := httptest.NewRecorder()
+	server.ServeHTTP(readConfigResponse, readConfig)
+	if readConfigResponse.Code != http.StatusOK {
+		t.Fatalf("read student registration status %d body %s", readConfigResponse.Code, readConfigResponse.Body.String())
+	}
+	var registrationConfig adminStudentRegistrationResponse
+	if err := json.NewDecoder(readConfigResponse.Body).Decode(&registrationConfig); err != nil {
+		t.Fatalf("decode student registration config: %v", err)
+	}
+	if !registrationConfig.Enabled {
+		enable := newJSONRequest(http.MethodPatch, "/api/v1/admin/student-registration", fmt.Sprintf(
+			`{"enabled":true,"expectedVersion":%d,"reason":"开启学生测试注册"}`,
+			registrationConfig.Version,
+		))
+		addAuth(enable, admin, "student-registration-enable-"+username)
+		enable.Header.Set("If-Match", fmt.Sprintf(`"%d"`, registrationConfig.Version))
+		enableResponse := httptest.NewRecorder()
+		server.ServeHTTP(enableResponse, enable)
+		if enableResponse.Code != http.StatusOK {
+			t.Fatalf("enable student registration status %d body %s", enableResponse.Code, enableResponse.Body.String())
+		}
+	}
+
+	email := username + "@" + domainValue
+	start := newJSONRequest(http.MethodPost, "/api/v1/auth/email-registration/start", `{"email":"`+email+`","turnstileToken":"test-token"}`)
+	startResponse := httptest.NewRecorder()
+	server.ServeHTTP(startResponse, start)
+	if startResponse.Code != http.StatusOK {
+		t.Fatalf("start student registration status %d body %s", startResponse.Code, startResponse.Body.String())
+	}
+	var challenge emailRegistrationStartResponse
+	if err := json.NewDecoder(startResponse.Body).Decode(&challenge); err != nil || challenge.DevCode == "" {
+		t.Fatalf("decode student challenge: %+v error=%v", challenge, err)
+	}
+	confirm := newJSONRequest(http.MethodPost, "/api/v1/auth/email-registration/confirm", `{"email":"`+email+`","code":"`+challenge.DevCode+`","username":"`+username+`","password":"StudentPassword1!","attribution":{}}`)
+	confirmResponse := httptest.NewRecorder()
+	server.ServeHTTP(confirmResponse, confirm)
+	if confirmResponse.Code != http.StatusOK {
+		t.Fatalf("confirm student registration status %d body %s", confirmResponse.Code, confirmResponse.Body.String())
+	}
+	var payload sessionResponse
+	if err := json.NewDecoder(confirmResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode student session: %v", err)
+	}
+	if payload.Audience != auth.SessionAudienceNormal {
+		t.Fatalf("student registration audience=%q, want %q", payload.Audience, auth.SessionAudienceNormal)
+	}
+	if payload.User.StudentClaim == nil || payload.User.StudentClaim.InstitutionDomain != domainValue || payload.User.LinuxDo.Bound || len(payload.User.Capabilities) != 1 || payload.User.Capabilities[0] != "api_order.create" {
+		t.Fatalf("unexpected student identity projection: %+v", payload.User)
+	}
+	var cookie string
+	for _, item := range confirmResponse.Result().Cookies() {
+		if item.Name == sessionCookieName {
+			cookie = item.Value
+			break
+		}
+	}
+	if cookie == "" {
+		t.Fatal("student registration did not set session cookie")
+	}
+	return testSession{cookie: cookie, csrf: payload.CSRFToken, userID: payload.User.ID, student: true}
 }
 
 func createLinuxDoSession(t *testing.T, server http.Handler, username string) testSession {
@@ -3338,7 +4120,11 @@ func approveLead(t *testing.T, server http.Handler, session testSession, leadID,
 
 func createContactMethod(t *testing.T, server http.Handler, session testSession, typ, label, value string) createdContact {
 	t.Helper()
-	request := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{"type":"`+typ+`","label":"`+label+`","value":"`+value+`"}`)
+	usageScopes := `["carpool_owner","api_merchant","buyer","dispute"]`
+	if session.student {
+		usageScopes = `["buyer","dispute"]`
+	}
+	request := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{"type":"`+typ+`","label":"`+label+`","value":"`+value+`","usageScopes":`+usageScopes+`}`)
 	addAuth(request, session, "contact-"+label)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
@@ -3869,6 +4655,26 @@ func readAPIOrderPaymentInstructions(t *testing.T, server http.Handler, session 
 	return payload
 }
 
+func getAPIOrder(t *testing.T, server http.Handler, session testSession, perspective, orderID string) createdAPIOrder {
+	t.Helper()
+	path := "/api/v1/me/api-orders/" + orderID
+	if perspective == "owner" {
+		path = "/api/v1/owner/api-orders/" + orderID
+	}
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("get API order %s status %d body %s", perspective, response.Code, response.Body.String())
+	}
+	var payload createdAPIOrder
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode API order %s: %v", perspective, err)
+	}
+	return payload
+}
+
 func apiOrderAction(t *testing.T, server http.Handler, session testSession, perspective, orderID, action string, version int64, key, body string) createdAPIOrder {
 	t.Helper()
 	path := "/api/v1/me/api-orders/" + orderID + "/" + action
@@ -3927,6 +4733,44 @@ func listMyDisputes(t *testing.T, server http.Handler, session testSession) (lis
 		t.Fatalf("decode my disputes: %v", err)
 	}
 	return payload, body
+}
+
+func getMyDispute(t *testing.T, server http.Handler, session testSession, disputeID string) createdDispute {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/disputes/"+disputeID, nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("my dispute detail status %d body %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("expected private no-store on dispute detail, got %q", got)
+	}
+	var payload createdDispute
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode my dispute detail: %v", err)
+	}
+	return payload
+}
+
+func disputeParticipantAction(t *testing.T, server http.Handler, session testSession, disputeID, action, key, body string) createdDispute {
+	t.Helper()
+	request := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputeID+"/"+action, body)
+	addAuth(request, session, key)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("dispute participant action %s status %d body %s", action, response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("expected private no-store on dispute action %s, got %q", action, got)
+	}
+	var payload createdDispute
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dispute participant action %s: %v", action, err)
+	}
+	return payload
 }
 
 func findCreatedDispute(items []createdDispute, id string) (createdDispute, bool) {
@@ -4067,8 +4911,8 @@ func carpoolPayload(ownerContactID string) string {
 		"regionName":"印度区",
 		"priceMonthlyCny":"68.00",
 		"serviceMultiplier":"1.0000",
-		"weeklyQuotaAmount":"50.00",
-		"monthlyQuotaAmount":"200.00",
+		"dailyQuotaAmount":"50.00",
+		"weeklyQuotaAmount":"200.00",
 		"followsOfficialQuotaReset":true,
 		"vpsRegion":"香港",
 		"supportsMainlandChinaDirectConnection":true,
@@ -4106,6 +4950,7 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 	return `{
 		"merchantIdentityMode":"public_profile",
 		"ownerContactMethodId":"` + ownerContactID + `",
+		"probeConnectionId":"00000000-0000-0000-0000-000000000811",
 		"title":"Sub2API 美元额度意向服务",
 		"shortDescription":"商户声明美元额度售价，双方站外确认具体安排。",
 		"sourceUrl":"https://linux.do/t/api-service/123",
@@ -4158,11 +5003,11 @@ func productPlanPayload(categoryCode, slug, displayName, publishPolicy, riskLeve
 	return productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayName, publishPolicy, riskLevel, riskAckRequired)
 }
 
-func apiModelPayload(providerID, modelKey, displayName, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
-	return apiModelPayloadWithCapabilities(providerID, modelKey, displayName, []string{" vision ", "chat", "text", "chat"}, inputPrice, cachedInputPrice, outputPrice, sourceVersion, active)
+func apiModelPayload(providerID, modelKey, _ string, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
+	return apiModelPayloadWithCapabilities(providerID, modelKey, "", []string{" vision ", "chat", "text", "chat"}, inputPrice, cachedInputPrice, outputPrice, sourceVersion, active)
 }
 
-func apiModelPayloadWithCapabilities(providerID, modelKey, displayName string, capabilities []string, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
+func apiModelPayloadWithCapabilities(providerID, modelKey, _ string, capabilities []string, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
 	capabilityJSON := make([]string, 0, len(capabilities))
 	for _, capability := range capabilities {
 		capabilityJSON = append(capabilityJSON, strconv.Quote(capability))
@@ -4174,14 +5019,12 @@ func apiModelPayloadWithCapabilities(providerID, modelKey, displayName string, c
 	return `{
 		"providerId":"` + providerID + `",
 		"modelKey":"` + modelKey + `",
-		"displayName":"` + displayName + `",
 		"capabilities":[` + strings.Join(capabilityJSON, ",") + `],
 		"inputTokenPrice":"` + inputPrice + `",
 		"cachedInputTokenPrice":"` + cachedInputPrice + `",
 		"outputTokenPrice":"` + outputPrice + `",
 		"sourceUrl":"` + sourceURL + `",
 		"sourceVersion":"` + sourceVersion + `",
-		"active":` + boolString(active) + `,
 		"sortOrder":333
 	}`
 }
@@ -4191,9 +5034,14 @@ func apiModelProviderPayload(providerCategory, code, displayName string, active 
 		"providerCategory":"` + providerCategory + `",
 		"code":"` + code + `",
 		"displayName":"` + displayName + `",
-		"active":` + boolString(active) + `,
 		"sortOrder":123
 	}`
+}
+
+func catalogDeprecateRequest(basePath string, version int64) *http.Request {
+	request := newJSONRequest(http.MethodPost, basePath+"/deprecate", `{"reason":"目录测试退役"}`)
+	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
+	return request
 }
 
 func productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayName, publishPolicy, riskLevel string, riskAckRequired bool) string {
@@ -4217,7 +5065,6 @@ func productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayNam
 		"quotaLabel":"额度",
 		"quotaUnit":"USD",
 		"quotaPeriod":"monthly",
-		"active":true,
 		"allowCustomVariant":true,
 		"sortOrder":120
 	}`
@@ -4328,7 +5175,7 @@ func collectOpenAPIRoutes(t *testing.T, includeDev bool) map[string]struct{} {
 		t.Fatalf("read openapi: %v", err)
 	}
 	pathRE := regexp.MustCompile(`^  (/[^:]+):$`)
-	methodRE := regexp.MustCompile(`^    (get|post|put|patch|delete):$`)
+	methodRE := regexp.MustCompile(`^    (get|post|put|patch|delete):(?:\s.*)?$`)
 	routes := map[string]struct{}{}
 	var currentPath, currentMethod string
 	var methodLines []string

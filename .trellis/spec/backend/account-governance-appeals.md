@@ -59,6 +59,10 @@ account_appeal_sessions(
   existing `(provider, provider_subject)` identity and must not create or
   update users, identities, linux.do bindings, profiles, login/activity facts,
   attribution, referrals, coupons, or `auth_sessions`.
+- `account_appeal` owns a dedicated server-side one-time OAuth state table and
+  `c2c_account_appeal_oauth_state` cookie. Restricted-business, normal-login,
+  linux.do-link, and administrator-reauthentication states cannot consume it;
+  a mismatch does not consume the correct flow's state.
 - Only existing linux.do identities whose current account status is
   `suspended` or `banned` are eligible. Unknown, active, and archived identities
   share the generic `ACCOUNT_APPEAL_INELIGIBLE` browser outcome.
@@ -121,6 +125,9 @@ account_appeal_sessions(
   normal auth/registration/referral side effects, hashed token storage, one
   live session replacement, status eligibility, fixed expiry, CSRF rotation,
   expiry/revocation rejection, and bounded lifecycle cleanup.
+- PostgreSQL purpose-isolation tests assert the appeal state cannot create a
+  restricted session, the restricted state cannot create an appeal session,
+  and maintenance reports deletion of expired/consumed governance OAuth states.
 - Server tests assert purpose-tagged state, generic ineligible redirects,
   cookie name/path/production Secure attributes, no normal cookie, ordinary
   route isolation, `Cache-Control: no-store`, dedicated CSRF enforcement, and

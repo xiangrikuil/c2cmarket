@@ -22,47 +22,270 @@ import (
 
 const apiServiceSupportedPaymentMethodsSQL = "'wechat', 'alipay'"
 
-func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service) *domain.AppError {
+func (s *Store) executeAPIServiceCommand(
+	ctx context.Context,
+	entry *idempotency.Entry,
+	now time.Time,
+	mutate func(pgx.Tx) (apimarket.Service, *domain.AppError),
+	buildCompletion apimarket.ServiceCompletionBuilder,
+) (apimarket.Service, idempotency.Completion, *domain.AppError) {
 	if s == nil || s.pool == nil {
-		return internalStoreError()
+		return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return internalStoreError()
+		return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
-		return appErr
+	var processing idempotency.Entry
+	hasProcessing := false
+	if entry != nil {
+		if buildCompletion == nil {
+			return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
+		}
+		var appErr *domain.AppError
+		processing, appErr = lockProcessingIdempotencyInTx(ctx, tx, *entry)
+		if appErr != nil {
+			return apimarket.Service{}, idempotency.Completion{}, appErr
+		}
+		hasProcessing = true
 	}
-	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
-		return appErr
+	service, appErr := mutate(tx)
+	if appErr != nil {
+		return apimarket.Service{}, idempotency.Completion{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, service.UpdatedAt); appErr != nil {
-		return appErr
+	completion := idempotency.Completion{}
+	if hasProcessing {
+		completion, appErr = buildCompletion(service)
+		if appErr != nil {
+			return apimarket.Service{}, idempotency.Completion{}, appErr
+		}
+		if appErr := completeIdempotencyInTx(ctx, tx, processing, completion, now); appErr != nil {
+			return apimarket.Service{}, idempotency.Completion{}, appErr
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return internalStoreError()
+		return apimarket.Service{}, idempotency.Completion{}, internalStoreError()
 	}
-	return nil
+	return service, completion, nil
 }
 
-func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError) {
+func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service, requestID string) *domain.AppError {
+	_, _, appErr := s.executeAPIServiceCommand(ctx, nil, service.CreatedAt, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.createAPIServiceInTx(ctx, tx, service, requestID)
+	}, nil)
+	return appErr
+}
+
+func (s *Store) CreateAPIServiceWithIdempotency(ctx context.Context, entry idempotency.Entry, service apimarket.Service, requestID string, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.createAPIServiceInTx(ctx, tx, service, requestID)
+	}, buildCompletion)
+}
+
+func (s *Store) createAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Service, requestID string) (apimarket.Service, *domain.AppError) {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.created", service.OwnerUserID, apiOperationActorUser, service.Version, requestID, map[string]any{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus,
+	}, service.CreatedAt); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, service.UpdatedAt); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	loaded, err := s.getAPIService(ctx, tx, service.ID, false)
+	if err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	return loaded, nil
+}
+
+func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
 	where := `WHERE ` + publicAPIServiceOrderablePredicate("api_services")
 	var args []any
+	addArgument := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
 	if strings.TrimSpace(filter.PaymentMethod) != "" {
+		placeholder := addArgument(strings.TrimSpace(filter.PaymentMethod))
 		where += `
 		  AND EXISTS (
 		    SELECT 1
 		    FROM api_service_payment_options po
 		    WHERE po.api_service_id = api_services.id
 		      AND po.enabled = true
-		      AND po.payment_method = $1
+		      AND po.payment_method = ` + placeholder + `
 		      AND po.payment_method IN (` + apiServiceSupportedPaymentMethodsSQL + `)
 		  )
 		`
-		args = []any{strings.TrimSpace(filter.PaymentMethod)}
 	}
-	return s.listAPIServices(ctx, where, args)
+	if strings.TrimSpace(filter.BillingMode) != "" {
+		where += ` AND api_services.billing_mode = ` + addArgument(strings.TrimSpace(filter.BillingMode))
+	}
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		placeholder := addArgument(search)
+		where += ` AND (
+		  api_services.title ILIKE '%' || ` + placeholder + ` || '%'
+		  OR api_services.short_description ILIKE '%' || ` + placeholder + ` || '%'
+		  OR EXISTS (
+		    SELECT 1 FROM api_service_models search_model
+		    WHERE search_model.api_service_id = api_services.id
+		      AND search_model.enabled = true
+		      AND (search_model.model_key_snapshot ILIKE '%' || ` + placeholder + ` || '%'
+		        OR search_model.provider_snapshot ILIKE '%' || ` + placeholder + ` || '%')
+		  )
+		  OR EXISTS (
+		    SELECT 1 FROM users search_owner
+		    WHERE search_owner.id = api_services.owner_user_id
+		      AND search_owner.display_name ILIKE '%' || ` + placeholder + ` || '%'
+		  )
+		  OR EXISTS (
+		    SELECT 1 FROM merchant_profiles search_merchant
+		    WHERE search_merchant.id = api_services.merchant_profile_id
+		      AND search_merchant.owner_user_id = api_services.owner_user_id
+		      AND search_merchant.display_name ILIKE '%' || ` + placeholder + ` || '%'
+		  )
+		)`
+	}
+	if distributionSystem := strings.TrimSpace(filter.DistributionSystem); distributionSystem != "" {
+		where += ` AND api_services.distribution_system = ` + addArgument(distributionSystem)
+	}
+	if modelCatalogID := strings.TrimSpace(filter.ModelCatalogID); modelCatalogID != "" {
+		placeholder := addArgument(modelCatalogID)
+		where += ` AND EXISTS (
+		  SELECT 1 FROM api_service_models selected_model
+		  WHERE selected_model.api_service_id = api_services.id
+		    AND selected_model.enabled = true
+		    AND selected_model.model_catalog_id::text = ` + placeholder + `
+		)`
+	}
+	if maximum := strings.TrimSpace(filter.MaxCNYPerUSD); maximum != "" {
+		where += ` AND api_services.declared_cny_per_usd_allowance <= ` + addArgument(maximum) + `::numeric`
+	}
+	if maximum := strings.TrimSpace(filter.MinimumIntentCNYMax); maximum != "" {
+		where += ` AND api_services.minimum_intent_cny <= ` + addArgument(maximum) + `::numeric`
+	}
+	if strings.TrimSpace(filter.PackageModelCatalogID) != "" || filter.PackageDurationDays > 0 ||
+		strings.TrimSpace(filter.PackagePriceCNYMax) != "" || strings.TrimSpace(filter.PackageMultiplierMax) != "" {
+		where += `
+		  AND EXISTS (
+		    SELECT 1
+		    FROM api_service_packages package_row
+		    WHERE package_row.api_service_id = api_services.id
+		      AND package_row.enabled = true
+		      AND package_row.stock_available > 0`
+		if filter.PackageDurationDays > 0 {
+			where += ` AND package_row.duration_days = ` + addArgument(filter.PackageDurationDays)
+		}
+		if maximum := strings.TrimSpace(filter.PackagePriceCNYMax); maximum != "" {
+			where += ` AND package_row.price_cny <= ` + addArgument(maximum) + `::numeric`
+		}
+		if strings.TrimSpace(filter.PackageModelCatalogID) != "" || strings.TrimSpace(filter.PackageMultiplierMax) != "" {
+			where += `
+              AND EXISTS (
+                SELECT 1
+                FROM api_service_package_models package_model
+                JOIN api_service_models service_model
+                  ON service_model.id = package_model.api_service_model_id
+                 AND service_model.api_service_id = package_model.api_service_id
+                WHERE package_model.api_service_package_id = package_row.id
+                  AND package_model.api_service_id = package_row.api_service_id
+                  AND service_model.enabled = true`
+			if modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID); modelCatalogID != "" {
+				where += ` AND service_model.model_catalog_id::text = ` + addArgument(modelCatalogID)
+			}
+			if maximum := strings.TrimSpace(filter.PackageMultiplierMax); maximum != "" {
+				where += ` AND service_model.merchant_multiplier <= ` + addArgument(maximum) + `::numeric`
+			}
+			where += `
+			  )`
+		}
+		where += `
+		  )`
+	}
+	sortMode := filter.NormalizedSort()
+	sortExpression := ""
+	var scalarValue func(apimarket.Service) string
+	switch sortMode {
+	case apimarket.PublicServiceSortPriceAsc:
+		sortExpression = "api_services.declared_cny_per_usd_allowance"
+		scalarValue = func(item apimarket.Service) string { return item.DeclaredCNYPerUSDAllowance }
+	case apimarket.PublicServiceSortMinimumPurchaseAsc:
+		sortExpression = "api_services.minimum_intent_cny"
+		scalarValue = func(item apimarket.Service) string { return item.MinimumIntentCNY }
+	case apimarket.PublicServiceSortPackagePriceAsc:
+		durationPlaceholder := addArgument(filter.PackageDurationDays)
+		modelPlaceholder := addArgument(strings.TrimSpace(filter.PackageModelCatalogID))
+		pricePlaceholder := addArgument(strings.TrimSpace(filter.PackagePriceCNYMax))
+		multiplierPlaceholder := addArgument(strings.TrimSpace(filter.PackageMultiplierMax))
+		sortExpression = `(SELECT MIN(sort_package.price_cny)
+		  FROM api_service_packages sort_package
+		  WHERE sort_package.api_service_id = api_services.id
+		    AND sort_package.enabled = true
+		    AND sort_package.stock_available > 0
+		    AND (` + durationPlaceholder + `::integer = 0 OR sort_package.duration_days = ` + durationPlaceholder + `::integer)
+		    AND (` + pricePlaceholder + ` = '' OR sort_package.price_cny <= NULLIF(` + pricePlaceholder + `, '')::numeric)
+		    AND EXISTS (
+		      SELECT 1
+		      FROM api_service_package_models sort_package_model
+		      JOIN api_service_models sort_service_model ON sort_service_model.id = sort_package_model.api_service_model_id
+		      WHERE sort_package_model.api_service_package_id = sort_package.id
+		        AND sort_package_model.api_service_id = sort_package.api_service_id
+		        AND sort_service_model.enabled = true
+		        AND (` + modelPlaceholder + ` = '' OR sort_service_model.model_catalog_id::text = ` + modelPlaceholder + `)
+		        AND (` + multiplierPlaceholder + ` = '' OR sort_service_model.merchant_multiplier <= NULLIF(` + multiplierPlaceholder + `, '')::numeric)
+		    )
+		)`
+		scalarValue = func(item apimarket.Service) string { return minimumPackagePriceForFilter(item, filter) }
+	}
+	return s.listAPIServicesPage(ctx, where, args, page, sortMode, sortExpression, scalarValue)
+}
+
+func minimumPackagePriceForFilter(service apimarket.Service, filter apimarket.PublicServiceFilter) string {
+	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	maximumPrice, hasMaximumPrice := new(big.Rat).SetString(strings.TrimSpace(filter.PackagePriceCNYMax))
+	maximumMultiplier, hasMaximumMultiplier := new(big.Rat).SetString(strings.TrimSpace(filter.PackageMultiplierMax))
+	var minimum *big.Rat
+	minimumText := "0"
+	for _, item := range service.Packages {
+		if !item.Enabled || item.StockAvailable <= 0 ||
+			(filter.PackageDurationDays > 0 && (item.DurationDays == nil || *item.DurationDays != filter.PackageDurationDays)) {
+			continue
+		}
+		price, ok := new(big.Rat).SetString(strings.TrimSpace(item.PriceCNY))
+		if !ok || price.Sign() < 0 || hasMaximumPrice && price.Cmp(maximumPrice) > 0 {
+			continue
+		}
+		matchesModel := false
+		for _, model := range item.Models {
+			if modelCatalogID != "" && model.ModelCatalogID != modelCatalogID {
+				continue
+			}
+			multiplier, ok := new(big.Rat).SetString(strings.TrimSpace(model.MerchantMultiplier))
+			if hasMaximumMultiplier && (!ok || multiplier.Cmp(maximumMultiplier) > 0) {
+				continue
+			}
+			matchesModel = true
+			break
+		}
+		if !matchesModel {
+			continue
+		}
+		if minimum == nil || price.Cmp(minimum) < 0 {
+			minimum = price
+			minimumText = item.PriceCNY
+		}
+	}
+	return minimumText
 }
 
 func (s *Store) GetPublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -95,6 +318,13 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		  AND %[1]s.billing_mode IN ('metered_usd_quota', 'fixed_package')
 		  AND %[1]s.accepting_orders = true
 		  AND EXISTS (
+		    SELECT 1 FROM api_probe_connections probe_connection
+		    WHERE probe_connection.id = %[1]s.probe_connection_id
+		      AND probe_connection.owner_user_id = %[1]s.owner_user_id
+		      AND probe_connection.enabled = true
+		      AND probe_connection.verification_status = 'verified'
+		  )
+		  AND EXISTS (
 		    SELECT 1 FROM users owner
 		    WHERE owner.id = %[1]s.owner_user_id
 		      AND owner.account_status = 'active'
@@ -111,7 +341,7 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		  )
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
-		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > %[3]s)
+		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > %[3]s + interval '24 hours')
 		  AND (%[1]s.billing_mode <> 'fixed_package' OR EXISTS (
 		    SELECT 1
 		    FROM api_service_packages package_row
@@ -132,6 +362,34 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		  )`, alias, apiServiceSupportedPaymentMethodsSQL, currentTimeExpression)
 }
 
+func apiServiceFulfillmentReadyPredicate(alias string) string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		alias = "api_services"
+	}
+	return fmt.Sprintf(`%[1]s.review_status = 'approved'
+		  AND %[1]s.publication_status = 'online'
+		  AND %[1]s.moderation_status = 'clear'
+		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
+		  AND EXISTS (
+		    SELECT 1 FROM api_probe_connections probe_connection
+		    WHERE probe_connection.id = %[1]s.probe_connection_id
+		      AND probe_connection.owner_user_id = %[1]s.owner_user_id
+		      AND probe_connection.enabled = true
+		      AND probe_connection.verification_status = 'verified'
+		  )
+		  AND EXISTS (
+		    SELECT 1 FROM users owner
+		    WHERE owner.id = %[1]s.owner_user_id AND owner.account_status = 'active'
+		  )
+		  AND EXISTS (
+		    SELECT 1 FROM api_service_payment_options payment_option
+		    WHERE payment_option.api_service_id = %[1]s.id
+		      AND payment_option.enabled = true
+		      AND payment_option.payment_method IN (%[2]s)
+		  )`, alias, apiServiceSupportedPaymentMethodsSQL)
+}
+
 func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, s.pool, serviceID, false)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != ownerUserID {
@@ -143,8 +401,76 @@ func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceI
 	return service, nil
 }
 
-func (s *Store) ListAdminAPIServices(ctx context.Context, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
-	return s.listAPIServicesPage(ctx, "", nil, page)
+func (s *Store) ListAdminAPIServices(ctx context.Context, filter apimarket.AdminServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
+	conditions := make([]string, 0, 5)
+	args := make([]any, 0, 6)
+	addArgument := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
+	statusExpression := apiServiceAdminStatusSQL("api_services")
+	if len(filter.Statuses) > 0 {
+		placeholder := addArgument(filter.Statuses)
+		conditions = append(conditions, "("+statusExpression+") = ANY("+placeholder+"::text[])")
+	}
+	switch strings.TrimSpace(filter.View) {
+	case apimarket.AdminServiceViewPublic:
+		conditions = append(conditions, "("+statusExpression+") = 'online'")
+	case apimarket.AdminServiceViewExceptions:
+		conditions = append(conditions, "("+statusExpression+") IN ('pending', 'changes_requested', 'suspended', 'rejected', 'removed')")
+	}
+	if strings.TrimSpace(filter.Risk) == apimarket.AdminServiceRiskHigh {
+		conditions = append(conditions, `(api_services.moderation_status <> 'clear' OR EXISTS (
+			SELECT 1
+			FROM api_orders risk_order
+			WHERE risk_order.api_service_id = api_services.id
+			  AND risk_order.dispute_status NOT IN ('none', 'closed')
+		))`)
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		placeholder := addArgument(strings.ToLower(query))
+		conditions = append(conditions, `(
+			strpos(lower(api_services.id::text), `+placeholder+`) > 0 OR
+			strpos(lower(api_services.title), `+placeholder+`) > 0 OR
+			strpos(lower(api_services.short_description), `+placeholder+`) > 0 OR
+			strpos(lower(api_services.owner_user_id::text), `+placeholder+`) > 0 OR
+			strpos(lower(COALESCE(api_services.moderation_reason, '')), `+placeholder+`) > 0 OR
+			EXISTS (
+				SELECT 1 FROM users owner
+				WHERE owner.id = api_services.owner_user_id
+				  AND strpos(lower(COALESCE(owner.display_name, '')), `+placeholder+`) > 0
+			) OR
+			EXISTS (
+				SELECT 1 FROM merchant_profiles merchant
+				WHERE merchant.id = api_services.merchant_profile_id
+				  AND merchant.owner_user_id = api_services.owner_user_id
+				  AND strpos(lower(COALESCE(merchant.display_name, '')), `+placeholder+`) > 0
+			)
+		)`)
+	}
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+	return s.listAPIServicesPage(ctx, whereClause, args, page, apimarket.PublicServiceSortUpdatedDesc, "", nil)
+}
+
+func apiServiceAdminStatusSQL(alias string) string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		alias = "api_services"
+	}
+	return `CASE
+		WHEN ` + alias + `.moderation_status = 'removed' THEN 'removed'
+		WHEN ` + alias + `.moderation_status = 'admin_suspended' THEN 'suspended'
+		WHEN ` + alias + `.review_status = 'pending_review' THEN 'pending'
+		WHEN ` + alias + `.review_status = 'changes_requested' THEN 'changes_requested'
+		WHEN ` + alias + `.review_status = 'rejected' THEN 'rejected'
+		WHEN ` + alias + `.review_status = 'approved' AND ` + alias + `.publication_status = 'online' THEN 'online'
+		WHEN ` + alias + `.review_status = 'approved' AND ` + alias + `.publication_status = 'owner_paused' THEN 'paused'
+		WHEN ` + alias + `.review_status = 'approved' THEN 'approved'
+		ELSE 'draft'
+	END`
 }
 
 func (s *Store) GetAdminAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -159,14 +485,19 @@ func (s *Store) GetAdminAPIService(ctx context.Context, serviceID string) (apima
 }
 
 func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServiceInput, service apimarket.Service, now time.Time) (apimarket.Service, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceInTx(ctx, tx, input, service, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.UpdateServiceInput, service apimarket.Service, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceInTx(ctx, tx, input, service, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceInTx(ctx context.Context, tx pgx.Tx, input apimarket.UpdateServiceInput, service apimarket.Service, now time.Time) (apimarket.Service, *domain.AppError) {
 	current, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || current.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -180,7 +511,10 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if !canEditAPIService(current) {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能直接修改，请先开始修订。")
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	service.UpdatedAt = now
@@ -191,6 +525,11 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.updated", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"changedFields": []string{"service_configuration"},
+	}, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	service, err = s.getAPIService(ctx, tx, service.ID, false)
 	if err != nil {
 		return apimarket.Service{}, internalStoreError()
@@ -198,21 +537,104 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
+	return service, nil
+}
+
+func validateReadyAPIProbeConnectionInTx(ctx context.Context, tx pgx.Tx, ownerUserID, connectionID string) *domain.AppError {
+	connectionID = strings.TrimSpace(connectionID)
+	if connectionID == "" {
+		return nil
+	}
+	var ready bool
+	err := tx.QueryRow(ctx, `
+		SELECT enabled AND verification_status = 'verified'
+		FROM api_probe_connections
+		WHERE id = $1 AND owner_user_id = $2
+		FOR SHARE
+	`, connectionID, ownerUserID).Scan(&ready)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return internalStoreError()
+	}
+	if errors.Is(err, pgx.ErrNoRows) || !ready {
+		return domain.NewFieldError(
+			http.StatusUnprocessableEntity,
+			domain.CodeValidationFailed,
+			"Probe connection unavailable",
+			"探针连接不存在、不属于当前用户，或尚未启用并验证通过。",
+			"probeConnectionId",
+			"not_ready",
+			"请选择自己已启用且验证通过的探针连接。",
+		)
+	}
+	return nil
+}
+
+func (s *Store) UpdateAPIServiceProbeConnection(ctx context.Context, input apimarket.UpdateProbeConnectionInput, now time.Time) (apimarket.Service, *domain.AppError) {
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceProbeConnectionInTx(ctx, tx, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceProbeConnectionWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.UpdateProbeConnectionInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceProbeConnectionInTx(ctx, tx, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceProbeConnectionInTx(ctx context.Context, tx pgx.Tx, input apimarket.UpdateProbeConnectionInput, now time.Time) (apimarket.Service, *domain.AppError) {
+	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
+	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
+		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
+	}
+	if err != nil {
 		return apimarket.Service{}, internalStoreError()
+	}
+	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
+		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	connectionID := strings.TrimSpace(input.ProbeConnectionID)
+	if strings.TrimSpace(service.ProbeConnectionID) == connectionID {
+		return service, nil
+	}
+	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, input.OwnerUserID, connectionID); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE api_services
+		SET probe_connection_id = $1,
+		    updated_at = $2,
+		    version = version + 1
+		WHERE id = $3 AND owner_user_id = $4
+	`, nullUUID(connectionID), now, input.ServiceID, input.OwnerUserID); err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	service, err = s.getAPIService(ctx, tx, input.ServiceID, false)
+	if err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.probe_binding_changed", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"changedFields": []string{"probe_connection"},
+	}, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
 
 func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimarket.UpdateOrderSettingsInput, now time.Time) (apimarket.Service, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceOrderSettingsInTx(ctx, tx, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceOrderSettingsWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.UpdateOrderSettingsInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceOrderSettingsInTx(ctx, tx, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceOrderSettingsInTx(ctx context.Context, tx pgx.Tx, input apimarket.UpdateOrderSettingsInput, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -226,6 +648,27 @@ func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimark
 	if appErr := storeValidateAPIServiceOrderSettings(input); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if input.AcceptingOrders && service.BillingMode == apimarket.ServiceBillingModeMetered {
+		var limitedQuotaActive bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+			  SELECT 1 FROM api_quota_batches batch
+			  WHERE batch.api_service_id = $1
+			    AND batch.status IN ('published', 'paused')
+			    AND batch.sale_cutoff_at > $2 AND batch.expires_at > $2
+			)
+		`, service.ID, now).Scan(&limitedQuotaActive); err != nil {
+			return apimarket.Service{}, internalStoreError()
+		}
+		if limitedQuotaActive {
+			return apimarket.Service{}, domain.NewFieldError(http.StatusConflict, domain.CodeInvalidStateTransition, "Limited quota channel active", "该服务仍有未结束的限量额度批次，暂不能重新开启自选额度接单。", "acceptingOrders", "limited_quota_active", "请先归档或等待限量额度批次结束。")
+		}
+	}
+	if service.AcceptingOrders == input.AcceptingOrders &&
+		service.PaymentWindowMinutes == input.PaymentWindowMinutes &&
+		apimarket.PaymentOptionsMatchInput(service.PaymentOptions, input.PaymentOptions) {
+		return apimarket.WithOrderability(service), nil
+	}
 	service.PaymentWindowMinutes = input.PaymentWindowMinutes
 	service.PaymentOptions = storeBuildPaymentOptions(service.ID, service.PaymentOptions, input.PaymentOptions, now)
 	service.AcceptingOrders = input.AcceptingOrders
@@ -238,21 +681,31 @@ func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimark
 	if appErr := updateAPIServiceOrderSettingsInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.order_settings_changed", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"changedFields": []string{"accepting_orders", "payment_window", "payment_options"},
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
 
 func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput, now time.Time) (apimarket.Service, *domain.AppError) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.submitAPIServiceForReviewInTx(ctx, tx, user, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) SubmitAPIServiceForReviewWithIdempotency(ctx context.Context, entry idempotency.Entry, user auth.User, input apimarket.ServiceOwnerActionInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.submitAPIServiceForReviewInTx(ctx, tx, user, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) submitAPIServiceForReviewInTx(ctx context.Context, tx pgx.Tx, user auth.User, input apimarket.ServiceOwnerActionInput, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -263,13 +716,16 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
 		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if service.ReviewStatus != apimarket.ServiceReviewStatusDraft && service.ReviewStatus != apimarket.ServiceReviewStatusChangesRequested {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能提交审核。")
 	}
 	if user.LinuxDoBinding == nil || !user.LinuxDoBinding.Bound {
 		return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "linux.do binding required", "提交 API 服务前需要完成 linux.do 身份绑定。", "linuxDoBinding", "required", "需要先完成 linux.do 身份绑定。")
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	service.ReviewStatus = apimarket.ServiceReviewStatusApproved
@@ -282,21 +738,31 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, "api_service.review_submitted", service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus,
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
 
 func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket.ServiceOwnerActionInput, action string, now time.Time) (apimarket.Service, *domain.AppError) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServicePublicationInTx(ctx, tx, input, action, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServicePublicationWithIdempotency(ctx context.Context, entry idempotency.Entry, input apimarket.ServiceOwnerActionInput, action string, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServicePublicationInTx(ctx, tx, input, action, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServicePublicationInTx(ctx context.Context, tx pgx.Tx, input apimarket.ServiceOwnerActionInput, action string, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -311,10 +777,19 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该操作。")
 	}
 	if action == "publish" || action == "resume" {
-		if strings.TrimSpace(service.OwnerContactMethodID) == "" {
+		if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
+			return apimarket.Service{}, appErr
+		}
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+			return apimarket.Service{}, appErr
+		}
+		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
+			return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
+		}
+		if len(service.OwnerContactMethodIDs) == 0 {
 			return apimarket.Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "上线 API 服务必须配置商户联系方式。")
 		}
-		if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式当前不可用。"); appErr != nil {
+		if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式当前不可用。"); appErr != nil {
 			return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 		}
 	}
@@ -322,11 +797,16 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	eventType := map[string]string{
+		"publish": "api_service.published", "pause": "api_service.paused", "resume": "api_service.resumed", "start_revision": "api_service.revision_started",
+	}[action]
+	if appErr := insertAPIOperationDomainEvent(ctx, tx, "api_service", service.ID, eventType, service.OwnerUserID, apiOperationActorUser, service.Version, input.RequestID, map[string]any{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus,
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
@@ -335,11 +815,22 @@ func (s *Store) UpdateAPIServiceModeration(ctx context.Context, user auth.User, 
 	if !user.IsAdmin {
 		return apimarket.Service{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return apimarket.Service{}, internalStoreError()
+	result, _, appErr := s.executeAPIServiceCommand(ctx, nil, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceModerationInTx(ctx, tx, user, input, now)
+	}, nil)
+	return result, appErr
+}
+
+func (s *Store) UpdateAPIServiceModerationWithIdempotency(ctx context.Context, entry idempotency.Entry, user auth.User, input apimarket.ServiceAdminActionInput, now time.Time, buildCompletion apimarket.ServiceCompletionBuilder) (apimarket.Service, idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return apimarket.Service{}, idempotency.Completion{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
-	defer rollback(ctx, tx)
+	return s.executeAPIServiceCommand(ctx, &entry, now, func(tx pgx.Tx) (apimarket.Service, *domain.AppError) {
+		return s.updateAPIServiceModerationInTx(ctx, tx, user, input, now)
+	}, buildCompletion)
+}
+
+func (s *Store) updateAPIServiceModerationInTx(ctx context.Context, tx pgx.Tx, user auth.User, input apimarket.ServiceAdminActionInput, now time.Time) (apimarket.Service, *domain.AppError) {
 	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
@@ -353,15 +844,26 @@ func (s *Store) UpdateAPIServiceModeration(ctx context.Context, user auth.User, 
 	if !canUpdateAPIServiceAdminStatus(service, input.Action) {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该管理动作。")
 	}
+	before := map[string]string{"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus}
 	service = applyAPIServiceAdminAction(service, input, now)
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+	auditAction := map[string]string{
+		"approve":         "api_service.approved",
+		"request_changes": "api_service.changes_requested",
+		"reject":          "api_service.rejected",
+		"suspend":         "api_service.suspended",
+		"restore":         "api_service.restored",
+		"remove":          "api_service.removed",
+	}[input.Action]
+	if appErr := insertAPIServiceAdminAudit(ctx, tx, user.ID, service.ID, auditAction, input.RequestID, before, map[string]string{
+		"reviewStatus": service.ReviewStatus, "publicationStatus": service.PublicationStatus, "moderationStatus": service.ModerationStatus,
+	}, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return apimarket.Service{}, internalStoreError()
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
 	}
 	return service, nil
 }
@@ -618,6 +1120,26 @@ const apiServiceColumns = `
 	accepting_orders, payment_window_minutes,
 	review_status, publication_status, moderation_status, COALESCE(approved_by_admin_id::text, ''),
 		approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version,
+		COALESCE(probe_connection_id::text, ''),
+		EXISTS (
+		  SELECT 1 FROM api_probe_connections probe_connection
+		  WHERE probe_connection.id = api_services.probe_connection_id
+		    AND probe_connection.owner_user_id = api_services.owner_user_id
+		    AND probe_connection.enabled = true
+		    AND probe_connection.verification_status = 'verified'
+		),
+		COALESCE((
+		  SELECT probe_connection.base_url
+		  FROM api_probe_connections probe_connection
+		  WHERE probe_connection.id = api_services.probe_connection_id
+		    AND probe_connection.owner_user_id = api_services.owner_user_id
+		), ''),
+		COALESCE((
+		  SELECT probe_connection.normalized_base_url
+		  FROM api_probe_connections probe_connection
+		  WHERE probe_connection.id = api_services.probe_connection_id
+		    AND probe_connection.owner_user_id = api_services.owner_user_id
+		), ''),
 		prompt_audit_enabled
 `
 
@@ -671,14 +1193,34 @@ func (s *Store) listAPIServices(ctx context.Context, whereClause string, args []
 	return services, nil
 }
 
-func (s *Store) listAPIServicesPage(ctx context.Context, whereClause string, args []any, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
+func (s *Store) listAPIServicesPage(
+	ctx context.Context,
+	whereClause string,
+	args []any,
+	page domain.PageRequest,
+	sortMode string,
+	sortExpression string,
+	scalarValue func(apimarket.Service) string,
+) (domain.Page[apimarket.Service], *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return domain.Page[apimarket.Service]{}, internalStoreError()
 	}
 	page = normalizePageRequest(page)
-	position, appErr := decodeKeysetCursor(page.Cursor)
+	var position keysetPosition
+	var scalarPosition scalarKeysetPosition
+	var appErr *domain.AppError
+	if sortMode == apimarket.PublicServiceSortUpdatedDesc {
+		position, appErr = decodeKeysetCursor(page.Cursor)
+	} else {
+		scalarPosition, appErr = decodeScalarKeysetCursor(page.Cursor, sortMode)
+	}
 	if appErr != nil {
 		return domain.Page[apimarket.Service]{}, appErr
+	}
+	if page.Cursor != "" && sortMode != apimarket.PublicServiceSortUpdatedDesc {
+		if appErr := validateNonNegativeDecimalCursor(scalarPosition); appErr != nil {
+			return domain.Page[apimarket.Service]{}, appErr
+		}
 	}
 	query := `SELECT ` + apiServiceColumns + ` FROM api_services `
 	whereClause = strings.TrimSpace(whereClause)
@@ -692,11 +1234,21 @@ func (s *Store) listAPIServicesPage(ctx context.Context, whereClause string, arg
 		} else {
 			query += ` AND `
 		}
-		args = append(args, position.Time, position.ID)
-		query += `(updated_at, id) < ($` + strconv.Itoa(len(args)-1) + `, $` + strconv.Itoa(len(args)) + `::uuid)`
+		if sortMode == apimarket.PublicServiceSortUpdatedDesc {
+			args = append(args, position.Time, position.ID)
+			query += `(api_services.updated_at, api_services.id) < ($` + strconv.Itoa(len(args)-1) + `, $` + strconv.Itoa(len(args)) + `::uuid)`
+		} else {
+			args = append(args, scalarPosition.Value, scalarPosition.ID)
+			query += `(` + sortExpression + `, api_services.id) > ($` + strconv.Itoa(len(args)-1) + `::numeric, $` + strconv.Itoa(len(args)) + `::uuid)`
+		}
 	}
 	args = append(args, page.Limit+1)
-	query += ` ORDER BY updated_at DESC, id DESC LIMIT $` + strconv.Itoa(len(args))
+	if sortMode == apimarket.PublicServiceSortUpdatedDesc {
+		query += ` ORDER BY api_services.updated_at DESC, api_services.id DESC`
+	} else {
+		query += ` ORDER BY ` + sortExpression + ` ASC, api_services.id ASC`
+	}
+	query += ` LIMIT $` + strconv.Itoa(len(args))
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return domain.Page[apimarket.Service]{}, internalStoreError()
@@ -710,6 +1262,11 @@ func (s *Store) listAPIServicesPage(ctx context.Context, whereClause string, arg
 		if appErr := s.loadAPIServiceChildren(ctx, s.pool, &services[i]); appErr != nil {
 			return domain.Page[apimarket.Service]{}, appErr
 		}
+	}
+	if sortMode != apimarket.PublicServiceSortUpdatedDesc && scalarValue != nil {
+		return pageFromScalarItems(services, page, sortMode, func(item apimarket.Service) (string, string) {
+			return scalarValue(item), item.ID
+		}), nil
 	}
 	return pageFromItems(services, page, func(item apimarket.Service) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
 }
@@ -751,6 +1308,31 @@ func (s *Store) getPublicAPIService(ctx context.Context, q queryer, serviceID st
 }
 
 func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *apimarket.Service) *domain.AppError {
+	contactRows, err := queryRows(ctx, q, `
+		SELECT contact_method_id::text
+		FROM api_service_contact_methods
+		WHERE api_service_id = $1
+		ORDER BY sort_order ASC
+	`, service.ID)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer contactRows.Close()
+	service.OwnerContactMethodIDs = nil
+	for contactRows.Next() {
+		var contactMethodID string
+		if err := contactRows.Scan(&contactMethodID); err != nil {
+			return internalStoreError()
+		}
+		service.OwnerContactMethodIDs = append(service.OwnerContactMethodIDs, contactMethodID)
+	}
+	if err := contactRows.Err(); err != nil {
+		return internalStoreError()
+	}
+	if len(service.OwnerContactMethodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
+		service.OwnerContactMethodIDs = []string{service.OwnerContactMethodID}
+	}
+
 	accessRows, err := queryRows(ctx, q, `
 		SELECT api_service_id::text, access_mode, COALESCE(public_note, '')
 		FROM api_service_access_modes
@@ -775,7 +1357,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 
 	modelRows, err := queryRows(ctx, q, `
 		SELECT id::text, api_service_id::text, distribution_system, model_catalog_id::text,
-		       COALESCE(model_price_version_id::text, ''), model_name_snapshot, provider_snapshot,
+		       COALESCE(model_price_version_id::text, ''), model_key_snapshot, provider_snapshot,
 		       capabilities_snapshot, merchant_multiplier::text,
 		       COALESCE(effective_input_price_per_million::text, ''),
 		       COALESCE(effective_cached_input_price_per_million::text, ''),
@@ -798,7 +1380,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 			&model.DistributionSystem,
 			&model.ModelCatalogID,
 			&model.ModelPriceVersionID,
-			&model.ModelNameSnapshot,
+			&model.ModelKey,
 			&model.ProviderSnapshot,
 			&model.CapabilitiesSnapshot,
 			&model.MerchantMultiplier,
@@ -867,7 +1449,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 	packageModelRows, err := queryRows(ctx, q, `
 		SELECT relation.api_service_package_id::text, model.id::text,
 		       model.model_catalog_id::text, COALESCE(model.model_price_version_id::text, ''),
-		       model.model_name_snapshot, model.provider_snapshot, model.merchant_multiplier::text
+		       model.model_key_snapshot, model.provider_snapshot, model.merchant_multiplier::text
 		FROM api_service_package_models relation
 		JOIN api_service_models model
 		  ON model.api_service_id = relation.api_service_id
@@ -887,7 +1469,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 			&model.ServiceModelID,
 			&model.ModelCatalogID,
 			&model.ModelPriceVersionID,
-			&model.ModelNameSnapshot,
+			&model.ModelKey,
 			&model.ProviderSnapshot,
 			&model.MerchantMultiplier,
 		); err != nil {
@@ -976,20 +1558,29 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if err != nil {
 		return apiintent.Intent{}, internalStoreError()
 	}
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, input.BuyerUserID, service.OwnerUserID); appErr != nil {
+		return apiintent.Intent{}, appErr
+	}
 	if validateErr := validateCreateAPIPurchaseIntentForStore(input, service); validateErr != nil {
 		return apiintent.Intent{}, validateErr
 	}
+	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
+		return apiintent.Intent{}, appErr
+	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apiintent.Intent{}, appErr
+	}
 
-	buyerMethod, buyerVersion, appErr := lockContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "买家联系方式不可用或不属于当前用户。")
+	buyerMethod, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	ownerMethod, ownerVersion, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或归属不正确。")
+	ownerSnapshots, appErr := lockAPIServiceOwnerContactSnapshots(ctx, tx, service.ID, service.OwnerUserID, service.OwnerContactMethodID, service.OwnerContactMethodIDs, "商户联系方式不可用或归属不正确。")
 	if appErr != nil {
 		return apiintent.Intent{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 	}
 
-	intent, appErr := apiintent.NewIntent(input, service, buyerMethod, buyerVersion, ownerMethod, ownerVersion, now)
+	intent, appErr := apiintent.NewIntentWithOwnerContacts(input, service, buyerMethod, buyerVersion, ownerSnapshots, now)
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1007,6 +1598,41 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 		return apiintent.Intent{}, appErr
 	}
 	return intent, nil
+}
+
+func ensureAPIServiceCatalogActiveInTx(ctx context.Context, tx pgx.Tx, serviceID string) *domain.AppError {
+	rows, err := tx.Query(ctx, `
+		SELECT catalog.status, provider.status
+		FROM api_service_models service_model
+		JOIN api_model_catalog catalog ON catalog.id = service_model.model_catalog_id
+		JOIN api_model_providers provider ON provider.id = catalog.provider_id
+		WHERE service_model.api_service_id = $1
+		ORDER BY service_model.id
+		FOR SHARE OF service_model, catalog, provider
+	`, serviceID)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer rows.Close()
+
+	modelCount := 0
+	for rows.Next() {
+		var modelStatus, providerStatus string
+		if err := rows.Scan(&modelStatus, &providerStatus); err != nil {
+			return internalStoreError()
+		}
+		modelCount++
+		if modelStatus != "active" || providerStatus != "active" {
+			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "API model catalog unavailable", "关联模型目录已退役或被阻断，当前不能发布或创建新交易。")
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return internalStoreError()
+	}
+	if modelCount == 0 {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "API model catalog unavailable", "API 服务未配置可用模型，当前不能发布或创建新交易。")
+	}
+	return nil
 }
 
 func (s *Store) updateAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, input apiintent.ActionInput, now time.Time, action string) (apiintent.Intent, *domain.AppError) {
@@ -1083,7 +1709,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			review_status, publication_status, moderation_status,
 			approved_by_admin_id, approved_at, moderation_reason,
 			accepting_orders, payment_window_minutes,
-			created_at, updated_at, version, prompt_audit_enabled
+			created_at, updated_at, version, probe_connection_id, prompt_audit_enabled
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1098,7 +1724,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			$31, $32, $33,
 			$34, $35, $36,
 			$37, $38,
-				$39, $40, $41, $42
+				$39, $40, $41, $42, $43
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -1136,8 +1762,9 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    approved_at = EXCLUDED.approved_at,
 		    moderation_reason = EXCLUDED.moderation_reason,
 		    accepting_orders = EXCLUDED.accepting_orders,
-			    payment_window_minutes = EXCLUDED.payment_window_minutes,
-			    prompt_audit_enabled = EXCLUDED.prompt_audit_enabled,
+		    payment_window_minutes = EXCLUDED.payment_window_minutes,
+		    probe_connection_id = EXCLUDED.probe_connection_id,
+		    prompt_audit_enabled = EXCLUDED.prompt_audit_enabled,
 			    updated_at = EXCLUDED.updated_at,
 		    version = EXCLUDED.version
 		`, service.ID, service.OwnerUserID, nullUUID(service.MerchantProfileID), service.MerchantIdentityMode, service.OwnerContactMethodID,
@@ -1153,9 +1780,21 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		service.ReviewStatus, service.PublicationStatus, service.ModerationStatus,
 		nullUUID(service.ApprovedByAdminID), service.ApprovedAt, nullText(service.ModerationReason),
 		service.AcceptingOrders, service.PaymentWindowMinutes,
-		service.CreatedAt, service.UpdatedAt, service.Version, service.PromptAuditEnabled)
+		service.CreatedAt, service.UpdatedAt, service.Version, nullUUID(service.ProbeConnectionID), service.PromptAuditEnabled)
 	if err != nil {
 		return internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM api_service_contact_methods WHERE api_service_id = $1`, service.ID); err != nil {
+		return internalStoreError()
+	}
+	for index, contactMethodID := range service.OwnerContactMethodIDs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_service_contact_methods (
+				api_service_id, owner_user_id, contact_method_id, sort_order, created_at
+			) VALUES ($1, $2, $3, $4, $5)
+		`, service.ID, service.OwnerUserID, contactMethodID, index, service.UpdatedAt); err != nil {
+			return internalStoreError()
+		}
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM api_service_access_modes WHERE api_service_id = $1`, service.ID); err != nil {
 		return internalStoreError()
@@ -1176,7 +1815,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		_, err = tx.Exec(ctx, `
 			INSERT INTO api_service_models (
 				id, api_service_id, distribution_system, model_catalog_id, model_price_version_id,
-				model_name_snapshot, provider_snapshot, capabilities_snapshot, merchant_multiplier,
+				model_key_snapshot, provider_snapshot, capabilities_snapshot, merchant_multiplier,
 				effective_input_price_per_million, effective_cached_input_price_per_million,
 				effective_output_price_per_million, enabled, created_at, updated_at
 			)
@@ -1190,7 +1829,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 				SET distribution_system = EXCLUDED.distribution_system,
 				    model_catalog_id = EXCLUDED.model_catalog_id,
 				    model_price_version_id = EXCLUDED.model_price_version_id,
-				    model_name_snapshot = EXCLUDED.model_name_snapshot,
+				    model_key_snapshot = EXCLUDED.model_key_snapshot,
 				    provider_snapshot = EXCLUDED.provider_snapshot,
 				    capabilities_snapshot = EXCLUDED.capabilities_snapshot,
 				    merchant_multiplier = EXCLUDED.merchant_multiplier,
@@ -1200,7 +1839,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 				    enabled = EXCLUDED.enabled,
 				    updated_at = EXCLUDED.updated_at
 		`, model.ID, service.ID, service.DistributionSystem, model.ModelCatalogID, nullUUID(model.ModelPriceVersionID),
-			model.ModelNameSnapshot, model.ProviderSnapshot, model.CapabilitiesSnapshot, model.MerchantMultiplier,
+			model.ModelKey, model.ProviderSnapshot, model.CapabilitiesSnapshot, model.MerchantMultiplier,
 			nullNumeric(model.EffectiveInputPricePerMillion), nullNumeric(model.EffectiveCachedInputPricePerMillion),
 			nullNumeric(model.EffectiveOutputPricePerMillion), model.Enabled, model.CreatedAt, model.UpdatedAt)
 		if err != nil {
@@ -1279,6 +1918,67 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 	return nil
 }
 
+func lockAPIServiceContacts(ctx context.Context, tx pgx.Tx, service apimarket.Service, detail string) *domain.AppError {
+	methodIDs := service.OwnerContactMethodIDs
+	if len(methodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
+		methodIDs = []string{service.OwnerContactMethodID}
+	}
+	if len(methodIDs) == 0 {
+		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "至少需要一种商户联系方式。")
+	}
+	for _, methodID := range methodIDs {
+		if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant, detail); appErr != nil {
+			return appErr
+		}
+	}
+	return nil
+}
+
+func lockAPIServiceOwnerContactSnapshots(ctx context.Context, tx pgx.Tx, serviceID, ownerUserID, fallbackMethodID string, methodIDs []string, detail string) ([]apiintent.OwnerContactSnapshot, *domain.AppError) {
+	if len(methodIDs) == 0 {
+		rows, err := tx.Query(ctx, `
+			SELECT contact_method_id::text
+			FROM api_service_contact_methods
+			WHERE api_service_id = $1 AND owner_user_id = $2
+			ORDER BY sort_order ASC
+		`, serviceID, ownerUserID)
+		if err != nil {
+			return nil, internalStoreError()
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var methodID string
+			if err := rows.Scan(&methodID); err != nil {
+				return nil, internalStoreError()
+			}
+			methodIDs = append(methodIDs, methodID)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, internalStoreError()
+		}
+	}
+	if len(methodIDs) == 0 && strings.TrimSpace(fallbackMethodID) != "" {
+		methodIDs = []string{fallbackMethodID}
+	}
+	if len(methodIDs) == 0 {
+		return nil, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", detail)
+	}
+	snapshots := make([]apiintent.OwnerContactSnapshot, 0, len(methodIDs))
+	for _, methodID := range methodIDs {
+		method, version, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, ownerUserID, contact.UsageScopeAPIMerchant, detail)
+		if appErr != nil {
+			return nil, appErr
+		}
+		snapshots = append(snapshots, apiintent.OwnerContactSnapshot{
+			ContactMethodID:        method.ID,
+			ContactMethodVersionID: version.ID,
+			Type:                   method.Type,
+			Label:                  method.Label,
+		})
+	}
+	return snapshots, nil
+}
+
 func loadAPIServiceRecommendationStats(ctx context.Context, q queryer, service *apimarket.Service) *domain.AppError {
 	var responseMedian float64
 	err := q.QueryRow(ctx, `
@@ -1303,7 +2003,7 @@ func loadAPIServiceRecommendationStats(ctx context.Context, q queryer, service *
 		SELECT COUNT(*) FILTER (
 		         WHERE status = 'completed' AND completed_at >= now() - interval '30 days'
 		       )::int,
-		       COUNT(*) FILTER (WHERE dispute_status = 'open')::int,
+		       COUNT(*) FILTER (WHERE dispute_status NOT IN ('none', 'closed'))::int,
 		       COALESCE(
 		         percentile_cont(0.5) WITHIN GROUP (
 		           ORDER BY EXTRACT(EPOCH FROM (first_seller_response_at - created_at)) / 60.0
@@ -1433,6 +2133,34 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 		}
 		return internalStoreError()
 	}
+	if appErr := insertAPIPurchaseIntentOwnerContactSnapshotsInTx(ctx, tx, intent); appErr != nil {
+		return appErr
+	}
+	return nil
+}
+
+func insertAPIPurchaseIntentOwnerContactSnapshotsInTx(ctx context.Context, tx pgx.Tx, intent apiintent.Intent) *domain.AppError {
+	snapshots := intent.OwnerContactSnapshots
+	if len(snapshots) == 0 && strings.TrimSpace(intent.OwnerContactMethodID) != "" {
+		snapshots = []apiintent.OwnerContactSnapshot{{
+			ContactMethodID:        intent.OwnerContactMethodID,
+			ContactMethodVersionID: intent.OwnerContactMethodVersionID,
+			Type:                   intent.OwnerContactTypeSnapshot,
+			Label:                  intent.OwnerContactLabelSnapshot,
+		}}
+	}
+	for index, snapshot := range snapshots {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_purchase_intent_owner_contact_snapshots (
+				api_purchase_intent_id, owner_user_id, contact_method_id,
+				contact_method_version_id, contact_type_snapshot,
+				contact_label_snapshot, sort_order, created_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, intent.ID, intent.OwnerUserID, snapshot.ContactMethodID,
+			snapshot.ContactMethodVersionID, snapshot.Type, snapshot.Label, index, intent.CreatedAt); err != nil {
+			return internalStoreError()
+		}
+	}
 	return nil
 }
 
@@ -1500,11 +2228,48 @@ func insertAPIPurchaseIntentContactAccessLogInTx(ctx context.Context, tx pgx.Tx,
 }
 
 func (s *Store) withAPIPurchaseIntentMerchantContact(ctx context.Context, q queryer, intent apiintent.Intent) (apiintent.Intent, *domain.AppError) {
-	item, appErr := s.readFrozenContactVersion(ctx, q, intent.OwnerContactMethodVersionID, intent.OwnerContactMethodID, intent.OwnerUserID, "merchant", intent.OwnerContactTypeSnapshot, intent.OwnerContactLabelSnapshot)
-	if appErr != nil {
-		return apiintent.Intent{}, appErr
+	rows, err := queryRows(ctx, q, `
+		SELECT contact_method_id::text, contact_method_version_id::text,
+		       contact_type_snapshot, contact_label_snapshot
+		FROM api_purchase_intent_owner_contact_snapshots
+		WHERE api_purchase_intent_id = $1 AND owner_user_id = $2
+		ORDER BY sort_order ASC
+	`, intent.ID, intent.OwnerUserID)
+	if err != nil {
+		return apiintent.Intent{}, internalStoreError()
 	}
-	intent.MerchantContact = &item
+	defer rows.Close()
+	intent.OwnerContactSnapshots = nil
+	for rows.Next() {
+		var snapshot apiintent.OwnerContactSnapshot
+		if err := rows.Scan(&snapshot.ContactMethodID, &snapshot.ContactMethodVersionID, &snapshot.Type, &snapshot.Label); err != nil {
+			return apiintent.Intent{}, internalStoreError()
+		}
+		intent.OwnerContactSnapshots = append(intent.OwnerContactSnapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return apiintent.Intent{}, internalStoreError()
+	}
+	if len(intent.OwnerContactSnapshots) == 0 {
+		intent.OwnerContactSnapshots = []apiintent.OwnerContactSnapshot{{
+			ContactMethodID:        intent.OwnerContactMethodID,
+			ContactMethodVersionID: intent.OwnerContactMethodVersionID,
+			Type:                   intent.OwnerContactTypeSnapshot,
+			Label:                  intent.OwnerContactLabelSnapshot,
+		}}
+	}
+	intent.MerchantContacts = nil
+	for _, snapshot := range intent.OwnerContactSnapshots {
+		item, appErr := s.readFrozenContactVersion(ctx, q, snapshot.ContactMethodVersionID, snapshot.ContactMethodID, intent.OwnerUserID, "merchant", snapshot.Type, snapshot.Label)
+		if appErr != nil {
+			return apiintent.Intent{}, appErr
+		}
+		intent.MerchantContacts = append(intent.MerchantContacts, item)
+	}
+	if len(intent.MerchantContacts) > 0 {
+		primary := intent.MerchantContacts[0]
+		intent.MerchantContact = &primary
+	}
 	return intent, nil
 }
 
@@ -1968,6 +2733,10 @@ func apiServiceScanDestinations(service *apimarket.Service) []any {
 		&service.CreatedAt,
 		&service.UpdatedAt,
 		&service.Version,
+		&service.ProbeConnectionID,
+		&service.ProbeReady,
+		&service.ProbeBaseURL,
+		&service.NormalizedProbeBaseURL,
 		&service.PromptAuditEnabled,
 	}
 }

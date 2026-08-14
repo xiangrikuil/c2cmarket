@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AcceptableValue } from 'reka-ui'
 import { Network } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -23,7 +22,7 @@ const emit = defineEmits<{
   setDefaultMultiplier: [value: string]
 }>()
 
-function setDistribution(value: AcceptableValue) {
+function setDistribution(value: unknown) {
   if (value === 'sub2api' || value === 'other') emit('setDistribution', value)
 }
 </script>

@@ -1,347 +1,651 @@
 package apihealth
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"io"
-	"net/http"
 	"testing"
 	"time"
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/platform/openaiapi"
 )
 
-func TestServicePutOwnerConfigPassesAuthorizationInvalidationMutation(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
-	verifiedAt := now.Add(-time.Hour)
-	repository := &probeServiceRepository{config: Config{
-		ID: "config", APIServiceID: "service", OwnerUserID: "owner",
-		Protocol: ProtocolOpenAIChatCompletionsV1, BaseURL: "https://api.example.com/v1",
-		NormalizedOrigin: "https://api.example.com:443", Model: "gpt-5",
-		CredentialConfigured: true, Enabled: true,
-		AuthorizationStatus: AuthorizationVerified, AuthorizationMethod: AuthorizationMethodDNSTXT,
-		VerifiedOrigin: "https://api.example.com:443", VerifiedAt: &verifiedAt,
-		MeasurementVersion: 4, Version: 6, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: verifiedAt,
-	}, found: true}
-	service := NewService(repository, urlValidatorFunc(func(_ context.Context, raw string) (string, error) {
-		return raw, nil
-	}), nil, nil, func() time.Time { return now }, time.Minute)
-
-	config, appErr := service.PutOwnerConfig(context.Background(), auth.User{ID: "owner"}, " service ", ConfigInput{
-		BaseURL: "https://api.example.com/v1", Model: "gpt-5.1", Enabled: true,
-	}, 6)
+func TestCreateConnectionVerifiesAndEnablesSuccessfulTarget(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	repository := &connectionRepository{}
+	verifier := &connectionVerifier{result: successfulVerification()}
+	service := NewService(repository, verifier, func() time.Time { return now })
+	credential := " probe-key "
+	input := ConnectionInput{
+		Name: " 主 Sub2API ", BaseURL: "https://API.example.com/v1/", Credential: &credential, Enabled: true,
+		ProbeModel: DefaultGPTProbeModel,
+	}
+	preflight, appErr := service.PreflightOwnerConnection(context.Background(), probeOwner("owner-1"), input)
+	if appErr != nil || preflight.PreflightToken == "" {
+		t.Fatalf("PreflightOwnerConnection() result=%+v error=%v", preflight, appErr)
+	}
+	input.PreflightToken = preflight.PreflightToken
+	connection, appErr := service.CreateOwnerConnection(context.Background(), probeOwner("owner-1"), input, "request-create-1")
 	if appErr != nil {
-		t.Fatalf("update owner config: %v", appErr)
+		t.Fatalf("CreateOwnerConnection() error: %v", appErr)
 	}
-	mutation := repository.upsertMutation
-	if !mutation.MeasurementInvalidated || !mutation.AuthorizationInvalidated {
-		t.Fatalf("complete invalidation mutation was not passed to repository: %+v", mutation)
+	if connection.Name != "主 Sub2API" || connection.BaseURL != "https://API.example.com/v1/" || connection.NormalizedBaseURL != "https://api.example.com/v1" {
+		t.Fatalf("unexpected connection: %+v", connection)
 	}
-	if mutation.Config.Model != "gpt-5.1" || mutation.Config.AuthorizationStatus != AuthorizationPending || mutation.Config.Version != 7 {
-		t.Fatalf("unexpected persisted mutation config: %+v", mutation.Config)
+	if !connection.Enabled || connection.VerificationStatus != VerificationVerified || connection.VerifiedAt == nil {
+		t.Fatalf("connection was not verified and enabled: %+v", connection)
 	}
-	if repository.upsertExpectedVersion != 6 || repository.upsertCredential != nil || config != mutation.Config {
-		t.Fatalf("unexpected repository upsert inputs or result: repository=%+v config=%+v", repository, config)
+	if verifier.calls != 1 || verifier.baseURL != connection.BaseURL || verifier.credential != "probe-key" || repository.credential != "probe-key" {
+		t.Fatalf("verification or persistence did not receive normalized secret input")
+	}
+	if len(repository.audits) != 1 || repository.audits[0].Action != ProbeAuditCreated || repository.audits[0].RequestID != "request-create-1" || !repository.audits[0].OccurredAt.Equal(now) {
+		t.Fatalf("unexpected create audit: %+v", repository.audits)
 	}
 }
 
-func TestConfigValidationErrorUsesProbeAPIKeyWording(t *testing.T) {
-	t.Parallel()
+func TestCreateConnectionAcceptsOmittedModelSelectedByPreflight(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	repository := &connectionRepository{}
+	verifier := &connectionVerifier{result: successfulVerification()}
+	service := NewService(repository, verifier, func() time.Time { return now })
+	credential := "probe-key"
+	input := ConnectionInput{
+		Name: "主连接", BaseURL: "https://api.example.com/v1", Credential: &credential, Enabled: true,
+	}
+
+	preflight, appErr := service.PreflightOwnerConnection(context.Background(), probeOwner("owner-1"), input)
+	if appErr != nil || preflight.PreflightToken == "" || preflight.Verification.ProbeModel != DefaultGPTProbeModel {
+		t.Fatalf("PreflightOwnerConnection() result=%+v error=%v", preflight, appErr)
+	}
+	input.PreflightToken = preflight.PreflightToken
+	connection, appErr := service.CreateOwnerConnection(context.Background(), probeOwner("owner-1"), input, "request-create-2")
+	if appErr != nil {
+		t.Fatalf("CreateOwnerConnection() error: %v", appErr)
+	}
+	if connection.ProbeModel != DefaultGPTProbeModel || verifier.calls != 1 {
+		t.Fatalf("unexpected default-model connection=%+v verifier calls=%d", connection, verifier.calls)
+	}
+}
+
+func TestCreateConnectionRequiresSuccessfulPreflight(t *testing.T) {
+	repository := &connectionRepository{}
+	service := NewService(repository, &connectionVerifier{result: VerificationResult{ErrorCode: ErrorAuthorizationInvalid}}, time.Now)
+	credential := "bad-key"
+	input := ConnectionInput{
+		Name: "低额度探针", BaseURL: "https://api.example.com/v1", Credential: &credential,
+		ProbeModel: DefaultGPTProbeModel, Enabled: true,
+	}
+	preflight, appErr := service.PreflightOwnerConnection(context.Background(), probeOwner("owner-1"), input)
+	if appErr != nil || preflight.Verification.ErrorCode != ErrorAuthorizationInvalid || preflight.PreflightToken != "" {
+		t.Fatalf("unexpected failed preflight: result=%+v error=%v", preflight, appErr)
+	}
+	_, appErr = service.CreateOwnerConnection(context.Background(), probeOwner("owner-1"), input, "request-create-3")
+	if appErr == nil || len(appErr.FieldErrors) == 0 || appErr.FieldErrors[0].Field != "preflightToken" || repository.found {
+		t.Fatalf("unexpected create result: error=%+v persisted=%t", appErr, repository.found)
+	}
+}
+
+func TestUpdateConnectionOnlyReverifiesMaterialChangesOrEnable(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	existing := verifiedConnection(now)
+	repository := &connectionRepository{connection: existing, found: true, credential: "secret"}
+	verifier := &connectionVerifier{result: successfulVerification()}
+	service := NewService(repository, verifier, func() time.Time { return now.Add(time.Minute) })
+
+	updated, appErr := service.UpdateOwnerConnection(context.Background(), probeOwner(existing.OwnerUserID), existing.ID, ConnectionInput{
+		Name: "新名称", BaseURL: existing.BaseURL, Enabled: true,
+	}, existing.Version, "request-update-1")
+	if appErr != nil {
+		t.Fatalf("name update error: %v", appErr)
+	}
+	if verifier.calls != 0 || updated.MeasurementVersion != existing.MeasurementVersion {
+		t.Fatalf("name-only update unexpectedly reverified: calls=%d connection=%+v", verifier.calls, updated)
+	}
+	if len(repository.audits) != 1 || repository.audits[0].Action != ProbeAuditUpdated || repository.audits[0].RequestID != "request-update-1" {
+		t.Fatalf("unexpected update audit: %+v", repository.audits)
+	}
+
+	repository.connection = updated
+	repository.credential = "secret"
+	repository.found = true
+	newCredential := "replacement"
+	credentialUpdate := ConnectionInput{
+		Name: updated.Name, BaseURL: updated.BaseURL, Credential: &newCredential, Enabled: true,
+		ProbeModel: updated.ProbeModel,
+	}
+	preflight, appErr := service.PreflightExistingOwnerConnection(context.Background(), probeOwner(existing.OwnerUserID), existing.ID, credentialUpdate, updated.Version)
+	if appErr != nil || preflight.PreflightToken == "" {
+		t.Fatalf("credential preflight result=%+v error=%v", preflight, appErr)
+	}
+	credentialUpdate.PreflightToken = preflight.PreflightToken
+	updated, appErr = service.UpdateOwnerConnection(context.Background(), probeOwner(existing.OwnerUserID), existing.ID, credentialUpdate, updated.Version, "request-update-2")
+	if appErr != nil {
+		t.Fatalf("credential update error: %v", appErr)
+	}
+	if verifier.calls != 1 || updated.MeasurementVersion != existing.MeasurementVersion+1 {
+		t.Fatalf("credential update did not reverify: calls=%d connection=%+v", verifier.calls, updated)
+	}
+}
+
+func TestProbeMutationsPropagateSafeAuditActionRequestAndTime(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	existing := verifiedConnection(now.Add(-time.Hour))
+	repository := &connectionRepository{connection: existing, found: true, credential: "secret"}
+	service := NewService(repository, &connectionVerifier{result: successfulVerification()}, func() time.Time { return now })
+
+	verified, appErr := service.VerifyOwnerConnection(context.Background(), probeOwner(existing.OwnerUserID), existing.ID, existing.Version, " request-verify ")
+	if appErr != nil {
+		t.Fatalf("verify connection: %v", appErr)
+	}
+	if len(repository.audits) != 1 || repository.audits[0].Action != ProbeAuditVerifySucceeded || repository.audits[0].RequestID != "request-verify" || !repository.audits[0].OccurredAt.Equal(now) {
+		t.Fatalf("unexpected verify audit: %+v", repository.audits)
+	}
+
+	repository.connection = verified
+	if appErr := service.DeleteOwnerConnection(context.Background(), probeOwner(existing.OwnerUserID), existing.ID, verified.Version, " request-delete "); appErr != nil {
+		t.Fatalf("delete connection: %v", appErr)
+	}
+	if len(repository.audits) != 2 || repository.audits[1].Action != ProbeAuditDeleted || repository.audits[1].RequestID != "request-delete" || !repository.audits[1].OccurredAt.Equal(now) {
+		t.Fatalf("unexpected delete audit: %+v", repository.audits)
+	}
+
+	repository.audits = nil
+	repository.connection = existing
+	repository.found = true
+	service.verifier = &connectionVerifier{result: VerificationResult{ErrorCode: ErrorAuthorizationInvalid}}
+	if _, appErr := service.VerifyOwnerConnection(context.Background(), probeOwner(existing.OwnerUserID), existing.ID, existing.Version, "request-verify-failed"); appErr != nil {
+		t.Fatalf("persist failed verification result: %v", appErr)
+	}
+	if len(repository.audits) != 1 || repository.audits[0].Action != ProbeAuditVerifyFailed {
+		t.Fatalf("unexpected failed-verification audit: %+v", repository.audits)
+	}
+}
+
+func TestVerifyConnectionIdempotencyReplaysWithoutAnotherExternalProbeOrAudit(t *testing.T) {
+	now := time.Date(2026, 8, 12, 11, 0, 0, 0, time.UTC)
+	existing := verifiedConnection(now.Add(-time.Hour))
+	repository := &connectionRepository{connection: existing, found: true, credential: "secret"}
+	verifier := &connectionVerifier{result: successfulVerification()}
+	service := NewService(repository, verifier, func() time.Time { return now })
+	build := func(connection Connection) (idempotency.Completion, *domain.AppError) {
+		return idempotency.Completion{
+			Status: 200, ContentType: "application/json", Body: []byte(`{"ok":true}`),
+			ResourceType: "api_probe_connection", ResourceID: connection.ID,
+		}, nil
+	}
+
+	first, appErr := service.VerifyOwnerConnectionWithIdempotency(
+		context.Background(), probeOwner(existing.OwnerUserID),
+		"POST /api/v1/owner/api-probe-connections/{id}/verify", "verify-once", "request-hash",
+		existing.ID, existing.Version, "request-verify-once", build,
+	)
+	if appErr != nil || first.Status != 200 {
+		t.Fatalf("first verification completion=%+v error=%v", first, appErr)
+	}
+	replay, appErr := service.VerifyOwnerConnectionWithIdempotency(
+		context.Background(), probeOwner(existing.OwnerUserID),
+		"POST /api/v1/owner/api-probe-connections/{id}/verify", "verify-once", "request-hash",
+		existing.ID, existing.Version, "request-verify-once", build,
+	)
+	if appErr != nil || replay.Status != 200 || string(replay.Body) != `{"ok":true}` {
+		t.Fatalf("replayed verification completion=%+v error=%v", replay, appErr)
+	}
+	if verifier.calls != 1 || len(repository.audits) != 1 {
+		t.Fatalf("replay repeated side effects: verifier calls=%d audits=%+v", verifier.calls, repository.audits)
+	}
+}
+
+func TestProbeCapabilityDenialHappensBeforeIdempotencyBegin(t *testing.T) {
+	now := time.Date(2026, 8, 12, 11, 30, 0, 0, time.UTC)
+	existing := verifiedConnection(now.Add(-time.Hour))
+	repository := &connectionRepository{connection: existing, found: true, credential: "secret"}
+	verifier := &connectionVerifier{result: successfulVerification()}
+	service := NewService(repository, verifier, func() time.Time { return now })
+	build := func(connection Connection) (idempotency.Completion, *domain.AppError) {
+		return idempotency.Completion{Status: 200, ResourceType: "api_probe_connection", ResourceID: connection.ID}, nil
+	}
+	student := auth.User{ID: existing.OwnerUserID, StudentClaim: &auth.StudentEmailClaim{}}
+
+	_, appErr := service.VerifyOwnerConnectionWithIdempotency(
+		context.Background(), student,
+		"POST /api/v1/owner/api-probe-connections/{id}/verify", "same-key", "same-hash",
+		existing.ID, existing.Version, "student-denied", build,
+	)
+	if appErr == nil || appErr.Code != domain.CodeCapabilityRequired {
+		t.Fatalf("student verification error=%+v", appErr)
+	}
+	if verifier.calls != 0 || len(repository.audits) != 0 {
+		t.Fatalf("denied request reached mutation: verifier calls=%d audits=%+v", verifier.calls, repository.audits)
+	}
+
+	completion, appErr := service.VerifyOwnerConnectionWithIdempotency(
+		context.Background(), probeOwner(existing.OwnerUserID),
+		"POST /api/v1/owner/api-probe-connections/{id}/verify", "same-key", "same-hash",
+		existing.ID, existing.Version, "linuxdo-allowed", build,
+	)
+	if appErr != nil || completion.Status != 200 || verifier.calls != 1 || len(repository.audits) != 1 {
+		t.Fatalf("denial consumed idempotency key: completion=%+v error=%v calls=%d audits=%+v", completion, appErr, verifier.calls, repository.audits)
+	}
+}
+
+func TestPreflightTokenIsBoundOneTimeAndExpires(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	repository := &connectionRepository{}
+	service := NewService(repository, &connectionVerifier{result: successfulVerification()}, func() time.Time { return now })
+	credential := "probe-key"
+	input := ConnectionInput{
+		Name: "主连接", BaseURL: "https://api.example.com/v1", Credential: &credential,
+		ProbeModel: DefaultGPTProbeModel, Enabled: true,
+	}
+	preflight, appErr := service.PreflightOwnerConnection(context.Background(), probeOwner("owner-1"), input)
+	if appErr != nil || preflight.PreflightToken == "" {
+		t.Fatalf("preflight result=%+v error=%v", preflight, appErr)
+	}
+	input.PreflightToken = preflight.PreflightToken
+	if _, appErr = service.CreateOwnerConnection(context.Background(), probeOwner("owner-2"), input, "request-bound-owner"); appErr == nil {
+		t.Fatal("token was accepted for another owner")
+	}
+	if _, appErr = service.CreateOwnerConnection(context.Background(), probeOwner("owner-1"), input, "request-consume-token"); appErr == nil {
+		t.Fatal("consumed token was accepted a second time")
+	}
+
+	preflight, appErr = service.PreflightOwnerConnection(context.Background(), probeOwner("owner-1"), input)
+	if appErr != nil || preflight.PreflightToken == "" {
+		t.Fatalf("second preflight result=%+v error=%v", preflight, appErr)
+	}
+	input.PreflightToken = preflight.PreflightToken
+	now = now.Add(preflightTokenTTL + time.Second)
+	if _, appErr = service.CreateOwnerConnection(context.Background(), probeOwner("owner-1"), input, "request-expired-token"); appErr == nil {
+		t.Fatal("expired token was accepted")
+	}
+}
+
+func TestPreflightTokenBindsCanonicalTargetCredentialModelAndProtocol(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	service := NewService(&connectionRepository{}, &connectionVerifier{result: successfulVerification()}, func() time.Time { return now })
+	owner := probeOwner("owner-1")
+	credential := " probe-key "
+	input := ConnectionInput{
+		Name: "主连接", BaseURL: "https://API.example.com/v1/", Credential: &credential,
+		ProbeModel: DefaultGPTProbeModel, Enabled: true,
+	}
+
+	preflight, appErr := service.PreflightOwnerConnection(context.Background(), owner, input)
+	if appErr != nil {
+		t.Fatalf("canonical preflight: %v", appErr)
+	}
+	canonicalCredential := "probe-key"
+	canonicalInput := input
+	canonicalInput.BaseURL = "https://api.example.com/v1"
+	canonicalInput.Credential = &canonicalCredential
+	canonicalInput.PreflightToken = preflight.PreflightToken
+	if _, appErr = service.CreateOwnerConnection(context.Background(), owner, canonicalInput, "request-canonical"); appErr != nil {
+		t.Fatalf("canonically equivalent binding was rejected: %v", appErr)
+	}
+
 	tests := []struct {
-		name    string
-		err     error
-		message string
+		name   string
+		mutate func(*ConnectionInput)
 	}{
-		{name: "required", err: ErrCredentialRequired, message: "启用探针前必须配置探针专用 API Key。"},
-		{name: "invalid", err: ErrCredentialInvalid, message: "探针专用 API Key 不能为空。"},
+		{name: "base URL", mutate: func(value *ConnectionInput) { value.BaseURL = "https://api.example.com/v2" }},
+		{name: "credential", mutate: func(value *ConnectionInput) { changed := "other-key"; value.Credential = &changed }},
+		{name: "model", mutate: func(value *ConnectionInput) { value.ProbeModel = "gpt-5.6-sol" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			appErr := configValidationError(test.err)
-			if appErr.Detail != test.message || len(appErr.FieldErrors) != 1 ||
-				appErr.FieldErrors[0].Field != "credential" || appErr.FieldErrors[0].Message != test.message {
-				t.Fatalf("unexpected API Key validation error: %+v", appErr)
+			preflight, appErr := service.PreflightOwnerConnection(context.Background(), owner, input)
+			if appErr != nil {
+				t.Fatalf("preflight: %v", appErr)
+			}
+			changed := input
+			changed.PreflightToken = preflight.PreflightToken
+			test.mutate(&changed)
+			if _, appErr := service.CreateOwnerConnection(context.Background(), owner, changed, "request-mutated-preflight"); appErr == nil {
+				t.Fatal("mismatched token binding was accepted")
 			}
 		})
 	}
-}
 
-func TestServicePutOwnerConfigRequiresHTTPAcknowledgementBeforeValidation(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
-	repository := &probeServiceRepository{}
-	validationCalls := 0
-	service := NewService(repository, urlValidatorFunc(func(_ context.Context, raw string) (string, error) {
-		validationCalls++
-		return raw, nil
-	}), nil, nil, func() time.Time { return now }, time.Minute)
-	credential := "low-quota-probe-key"
-
-	_, appErr := service.PutOwnerConfig(context.Background(), auth.User{ID: "owner"}, "service", ConfigInput{
-		BaseURL: "http://api.example.com", Model: "gpt-5-mini", Credential: &credential,
-	}, 0)
-	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || len(appErr.FieldErrors) != 1 ||
-		appErr.FieldErrors[0].Field != "acknowledgeInsecureHttp" || validationCalls != 0 {
-		t.Fatalf("unexpected missing acknowledgement result: err=%+v validationCalls=%d", appErr, validationCalls)
-	}
-
-	config, appErr := service.PutOwnerConfig(context.Background(), auth.User{ID: "owner"}, "service", ConfigInput{
-		BaseURL: "http://api.example.com", Model: "gpt-5-mini", Credential: &credential,
-		AcknowledgeInsecureHTTP: true,
-	}, 0)
+	preflight, appErr = service.PreflightOwnerConnection(context.Background(), owner, input)
 	if appErr != nil {
-		t.Fatalf("put acknowledged HTTP config: %v", appErr)
+		t.Fatalf("protocol preflight: %v", appErr)
 	}
-	if validationCalls != 1 || config.BaseURL != "http://api.example.com/v1" || config.NormalizedOrigin != "http://api.example.com:80" {
-		t.Fatalf("unexpected acknowledged HTTP config=%+v validationCalls=%d", config, validationCalls)
-	}
-}
-
-func TestServiceCreateChallengeBindsExactTarget(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
-	repository := &probeServiceRepository{config: Config{
-		ID: "config", APIServiceID: "service", OwnerUserID: "owner",
-		NormalizedOrigin: "https://api.example.com:443", Version: 3,
-	}, found: true}
-	service := NewService(repository, nil, nil, nil, func() time.Time { return now }, 30*time.Minute)
-	service.random = bytes.NewReader(make([]byte, challengeTokenBytes))
-
-	challenge, appErr := service.CreateChallenge(context.Background(), auth.User{ID: "owner"}, " service ", AuthorizationMethodDNSTXT, 3)
-	if appErr != nil {
-		t.Fatalf("create DNS challenge: %v", appErr)
-	}
-	if challenge.Token == "" || challenge.DNSRecordName != "_c2cmarket-probe.api.example.com" || challenge.HTTPURL != "" {
-		t.Fatalf("unexpected DNS challenge: %+v", challenge)
-	}
-	if challenge.ExpiresAt != now.Add(30*time.Minute) || challenge.ConfigVersion != 4 {
-		t.Fatalf("unexpected challenge version or expiry: %+v", challenge)
-	}
-	expectedHash := sha256.Sum256([]byte(challenge.Token))
-	if repository.createdMethod != AuthorizationMethodDNSTXT || !bytes.Equal(repository.createdTokenHash, expectedHash[:]) {
-		t.Fatalf("challenge hash or method was not persisted")
-	}
-
-	repository.config.NormalizedOrigin = "https://api.example.com:8443"
-	_, appErr = service.CreateChallenge(context.Background(), auth.User{ID: "owner"}, "service", AuthorizationMethodDNSTXT, 3)
-	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "method" {
-		t.Fatalf("expected non-443 DNS rejection, got %v", appErr)
+	service.preflights.mu.Lock()
+	grant := service.preflights.grants[preflight.PreflightToken]
+	grant.Result.Verification.ProbeProtocol = ProtocolChatCompletionsV1
+	service.preflights.grants[preflight.PreflightToken] = grant
+	service.preflights.mu.Unlock()
+	input.PreflightToken = preflight.PreflightToken
+	if _, appErr = service.CreateOwnerConnection(context.Background(), owner, input, "request-price-change"); appErr == nil {
+		t.Fatal("protocol-mismatched token was accepted")
 	}
 }
 
-func TestServiceVerifyDNSChallenge(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
-	token := "dns-control-token"
-	repository := &probeServiceRepository{challenge: storedProbeChallenge(token, AuthorizationMethodDNSTXT, now.Add(time.Minute))}
-	resolver := txtResolverFunc(func(_ context.Context, name string) ([]string, error) {
-		if name != "_c2cmarket-probe.api.example.com" {
-			t.Fatalf("unexpected TXT name: %s", name)
-		}
-		return []string{"unrelated", token}, nil
-	})
-	service := NewService(repository, nil, resolver, nil, func() time.Time { return now }, time.Minute)
-
-	config, appErr := service.VerifyChallenge(context.Background(), auth.User{ID: "owner"}, "service", 7)
-	if appErr != nil {
-		t.Fatalf("verify DNS challenge: %v", appErr)
+func TestUpdateConnectionEnableAndManualVerificationKeepMeasurementVersionWhenConfigurationIsUnchanged(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	existing := verifiedConnection(now)
+	existing.Enabled = false
+	updated, err := UpdateConnection(existing, ConnectionInput{
+		Name: existing.Name, BaseURL: existing.BaseURL, ProbeModel: existing.ProbeModel, Enabled: true,
+	}, openaiapi.BaseURL{Raw: existing.BaseURL, Canonical: existing.NormalizedBaseURL}, pointerVerification(successfulVerification()), nil, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("enable unchanged connection: %v", err)
 	}
-	if !repository.completedSucceeded || repository.completedReason != "" || config.AuthorizationStatus != AuthorizationVerified {
-		t.Fatalf("unexpected verification completion: config=%+v repository=%+v", config, repository)
+	if updated.MeasurementVersion != existing.MeasurementVersion {
+		t.Fatalf("enable-only verification changed measurement version: before=%d after=%d", existing.MeasurementVersion, updated.MeasurementVersion)
 	}
 }
 
-func TestServiceVerifyHTTPChallengeDoesNotSendCredential(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
-	token := "http-control-token"
-	repository := &probeServiceRepository{challenge: storedProbeChallenge(token, AuthorizationMethodHTTPChallenge, now.Add(time.Minute))}
-	var captured *http.Request
-	factory := httpClientFactoryFunc(func(Config) (*http.Client, error) {
-		return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			captured = request
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewBufferString(token)),
-			}, nil
-		})}, nil
-	})
-	service := NewService(repository, nil, nil, factory, func() time.Time { return now }, time.Minute)
-
-	_, appErr := service.VerifyChallenge(context.Background(), auth.User{ID: "owner"}, "service", 7)
-	if appErr != nil {
-		t.Fatalf("verify HTTP challenge: %v", appErr)
-	}
-	if captured == nil || captured.Method != http.MethodGet || captured.URL.String() != "https://api.example.com:443/.well-known/c2cmarket-probe-verification" {
-		t.Fatalf("unexpected verification request: %v", captured)
-	}
-	if captured.Header.Get("Authorization") != "" {
-		t.Fatalf("HTTP ownership challenge leaked an authorization header")
-	}
-	if !repository.completedSucceeded || repository.completedReason != "" {
-		t.Fatalf("unexpected verification completion: %+v", repository)
+func TestHTTPConnectionRequiresExplicitAcknowledgement(t *testing.T) {
+	credential := "key"
+	service := NewService(&connectionRepository{}, &connectionVerifier{}, time.Now)
+	_, appErr := service.CreateOwnerConnection(context.Background(), probeOwner("owner"), ConnectionInput{
+		Name: "HTTP", BaseURL: "http://155.103.116.134:31238/", Credential: &credential,
+	}, "request-insecure-http")
+	if appErr == nil || len(appErr.FieldErrors) == 0 || appErr.FieldErrors[0].Field != "acknowledgeInsecureHttp" {
+		t.Fatalf("unexpected error: %+v", appErr)
 	}
 }
 
-func TestServiceVerifyInsecureHTTPChallengeDoesNotSendCredential(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
-	token := "http-control-token"
-	challenge := storedProbeChallenge(token, AuthorizationMethodHTTPChallenge, now.Add(time.Minute))
-	challenge.Config.BaseURL = "http://api.example.com/v1"
-	challenge.Config.NormalizedOrigin = "http://api.example.com:80"
-	repository := &probeServiceRepository{challenge: challenge}
-	var captured *http.Request
-	factory := httpClientFactoryFunc(func(Config) (*http.Client, error) {
-		return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			captured = request
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewBufferString(token)),
-			}, nil
-		})}, nil
-	})
-	service := NewService(repository, nil, nil, factory, func() time.Time { return now }, time.Minute)
-
-	_, appErr := service.VerifyChallenge(context.Background(), auth.User{ID: "owner"}, "service", 7)
-	if appErr != nil {
-		t.Fatalf("verify insecure HTTP challenge: %v", appErr)
-	}
-	if captured == nil || captured.URL.String() != "http://api.example.com:80/.well-known/c2cmarket-probe-verification" {
-		t.Fatalf("unexpected HTTP challenge target: %v", captured)
-	}
-	if captured.Header.Get("Authorization") != "" {
-		t.Fatalf("HTTP challenge sent credential header: %v", captured.Header)
-	}
-}
-
-func TestServiceRejectsExpiredChallengeWithoutNetworkAccess(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
-	repository := &probeServiceRepository{challenge: storedProbeChallenge("expired-token", AuthorizationMethodDNSTXT, now)}
-	resolverCalled := false
-	service := NewService(repository, nil, txtResolverFunc(func(context.Context, string) ([]string, error) {
-		resolverCalled = true
-		return nil, nil
-	}), nil, func() time.Time { return now }, time.Minute)
-
-	_, appErr := service.VerifyChallenge(context.Background(), auth.User{ID: "owner"}, "service", 7)
-	if appErr != nil {
-		t.Fatalf("complete expired challenge: %v", appErr)
-	}
-	if resolverCalled || repository.completedSucceeded || repository.completedReason != "challenge_expired" {
-		t.Fatalf("expired challenge was not rejected locally: %+v", repository)
-	}
-}
-
-func storedProbeChallenge(token, method string, expiresAt time.Time) StoredChallenge {
-	hash := sha256.Sum256([]byte(token))
-	return StoredChallenge{
-		Config: Config{
-			ID: "config", APIServiceID: "service", OwnerUserID: "owner",
-			NormalizedOrigin: "https://api.example.com:443", Version: 7,
+func TestOwnerConnectionsAttachConnectionLevelHealthSummary(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 4, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	repository := &connectionRepository{
+		connection: connection,
+		found:      true,
+		samples: map[string][]Sample{
+			connection.ID: {
+				finalSample(connection, SlotStart(now).Add(-10*time.Minute), SampleStatusSucceeded),
+				finalSample(connection, SlotStart(now).Add(-5*time.Minute), SampleStatusSucceeded),
+				finalSample(connection, SlotStart(now), SampleStatusSucceeded),
+			},
 		},
-		Method: method, TokenHash: hash[:], ExpiresAt: expiresAt,
+	}
+	service := NewService(repository, &connectionVerifier{}, func() time.Time { return now })
+
+	connections, appErr := service.OwnerConnections(context.Background(), probeOwner(connection.OwnerUserID))
+	if appErr != nil {
+		t.Fatalf("OwnerConnections() error: %v", appErr)
+	}
+	if len(connections) != 1 || connections[0].HealthSummary.State != HealthStateNormal ||
+		connections[0].HealthSummary.SuccessRatePercent == nil || *connections[0].HealthSummary.SuccessRatePercent != "100.0" {
+		t.Fatalf("unexpected owner connection health summary: %+v", connections)
 	}
 }
 
-type txtResolverFunc func(context.Context, string) ([]string, error)
-
-func (function txtResolverFunc) LookupTXT(ctx context.Context, name string) ([]string, error) {
-	return function(ctx, name)
-}
-
-type httpClientFactoryFunc func(Config) (*http.Client, error)
-
-func (function httpClientFactoryFunc) ClientFor(config Config) (*http.Client, error) {
-	return function(config)
-}
-
-type urlValidatorFunc func(context.Context, string) (string, error)
-
-func (function urlValidatorFunc) ValidateURL(ctx context.Context, raw string) (string, error) {
-	return function(ctx, raw)
-}
-
-type probeServiceRepository struct {
-	config                Config
-	found                 bool
-	upsertMutation        ConfigMutation
-	upsertCredential      *string
-	upsertExpectedVersion int64
-	challenge             StoredChallenge
-	createdMethod         string
-	createdTokenHash      []byte
-	completedSucceeded    bool
-	completedReason       string
-}
-
-func (repository *probeServiceRepository) GetOwnerProbeConfig(context.Context, string, string) (Config, bool, *domain.AppError) {
-	return repository.config, repository.found, nil
-}
-
-func (repository *probeServiceRepository) UpsertOwnerProbeConfig(_ context.Context, mutation ConfigMutation, credential *string, expectedVersion int64) (Config, *domain.AppError) {
-	repository.upsertMutation = mutation
-	repository.upsertCredential = credential
-	repository.upsertExpectedVersion = expectedVersion
-	return mutation.Config, nil
-}
-
-func (repository *probeServiceRepository) DeleteOwnerProbeConfig(context.Context, string, string, int64, time.Time) *domain.AppError {
-	return nil
-}
-
-func (repository *probeServiceRepository) CreateProbeChallenge(_ context.Context, _, _ string, method string, tokenHash []byte, _ time.Time, _ int64, _ time.Time) (Config, *domain.AppError) {
-	repository.createdMethod = method
-	repository.createdTokenHash = append([]byte(nil), tokenHash...)
-	updated := repository.config
-	updated.Version++
-	return updated, nil
-}
-
-func (repository *probeServiceRepository) GetProbeChallenge(context.Context, string, string) (StoredChallenge, *domain.AppError) {
-	return repository.challenge, nil
-}
-
-func (repository *probeServiceRepository) CompleteProbeVerification(_ context.Context, _, _ string, _ string, _ int64, succeeded bool, reason string, now time.Time) (Config, *domain.AppError) {
-	repository.completedSucceeded = succeeded
-	repository.completedReason = reason
-	config := repository.challenge.Config
-	config.Version++
-	if succeeded {
-		config.AuthorizationStatus = AuthorizationVerified
-		config.AuthorizationMethod = repository.challenge.Method
-		config.VerifiedOrigin = config.NormalizedOrigin
-		config.VerifiedAt = &now
+func TestHealthSummariesExposeDisabledAndStaleRunner(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 4, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	repository := &connectionRepository{
+		connection: connection,
+		found:      true,
+		summaryInputs: map[string]SummaryInput{
+			"service-1": {Connection: &connection},
+		},
 	}
-	return config, nil
+	service := NewService(repository, &connectionVerifier{}, func() time.Time { return now })
+	status := &staticRunnerStatus{status: RunnerStatus{Enabled: false, ScanInterval: time.Minute}}
+	service.SetRunnerStatusProvider(status)
+
+	connections, appErr := service.OwnerConnections(context.Background(), probeOwner(connection.OwnerUserID))
+	if appErr != nil || len(connections) != 1 || connections[0].HealthSummary.AvailabilityReason != AvailabilityRunnerDisabled {
+		t.Fatalf("disabled runner owner summary=%+v error=%v", connections, appErr)
+	}
+	summaries, appErr := service.Summaries(context.Background(), []string{"service-1"})
+	if appErr != nil || summaries["service-1"].AvailabilityReason != AvailabilityRunnerDisabled {
+		t.Fatalf("disabled runner public summary=%+v error=%v", summaries, appErr)
+	}
+
+	status.status = RunnerStatus{Enabled: true, LastSuccessfulScanAt: now.Add(-11 * time.Minute), ScanInterval: time.Minute}
+	connections, appErr = service.OwnerConnections(context.Background(), probeOwner(connection.OwnerUserID))
+	if appErr != nil || connections[0].HealthSummary.AvailabilityReason != AvailabilityStale {
+		t.Fatalf("stale runner owner summary=%+v error=%v", connections, appErr)
+	}
 }
 
-func (repository *probeServiceRepository) ListAdminProbeConfigs(context.Context, string, domain.PageRequest) (domain.Page[Config], *domain.AppError) {
-	return domain.Page[Config]{}, nil
+func TestLatencyRuleValidationRejectsInvalidDimensionsAndIncompleteCalibration(t *testing.T) {
+	repository := &calibrationConnectionRepository{
+		connectionRepository: &connectionRepository{},
+		calibration: Calibration{
+			Model: DefaultGPTProbeModel, Protocol: ProtocolResponsesV1,
+			Environment: ProbeEnvironmentUSWestV1, CompleteCalendarDays: 6, ConnectionCount: 5,
+		},
+	}
+	service := NewService(repository, &connectionVerifier{}, time.Now)
+
+	if _, appErr := service.PreviewLatencyRule(context.Background(), DefaultGPTProbeModel, "invalid", ProbeEnvironmentUSWestV1, 5000, 10000); appErr == nil || appErr.Status != 422 {
+		t.Fatalf("invalid protocol error=%+v", appErr)
+	}
+	if _, appErr := service.PublishLatencyRule(context.Background(), auth.User{ID: "admin-1", IsAdmin: true}, DefaultGPTProbeModel, ProtocolResponsesV1, ProbeEnvironmentUSWestV1, 5000, 10000); appErr == nil || appErr.Status != 422 {
+		t.Fatalf("incomplete calibration error=%+v", appErr)
+	}
+	if repository.previewCalls != 0 || repository.publishCalls != 0 {
+		t.Fatalf("incomplete calibration reached persistence: preview=%d publish=%d", repository.previewCalls, repository.publishCalls)
+	}
 }
 
-func (repository *probeServiceRepository) AdminDecideProbeConfig(context.Context, string, string, int64, bool, string, time.Time) (Config, *domain.AppError) {
-	return Config{}, nil
+func TestPublishLatencyRulePersistsReadyCalibrationSnapshot(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	repository := &calibrationConnectionRepository{
+		connectionRepository: &connectionRepository{},
+		calibration: Calibration{
+			Model: DefaultGPTProbeModel, Protocol: ProtocolResponsesV1, Environment: ProbeEnvironmentUSWestV1,
+			CompleteCalendarDays: 7, ConnectionCount: 5, SampleCount: 9000, Ready: true,
+		},
+	}
+	service := NewService(repository, &connectionVerifier{}, func() time.Time { return now })
+
+	rule, appErr := service.PublishLatencyRule(context.Background(), auth.User{ID: "admin-1", IsAdmin: true}, DefaultGPTProbeModel, ProtocolResponsesV1, ProbeEnvironmentUSWestV1, 5000, 10000)
+
+	if appErr != nil || repository.previewCalls != 1 || repository.publishCalls != 1 {
+		t.Fatalf("publish error=%v preview=%d publish=%d", appErr, repository.previewCalls, repository.publishCalls)
+	}
+	if rule.PublishedByAdminID != "admin-1" || !rule.PublishedAt.Equal(now) || rule.SampleCount != 9000 {
+		t.Fatalf("unexpected rule snapshot: %+v", rule)
+	}
 }
 
-func (repository *probeServiceRepository) LoadProbeSummaryInputs(context.Context, []string, time.Time) (map[string]SummaryInput, *domain.AppError) {
-	return map[string]SummaryInput{}, nil
+type connectionVerifier struct {
+	result     VerificationResult
+	calls      int
+	baseURL    string
+	credential string
 }
 
-func (repository *probeServiceRepository) ClaimDueProbes(context.Context, time.Time, time.Time, int, time.Duration) ([]ProbeJob, *domain.AppError) {
+func probeOwner(id string) auth.User {
+	return auth.User{ID: id, LinuxDoBinding: &auth.LinuxDoBinding{Bound: true}}
+}
+
+func (verifier *connectionVerifier) Verify(_ context.Context, baseURL, credential, _ string, _ bool) VerificationResult {
+	verifier.calls++
+	verifier.baseURL = baseURL
+	verifier.credential = credential
+	return verifier.result
+}
+
+type connectionRepository struct {
+	connection    Connection
+	found         bool
+	credential    string
+	audits        []ProbeAuditMutation
+	samples       map[string][]Sample
+	summaryInputs map[string]SummaryInput
+	idempotency   map[string]idempotency.Entry
+}
+
+type staticRunnerStatus struct{ status RunnerStatus }
+
+func (provider *staticRunnerStatus) ProbeRunnerStatus() RunnerStatus { return provider.status }
+
+type calibrationConnectionRepository struct {
+	*connectionRepository
+	calibration  Calibration
+	previewCalls int
+	publishCalls int
+}
+
+func (repository *calibrationConnectionRepository) LoadProbeCalibration(context.Context, string, string, string, time.Time) (Calibration, *domain.AppError) {
+	return repository.calibration, nil
+}
+
+func (repository *calibrationConnectionRepository) PreviewProbeLatencyRule(_ context.Context, calibration Calibration, slowTTFTMS, hardTimeoutMS int) (LatencyRulePreview, *domain.AppError) {
+	repository.previewCalls++
+	return LatencyRulePreview{Calibration: calibration, SlowTTFTMS: slowTTFTMS, HardTimeoutMS: hardTimeoutMS}, nil
+}
+
+func (repository *calibrationConnectionRepository) PublishProbeLatencyRule(_ context.Context, rule LatencyRule) (LatencyRule, *domain.AppError) {
+	repository.publishCalls++
+	return rule, nil
+}
+
+func (repository *calibrationConnectionRepository) ListProbeLatencyRules(context.Context) ([]LatencyRule, *domain.AppError) {
 	return nil, nil
 }
 
-func (repository *probeServiceRepository) FinalizeProbe(context.Context, string, ProbeResult, time.Time) (bool, *domain.AppError) {
-	return false, nil
+func (repository *connectionRepository) ListOwnerProbeConnections(context.Context, string) ([]Connection, *domain.AppError) {
+	return []Connection{repository.connection}, nil
 }
-
-func (repository *probeServiceRepository) DeleteFinalProbeSamplesBefore(context.Context, time.Time, int) (int, *domain.AppError) {
+func (repository *connectionRepository) GetOwnerProbeConnection(context.Context, string, string) (Connection, bool, *domain.AppError) {
+	return repository.connection, repository.found, nil
+}
+func (repository *connectionRepository) GetOwnerProbeConnectionCredential(context.Context, string, string) (Connection, string, bool, *domain.AppError) {
+	return repository.connection, repository.credential, repository.found, nil
+}
+func (repository *connectionRepository) CreateOwnerProbeConnection(_ context.Context, connection Connection, credential string, audit ProbeAuditMutation) (Connection, *domain.AppError) {
+	connection.ID = "connection-1"
+	repository.connection = connection
+	repository.credential = credential
+	repository.found = true
+	repository.audits = append(repository.audits, audit)
+	return connection, nil
+}
+func (repository *connectionRepository) UpdateOwnerProbeConnection(_ context.Context, connection Connection, credential *string, _ int64, audit ProbeAuditMutation) (Connection, *domain.AppError) {
+	repository.connection = connection
+	if credential != nil {
+		repository.credential = *credential
+	}
+	repository.audits = append(repository.audits, audit)
+	return connection, nil
+}
+func (repository *connectionRepository) DeleteOwnerProbeConnection(_ context.Context, _, _ string, _ int64, audit ProbeAuditMutation) *domain.AppError {
+	repository.audits = append(repository.audits, audit)
+	return nil
+}
+func (repository *connectionRepository) CreateOwnerProbeConnectionWithIdempotency(_ context.Context, entry idempotency.Entry, connection Connection, credential string, audit ProbeAuditMutation, build MutationCompletionBuilder) (Connection, idempotency.Completion, *domain.AppError) {
+	connection.ID = "connection-1"
+	completion, appErr := build(connection)
+	if appErr != nil {
+		return Connection{}, idempotency.Completion{}, appErr
+	}
+	repository.connection = connection
+	repository.credential = credential
+	repository.found = true
+	repository.audits = append(repository.audits, audit)
+	repository.completeIdempotencyEntry(entry, completion)
+	return connection, completion, nil
+}
+func (repository *connectionRepository) UpdateOwnerProbeConnectionWithIdempotency(_ context.Context, entry idempotency.Entry, connection Connection, credential *string, _ int64, audit ProbeAuditMutation, build MutationCompletionBuilder) (Connection, idempotency.Completion, *domain.AppError) {
+	completion, appErr := build(connection)
+	if appErr != nil {
+		return Connection{}, idempotency.Completion{}, appErr
+	}
+	repository.connection = connection
+	if credential != nil {
+		repository.credential = *credential
+	}
+	repository.audits = append(repository.audits, audit)
+	repository.completeIdempotencyEntry(entry, completion)
+	return connection, completion, nil
+}
+func (repository *connectionRepository) DeleteOwnerProbeConnectionWithIdempotency(_ context.Context, entry idempotency.Entry, ownerUserID, connectionID string, _ int64, audit ProbeAuditMutation, build MutationCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	completion, appErr := build(Connection{ID: connectionID, OwnerUserID: ownerUserID})
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	repository.audits = append(repository.audits, audit)
+	repository.completeIdempotencyEntry(entry, completion)
+	return completion, nil
+}
+func (repository *connectionRepository) BeginIdempotency(_ context.Context, entry idempotency.Entry) (*idempotency.Entry, *domain.AppError) {
+	if repository.idempotency == nil {
+		repository.idempotency = make(map[string]idempotency.Entry)
+	}
+	key := entry.RouteKey + "\x00" + entry.Key
+	if existing, ok := repository.idempotency[key]; ok {
+		copy := existing
+		return &copy, nil
+	}
+	repository.idempotency[key] = entry
+	copy := entry
+	return &copy, nil
+}
+func (repository *connectionRepository) CompleteIdempotency(_ context.Context, entry *idempotency.Entry, completion idempotency.Completion, _ time.Time) *domain.AppError {
+	if entry != nil {
+		repository.completeIdempotencyEntry(*entry, completion)
+	}
+	return nil
+}
+func (repository *connectionRepository) CancelIdempotency(_ context.Context, entry *idempotency.Entry, _ time.Time) *domain.AppError {
+	if entry == nil {
+		return nil
+	}
+	failed := *entry
+	failed.State = "failed"
+	repository.idempotency[failed.RouteKey+"\x00"+failed.Key] = failed
+	return nil
+}
+func (repository *connectionRepository) completeIdempotencyEntry(entry idempotency.Entry, completion idempotency.Completion) {
+	entry.State = "completed"
+	entry.Status = completion.Status
+	entry.ContentType = completion.ContentType
+	entry.Body = append([]byte(nil), completion.Body...)
+	entry.BodyCacheAllowed = !completion.SkipBodyCache
+	entry.ResourceType = completion.ResourceType
+	entry.ResourceID = completion.ResourceID
+	repository.idempotency[entry.RouteKey+"\x00"+entry.Key] = entry
+}
+func (repository *connectionRepository) LookupProbeModelPrice(context.Context, string) (PriceSnapshot, bool, *domain.AppError) {
+	return PriceSnapshot{}, false, nil
+}
+func (repository *connectionRepository) LoadOwnerProbeConnectionSamples(context.Context, string, []string, time.Time) (map[string][]Sample, *domain.AppError) {
+	if repository.samples == nil {
+		return map[string][]Sample{}, nil
+	}
+	return repository.samples, nil
+}
+func (repository *connectionRepository) LoadProbeSummaryInputs(context.Context, []string, time.Time) (map[string]SummaryInput, *domain.AppError) {
+	if repository.summaryInputs != nil {
+		return repository.summaryInputs, nil
+	}
+	return map[string]SummaryInput{}, nil
+}
+func (repository *connectionRepository) ClaimDueProbes(context.Context, time.Time, time.Time, int, time.Duration) ([]ProbeJob, *domain.AppError) {
+	return nil, nil
+}
+func (repository *connectionRepository) FinalizeProbe(context.Context, string, ProbeResult, time.Time) (bool, *domain.AppError) {
+	return true, nil
+}
+func (repository *connectionRepository) DeleteFinalProbeSamplesBefore(context.Context, time.Time, int) (int, *domain.AppError) {
 	return 0, nil
 }
+
+func verifiedConnection(now time.Time) Connection {
+	return Connection{
+		ID: "connection-1", OwnerUserID: "owner-1", Name: "主连接",
+		BaseURL: "https://api.example.com/v1", NormalizedBaseURL: "https://api.example.com/v1",
+		CredentialConfigured: true, Enabled: true, VerificationStatus: VerificationVerified,
+		VerifiedAt: timePointer(now), ProbeModel: DefaultGPTProbeModel, ProbeProtocol: ProtocolResponsesV1,
+		AvailableModels: []string{DefaultGPTProbeModel}, ProbeEnvironment: ProbeEnvironmentUSWestV1,
+		MeasurementVersion: 4, Version: 2, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func successfulVerification() VerificationResult {
+	return VerificationResult{
+		HTTPStatus: 200, AvailableModels: []string{DefaultGPTProbeModel},
+		ProbeModel: DefaultGPTProbeModel, ProbeProtocol: ProtocolResponsesV1,
+	}
+}
+
+func pointerVerification(value VerificationResult) *VerificationResult { return &value }

@@ -68,6 +68,24 @@ Fallbacks are allowed only when all of the following are true:
 - Was the branch created from a freshly fetched remote target, with its baseline
   SHA recorded and verified?
 
+## Floating UI Review Contract
+
+When adding or changing a shadcn-vue floating component such as Tooltip,
+Popover, HoverCard, or DropdownMenu:
+
+- Keep business components behind the local `components/ui/*` wrapper. Compare
+  that wrapper's parts with the upstream shadcn-vue composition, including
+  visual parts such as arrows, portals, and default alignment.
+- Let the underlying Reka primitive own hover, focus, and dismissal. Business
+  state may add one explicit mode such as click-to-pin, but must not duplicate
+  the primitive's pointer/focus event handlers for the same `open` state.
+- Do not put `overflow-auto` or `overflow-hidden` on the outer positioned
+  content when an arrow extends beyond its bounds. Put scrolling on an inner
+  body and size it with the primitive's available-height CSS variable.
+- Regression checks must cover the rendered interaction, not only imports:
+  stable hover, trigger-centered alignment, visible arrow, viewport collision,
+  inner scrolling, keyboard dismissal, and outside-click dismissal.
+
 ## External Proxy Boundary Diagnosis
 
 When a browser reports an application-layer error for a request that crosses a CDN, Tunnel, reverse proxy, or access gateway, inspect the raw public response before changing application code:

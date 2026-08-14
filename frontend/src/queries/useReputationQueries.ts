@@ -1,9 +1,11 @@
 import { computed, unref, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
+  applyAPIOrderSanction,
   createDisputeReputationOutcome,
   createReputationRestriction,
   getAdminUserReputation,
+  getAPIOrderSanctionRecommendation,
   getMyReputation,
   getPublicUserReputation,
   getReputationRules,
@@ -14,6 +16,7 @@ import {
   updateSourceAuthorVerification,
 } from '@/lib/reputationApi'
 import type {
+  ApplyAPIOrderSanctionInput,
   CreateDisputeOutcomeInput,
   CreateReputationRestrictionInput,
   ReputationScope,
@@ -32,6 +35,7 @@ export const reputationQueryKeys = {
   my: () => ['reputation', 'my'] as const,
   public: (username: string, scope: ReputationScope) => ['reputation', 'public', username, scope] as const,
   admin: (userId: string, historyLimit: number) => ['reputation', 'admin', userId, historyLimit] as const,
+  sanction: (disputeCaseId: string) => ['reputation', 'sanction', disputeCaseId] as const,
   sourceAuthor: (resourceType: 'carpool' | 'api_service', resourceId: string) =>
     ['reputation', 'source-author', resourceType, resourceId] as const,
 }
@@ -78,6 +82,33 @@ export function useAdminUserReputationQuery(
     enabled: computed(() => Boolean(valueOf(userId)) && (options.enabled === undefined || valueOf(options.enabled))),
     staleTime: 0,
     refetchOnWindowFocus: false,
+  })
+}
+
+export function useAPIOrderSanctionRecommendationQuery(
+  disputeCaseId: MaybeRef<string>,
+  enabled: MaybeRef<boolean> = true,
+) {
+  return useQuery({
+    queryKey: computed(() => reputationQueryKeys.sanction(valueOf(disputeCaseId))),
+    queryFn: () => getAPIOrderSanctionRecommendation(valueOf(disputeCaseId)),
+    enabled: computed(() => Boolean(valueOf(disputeCaseId)) && valueOf(enabled)),
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  })
+}
+
+export function useApplyAPIOrderSanctionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: ApplyAPIOrderSanctionInput) => applyAPIOrderSanction(input),
+    onSuccess(_data, input) {
+      queryClient.invalidateQueries({ queryKey: reputationQueryKeys.sanction(input.disputeCaseId) })
+      queryClient.invalidateQueries({ queryKey: reputationQueryKeys.my() })
+      if (input.subjectUserId) queryClient.invalidateQueries({ queryKey: ['reputation', 'admin', input.subjectUserId] })
+      queryClient.invalidateQueries({ queryKey: ['admin-dispute-resolution', input.disputeCaseId] })
+      queryClient.invalidateQueries({ queryKey: ['admin-section', 'reports'] })
+    },
   })
 }
 

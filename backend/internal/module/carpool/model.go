@@ -33,6 +33,12 @@ const (
 	MembershipStatusLeft      = "left"
 	MembershipStatusRemoved   = "removed"
 
+	OwnerListingViewAll        = ""
+	OwnerListingViewRecruiting = "recruiting"
+	OwnerListingViewServing    = "serving"
+	OwnerListingViewHistory    = "history"
+	OwnerListingViewNeedsEdit  = "needs_edit"
+
 	ListingDistributionMethodSub2API = "sub2api"
 	ListingDistributionMethodOther   = "other"
 
@@ -81,8 +87,8 @@ type Listing struct {
 	SourceURL                             string
 	PriceMonthlyCNY                       string
 	ServiceMultiplier                     string
-	WeeklyQuotaAmount                     *string
-	MonthlyQuotaAmount                    string
+	DailyQuotaAmount                      *string
+	WeeklyQuotaAmount                     string
 	FollowsOfficialQuotaReset             *bool
 	VPSRegion                             *string
 	SupportsMainlandChinaDirectConnection *bool
@@ -104,6 +110,7 @@ type Listing struct {
 	RiskAckRequired                       bool
 	ReservedSeats                         int
 	AvailableSeats                        int
+	RequestID                             string
 	CreatedAt                             time.Time
 	UpdatedAt                             time.Time
 	Version                               int64
@@ -146,6 +153,7 @@ type Application struct {
 	JoinedAt                 *time.Time
 	DecisionReason           string
 	DecidedAt                *time.Time
+	RequestID                string
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 	Version                  int64
@@ -193,8 +201,8 @@ type CreateListingInput struct {
 	SourceURL                             string
 	PriceMonthlyCNY                       string
 	ServiceMultiplier                     string
+	DailyQuotaAmount                      string
 	WeeklyQuotaAmount                     string
-	MonthlyQuotaAmount                    string
 	FollowsOfficialQuotaReset             *bool
 	VPSRegion                             string
 	SupportsMainlandChinaDirectConnection *bool
@@ -205,6 +213,7 @@ type CreateListingInput struct {
 	BuyerSeatCapacity                     int
 	ActiveBuyerMembers                    int
 	RiskAcknowledgement                   *RiskAcknowledgement
+	RequestID                             string
 }
 
 type PublishListingInput = CreateListingInput
@@ -244,8 +253,8 @@ type UpdateListingInput struct {
 	SourceURL                             string
 	PriceMonthlyCNY                       string
 	ServiceMultiplier                     string
+	DailyQuotaAmount                      string
 	WeeklyQuotaAmount                     string
-	MonthlyQuotaAmount                    string
 	FollowsOfficialQuotaReset             *bool
 	VPSRegion                             string
 	SupportsMainlandChinaDirectConnection *bool
@@ -267,11 +276,26 @@ type SubmitListingReviewInput struct {
 	RequestID       string
 }
 
+// ListingAuditEvent 是内存仓储与 PostgreSQL domain_events 对齐的安全操作事实。
+type ListingAuditEvent struct {
+	ListingID        string
+	EventType        string
+	ActorUserID      string
+	ActorKind        string
+	AggregateVersion int64
+	RequestID        string
+	Status           string
+	CreatedAt        time.Time
+}
+
+type ListingCompletionBuilder func(Listing) (idempotency.Completion, *domain.AppError)
+
 type CreateApplicationInput struct {
 	ListingID            string
 	BuyerUserID          string
 	BuyerContactMethodID string
 	RiskAcknowledgement  *RiskAcknowledgement
+	RequestID            string
 }
 
 type AcceptApplicationInput struct {
@@ -315,22 +339,41 @@ type ConfirmApplicationJoinInput struct {
 
 type ApplicationCompletionBuilder func(Application) (idempotency.Completion, *domain.AppError)
 
+type ApplicationAuditEvent struct {
+	ApplicationID    string
+	EventType        string
+	ActorUserID      string
+	ActorKind        string
+	AggregateVersion int64
+	RequestID        string
+	Status           string
+	CreatedAt        time.Time
+}
+
 type ConfirmMembershipCompleteInput struct {
-	MembershipID    string
-	ActorUserID     string
-	ActorRole       string
-	ExpectedVersion int64
-	RequestID       string
+	MembershipID           string
+	ActorUserID            string
+	ActorRole              string
+	ActorAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	ExpectedVersion        int64
+	RequestID              string
 }
 
 type EndMembershipInput struct {
-	MembershipID    string
-	ActorUserID     string
-	ActorRole       string
-	TargetStatus    string
-	Reason          string
-	ExpectedVersion int64
-	RequestID       string
+	MembershipID           string
+	ActorUserID            string
+	ActorRole              string
+	ActorAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	TargetStatus           string
+	Reason                 string
+	ExpectedVersion        int64
+	RequestID              string
 }
 
 type MembershipCompletionBuilder func(Membership) (idempotency.Completion, *domain.AppError)

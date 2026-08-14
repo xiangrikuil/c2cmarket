@@ -62,9 +62,9 @@ func TestTransactionReviewPostgresLifecycle(t *testing.T) {
 	}
 
 	submitReviewForTest(t, ctx, service, buyerID, review.TransactionAPIOrder, orderID, review.OperationCreate, 5, []string{"沟通顺畅", "描述真实"}, "卖家说明清晰，交付过程顺畅。", "api-buyer-create")
-	received := findReviewCenterRow(t, listReviewCenter(t, ctx, service, sellerID), review.DirectionReceived, orderID)
-	if received.Visibility != review.VisibilitySealed || received.ContentVisible || received.Rating != 0 || len(received.Tags) != 0 || received.Note != "" {
-		t.Fatalf("sealed counterparty content leaked: %#v", received)
+	sellerPending := findReviewCenterRow(t, listReviewCenter(t, ctx, service, sellerID), review.DirectionPending, orderID)
+	if !sellerPending.CounterpartySubmitted || sellerPending.ContentVisible || sellerPending.Rating != 0 || len(sellerPending.Tags) != 0 || sellerPending.Note != "" {
+		t.Fatalf("sealed counterparty content leaked: %#v", sellerPending)
 	}
 	if public := listPublicReviews(t, ctx, service, sellerUsername); hasPublicReviewForTransaction(public, review.TransactionAPIOrder, "卖家说明清晰，交付过程顺畅。") {
 		t.Fatalf("sealed review leaked to public profile: %#v", public)
@@ -352,9 +352,9 @@ func TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles(t *testing.T)
 	if sellerSent.ReviewerRole != review.RoleSeller || sellerSent.RevieweeRole != review.RoleBuyer {
 		t.Fatalf("unexpected carpool seller direction: %#v", sellerSent)
 	}
-	buyerReceived := findReviewCenterRow(t, listReviewCenter(t, ctx, service, buyerID), review.DirectionReceived, membershipID)
-	if buyerReceived.ContentVisible || buyerReceived.Rating != 0 || buyerReceived.Note != "" {
-		t.Fatalf("sealed carpool seller review leaked to buyer: %#v", buyerReceived)
+	buyerPending := findReviewCenterRow(t, listReviewCenter(t, ctx, service, buyerID), review.DirectionPending, membershipID)
+	if !buyerPending.CounterpartySubmitted || buyerPending.ContentVisible || buyerPending.Rating != 0 || buyerPending.Note != "" {
+		t.Fatalf("sealed carpool seller review leaked to buyer: %#v", buyerPending)
 	}
 	submitReviewForTest(t, ctx, service, buyerID, review.TransactionCarpoolMembership, membershipID, review.OperationCreate, 4, []string{"规则清晰"}, "买家评价卖家。", "carpool-buyer-create")
 

@@ -4,6 +4,18 @@ title = "C2CMarket Gitleaks configuration"
 useDefault = true
 
 [[allowlists]]
+description = "The auth session spec names Compose and Wrangler as deployment tooling."
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+paths = [
+  '''\.trellis/spec/backend/auth-sessions\.md$''',
+]
+regexes = [
+  '''^Compose/Wrangler$''',
+]
+
+[[allowlists]]
 description = "Browser mock storage keys are identifiers, not credentials."
 targetRules = ["generic-api-key"]
 condition = "AND"

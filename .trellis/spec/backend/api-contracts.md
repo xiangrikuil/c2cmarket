@@ -2,6 +2,7 @@
 
 Date: 2026-06-21
 Author: Codex
+Updated: 2026-08-08
 
 ## Scenario: Backend Contract Foundation And Current Real Business Slices
 
@@ -46,6 +47,9 @@ GET  /api/v1/api-models/{id}
 GET  /api/v1/api-services
 GET  /api/v1/api-services/{id}
 GET  /api/v1/api-service-promotions
+GET  /api/v1/tools/api-model-tester/order-sources
+POST /api/v1/tools/api-model-tester/discover
+POST /api/v1/tools/api-model-tester/test
 POST /api/v1/api-services/{id}/purchase-intents
 GET  /api/v1/official-prices
 GET  /api/v1/official-prices/{id}
@@ -114,8 +118,15 @@ POST /api/v1/owner/carpool-memberships/{id}/confirm-complete
 POST /api/v1/owner/carpool-memberships/{id}/remove
 GET  /api/v1/owner/api-services
 POST /api/v1/owner/api-services
+GET  /api/v1/owner/api-probe-connections
+POST /api/v1/owner/api-probe-connections
+GET  /api/v1/owner/api-probe-connections/{id}
+PATCH /api/v1/owner/api-probe-connections/{id}
+DELETE /api/v1/owner/api-probe-connections/{id}
+POST /api/v1/owner/api-probe-connections/{id}/verify
 GET  /api/v1/owner/api-services/{id}
 PATCH /api/v1/owner/api-services/{id}
+PATCH /api/v1/owner/api-services/{id}/probe-connection
 POST /api/v1/owner/api-services/{id}/submit-review
 POST /api/v1/owner/api-services/{id}/publish
 POST /api/v1/owner/api-services/{id}/pause
@@ -210,12 +221,12 @@ If-Match: "<version>"                            # required for versioned admin 
 - Problem responses use `application/problem+json` and include `code` plus `requestId`.
 - Session auth is same-origin cookie auth. Production code must not accept request headers as user impersonation.
 - `POST /api/v1/auth/dev-session` is a development entry only. It must be disabled outside development/test by `APP_ENV` / `ENABLE_DEV_AUTH` startup configuration.
-- First-release public registration/login is linux.do OAuth only. Native username/password is a backup login path for accounts with `linuxDoBinding.bound=true`, plus the explicit first-admin bootstrap account. `POST /api/v1/auth/password` and `POST /api/v1/auth/password/login` must reject unbound non-admin users with `403 LINUX_DO_BINDING_REQUIRED` before creating or changing credentials. Password credentials must be stored only as salted hashes; plaintext passwords must never be stored in PostgreSQL, logs, OpenAPI examples, or frontend state.
-- `POST /api/v1/auth/email-registration/start` and `POST /api/v1/auth/email-registration/confirm` are retained only as stable disabled compatibility endpoints. Both return `403 EMAIL_REGISTRATION_DISABLED` and must not send registration email, create challenges, create users, create sessions, or set session cookies. Login-bound `/me/email-verification/*` remains a profile/contact verification feature.
+- Public registration supports linux.do OAuth plus administrator-controlled student-email registration. The persistent registration switch is seeded disabled, and both `POST /api/v1/auth/email-registration/start` and `POST /api/v1/auth/email-registration/confirm` recheck the switch and the exact enabled institution domain; a disabled switch returns `403 EMAIL_REGISTRATION_DISABLED` without creating a user or session. Login-bound `/me/email-verification/*` remains a separate profile/contact verification feature.
+- Native username/password login is available to accounts with a durable student-email claim, accounts with `linuxDoBinding.bound=true`, and the explicit first-admin bootstrap account. Students may log in with their strict lowercase username or immutable claimed institution email; mutable profile email is not a login identity. `POST /api/v1/auth/password` and `POST /api/v1/auth/password/login` reject users with none of those durable identity facts. Password credentials are stored only as salted Argon2id hashes; plaintext passwords must never be stored in PostgreSQL, logs, OpenAPI examples, or frontend state.
 - OAuth login is another real session entry. `GET /api/v1/auth/oauth/start?returnTo=/path` sets an HttpOnly OAuth state cookie and returns `{authorizationUrl}`. `GET /api/v1/auth/oauth/callback?code=...&state=...` must compare query state with the state cookie, exchange the code for a provider profile, upsert `users`, `auth_identities`, `linux_do_bindings`, create an `auth_sessions` row, set `c2c_session`, clear the state cookie, and redirect to the normalized `FRONTEND_ORIGIN` plus the sanitized relative `returnTo`. Production `FRONTEND_ORIGIN` must be an absolute HTTPS origin without credentials, path, query, or fragment.
 - OAuth provider mode can be `fake` only in development/test for smoke automation. Production must use `OAUTH_PROVIDER_MODE=oauth2` with `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_AUTHORIZE_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, and `OAUTH_REDIRECT_URL`.
 - OAuth token responses are request-time credentials only. Do not persist provider access tokens, refresh tokens, userinfo raw payloads, session cookies, or OAuth codes in database rows, logs, OpenAPI examples, or frontend state.
-- `GET /api/v1/auth/session` returns `user.permissions` and `user.linuxDoBinding`. Admin UI and backend admin routes must derive admin authority from the returned backend session/user permission source, not frontend-selected mock roles.
+- `GET /api/v1/auth/session` returns `user.permissions`, `user.capabilities`, `user.studentClaim`, and `user.linuxDoBinding`. Business and administrator UI decisions use the typed capability projection, while backend authorization reprojects from current durable identity/permission facts instead of trusting a session/DTO capability snapshot or frontend-selected mock role.
 - `linuxDoBinding` means the account has a bound linux.do identity summary. It must not be worded as linux.do official certification, endorsement, or guarantee.
 - `GET /readyz` is an unversioned operational endpoint. It returns process/database readiness, `schema_migrations` state, and the expected migration version when PostgreSQL is configured; business APIs must not depend on it for authorization or user-visible status.
 - State-changing endpoints must call session and CSRF validation before decoding business actions.
@@ -229,9 +240,15 @@ If-Match: "<version>"                            # required for versioned admin 
 - `GET/POST/PATCH /api/v1/me/merchant-profile` owns the current user's store alias profile. Self responses may include the owner ID; public merchant profile responses must not expose owner user ID or contact values.
 - API services with `merchantIdentityMode=store_alias` must reference a merchant profile owned by the service owner. Public API service DTOs may expose `merchantDisplayName` and `merchantProfileSlug`, but not the backing owner user ID or contact method IDs.
 - Public API service reads and API purchase-intent creation use the orderable service predicate, not only the public status triple. A public/orderable API service must be approved, online, clear, accepting orders, have `paymentWindowMinutes` between 3 and 15, and have at least one enabled payment option. Apply this same predicate to list, detail, search, favorite validation/listing, and purchase-intent creation.
+- API services additionally require an enabled, verified seller-owned `probeConnectionId` before
+  publication and new-order creation. Owner responses may expose the connection ID/name and
+  management state; public responses expose only the derived `healthSummary`, never Base URL,
+  connection ID, credential metadata, or model-list contents.
+- API catalog and service model DTOs use `modelKey` and `modelKeySnapshot` as their sole visible
+  model names and request identifiers. Do not reintroduce `displayName` or `modelNameSnapshot`.
 - Product catalog read endpoints return active categories/plans and publish-policy fields from PostgreSQL. Frontend and backend must use `publishPolicy`, `accessMode`, `providerPolicyStatus`, `riskLevel`, `riskAckRequired`, and `policyVersion` instead of hard-coded Plus/Pro or Business branches.
 - Carpool listing creation must resolve `productPlanId` from the product catalog. `publishPolicy=blocked` and `publishPolicy=info_only` cannot enter the listing/application flow. Plans with `riskAckRequired=true` require matching `riskNoticeCode` and `policyVersion` on both listing creation and application creation.
-- Carpool listing creation creates `draft`; owners may edit only `draft` or `changes_requested` listings. The retained owner `submit-review` route is now the publish compatibility route: a linux.do-bound owner publishes directly to `active` after re-checking current `publishPolicy` and owner contact availability. Create/update requests must include structured `cycleTerm` fields for billing period, exit policy, and usage rules so applicants can review rules before applying. They must send the system-fixed `serviceMultiplier="1"`, required positive `weeklyQuotaAmount` and `monthlyQuotaAmount`, and required reset, VPS-region, mainland-direct, opening-channel, payment-method, distribution, and administrator-account declarations. The multiplier is not owner-editable or user-facing. Nullable response fields support development data created before Version 68 and must render as `未声明`; new writes must pass service validation. Admin approve remains only for legacy `pending_review -> active`; request-changes remains only `pending_review -> changes_requested`; reject remains only `pending_review -> rejected`; pause is `active -> paused`; restore is `paused -> active`.
+- Carpool listing creation creates `draft`; owners may edit only `draft` or `changes_requested` listings. The retained owner `submit-review` route is now the publish compatibility route: a linux.do-bound owner publishes directly to `active` after re-checking current `publishPolicy` and owner contact availability. Create/update requests must include structured `cycleTerm` fields for billing period, exit policy, and usage rules so applicants can review rules before applying. They must send the system-fixed `serviceMultiplier="1"`, required positive `dailyQuotaAmount` and `weeklyQuotaAmount`, and required reset, VPS-region, mainland-direct, opening-channel, payment-method, distribution, and administrator-account declarations. The multiplier is not owner-editable or user-facing. Nullable response fields support development data created before Version 68 and must render as `未声明`; new writes must pass service validation. Admin approve remains only for legacy `pending_review -> active`; request-changes remains only `pending_review -> changes_requested`; reject remains only `pending_review -> rejected`; pause is `active -> paused`; restore is `paused -> active`.
 - Carpool listing requests use `buyerSeatCapacity` and `activeBuyerMembers`; both count buyer seats only and exclude the listing owner.
 - Carpool public listing endpoints return `active` listings only. Owner/admin views may return non-public statuses.
 - `/owner/*` carpool endpoints are a resource perspective for the current authenticated user as listing owner, not a separate merchant account role. Do not branch permissions on an independent merchant role for these routes.
@@ -257,8 +274,8 @@ Create/update JSON fields:
   regionCode: string       # required, max 64; custom regions use "other"
   regionName: string       # required, max 64; owner-facing display text
   serviceMultiplier: "1"  # required system-fixed compatibility value
+  dailyQuotaAmount: DecimalString
   weeklyQuotaAmount: DecimalString
-  monthlyQuotaAmount: DecimalString
   followsOfficialQuotaReset: boolean
   vpsRegion: string
   supportsMainlandChinaDirectConnection: boolean
@@ -278,8 +295,8 @@ PostgreSQL:
 
 - Frontend `SaveCarpoolDraftPayload.paymentMethodCode` is a single required value. Opening channel and payment method use single-select controls; selecting `other` requires the matching custom text. `u_card` is a supported payment method code.
 - The publish UI must not expose a multiplier input. Frontend mapping always sends `serviceMultiplier=1`, and backend validation rejects any other value.
-- Weekly/monthly quota, official-reset choice, free-text VPS region, mainland-direct choice, distribution method, and administrator-account choice are all required for new writes. VPS region is display-only free text and is not a list filter.
-- The public market keeps six columns: `车源 | 价格 | 车位 | 额度 / 接入 | 车主 | 状态`. The quota/access cell shows weekly/monthly quota, official-reset and administrator-account signals, then reveals channel/payment/distribution/network detail with a shadcn popover.
+- Daily/weekly quota, official-reset choice, free-text VPS region, mainland-direct choice, distribution method, and administrator-account choice are all required for new writes. VPS region is display-only free text and is not a list filter.
+- The public market keeps six columns: `车源 | 价格 | 车位 | 额度 / 接入 | 车主 | 状态`. The quota/access cell shows daily/weekly quota, official-reset and administrator-account signals, then reveals channel/payment/distribution/network detail with a shadcn popover.
 - Frontend custom region state is `regionCode="other"` plus `customRegionName`; the real backend adapter sends `regionCode` and the final trimmed `regionName`.
 - Backend create/update responses return `regionCode` and `regionName`. Public, owner, and admin listing reads must preserve these values without remapping custom regions to a fixed fallback.
 - The publish page must not expose a writable billing-period control. The backend request still writes `cycleTerm.billingPeriod="monthly"` so applicants can review monthly-cycle rules.
@@ -297,7 +314,7 @@ PostgreSQL:
 | Region/title/summary/access-arrangement contains credential-shaped text or NUL | 422 | `SECRET_CONTENT_DETECTED`, field-specific |
 | Frontend custom region selected with empty `customRegionName` | Block submit | `region` field error |
 | Frontend missing `paymentMethodCode`, or `other` without custom text | Block submit | `paymentMethodCode` field error |
-| Missing weekly/monthly quota, reset, VPS, mainland-direct, channel, payment, distribution, or admin declaration | 422 / block submit | field-specific validation error |
+| Missing daily/weekly quota, reset, VPS, mainland-direct, channel, payment, distribution, or admin declaration | 422 / block submit | field-specific validation error |
 | `serviceMultiplier` is not exactly `1` | 422 | `VALIDATION_FAILED`, `serviceMultiplier` |
 | High-risk product without current risk acknowledgement | 422 / block submit | `RISK_ACK_REQUIRED` or `accessArrangement` field error |
 
@@ -450,19 +467,21 @@ GET   /api/v1/admin/product-plans?category=<code>
 GET   /api/v1/admin/product-plans/{id}
 POST  /api/v1/admin/product-plans
 PATCH /api/v1/admin/product-plans/{id}
-POST  /api/v1/admin/product-plans/{id}/activate
-POST  /api/v1/admin/product-plans/{id}/deactivate
+POST  /api/v1/admin/product-plans/{id}/deprecate
+POST  /api/v1/admin/product-plans/{id}/block
+POST  /api/v1/admin/product-plans/{id}/reactivate
+POST  /api/v1/admin/product-plans/{id}/unblock
 
 ProductPlanRequest:
   categoryId, providerCode, slug, displayName, description
   publishPolicy, accessMode, providerPolicyStatus, riskLevel
   riskAckRequired, riskNoticeCode, policyNote
-  active, allowCustomVariant, sortOrder
+  allowCustomVariant, sortOrder
 ```
 
 ### 3. Contracts
 
-- Public product-plan reads return only active plans whose category is active. Admin reads return active and inactive product plans.
+- Public product-plan reads return only effectively active plans whose category is active. Admin reads return every lifecycle status.
 - Admin writes require a backend admin session. State-changing admin endpoints require CSRF validation before business decoding.
 - Admin create/update payloads are complete forms, not merge patches. JSON fields use camelCase and map to the existing snake_case `product_plans` columns.
 - `slug` is globally unique across product plans and uses lowercase letters, numbers, and dashes. `providerCode` uses the same lowercase slug shape.
@@ -473,8 +492,8 @@ ProductPlanRequest:
   - `riskLevel`: `normal`, `elevated`, `high`
 - If `riskAckRequired=true`, `riskNoticeCode` is required and must reference a supported risk notice.
 - Policy fields are `publishPolicy`, `accessMode`, `providerPolicyStatus`, `riskLevel`, `riskAckRequired`, `riskNoticeCode`, and `policyNote`.
-- Only policy field changes increment `policyVersion` and append `product_plan_policy_history`. Display name, description, sort order, active state, and custom-variant toggles must not increment policy version.
-- Activate/deactivate changes only `active` and `updated_at`; it never physically deletes rows and never writes policy history.
+- Only policy field changes increment `policyVersion` and append `product_plan_policy_history`. Display name, description, sort order, lifecycle state, and custom-variant toggles must not increment policy version.
+- Ordinary PATCH cannot change lifecycle. Dedicated deprecate/block/reactivate/unblock commands require idempotency, `If-Match`, a reason, immutable audit events, and transactional governance side effects.
 - Frontend mutations must invalidate both admin product-plan queries and user-facing active catalog caches so dropdowns refresh after admin changes.
 
 ### 4. Validation & Error Matrix
@@ -482,22 +501,22 @@ ProductPlanRequest:
 | Condition | HTTP | Code / Behavior |
 | --- | ---: | --- |
 | Non-admin calls admin list/detail/write | 403 | Admin authority comes from backend session/user permissions |
-| Missing CSRF on create/update/activate/deactivate | 401/403 | Session/CSRF middleware rejects before mutation |
+| Missing CSRF on create/update/lifecycle commands | 401/403 | Session/CSRF middleware rejects before mutation |
 | Unknown request body field on create/update | 400 | Strict JSON decoding rejects it |
 | Missing `categoryId`, invalid category, invalid enum, invalid slug/provider code | 422 | `VALIDATION_FAILED` field error |
 | Duplicate `slug` on create/update | 409 | `VALIDATION_FAILED` field error on `slug` |
 | Unknown plan ID on admin detail/update/toggle | 404 | Product plan not found |
-| Public list/detail points at inactive plan | 404 or omitted | Public reads are active-only |
+| Public list points at non-active plan | omitted | Public selection reads are effective-active-only; historical direct reads remain available |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: admin creates an inactive plan, sees it in `GET /api/v1/admin/product-plans`, and public `GET /api/v1/product-plans` does not expose it until activation.
+- Good: admin creates a plan, deprecates it through the dedicated command, sees it in the admin list, and public selection reads omit it until reactivation.
 - Base: admin changes only `displayName` or `sortOrder`; `policyVersion` remains unchanged.
 - Bad: admin deactivates a plan and existing historical records break because the row was deleted or public code hard-coded Plus/Pro behavior instead of resolving catalog policy.
 
 ### 6. Tests Required
 
-- Backend route/service tests for create, policy update version increment, deactivate, admin inactive visibility, and public active-only visibility.
+- Backend route/service tests for create, policy update version increment, lifecycle transitions, admin all-status visibility, and public effective-active-only visibility.
 - PostgreSQL repository coverage or focused review for policy history insertion and non-policy updates avoiding policy history.
 - OpenAPI YAML parse and route parity checks after adding or changing admin catalog routes.
 - Frontend type/build checks after changing product catalog adapters, query hooks, pages, or route integration.
@@ -759,7 +778,8 @@ legacy pending_review -> admin approve/request-changes/reject
 - Expired `accepted_reserved` reservations must not consume capacity and should read as `expired` even before a scheduler materializes the row.
 - API model catalog endpoints return active model catalog rows and current price snapshots.
 - API service creation and update store service root fields, access modes, supported model snapshots, and package rows. API service owner create/action POST endpoints require `Idempotency-Key`; update and state-changing owner/admin actions require `If-Match`.
-- API service review state is `draft -> pending_review -> approved|changes_requested|rejected`; owner publication state is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
+- The retained API service `submit-review` action requires a current linux.do binding and auto-approves `draft|changes_requested -> approved/offline`; it does not create new `pending_review` rows. Existing `pending_review` rows are legacy data and remain actionable through admin approve/request-changes/reject. Owner publication is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
+- The administrator API service surface is management, not a new-submission review queue. Its public view contains `approved/online/clear` services; its exception view retains legacy `pending_review`, `changes_requested`, `rejected`, `admin_suspended`, and `removed` records. Administrator action counts and navigation badges include only legacy `pending_review` and `admin_suspended` services; owner-paused, draft, and approved-offline services are not administrator tasks.
 - Public API service reads return only services where `reviewStatus=approved`, `publicationStatus=online`, and `moderationStatus=clear`. Public DTOs must not expose owner contact method IDs, owner user IDs, review/admin internals, moderation reasons, or merchant internal notes.
 - API service model `merchantMultiplier` is a positive merchant declaration for every `distributionSystem`; an omitted value defaults to `1.0000`, but Sub2API does not force that value. Limited quota offers own a separate positive `modelMultiplier` with the same default-only meaning; see `api-quota-offers.md`.
 - API service rows and DTOs must not store or return passwords, API keys, Sub2API keys, sessions, cookies, third-party tokens, panel owner credentials, payment proofs, or platform verification artifacts.
@@ -1367,12 +1387,12 @@ rating: row.rating ?? 0
 rating: row.rating ?? null
 ```
 
-## Scenario: Real Native/OAuth Login And Session Permissions
+## Scenario: Student Registration, Native/OAuth Login, And Session Capabilities
 
 ### 1. Scope / Trigger
 
-- Trigger: backend work that changes auth routes, session DTOs, native password login, OAuth provider config, linux.do binding display, production startup validation, or admin permission checks.
-- Owner: `backend/internal/config`, `backend/internal/server/auth_handler.go`, `backend/internal/module/auth`, `backend/internal/store/postgres/auth.go`, and `backend/migrations/*native*login*.sql`.
+- Trigger: backend work that changes student registration, auth routes, session DTOs, native password login, authenticated linux.do linking, OAuth provider config, production startup validation, or capability/admin checks.
+- Owner: `backend/internal/config`, `backend/internal/server/auth_handler.go`, `backend/internal/server/auth_student_admin_handler.go`, `backend/internal/module/auth`, `backend/internal/store/postgres/auth*.go`, and migrations `000091+`.
 
 ### 2. Signatures
 
@@ -1380,6 +1400,10 @@ rating: row.rating ?? null
 POST /api/v1/auth/password/login
 POST /api/v1/auth/email-registration/start
 POST /api/v1/auth/email-registration/confirm
+GET /api/v1/auth/student-registration/config
+POST /api/v1/auth/reauthenticate-password
+GET /api/v1/auth/link/linuxdo/start
+GET /api/v1/auth/link/linuxdo/callback
 GET /api/v1/auth/oauth/start?returnTo=/my
 GET /api/v1/auth/oauth/callback?code=<provider-code>&state=<state>
 GET /api/v1/auth/session
@@ -1407,6 +1431,8 @@ Session user response includes:
 {
   "user": {
     "permissions": ["admin"],
+    "capabilities": ["api_order.create", "admin.access"],
+    "studentClaim": null,
     "linuxDoBinding": {
       "bound": true,
       "linuxDoUserId": "123",
@@ -1424,10 +1450,14 @@ Session user response includes:
 
 - `password/login` must validate native credentials through salted hashes in `user_password_credentials`, create the same cookie-backed session contract as OAuth, and return `401 INVALID_CREDENTIALS` for missing users or bad passwords without revealing which field failed.
 - New or changed native passwords must write `password_algorithm='argon2id_v1'`. `sha256_salted_v1` is legacy verification-only; a successful legacy login must rehash the credential to `argon2id_v1` before session creation completes.
-- Native password login and set-password must require `linuxDoBinding.bound=true` for non-admin users. Admin users may use native password login without linux.do binding only to support the explicit first-admin bootstrap path.
+- Native password login and set-password require at least one durable native-password identity fact: a student-email claim, `linuxDoBinding.bound=true`, or the explicit administrator bootstrap identity. Student login resolves the canonical username or immutable claimed institution email and never the mutable profile email.
 - First-admin bootstrap is environment-driven at process startup. If `C2C_BOOTSTRAP_ADMIN_PASSWORD` is empty, bootstrap is skipped. If password is present and username is empty, username defaults to `admin`. If username is present without password, config loading must fail.
 - Bootstrap is create-only and records `admin_bootstrap_runs.bootstrap_key='initial-admin-v1'`. With no marker, any existing administrator or occupied target username returns `ADMIN_BOOTSTRAP_CONFLICT` without mutation. A matching marker rerun verifies the active user, admin permission, and password credential without updating any field; damaged marked state returns `ADMIN_BOOTSTRAP_INCONSISTENT`.
-- `email-registration/start` and `email-registration/confirm` are disabled first-release compatibility endpoints. They return `403 EMAIL_REGISTRATION_DISABLED` and must not create accounts or sessions.
+- Student registration is persistent-config controlled and seeded disabled. Start and confirm both recheck the global switch and exact enabled institution domain. Start uses a six-digit, 15-minute, purpose-bound HMAC challenge with resend invalidation and at most five failed attempts. Confirm atomically creates the user, permanent claim, Argon2id credential, attribution, safe identity event, and session; a username/claim race rolls back challenge consumption and all partial rows.
+- Student claims are append-only and globally unique by normalized institution email. Changing the profile email, linking linux.do, changing account status, or administrative domain changes cannot release or reassign a claim.
+- A student session may start linux.do linking only after a successful current-password reauthentication no older than 10 minutes. The OAuth state is purpose/session bound and single use. A successful link keeps the same user/history/password, rejects identities owned by another user, revokes the old current session, and returns a fresh session/CSRF. There is no unlink or automatic account merge.
+- Session/profile capability arrays contain exactly the canonical seven-value vocabulary and are display projections only. Authorization derives from current student claim, linux.do binding, and existing admin permission facts on every request.
+- Session `user.studentClaim` is always present and nullable. Its non-null safe projection contains only `institutionDomain`, `institutionName`, and RFC3339 `claimedAt`; it never exposes the canonical student email, claim/user/domain IDs, challenge material, or another internal identity field.
 - `start` must store only state plus same-origin `returnTo` in the state cookie. External URLs, protocol-relative URLs, and empty values normalize to `/`.
 - `callback` must clear the state cookie after successful login.
 - The PostgreSQL auth repository must query `(provider, provider_subject)` first. Existing identities retain their original `user_id` and local username. First login creates a new user, identity, and provider binding in one transaction; username collisions select a deterministic alternative instead of reusing the conflicting row.
@@ -1442,13 +1472,19 @@ Session user response includes:
 | Condition | HTTP | Code |
 | --- | ---: | --- |
 | Bad native username/password | 401 | `INVALID_CREDENTIALS` |
-| Native password set/login for non-admin user without linux.do binding | 403 | `LINUX_DO_BINDING_REQUIRED` |
+| Native password set/login without student claim, linux.do binding, or admin fact | 403 | `LINUX_DO_BINDING_REQUIRED` |
 | Legacy `sha256_salted_v1` password login succeeds | 200 plus credential rehash | n/a |
 | Bootstrap username set without bootstrap password | startup failure | n/a |
 | Bootstrap target occupied or unproven admin exists | 409 | `ADMIN_BOOTSTRAP_CONFLICT` |
 | Bootstrap marker exists but linked state is damaged | 500 | `ADMIN_BOOTSTRAP_INCONSISTENT` |
 | Proven Bootstrap rerun | no-op, no overwrite | n/a |
-| Email registration start/confirm | 403 | `EMAIL_REGISTRATION_DISABLED` |
+| Student registration switch disabled at start/confirm | 403 | `EMAIL_REGISTRATION_DISABLED` |
+| Institution domain not enabled | 422 | `STUDENT_EMAIL_NOT_ELIGIBLE` |
+| Institution email already claimed | 409 | `STUDENT_EMAIL_CLAIMED` |
+| Invalid/expired/exhausted registration code | 422 | `VERIFICATION_CODE_INVALID` |
+| Invalid or occupied strict username | 422/409 | `USERNAME_INVALID` / `USERNAME_UNAVAILABLE` |
+| linux.do link without recent password reauthentication | 403 | `RECENT_REAUTHENTICATION_REQUIRED` |
+| linux.do identity belongs to another user | 409 | `OAUTH_IDENTITY_CONFLICT` |
 | Missing state cookie or state query | 403 | `CSRF_TOKEN_INVALID` |
 | State mismatch | 403 | `CSRF_TOKEN_INVALID` |
 | Missing callback code | 422 | `VALIDATION_FAILED` |
@@ -1462,15 +1498,16 @@ Session user response includes:
 - Good: linux.do-bound native user login returns the normal session response, while an incorrect password returns `401 INVALID_CREDENTIALS` and creates no session.
 - Good: a legacy `sha256_salted_v1` credential logs in once and is persisted back as `argon2id_v1`; the same wrong password does not create a session or rehash.
 - Good: first empty-database startup with `C2C_BOOTSTRAP_ADMIN_USERNAME=admin` and `C2C_BOOTSTRAP_ADMIN_PASSWORD=<secret>` creates a new admin, Argon2id credential, and `initial-admin-v1` marker; a proven rerun leaves the credential unchanged.
-- Good: email registration start/confirm return `EMAIL_REGISTRATION_DISABLED` and do not set `c2c_session`.
+- Good: registration remains disabled after migration until an administrator enables one exact institution domain and the global switch; a valid student registration creates one permanent claim and only `api_order.create`.
+- Good: after recent password reauthentication, a student links an unused linux.do identity in place, keeps historical orders and password login, receives the six non-admin business capabilities, and rotates the current session/CSRF.
 - Good: fake provider smoke logs in both `fake-auth-user-*` and `fake-auth-admin-*`; both remain non-admin and receive `403` from admin routes. A separate development-only dev session verifies the admin route.
 - Base: existing smoke scripts may call `/auth/dev-session` only when `APP_ENV=development|test` and `ENABLE_DEV_AUTH=true`.
-- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, OAuth profile data grants admin, Bootstrap promotes an existing user or overwrites a password, email registration becomes a public sign-up path, an unbound non-admin user uses backup password, new writes use `sha256_salted_v1`, or backend stores OAuth access tokens in `auth_identities`.
+- Bad: real frontend mode silently calls `/auth/dev-session` to switch identities, trusts stale capability arrays, enables every `.edu` suffix, releases a claim after profile-email changes, merges users by matching email, links linux.do without recent reauthentication, OAuth profile data grants admin, Bootstrap promotes an existing user or overwrites a password, new writes use `sha256_salted_v1`, or backend stores OAuth access tokens in `auth_identities`.
 
 ### 6. Tests Required
 
 - `cd backend && /opt/homebrew/bin/go test ./...` for config, route parity, and auth behavior.
-- Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, identity ownership/collision isolation, first-admin Bootstrap creation, conflict handling, provenance validation, and no-overwrite reruns.
+- Auth tests must assert default-off/exact-domain registration, immutable claim uniqueness, challenge expiry/attempt/resend/single-use semantics, username/claim race rollback, Argon2id login and legacy rehash, strict username or claim-email login, mutable-email rejection, capability projection/current-session refresh, link recent-auth/state/conflict/session rotation, identity ownership isolation, and first-admin Bootstrap behavior.
 - OAuth profile tests must cover linux.do userinfo with integer `id` and the existing string identifier form, and must assert both normalize to the stable string subject used by `auth_identities` and `linux_do_bindings`.
 - OpenAPI YAML parse to verify auth path/schema contract.
 - `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` and development auth enabled for OAuth start/callback/session, fake admin-like denial, dev-admin route access, and logout.
@@ -1673,7 +1710,7 @@ MAIL_FROM_NAME=C2CMarket
 - Rate limits return HTTP `429`, Problem Details `code=RATE_LIMITED`, and `Retry-After` when available.
 - Pagination `limit` defaults to 20, maxes at 100, and invalid values return `422 VALIDATION_FAILED`. `cursor` is opaque; clients must only pass through `nextCursor` and must not depend on whether a route currently uses offset or keyset internals.
 - List responses using pagination return `{ "items": [...], "nextCursor": "..." }` with `nextCursor` omitted/null when there are no more results.
-- Database-backed list repositories should accept `domain.PageRequest` and return `domain.Page[T]`; high-volume lists must use repository-level pagination rather than loading all rows for `server.paginateSlice`.
+- Database-backed list repositories should accept `domain.PageRequest` and return `domain.Page[T]`; high-volume lists must apply search, filters, and sorting before repository-level pagination rather than loading all rows for `server.paginateSlice` or filtering one already-bounded page.
 - API purchase intent create, buyer detail, and owner detail responses that include full contact values must set `Cache-Control: no-store` and write API purchase intent contact access audit rows without plaintext contact values.
 
 ### 4. Validation & Error Matrix
@@ -2277,6 +2314,88 @@ UPDATE api_services SET available_usd_allowance = available_usd_allowance - requ
 WHERE id = service_id AND available_usd_allowance >= requested
 ```
 
+## Scenario: Admin API Order Supervision Query Contract
+
+### 1. Scope / Trigger
+
+- Trigger: administrator API-order list work that adds or changes search, filters, sorting, cursor pagination, OpenAPI fields, frontend query state, or Mock behavior.
+- The compatibility route remains `/admin/trade-intents`, but its visible product name is `API 订单监管` and its backend authority is `GET /api/v1/admin/api-orders`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/admin/api-orders
+  ?q
+  &statuses=pending_payment,payment_submitted,payment_issue,paid_confirmed,delivery_submitted,completed,cancelled
+  &dateRange=today|7d|30d
+  &buyerId=<uuid>
+  &sellerId=<uuid>
+  &serviceId=<uuid>
+  &dispute=active|none
+  &minAmount=<non-negative decimal>
+  &maxAmount=<non-negative decimal>
+  &sort=updated_desc|created_desc|amount_desc|amount_asc
+  &limit=1..100
+  &cursor=<opaque sort-bound cursor>
+
+ListAdminAPIOrders(ctx, apiorder.AdminOrderFilter, domain.PageRequest) (domain.Page[domain.APIOrder], error)
+```
+
+### 3. Contracts
+
+- The default page size is 20 and the maximum is 100. PostgreSQL applies every search/filter predicate before the keyset predicate and `LIMIT limit + 1`; handlers must not load the full table or filter a page-sized slice in memory.
+- Every sort uses the requested scalar plus order ID as a deterministic tie-breaker. The opaque cursor is bound to the sort mode; changing filters or sort starts again from page one, and a cursor created for another sort is invalid.
+- `q` matches UUIDs, service/participant public-safe fields, and normalized public order numbers so searches such as `k7m4p9q2xz` and `API-...-K7M4-P9Q2XZ` remain equivalent in PostgreSQL, in-memory tests, and Mock mode.
+- `dateRange=today` means the current Asia/Shanghai calendar day, not a rolling 24-hour window and not the host machine's local calendar.
+- Amounts remain decimal strings from input through query serialization and Mock comparison. Filter inputs use text semantics with `inputmode="decimal"`; do not rely on native number-input `v-model` values supporting string methods or exact JavaScript-number precision.
+- The administrator list is read-only and returns only public-safe order state and immutable snapshots. It omits contacts, payment instructions/data, and every delivery credential field.
+- Frontend query keys include every visible filter and sort value. The real adapter serializes the same fields documented in OpenAPI; Mock mode applies equivalent filtering/sorting before pagination and binds cursors to the active sort.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Unknown status, date range, dispute mode, or sort | `422 VALIDATION_FAILED` on the corresponding field |
+| Invalid buyer, seller, or service UUID | `422 VALIDATION_FAILED` on that UUID field |
+| Negative or malformed minimum/maximum amount | `422 VALIDATION_FAILED` on that amount field |
+| `minAmount > maxAmount` | `422 VALIDATION_FAILED` on `minAmount` / `maxAmount` |
+| Invalid, non-UUID, or sort-mismatched cursor | `422 VALIDATION_FAILED` on `cursor` |
+| Valid filters with no matches | `200` with `items=[]` and no `nextCursor` |
+| Non-admin caller | `403 PERMISSION_DENIED` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: an administrator combines status, seller, active-dispute, `7d`, and amount filters; SQL finds a matching row beyond the unfiltered first 20 records and returns a stable next cursor.
+- Base: no filters and no sort returns the first 20 orders by `updated_at DESC, id DESC`.
+- Base: `today` at `2026-08-09T16:30:00Z` includes rows from the Shanghai date `2026-08-10` and excludes rows from the preceding Shanghai day.
+- Bad: fetch 20 rows, filter them in the handler, then claim there are no matches while matching rows exist deeper in the table.
+- Bad: convert `9999999999999999.99` to JavaScript `Number` or call `.trim()` directly on a value emitted by a native number input.
+
+### 6. Tests Required
+
+- Go unit tests cover all filters, normalized order-number search, all four sort orders, tie-breakers, sort-bound cursors, and Shanghai day boundaries.
+- Handler tests assert field-level `422` responses for every enum, UUID, decimal range, and cursor failure.
+- A dedicated PostgreSQL integration test seeds more than one page and proves filtering happens before pagination for all four stable sort modes.
+- OpenAPI route/schema checks and generated frontend types must match the documented query signature.
+- Frontend tests cover query omission/serialization, Mock parity, large exact decimals, cursor/sort mismatch, and numeric-or-text input normalization.
+- Browser verification covers filter/reset interaction, no new console errors, and no horizontal overflow at desktop and mobile widths.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+SELECT all rows -> handler filters/sorts -> offset cursor
+Number(minAmount) -> compare binary floating-point values
+```
+
+#### Correct
+
+```text
+WHERE all filters -> keyset predicate for active sort -> ORDER BY scalar, id -> LIMIT limit + 1
+canonical decimal text -> exact decimal comparison -> sort-bound opaque cursor
+```
+
 ## Scenario: API Order Delivery Review And Role Projection
 
 ### 1. Scope / Trigger
@@ -2503,7 +2622,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 80 (current repository target)
+  ExpectedMigrationVersion = 98 (current repository target)
 ```
 
 ### 3. Contracts
@@ -2631,4 +2750,360 @@ order.payment_settings_id   -> mutable service payment row
 account settings
   -> copied into new service payment snapshot
   -> copied into new order payment snapshot
+```
+
+## Scenario: Reusable API Probe And Temporary Model Tester Contracts
+
+### 1. Scope / Trigger
+
+- Trigger: route, DTO, session, CSRF, OpenAPI, or generated-type changes for reusable probe
+  connections, service binding, delivery target snapshots, or the API model tester.
+- The behavioral source of truth is
+  [API Probe Connections, Model Testing, And Quota Policy](./api-health-quota-policy.md).
+
+### 2. Signatures
+
+```text
+APIProbeConnectionRequest:
+  name, baseUrl, credential?, enabled, acknowledgeInsecureHttp?
+
+APIServiceProbeConnectionRequest:
+  probeConnectionId
+
+APIModelTesterDiscoverRequest:
+  credentialSource
+
+APIModelTesterTestRequest:
+  credentialSource, model[1..512]
+```
+
+```text
+manual credentialSource:
+  kind=manual, baseUrl, apiKey(writeOnly), acknowledgeInsecureHttp
+
+order credentialSource:
+  kind=order, orderId, acknowledgeInsecureHttp
+```
+
+### 3. Contracts
+
+- Probe connection list/detail/create/update/delete/verify routes are owner-private and use
+  `Cache-Control: private, no-store`. Credential input is write-only. PATCH/DELETE require
+  `If-Match`; create/verify require `Idempotency-Key`; every mutation requires session and CSRF.
+- The service binding request contains only `probeConnectionId`. The backend verifies ownership,
+  enabled state, completed `/models` verification, and service version. It never accepts Base URL
+  or Key through the service DTO.
+- Removed service-level health-probe and administrator approval routes remain unregistered. Do not
+  retain compatibility handlers for DNS TXT, HTTP challenge, target ownership, configured model,
+  or TTFT fields.
+- Model tester credential sources are a strict tagged union. Manual sources contain `baseUrl`,
+  write-only `apiKey`, and `acknowledgeInsecureHttp`; order sources contain only `orderId` and the
+  acknowledgement. Unknown or mixed fields fail strict JSON decoding/validation.
+- Model tester POST routes require session plus CSRF, reject HTTP without explicit current-request
+  acknowledgement, and return `private, no-store`. They do not use idempotency because each click
+  intentionally makes new third-party calls.
+- `discover` may return stable `401`, `403`, `404`, `409`, `422`, `429`, `502`, and `504` problems.
+  `test` may return `401`, `403`, `404`, `409`, or `422`; protocol failures after a valid request
+  are represented independently in the successful response.
+- `test.model` accepts one non-empty identifier up to 512 Unicode code points without control
+  characters. It is not restricted to the platform model catalog; the UI restricts selection to
+  the current `/models` discovery result.
+- Neither tester endpoint returns the API key, provider response body, full third-party error,
+  prompt, or internal resolved address. Order sources never contain the key.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Probe mutation lacks session/CSRF | `401` or `403` before business decoding |
+| Probe PATCH/DELETE lacks or has stale `If-Match` | `428` or `412 VERSION_CONFLICT` |
+| Service binds a missing, foreign, disabled, or unverified connection | `422 VALIDATION_FAILED` on `probeConnectionId` |
+| Referenced connection delete | `409 INVALID_STATE_TRANSITION` with owner-safe service references |
+| Tester manual/order fields are mixed or malformed | `422 VALIDATION_FAILED` |
+| Tester HTTP source omits acknowledgement | `422 VALIDATION_FAILED` on `credentialSource.acknowledgeInsecureHttp` |
+| Tester order is foreign/missing or credential unavailable | `404` or `409` without key/existence leakage |
+| `test.model` is empty, over 512 code points, or contains controls | `422 VALIDATION_FAILED` on `model` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: owner creates one connection, receives no key in the response, binds it to two services,
+  and both owner DTOs reference the connection while public DTOs expose health only.
+- Good: buyer selects an authorized order source and the POST body contains only order ID plus the
+  current HTTP acknowledgement; the server resolves the key after authorization.
+- Base: an HTTPS tester request sends `acknowledgeInsecureHttp=false`; the field does not enable any
+  broader outbound policy and the request proceeds through normal target validation.
+- Bad: putting the key in a query string, returning it from order sources, accepting body-level
+  `expectedVersion`, or registering compatibility challenge/admin routes.
+
+### 6. Tests Required
+
+- Route/OpenAPI parity for all connection, binding, and tester paths and response statuses.
+- Strict request tests for manual/order unions, HTTP acknowledgement, model length, session/CSRF,
+  no-store headers, key non-disclosure, owner/buyer isolation, and destroyed order credentials.
+- Generated frontend types must be regenerated from OpenAPI and `openapi:check` must remain clean.
+
+### 7. Wrong vs Correct
+
+```json
+// Wrong: service-scoped target and secret duplication.
+{"probeBaseUrl":"https://api.example.com/v1","probeKey":"sk-secret","probeModel":"gpt-4.1-mini"}
+```
+
+```json
+// Correct: service binds a separately managed reusable connection.
+{"probeConnectionId":"00000000-0000-0000-0000-000000000801"}
+```
+
+```json
+// Wrong: order import leaks or resubmits the delivered key.
+{"kind":"order","orderId":"...","apiKey":"sk-secret"}
+```
+
+```json
+// Correct: the backend authorizes and resolves the order credential.
+{"kind":"order","orderId":"00000000-0000-0000-0000-000000000802","acknowledgeInsecureHttp":false}
+```
+
+## Scenario: Bounded Public Profile Aggregation
+
+### 1. Scope / Trigger
+
+- Trigger: changing `GET /api/v1/users/{username}/public-profile`, public merchant profiles, or any profile activity projection.
+- The contract spans PostgreSQL-backed business modules, the core aggregation service, HTTP/OpenAPI DTOs, generated TypeScript, and `/u/:username`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/users/{username}/public-profile
+  -> PublicUserProfileBundle
+
+GET /api/v1/merchant-profiles/{slug}
+  -> PublicMerchantProfile
+```
+
+```go
+PublicProfileBundle(context.Context, username string) (profile.PublicUserProfileBundle, *domain.AppError)
+```
+
+```text
+PublicUserProfileBundle collections:
+  carpools:    PublicProfileCarpool[]      max 6
+  services:    PublicProfileAPIService[]   max 6
+  completions: PublicProfileCompletion[]   max 10
+  reviews:     PublicReview[]              max 10
+  disputes:    PublicDispute[]             max 10
+```
+
+### 3. Contracts
+
+- Public profile aggregation uses authoritative business queries and typed allowlist DTOs; it never returns `[]any`, `items: {}`, or hard-coded empty success for a failed dependency.
+- Carpools include active public listings only. API services use the existing public/orderable projection. Both collections use stable `updatedAt DESC, id DESC` ordering.
+- Completion records contain only kind, title, role, completion time, and a stable public projection ID. They omit counterpart IDs, amount/payment detail, contact data, order numbers, and credentials.
+- Completion records are sorted by `completedAt DESC, id DESC`. Carpool and API completion groups obey their corresponding profile privacy flags.
+- Reviews and disputes reuse their existing public-safe projections, remain bounded, and preserve their own visibility/redaction rules.
+- Any authoritative aggregate dependency failure returns a problem response. A successful profile with no public activity returns non-null empty arrays.
+- The public merchant-profile endpoint returns the profile DTO directly. It does not promise empty `services`, `completions`, `reviews`, or `disputes` bundles when no consumer exists.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Public user or merchant slug does not exist | `404 OBJECT_NOT_FOUND`. |
+| User has no public activity | Typed empty arrays in the user bundle. |
+| Carpool completion privacy is disabled | Omit carpool completions; keep allowed API completions. |
+| API completion privacy is disabled | Omit API completions; keep allowed carpool completions. |
+| Aggregate repository/service fails | Return a problem response; do not replace the failed collection with fake emptiness. |
+| Merchant profile is found | Return `PublicMerchantProfile` directly. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one profile response contains an active carpool, an online API service, recent completions, published reviews, and sanitized disputes in their bounded order.
+- Base: a new user has no activity, so all five user collections are typed empty arrays.
+- Bad: the handler initializes `carpools: []any{}` or returns complete order/listing domain objects containing private fields.
+
+### 6. Tests Required
+
+- Core/service tests for each collection, bounds, stable ordering, mixed completion kinds, privacy pruning, and dependency failures.
+- HTTP/OpenAPI tests for strong item schemas, non-null arrays, merchant response contraction, and sensitive-field absence.
+- PostgreSQL-backed tests for real public records and owner/public visibility predicates.
+- Frontend adapter/page tests for the single aggregate request, typed mapping, unified empty state, and linux.do link behavior.
+- Browser checks with populated and empty public profiles at desktop and mobile widths.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+response.Carpools = []any{}
+response.Services = []any{}
+```
+
+#### Correct
+
+```go
+bundle, appErr := s.core.PublicProfileBundle(r.Context(), username)
+if appErr != nil {
+    writeProblem(w, r, appErr)
+    return
+}
+writeJSON(w, http.StatusOK, toPublicProfileBundle(bundle))
+```
+
+## Scenario: Owner Carpool Views And Optimistic Editing
+
+### 1. Scope / Trigger
+
+- Trigger: changing `/my/carpools`, owner list status grouping, owner detail reads, or carpool edit/save behavior.
+
+### 2. Signatures
+
+```text
+GET   /api/v1/me/carpools?view=recruiting|serving|history|needs_edit&limit&cursor
+GET   /api/v1/me/carpools/{id}
+PATCH /api/v1/carpools/{id}
+Cookie: c2c_session=<owner session>
+If-Match: "<listing version>"        # PATCH
+```
+
+```ts
+type OwnerCarpoolView = 'recruiting' | 'serving' | 'history' | 'needs_edit'
+function backendOwnerCarpoolForEdit(id: string): Promise<OwnerCarpoolEditData>
+function backendUpdateOwnerCarpool(id, payload, version, contactId, submit): Promise<CarpoolWithMeta>
+```
+
+### 3. Contracts
+
+- The repository applies the owner and view predicates before keyset pagination.
+- `recruiting` means active with no active buyer members; `serving` means active with at least one active buyer member; `history` means rejected or removed; `needs_edit` means draft, pending review, changes requested, or paused.
+- Owner detail returns only a listing owned by the current session user and emits its current version as ETag. Missing and cross-owner IDs both return not found.
+- Only draft and changes-requested records expose an edit action. The edit page reuses the publish form and maps every persisted field back into form state.
+- Save reuses the existing PATCH contract with `If-Match`. Submit-after-save uses the returned version, never the stale pre-patch version.
+- A `412 VERSION_CONFLICT` stops the mutation, tells the user the record changed, and refetches owner detail before another save.
+- The owner list renders explicit backend-state labels such as draft, pending review, changes requested, paused, rejected, and removed; it must not collapse every non-public state into `paused`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| View value is unsupported | `422 VALIDATION_FAILED`. |
+| Listing is missing or owned by another user | `404 OBJECT_NOT_FOUND`. |
+| Edit status is not draft or changes requested | `409 INVALID_STATE_TRANSITION`. |
+| Missing `If-Match` | `428 PRECONDITION_REQUIRED`. |
+| Stale version | `412 VERSION_CONFLICT`; refetch without overwriting. |
+| Save succeeds | Invalidate owner/public/detail queries and return to `/my/carpools`. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a draft appears under `needs_edit` with the label `草稿`, opens a prefilled form, saves with version 1, and persists as version 2.
+- Base: each owner view has zero records and shows its own contextual empty state.
+- Bad: tabs only change visual selection, filter the current page after pagination, or show every draft/removed row as `暂停`.
+
+### 6. Tests Required
+
+- Repository/service tests for all four mutually exclusive views, stable cursor paging, and owner isolation.
+- HTTP tests for owner detail, ETag, not-found isolation, PATCH preconditions, and version conflict.
+- Frontend tests for query serialization, form reverse mapping, status labels, save/submit versions, cache invalidation, and conflict recovery.
+- Authenticated browser checks for all four tabs, draft edit/save, explicit owner status labels, and mobile overflow.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const visible = currentPage.items.filter(matchesSelectedTab)
+if (backendStatus !== 'active') label = '暂停'
+```
+
+#### Correct
+
+```ts
+const page = await backendOwnerCarpoolsPage(selectedView, { limit, cursor })
+const label = ownerStatusLabels[item.backendStatus] ?? item.status
+await backendUpdateOwnerCarpool(item.id, payload, item.version, contactId, submit)
+```
+
+## Scenario: Public API Market Cursor Pagination
+
+### 1. Scope / Trigger
+
+- Trigger: changes to the public API service list, repository pagination, API
+  market infinite queries, health enrichment, or search aggregation.
+
+### 2. Signatures
+
+```text
+GET /api/v1/api-services?limit=20&cursor=<opaque>&paymentMethod=wechat&billingMode=fixed_package&packageModelCatalogId=<id>&packageDurationDays=7
+-> { items: PublicAPIService[], nextCursor: string | null }
+
+GET /api/v1/api-quota-offers?limit=20&cursor=<opaque>&search=<query>&excludeSystemSlots=true
+-> { items: PublicAPIQuotaOffer[], nextCursor: string | null }
+```
+
+```go
+ListPublicAPIServices(ctx, filter, domain.PageRequest) (domain.Page[Service], *domain.AppError)
+PublicAPIServices(ctx, filter, domain.PageRequest) (domain.Page[APIService], *domain.AppError)
+```
+
+### 3. Contracts
+
+- PostgreSQL applies the public orderable predicate, payment method, billing
+  mode, matching package model/duration, quota-offer search, and system-slot
+  exclusion before keyset pagination, ordered by `(updated_at DESC, id DESC)`.
+- Repository, manager, core, and HTTP projections preserve `NextCursor` without
+  parsing or replacing it. Enrichment loads merchant profile, reputation, and
+  health facts for the current page only.
+- The in-memory implementation may use the shared offset cursor helper, but it
+  must expose the same `domain.Page` behavior.
+- Global search follows every API service page so moving pagination into the
+  repository cannot make later services unsearchable.
+- Compatibility callers that require a complete list may traverse pages, but
+  must reject a repeated cursor instead of looping forever.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Missing `limit` | Default to 20 |
+| `limit < 1` or `limit > 100` | `422 VALIDATION_FAILED` |
+| Invalid keyset cursor | `422 VALIDATION_FAILED` on `cursor` |
+| No later row | `nextCursor` is null/omitted |
+| Payment method has no matching rows | Empty page with no cursor |
+| Package model/duration match exists after page one | It appears on the first filtered page |
+| Quota search match exists after page one | It appears on the first filtered page |
+| Search match exists after page one | Search still returns the service |
+| Full-list adapter receives a repeated cursor | Visible error; no infinite loop |
+
+### 5. Good / Base / Bad Cases
+
+- Good: page one returns 20 enriched services and one opaque cursor; the next
+  request returns only rows after that stable keyset position.
+- Base: 12 services return in one page and no second database query is needed.
+- Bad: load all services, enrich all rows, then slice them in the HTTP handler.
+
+### 6. Tests Required
+
+- Manager pagination after public/payment/package filtering, including
+  final-page stop.
+- Handler pass-through for `limit`, `cursor`, filter, response cursor, and
+  invalid pagination.
+- Search regression where the only matching API service is on page two.
+- PostgreSQL keyset helper tests for stable order and invalid cursors.
+- Frontend adapter tests for opaque cursor serialization and repeated-cursor
+  rejection in complete-list compatibility reads.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+services, _ := repo.ListPublicAPIServices(ctx, filter)
+writePaginatedJSON(w, r, enrichAll(services))
+```
+
+#### Correct
+
+```go
+page, _ := repo.ListPublicAPIServices(ctx, filter, pageRequest)
+items := enrich(page.Items)
+writePageJSON(w, domain.Page[Response]{Items: items, NextCursor: page.NextCursor})
 ```

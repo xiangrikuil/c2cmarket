@@ -40,17 +40,10 @@ const (
 	SourceCarpoolMembership = TransactionCarpoolMembership
 )
 
-var PresetTags = []string{
-	"沟通顺畅",
-	"描述真实",
-	"响应及时",
-	"规则清晰",
-	"付款及时",
-	"确认及时",
-	"交付清晰",
-	"合作愉快",
-	"响应较慢",
-	"与描述不符",
+type TagDefinition struct {
+	Code     string
+	Label    string
+	Polarity string
 }
 
 type Transaction struct {
@@ -104,6 +97,7 @@ type ReviewCenterRow struct {
 	Status                string
 	Visibility            string
 	CounterpartySubmitted bool
+	AllowedTags           []TagDefinition
 	CanCreate             bool
 	CanEdit               bool
 	ContentVisible        bool

@@ -20,8 +20,10 @@ import AccountPaymentSummarySection from '@/components/api-service-publish/Accou
 import ApiPaymentSettingsDialog from '@/components/contact-payment/ApiPaymentSettingsDialog.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
+import MerchantContactMethodsSection from '@/components/api-service-publish/MerchantContactMethodsSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
+import ProbeConnectionSection from '@/components/api-service-publish/ProbeConnectionSection.vue'
 import PublishStepSection from '@/components/api-service-publish/PublishStepSection.vue'
 import PublishWorkflowStepper from '@/components/api-service-publish/PublishWorkflowStepper.vue'
 import ResponsivePublishPreview from '@/components/api-service-publish/ResponsivePublishPreview.vue'
@@ -77,11 +79,14 @@ import {
   useApiPaymentAccountSettingsQuery,
   useApiQuotaSaleSlots,
   useCreateApiQuotaRushOfferMutation,
+	useMerchantApiOrders,
   useModelCatalog,
   useMyApiServices,
+	useMyContactMethodsQuery,
   useMyProfileQuery,
 } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
+import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 
 type ServiceMode = 'existing' | 'create'
 
@@ -94,7 +99,7 @@ const previewOpen = ref(false)
 const paymentSettingsDialogOpen = ref(false)
 const paymentPromptedForCreate = ref(false)
 const formDirty = ref(false)
-useUnsavedChangesGuard(formDirty, '限时额度包配置尚未发布，确认离开当前页面？')
+useUnsavedChangesGuard(formDirty, '限量额度包配置尚未发布，确认离开当前页面？')
 const serviceMode = ref<ServiceMode>('existing')
 const selectedServiceId = ref('')
 const serviceError = ref('')
@@ -108,6 +113,9 @@ const publishSteps = [
 ]
 
 const myServicesQuery = useMyApiServices('all')
+const contactMethodsQuery = useMyContactMethodsQuery()
+const activeDisputesQuery = useMerchantApiOrders({ dispute: 'active' })
+const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const {
@@ -158,6 +166,8 @@ watch([eligibleServices, requestedServiceId, () => myServicesQuery.isSuccess.val
 }, { immediate: true })
 
 const baseForm = reactive<ApiServicePublishForm>({
+  probeConnectionId: '',
+	ownerContactMethodIds: [],
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -211,6 +221,17 @@ const catalog = computed(() => modelCatalog.value ?? [])
 const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, item])))
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === baseForm.providerCategory))
 const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById.value))
+const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
+  contact.enabled && contact.usageScopes.includes('api_merchant')
+)))
+const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === baseForm.probeConnectionId) ?? null)
+const probeConnectionReady = computed(() => Boolean(
+  selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
+))
+const probeConnectionError = computed(() => probeConnectionsQuery.error.value
+  ? backendErrorMessage(probeConnectionsQuery.error.value, '探针连接暂时无法读取。')
+  : '')
 const accountSettingsValue = computed(() => accountPaymentSettings.value
   ? cloneApiPaymentAccountSettings(accountPaymentSettings.value)
   : { paymentWindowMinutes: defaultPaymentWindowMinutes, paymentOptions: createDefaultPaymentOptions(), updatedAt: '' })
@@ -221,6 +242,15 @@ const profileErrorMessage = computed(() =>
 
 watch(() => myProfile.value, profile => {
   baseForm.merchantDisplayName = profile?.displayName.trim() || profile?.username.trim() || ''
+}, { immediate: true })
+
+watch(availableOwnerContacts, contacts => {
+  const availableIds = new Set(contacts.map(contact => contact.id))
+  baseForm.ownerContactMethodIds = baseForm.ownerContactMethodIds.filter(id => availableIds.has(id))
+  if (baseForm.ownerContactMethodIds.length || !contacts.length) return
+  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
+  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
+  baseForm.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
 }, { immediate: true })
 
 watch(accountSettingsValue, settings => {
@@ -310,13 +340,23 @@ const minimumExpiry = computed(() => selectedSlot.value
 const serviceStepSummary = computed(() => selectedService.value
   ? `${selectedService.value.title} · ${selectedService.value.models.slice(0, 3).join(' / ')}`
   : serviceMode.value === 'create' ? '正在新建 API 服务' : '待选择可接单服务')
-const packageStepSummary = computed(() => `${rush.name || '限时额度包'} · $${formatDecimal(rush.usdAllowance || '0', 0, 6)} / ¥${formatDecimal(rush.priceCny || '0', 2, 2)} · ${rush.copies} 份 · 手工 ≤ ${rush.deliveryEtaMinutes} 分钟`)
+const packageStepSummary = computed(() => `${rush.name || '限量额度包'} · $${formatDecimal(rush.usdAllowance || '0', 0, 6)} / ¥${formatDecimal(rush.priceCny || '0', 2, 2)} · ${rush.copies} 份 · 手工 ≤ ${rush.deliveryEtaMinutes} 分钟`)
 const slotStepSummary = computed(() => selectedSlot.value
   ? `${formatSlotDate(selectedSlot.value.startsAt)} ${formatSlotTime(selectedSlot.value.startsAt)} · ${rush.expiresAt ? `失效于 ${rush.expiresAt.replace('T', ' ')}` : '待填写失效时间'}`
   : '待选择开放场次')
 const selectedSlotLabel = computed(() => selectedSlot.value
   ? `${formatSlotDate(selectedSlot.value.startsAt)} ${formatSlotTime(selectedSlot.value.startsAt)}`
   : '')
+const activeDisputeCount = computed(() => activeDisputesQuery.data.value?.length ?? 0)
+const disputePublishBlocked = computed(() => (
+	activeDisputesQuery.isLoading.value || activeDisputesQuery.isError.value || activeDisputeCount.value > 0
+))
+const disputeRuleText = computed(() => {
+	if (activeDisputesQuery.isLoading.value) return '正在检查当前账号是否存在未解决的 API 订单纠纷，检查完成前不能提交发布。'
+	if (activeDisputesQuery.isError.value) return '暂时无法确认纠纷状态，为避免违规接单，当前不能提交发布。请重试。'
+	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 个未解决的 API 订单纠纷。处理完成前不能发布或恢复 API 服务与额度，也不会接收新订单。`
+	return '发布规则：账号存在未解决的 API 订单纠纷时，不能发布或恢复 API 服务与额度，也不会接收新订单。'
+})
 const primaryActionLabel = computed(() => {
   if (createBaseServiceMutation.isPending.value) return '创建中...'
   if (createRushMutation.isPending.value) return '发布中...'
@@ -329,6 +369,7 @@ const primaryActionLabel = computed(() => {
 const primaryActionDisabled = computed(() =>
   createBaseServiceMutation.isPending.value
   || createRushMutation.isPending.value
+	|| (step.value === 3 && disputePublishBlocked.value)
   || (step.value === 1 && serviceMode.value === 'create' && (profileLoading.value || profileIsError.value)),
 )
 
@@ -408,6 +449,9 @@ function validateBaseService() {
     return false
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
+	if (!baseForm.ownerContactMethodIds.length) baseErrors.ownerContactMethods = '请至少选择一种订单联系方式。'
+  if (!baseForm.probeConnectionId) baseErrors.probeConnection = '请选择已验证且启用的探针连接。'
+  else if (!probeConnectionReady.value) baseErrors.probeConnection = '所选探针连接当前不可用，请重新选择。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
 	if (!baseForm.accountPoolType) baseErrors.accountPool = '请选择一个号池。'
 	if (baseForm.accountPoolType === 'custom') {
@@ -456,7 +500,7 @@ function validateRush() {
   if (Number(rush.usdAllowance) <= 0) return '单份美元额度必须大于 0。'
   if (Number(rush.priceCny) <= 0) return '人民币总价必须大于 0。'
   if (rushQuotaPolicyError.value) return rushQuotaPolicyError.value
-  if (!Number.isInteger(rush.copies) || rush.copies < 1 || rush.copies > 5000) return '份数必须是 1-5000 的整数。'
+  if (!Number.isInteger(rush.copies) || rush.copies < 1 || rush.copies > 10) return '份数必须是 1-10 的整数。'
   if (rush.deliveryEtaMinutes < 1 || rush.deliveryEtaMinutes > 10) return '交付时限必须在 1-10 分钟之间。'
   if (rush.sourceType === 'other' && !rush.sourceLabel.trim()) return '其他来源需要填写来源说明。'
   return ''
@@ -495,7 +539,11 @@ function formatSlotTime(value: string) {
 }
 
 async function publishRushOffer() {
-  if (!selectedService.value) {
+	if (disputePublishBlocked.value) {
+		toast.warning(disputeRuleText.value)
+		return
+	}
+	if (!selectedService.value) {
     serviceError.value = '原服务已不可用，请重新选择一个已上线且可接单的 API 服务。'
     step.value = 1
     void focusStep(1)
@@ -534,7 +582,7 @@ async function publishRushOffer() {
       sourceConfirmedAt: rush.sourceConfirmedAt,
     })
     formDirty.value = false
-    toast.success('限时额度包已发布。')
+    toast.success('限量额度包已发布。')
     await router.replace(`/my/api-services/${selectedService.value.id}#quota-offers`)
     void publication
   } catch (error) {
@@ -592,9 +640,9 @@ function preview() {
   <div class="api-publish-page space-y-5 pb-20" @input="formDirty = true" @change="formDirty = true">
     <header class="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <div class="flex items-center gap-2 text-sm font-medium text-primary"><CalendarClock class="h-4 w-4" />限时额度包</div>
+        <div class="flex items-center gap-2 text-sm font-medium text-primary"><CalendarClock class="h-4 w-4" />限量额度包</div>
         <h1 class="mt-1 text-2xl font-semibold">发布到固定抢购场次</h1>
-        <p class="mt-1 text-sm text-muted-foreground">选择服务、设置单份额度与库存，再选择北京时间 09:00、13:00 或 20:00 场次。</p>
+        <p class="mt-1 text-sm text-muted-foreground">选择服务、设置单份额度与库存，再选择北京时间 20:00 场次。</p>
       </div>
       <div class="flex gap-2">
         <Button variant="outline" @click="preview"><Eye class="h-4 w-4" />预览</Button>
@@ -602,17 +650,26 @@ function preview() {
       </div>
     </header>
 
+    <Alert :variant="activeDisputeCount > 0 || activeDisputesQuery.isError.value ? 'destructive' : 'default'">
+      <CalendarClock />
+      <AlertTitle>发布前纠纷规则</AlertTitle>
+      <AlertDescription>
+        {{ disputeRuleText }}
+        <Button v-if="activeDisputesQuery.isError.value" type="button" size="sm" variant="outline" class="mt-3" @click="activeDisputesQuery.refetch()">重新检查</Button>
+      </AlertDescription>
+    </Alert>
+
     <PublishWorkflowStepper :steps="publishSteps" :current-step="step" :completed-steps="completedSteps" @select="selectStep" />
 
     <div class="api-publish-layout grid min-w-0 gap-3 lg:items-start">
       <section class="api-publish-editor min-w-0 space-y-3">
-        <PublishStepSection :step="1" title="选择要发布额度的 API 服务" description="限时额度包会归属到当前选中的服务。" :status="publishStepStatus(1, step, completedSteps)" :summary="serviceStepSummary" @edit="selectStep">
+        <PublishStepSection :step="1" title="选择要发布额度的 API 服务" description="限量额度包会归属到当前选中的服务。" :status="publishStepStatus(1, step, completedSteps)" :summary="serviceStepSummary" @edit="selectStep">
           <div class="space-y-4">
             <template v-if="serviceMode === 'existing'">
               <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 class="text-sm font-semibold">我的 API 服务</h2>
-                  <p class="mt-0.5 text-xs text-muted-foreground">请选择这次限时额度包所属的服务。</p>
+                  <p class="mt-0.5 text-xs text-muted-foreground">请选择这次限量额度包所属的服务。</p>
                 </div>
                 <Button type="button" size="sm" variant="outline" @click="openNewServiceForm">
                   <Plus class="h-4 w-4" />新建 API 服务
@@ -630,7 +687,7 @@ function preview() {
                   </div>
                 </AlertDescription>
               </Alert>
-              <EmptyState v-else-if="eligibleServices.length === 0" title="暂无可用的 API 服务" description="新建一个 API 服务后，再为它发布限时额度包。" />
+              <EmptyState v-else-if="eligibleServices.length === 0" title="暂无可用的 API 服务" description="新建一个 API 服务后，再为它发布限量额度包。" />
               <RadioGroup v-else v-model="selectedServiceId" class="grid max-h-72 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
                 <label v-for="service in eligibleServices" :key="service.id" class="flex min-h-24 cursor-pointer gap-3 rounded-md border border-border p-3 hover:border-primary/50 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
                   <RadioGroupItem :value="service.id" class="mt-1" />
@@ -664,13 +721,27 @@ function preview() {
               <template v-else>
                 <Alert><Server /><AlertTitle>先完善 API 服务</AlertTitle><AlertDescription>这里设置接入方式、模型与账户收款资料；额度价格、份数和场次在后续步骤设置。</AlertDescription></Alert>
                 <ApiAccessSourceSection :form="baseForm" :errors="baseErrors" selling-mode="limited" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
+                <ProbeConnectionSection
+                  v-model="baseForm.probeConnectionId"
+                  :connections="probeConnections"
+                  :loading="probeConnectionsQuery.isLoading.value"
+                  :error="probeConnectionError"
+                  :field-error="baseErrors.probeConnection"
+                  @refresh="probeConnectionsQuery.refetch()"
+                />
                 <AccountPaymentSummarySection
                   :form="baseForm"
                   :settings="accountSettingsValue"
                   :loading="paymentSettingsLoading"
                   @edit="paymentSettingsDialogOpen = true"
                 />
-                <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" @update:model-value="setProviderCategory" />
+                <MerchantContactMethodsSection
+                  :form="baseForm"
+                  :contacts="availableOwnerContacts"
+                  :loading="contactMethodsQuery.isLoading.value"
+                  :error="baseErrors.ownerContactMethods"
+                />
+                <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" :catalog="catalog" @update:model-value="setProviderCategory" />
                 <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个 API 服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>
                 <MerchantNoteSection :form="baseForm" :errors="baseErrors" />
               </template>
@@ -687,7 +758,7 @@ function preview() {
             <label class="space-y-1.5 text-sm sm:col-span-2"><span class="font-medium">限时包名称</span><Input v-model="rush.name" maxlength="80" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份美元额度</span><Input v-model="rush.usdAllowance" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份人民币总价</span><Input v-model="rush.priceCny" inputmode="decimal" /></label>
-            <label class="space-y-1.5 text-sm"><span class="font-medium">计划份数</span><Input v-model.number="rush.copies" type="number" min="1" max="5000" /></label>
+            <label class="space-y-1.5 text-sm"><span class="font-medium">计划份数</span><Input v-model.number="rush.copies" type="number" min="1" max="10" /></label>
           </div>
           <div class="mt-4 border-t border-border pt-4">
             <ApiQuotaPolicyFields v-model="rush.quotaUsagePolicy" :error="rushQuotaPolicyError || undefined" />
@@ -705,7 +776,7 @@ function preview() {
             <div class="space-y-1.5 text-sm sm:col-span-2"><span class="font-medium">交付方式</span>
               <div class="flex items-start gap-3 rounded-md border border-primary/25 bg-primary/5 p-3">
                 <PackageCheck class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                <span><strong>卖家手工交付</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">确认收款后由卖家发放 API Key 与请求地址。新发布的限时额度包不再使用预导入凭据。</span></span>
+                <span><strong>卖家手工交付</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">确认收款后由卖家发放 API Key 与请求地址。新发布的限量额度包不再使用预导入凭据。</span></span>
               </div>
             </div>
             <label class="space-y-1.5 text-sm"><span class="font-medium">最长交付分钟数</span><Input v-model.number="rush.deliveryEtaMinutes" type="number" min="1" max="10" /></label>
@@ -748,7 +819,7 @@ function preview() {
         </PublishStepSection>
       </section>
 
-      <ResponsivePublishPreview v-model:open="previewOpen" title="限时额度包预览" description="根据当前服务、额度包和场次实时生成。">
+      <ResponsivePublishPreview v-model:open="previewOpen" title="限量额度包预览" description="根据当前服务、额度包和场次实时生成。">
         <ApiQuotaRushPublishPreview :step="step" :service-title="selectedService?.title" :slot-label="selectedSlotLabel" :default-multiplier="serviceDefaultMultiplier" :declared-max-concurrency="serviceDeclaredMaxConcurrency" :prompt-audit-enabled="servicePromptAuditEnabled" :draft="rush" />
       </ResponsivePublishPreview>
     </div>

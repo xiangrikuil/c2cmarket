@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/catalog"
 )
 
@@ -14,6 +15,7 @@ const (
 	EligibilityPaused              = "paused"
 	EligibilityCredentialRisk      = "credential_risk"
 	EligibilityOwnerActionRequired = "owner_action_required"
+	EligibilityCapabilityRequired  = "capability_required"
 	EligibilityAlreadyApplied      = "already_applied"
 	EligibilityAlreadyMember       = "already_member"
 	EligibilitySelfOwned           = "self_owned"
@@ -27,11 +29,13 @@ type ApplicationEligibility struct {
 }
 
 type EligibilityContext struct {
-	Listing               Listing
-	Plan                  catalog.ProductPlan
-	CurrentUserID         string
-	HasOngoingApplication bool
-	HasActiveMembership   bool
+	Listing                Listing
+	Plan                   catalog.ProductPlan
+	CurrentUserID          string
+	HasOngoingApplication  bool
+	HasActiveMembership    bool
+	ApplyCapabilityChecked bool
+	HasApplyCapability     bool
 }
 
 func EvaluateApplicationEligibility(input EligibilityContext) ApplicationEligibility {
@@ -44,6 +48,9 @@ func EvaluateApplicationEligibility(input EligibilityContext) ApplicationEligibi
 	}
 	if listing.Status != ListingStatusActive {
 		return blockedEligibility(EligibilityPaused, "车源当前暂停或尚未公开。", "browse_other_listings")
+	}
+	if input.ApplyCapabilityChecked && !input.HasApplyCapability {
+		return blockedEligibility(EligibilityCapabilityRequired, "当前账号暂不能发起新的上车申请，请先绑定 linux.do。", "link_linuxdo")
 	}
 	if strings.TrimSpace(input.CurrentUserID) != "" && input.CurrentUserID == listing.OwnerUserID {
 		return blockedEligibility(EligibilitySelfOwned, "不能申请自己的车源。", "manage_own_listing")
@@ -73,6 +80,16 @@ func blockedEligibility(code, reason, resolutionAction string) ApplicationEligib
 
 func eligibilityError(value ApplicationEligibility) *domain.AppError {
 	switch value.Code {
+	case EligibilityCapabilityRequired:
+		return domain.NewFieldError(
+			http.StatusForbidden,
+			domain.CodeCapabilityRequired,
+			"Capability required",
+			value.Reason,
+			"capability",
+			"required",
+			auth.CapabilityCarpoolApply,
+		)
 	case EligibilitySelfOwned:
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Cannot apply to own carpool", value.Reason)
 	case EligibilityAlreadyMember:

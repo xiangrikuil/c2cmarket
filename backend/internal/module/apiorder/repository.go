@@ -5,16 +5,19 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 )
 
 type Repository interface {
 	CreateAPIOrderWithIdempotency(ctx context.Context, entry idempotency.Entry, input CreateInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
 	ListAPIOrdersByBuyer(ctx context.Context, buyerUserID string, now time.Time) ([]Order, *domain.AppError)
+	ListAPIOrdersForActor(ctx context.Context, actor auth.BusinessActor, participantRole string, now time.Time) ([]Order, *domain.AppError)
 	GetAPIOrderForBuyer(ctx context.Context, buyerUserID, orderID string, now time.Time) (Order, *domain.AppError)
+	GetAPIOrderForActor(ctx context.Context, actor auth.BusinessActor, orderID, participantRole string, now time.Time) (Order, *domain.AppError)
 	ReadAPIOrderPaymentInstructions(ctx context.Context, buyerUserID, orderID, requestID string, now time.Time) (PaymentInstructionsView, *domain.AppError)
 	ListAPIOrdersBySeller(ctx context.Context, sellerUserID string, now time.Time) ([]Order, *domain.AppError)
-	ListAdminAPIOrders(ctx context.Context, now time.Time) ([]Order, *domain.AppError)
+	ListAdminAPIOrders(ctx context.Context, filter AdminOrderFilter, page domain.PageRequest, now time.Time) (domain.Page[Order], *domain.AppError)
 	GetAdminAPIOrder(ctx context.Context, orderID string, now time.Time) (Order, *domain.AppError)
 	GetAPIOrderForSeller(ctx context.Context, sellerUserID, orderID string, now time.Time) (Order, *domain.AppError)
 	SubmitAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
@@ -24,4 +27,7 @@ type Repository interface {
 	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
 	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
 	SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
+	ReportLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
+	ResolveLateAPIOrderPaymentWithIdempotency(ctx context.Context, entry idempotency.Entry, input ActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
+	ResolveAPIOrderCatalogRiskHoldWithIdempotency(ctx context.Context, entry idempotency.Entry, input CatalogRiskHoldActionInput, now time.Time, buildCompletion CompletionBuilder) (Order, idempotency.Completion, *domain.AppError)
 }

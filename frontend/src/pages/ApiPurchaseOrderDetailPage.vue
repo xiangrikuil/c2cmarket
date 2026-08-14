@@ -6,7 +6,10 @@ import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, Headph
 import { toast } from 'vue-sonner'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
+import ApiOrderDisputePanel from '@/components/api-order/ApiOrderDisputePanel.vue'
+import ApiRefundPolicyEvidence from '@/components/api-order/ApiRefundPolicyEvidence.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
+import ReviewDialog from '@/components/review/ReviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +20,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Stepper, StepperDescription, StepperIndicator, StepperItem, StepperSeparator, StepperTitle, StepperTrigger } from '@/components/ui/stepper'
 import { Textarea } from '@/components/ui/textarea'
 import EmptyState from '@/components/market/EmptyState.vue'
@@ -28,6 +32,8 @@ import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
   getApiOrderDeliveryKindLabel,
+	getApiOrderDisputeStatusDescription,
+	getApiOrderDisputeStatusLabel,
   getApiOrderDisplayStatus,
   getApiOrderEventLabel,
   getApiOrderEvents,
@@ -38,6 +44,7 @@ import {
   getApiQuotaSaleModeLabel,
   getApiTTFTBandLabel,
   getApiUsageVisibilityLabel,
+	isApiOrderDisputeActive,
   readApiOrderPaymentInstructions,
   type ApiOrderDeliveryKind,
   type ApiOrderPaymentIssueReason,
@@ -48,10 +55,15 @@ import {
   buildApiOrderCancelReason,
   formatApiOrderCancelReason,
   formatOrderDateTime,
-  merchantHandlingDeadline,
   orderCountdown,
 } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels, apiPaymentMethodRequiresQrCode } from '@/lib/apiPaymentSettings'
+import {
+  apiOrderDisputeIssueLabels,
+  apiOrderDisputeResolutionLabels,
+  type ApiOrderDisputeIssueCode,
+  type ApiOrderDisputeResolution,
+} from '@/lib/apiOrderDispute'
 import { formatDecimal } from '@/lib/decimal'
 import { functionalMotion } from '@/lib/motion'
 import {
@@ -61,6 +73,9 @@ import {
   useConfirmApiOrderPaymentMutation,
   useOpenApiOrderDisputeMutation,
   useReportApiOrderPaymentIssueMutation,
+  useReportLateApiOrderPaymentMutation,
+  useResolveLateApiOrderPaymentMutation,
+  useReviewCenterRows,
   useSubmitApiOrderDeliveryCredentialMutation,
   useSubmitApiOrderPaymentMutation,
 } from '@/queries/useMarketQueries'
@@ -72,10 +87,15 @@ const id = computed(() => String(route.params.id ?? ''))
 const perspective = computed<'buyer' | 'merchant'>(() => route.name === 'merchant-api-order-detail' ? 'merchant' : 'buyer')
 const isMerchantView = computed(() => perspective.value === 'merchant')
 const { data: order, isLoading, error: orderError, refetch: refetchOrder } = useApiOrder(id, perspective)
+const { data: reviewCenter } = useReviewCenterRows()
+const ordinaryActionsPaused = computed(() => Boolean(order.value && (
+  isApiOrderDisputeActive(order.value.disputeStatus)
+  || order.value.catalogRiskHold?.status === 'active'
+)))
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
-  enabled: computed(() => Boolean(order.value && !isMerchantView.value && order.value.status === 'pending_payment')),
+	enabled: computed(() => Boolean(order.value && !isMerchantView.value && order.value.status === 'pending_payment' && !ordinaryActionsPaused.value)),
   retry: false,
 })
 
@@ -93,7 +113,16 @@ const paymentIssueDialogOpen = ref(false)
 const paymentIssueReason = ref<ApiOrderPaymentIssueReason | ''>('')
 const paymentIssueNote = ref('')
 const paymentIssueResponseOpen = ref(false)
+const latePaymentDialogOpen = ref(false)
+const latePaymentNote = ref('')
+const latePaymentResolutionOpen = ref(false)
+const latePaymentResolution = ref<'not_received' | 'received_refund_pending'>('not_received')
+const latePaymentResolutionNote = ref('')
 const disputeDialogOpen = ref(false)
+const disputeIssueCode = ref<ApiOrderDisputeIssueCode>('service_unavailable')
+const disputeRequestedResolution = ref<ApiOrderDisputeResolution>('full_refund')
+const disputeRequestedAmount = ref('')
+const disputeIssueOccurredAt = ref('')
 const disputeReason = ref('')
 const completionConfirmOpen = ref(false)
 const credentialProblemOpen = ref(false)
@@ -115,25 +144,42 @@ const cancelOrderMutation = useCancelApiOrderMutation()
 const confirmCompleteMutation = useConfirmApiOrderCompleteMutation()
 const confirmPaymentMutation = useConfirmApiOrderPaymentMutation()
 const reportPaymentIssueMutation = useReportApiOrderPaymentIssueMutation()
+const reportLatePaymentMutation = useReportLateApiOrderPaymentMutation()
+const resolveLatePaymentMutation = useResolveLateApiOrderPaymentMutation()
 const openDisputeMutation = useOpenApiOrderDisputeMutation()
 const submitDeliveryMutation = useSubmitApiOrderDeliveryCredentialMutation()
 
 const backPath = computed(() => isMerchantView.value ? '/merchant/api-orders' : '/my/api-orders')
 const backLabel = computed(() => isMerchantView.value ? '返回 API 销售订单' : '返回 API 购买订单')
-const canSubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
-const canResubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'payment_issue')
-const canConfirmPayment = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
-const canReportPaymentIssue = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
-const canSubmitDelivery = computed(() => isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
-const canConfirmComplete = computed(() => !isMerchantView.value && order.value?.status === 'delivery_submitted' && order.value.disputeStatus !== 'open')
+const canSubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'pending_payment')
+const canResubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'payment_issue')
+const canConfirmPayment = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
+const canReportPaymentIssue = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
+const canReportLatePayment = computed(() => !isMerchantView.value && Boolean(order.value?.canReportLatePayment))
+const canResolveLatePayment = computed(() => isMerchantView.value && order.value?.latePaymentStatus === 'reported')
+const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
+const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
-  && order.value.status !== 'cancelled'
-  && order.value.status !== 'completed'
-  && order.value.disputeStatus !== 'open',
+	&& (order.value.canOpenDispute ?? (order.value.status !== 'cancelled' && order.value.status !== 'completed' && (order.value.disputeStatus ?? 'none') === 'none')),
+))
+const showDisputeStatus = computed(() => Boolean(order.value && (order.value.disputeStatus ?? 'none') !== 'none'))
+const disputeViewerUserId = computed(() => {
+  if (!order.value) return ''
+  return isMerchantView.value ? order.value.sellerId : order.value.buyerId
+})
+const canSubmitDispute = computed(() => Boolean(
+  disputeReason.value.trim()
+	&& (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim())
+	&& (order.value?.status !== 'completed' || disputeIssueOccurredAt.value),
 ))
 const canOpenReviewCenter = computed(() => order.value?.status === 'completed')
+const reviewRow = computed(() => {
+  const matches = reviewCenter.value?.items.filter(item => item.transactionType === 'api_order' && item.transactionId === id.value) ?? []
+  return matches.find(item => item.direction === 'pending') ?? matches.find(item => item.direction === 'sent') ?? matches[0] ?? null
+})
+const reviewDialogOpen = computed(() => route.query.review === 'open')
 const counterpartyReputation = computed(() => {
   if (!order.value) return null
   return isMerchantView.value ? order.value.buyerReputation : order.value.sellerReputation
@@ -186,10 +232,6 @@ function refundCommitmentSnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
   return commercialSnapshotFallback(snapshot)
 }
 
-function refundPolicyVersionSnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
-  return snapshot.merchantRefundPolicyVersion || commercialSnapshotFallback(snapshot)
-}
-
 function serviceValiditySnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
   if (snapshot.serviceValidityExpiresAt) return formatOrderDateTime(snapshot.serviceValidityExpiresAt)
   if (snapshot.serviceValidityExpiresAt === null && !snapshot.commercialFactsSnapshotIssue) return '未设置固定失效时间'
@@ -210,6 +252,19 @@ const orderQuotaExpiryLabel = computed(() => {
   return serviceValiditySnapshotLabel(order.value.intentSnapshot)
 })
 const paymentInstructions = computed(() => paymentInstructionsQuery.data.value ?? null)
+const disputeValidityExpiresAt = computed(() => {
+	const raw = order.value?.packageExpiresAt
+		?? order.value?.quotaSnapshot?.expiresAt
+		?? order.value?.intentSnapshot.serviceValidityExpiresAt
+	if (!raw) return null
+	const timestamp = new Date(raw).getTime()
+	return Number.isFinite(timestamp) ? timestamp : null
+})
+const disputeOccurrenceMax = computed(() => {
+	const value = new Date(Math.min(now.value, disputeValidityExpiresAt.value ?? now.value))
+	value.setMinutes(value.getMinutes() - value.getTimezoneOffset())
+	return value.toISOString().slice(0, 16)
+})
 const paymentActionLabel = computed(() => {
   const method = order.value?.selectedPaymentMethod
   return method && apiPaymentMethodRequiresQrCode(method) ? '查看收款码' : '查看付款信息'
@@ -218,7 +273,10 @@ const canConfirmOffPlatformPayment = computed(() => {
   if (!paymentInstructions.value) return false
   return !apiPaymentMethodRequiresQrCode(paymentInstructions.value.paymentMethod) || Boolean(paymentInstructions.value.paymentQrCodeDataUrl)
 })
-const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmCompleteMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
+const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmCompleteMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || reportLatePaymentMutation.isPending.value || resolveLatePaymentMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
+const newDisputeResolutionLabels = computed(() => Object.fromEntries(
+  Object.entries(apiOrderDisputeResolutionLabels).filter(([value]) => value !== 'continue_fulfillment'),
+))
 const paymentIssueOptions: Array<{ value: ApiOrderPaymentIssueReason, label: string, description: string }> = [
   { value: 'not_received', label: '未到账', description: '收款记录中暂未找到对应付款。' },
   { value: 'amount_mismatch', label: '金额不符', description: '实收金额与订单金额不一致。' },
@@ -251,10 +309,10 @@ const currentFlowIndex = computed(() => {
 })
 const orderAmountText = computed(() => order.value ? formatDecimal(order.value.amountDecimal || String(order.value.amount), 2, 2) : '0.00')
 const orderAllowanceText = computed(() => order.value ? formatDecimal(order.value.requestedUsdAllowanceDecimal || String(order.value.requestedUsdAllowance), 2, 6) : '0.00')
-const merchantDeadline = computed(() => merchantHandlingDeadline(order.value?.paymentSubmittedAt, 10))
 const activeDeadline = computed(() => {
   if (order.value?.status === 'pending_payment') return order.value.paymentExpiresAt
-  if (order.value?.status === 'payment_submitted' || order.value?.status === 'paid_confirmed') return merchantDeadline.value
+  if (order.value?.status === 'payment_submitted') return order.value.merchantConfirmDueAt
+  if (order.value?.status === 'paid_confirmed') return order.value.deliveryDueAt
   if (!isMerchantView.value && order.value?.status === 'delivery_submitted') return order.value.deliveryReviewExpiresAt
   return null
 })
@@ -269,22 +327,22 @@ const countdownLabel = computed(() => {
 const countdownTitle = computed(() => {
   if (order.value?.status === 'pending_payment') return `请在 ${order.value.paymentWindowMinutes} 分钟内完成付款`
   if (order.value?.status === 'delivery_submitted') return '凭证核验剩余时间'
-  return '商户确认并交付剩余时间'
+  if (order.value?.status === 'payment_submitted') return '商户核对收款剩余时间'
+  return '商户交付剩余时间'
 })
 const pageTitle = computed(() => isMerchantView.value ? 'API 销售订单' : 'API 购买订单')
 const selectedCancelOption = computed(() => API_ORDER_CANCEL_OPTIONS.find(item => item.value === cancelReason.value))
-const canCancelOrder = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
+const canCancelOrder = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'pending_payment')
 const cancelSubmitDisabled = computed(() => {
   if (!selectedCancelOption.value || !cancelUnpaidConfirmed.value) return true
   return Boolean(selectedCancelOption.value.requiresNote && !cancelNote.value.trim())
 })
-const showMerchantTimeout = computed(() => Boolean(
-  countdown.value.expired
-  && (order.value?.status === 'payment_submitted' || order.value?.status === 'paid_confirmed'),
-))
+const showMerchantTimeout = computed(() => Boolean(order.value?.merchantConfirmOverdue || order.value?.deliveryOverdue))
 const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
+	if (order.value.catalogRiskHold?.status === 'active') return '关联模型目录被紧急阻断，付款、核款、交付、确认完成及自动超时均已暂停；仍可查看订单证据或发起纠纷。'
+	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请在下方纠纷区继续协商或等待处理。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
@@ -298,7 +356,7 @@ const currentActionDescription = computed(() => {
   if (order.value.status === 'payment_submitted') return '付款状态已提交，等待商户核对收款。'
   if (order.value.status === 'payment_issue') return '商户发现付款信息不匹配，请补充说明后重新提交。'
   if (order.value.status === 'paid_confirmed') return '商户已确认收款，等待商户提交交付凭证。'
-  if (order.value.status === 'delivery_submitted') return order.value.disputeStatus === 'open'
+  if (order.value.status === 'delivery_submitted') return isApiOrderDisputeActive(order.value.disputeStatus)
     ? '凭证问题正在处理中，自动完成计时已暂停。'
     : '请在核验期内确认凭证可用或报告问题；未反馈时订单将自动完成。'
   if (order.value.completionSource === 'auto_completed') return '核验期内未报告问题，订单已自动完成；交付凭证仍可查看。'
@@ -351,6 +409,37 @@ async function cancelOrder() {
   }
 }
 
+async function reportLatePayment() {
+  if (!order.value) return
+  try {
+    await reportLatePaymentMutation.mutateAsync({ id: order.value.id, note: latePaymentNote.value.trim(), version: order.value.version })
+    latePaymentDialogOpen.value = false
+    latePaymentNote.value = ''
+    await refresh(order.value.id)
+    toast.success('逾期付款已记录，等待卖家核对。')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '逾期付款报告失败。')
+  }
+}
+
+async function resolveLatePayment() {
+  if (!order.value) return
+  try {
+    await resolveLatePaymentMutation.mutateAsync({
+      id: order.value.id,
+      status: latePaymentResolution.value,
+      note: latePaymentResolutionNote.value.trim(),
+      version: order.value.version,
+    })
+    latePaymentResolutionOpen.value = false
+    latePaymentResolutionNote.value = ''
+    await refresh(order.value.id)
+    toast.success('逾期付款核对结果已记录。')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '核对结果提交失败。')
+  }
+}
+
 async function confirmPayment() {
   if (!order.value) return
   try {
@@ -384,18 +473,26 @@ async function reportPaymentIssue() {
 }
 
 async function submitOrderDispute() {
-  if (!order.value || !disputeReason.value.trim()) return
+	if (!order.value || !canSubmitDispute.value) return
   try {
     await openDisputeMutation.mutateAsync({
       id: order.value.id,
-      reason: disputeReason.value.trim(),
+      input: {
+        issueCode: disputeIssueCode.value,
+        requestedResolution: disputeRequestedResolution.value,
+        requestedAmountCny: disputeRequestedResolution.value === 'partial_refund' ? disputeRequestedAmount.value.trim() : null,
+				issueOccurredAt: disputeIssueOccurredAt.value ? new Date(disputeIssueOccurredAt.value).toISOString() : null,
+        reason: disputeReason.value.trim(),
+      },
       version: order.value.version,
       perspective: perspective.value,
     })
     disputeDialogOpen.value = false
+    disputeRequestedAmount.value = ''
+		disputeIssueOccurredAt.value = ''
     disputeReason.value = ''
     await refresh(order.value.id)
-    toast.success('订单问题已提交，平台将介入处理。')
+    toast.success('订单纠纷已发起，双方可先协商处理。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交订单问题失败。')
   }
@@ -438,7 +535,12 @@ async function submitCredentialProblem() {
   try {
     await openDisputeMutation.mutateAsync({
       id: order.value.id,
-      reason,
+      input: {
+        issueCode: 'service_unavailable',
+        requestedResolution: 'full_refund',
+        requestedAmountCny: null,
+        reason,
+      },
       version: order.value.version,
       perspective: 'buyer',
     })
@@ -453,14 +555,14 @@ async function submitCredentialProblem() {
 }
 
 function openReviewCenter() {
-  if (!order.value) return
-  router.push({
-    path: '/my/reviews',
-    query: {
-      transactionType: 'api_order',
-      transactionId: order.value.id,
-    },
-  })
+  router.push({ query: { ...route.query, review: 'open' } })
+}
+
+function setReviewDialogOpen(open: boolean) {
+  if (open) return router.push({ query: { ...route.query, review: 'open' } })
+  const query = { ...route.query }
+  delete query.review
+  router.push({ query })
 }
 
 function scrollToDeliveryForm() {
@@ -541,6 +643,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <ReviewDialog :open="reviewDialogOpen && Boolean(reviewRow)" :row="reviewRow" @update:open="setReviewDialogOpen" />
   <SkeletonBlock v-if="isLoading" :lines="9" />
   <ErrorState v-else-if="orderError" description="API 订单暂时无法加载，或当前账号无权查看。" @retry="refetchOrder()" />
   <EmptyState v-else-if="!order" title="未找到 API 订单" description="该订单不存在或暂不可见。"><template #action><Button variant="outline" @click="router.push(backPath)">{{ backLabel }}</Button></template></EmptyState>
@@ -551,7 +654,7 @@ onBeforeUnmount(() => {
         <div v-auto-animate="functionalMotion" class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold">{{ pageTitle }}</h1>
           <StatusBadge :key="order.status" :status="order.status" :label="getApiOrderDisplayStatus(order, perspective)" />
-          <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限时额度包</Badge>
+          <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限量额度包</Badge>
         </div>
         <p class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" :title="order.serviceTitle">
           <span class="min-w-0 truncate">{{ order.serviceTitle }}</span>
@@ -568,7 +671,25 @@ onBeforeUnmount(() => {
     <Alert v-if="order.status === 'cancelled'" variant="destructive">
       <XCircle />
       <AlertTitle>订单已取消</AlertTitle>
-      <AlertDescription>{{ formatApiOrderCancelReason(order.cancelReason) }}</AlertDescription>
+      <AlertDescription class="space-y-3">
+        <div>{{ formatApiOrderCancelReason(order.cancelReason) }}</div>
+        <Button v-if="canReportLatePayment" size="sm" variant="outline" @click="latePaymentDialogOpen = true"><WalletCards class="h-4 w-4" />我已发生逾期付款</Button>
+      </AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.latePaymentStatus" class="border-warning/35 bg-warning/10">
+      <WalletCards class="text-warning" />
+      <AlertTitle>{{ order.latePaymentStatus === 'reported' ? '逾期付款待核对' : order.latePaymentStatus === 'not_received' ? '卖家未查到到账' : '已到账，待线下退款' }}</AlertTitle>
+      <AlertDescription class="space-y-3">
+        <div>该记录不会恢复订单、库存或抢购资格。<span v-if="order.latePaymentNote">说明：{{ order.latePaymentNote }}</span></div>
+        <Button v-if="canResolveLatePayment" size="sm" variant="outline" @click="latePaymentResolutionOpen = true">核对付款</Button>
+      </AlertDescription>
+    </Alert>
+
+    <Alert v-if="!isMerchantView && order.status === 'pending_payment'">
+      <ShieldAlert />
+      <AlertTitle>转账不会自动更新订单</AlertTitle>
+      <AlertDescription>完成站外转账后，请在付款截止前立即点击“我已完成付款”，否则订单仍会按未付款超时处理。</AlertDescription>
     </Alert>
 
     <Alert v-if="order.status === 'payment_issue'" class="border-warning/35 bg-warning/10">
@@ -581,17 +702,66 @@ onBeforeUnmount(() => {
       </AlertDescription>
     </Alert>
 
-    <Alert v-if="order.disputeStatus === 'open'" class="border-warning/35 bg-warning/10">
-      <ShieldAlert class="text-warning" />
-      <AlertTitle>平台介入中</AlertTitle>
-      <AlertDescription>该订单问题已经提交，请等待平台处理；无需重复提交。</AlertDescription>
+    <Alert v-if="showDisputeStatus" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
+      <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
+      <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
+      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}</AlertDescription>
     </Alert>
+
+    <Alert v-if="order.catalogRiskHold?.status === 'active'" variant="destructive">
+      <ShieldAlert />
+      <AlertTitle>目录风险暂停处理中</AlertTitle>
+      <AlertDescription>
+        {{ order.catalogRiskHold.reason }} 付款、核款、交付、确认完成和自动超时已暂停；订单证据与纠纷入口保持可用。
+      </AlertDescription>
+    </Alert>
+
+    <ApiOrderDisputePanel
+      v-if="order.disputeCaseId"
+      :dispute-id="order.disputeCaseId"
+      :viewer-user-id="disputeViewerUserId"
+    />
 
     <Alert v-if="isMerchantView && order.status === 'delivery_submitted'" class="border-success/35 bg-success/10">
       <CheckCircle2 class="text-success" />
       <AlertTitle>已完成交付</AlertTitle>
       <AlertDescription>你的履约任务已经结束，无需等待买家点击确认。订单将在买家确认可用或 24 小时核验期结束后完成。</AlertDescription>
     </Alert>
+
+    <section v-if="isMerchantView" class="border-y border-border bg-card px-4 py-5 sm:px-5" aria-labelledby="merchant-payment-check-title">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 id="merchant-payment-check-title" class="font-semibold">收款核对</h2>
+          <p class="mt-1 text-xs leading-5 text-muted-foreground">先核对实际到账、买家备注和订单联系方式，再确认收款。</p>
+        </div>
+        <Badge :variant="canConfirmPayment ? 'trust' : 'secondary'">{{ canConfirmPayment ? '待核款' : getApiOrderDisplayStatus(order, perspective) }}</Badge>
+      </div>
+
+      <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <div class="border-l-2 border-primary pl-3"><dt class="text-xs text-muted-foreground">应收金额</dt><dd class="mt-1 text-xl font-semibold text-primary">¥{{ orderAmountText }}</dd></div>
+        <div><dt class="text-xs text-muted-foreground">付款方式</dt><dd class="mt-1 flex items-center gap-2 font-medium"><ApiPaymentMethodIcon :method="order.selectedPaymentMethod" size="sm" />{{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}</dd></div>
+        <div v-if="order.buyerNote"><dt class="text-xs text-muted-foreground">下单备注</dt><dd class="mt-1 whitespace-pre-line break-words">{{ order.buyerNote }}</dd></div>
+        <div v-if="order.paymentSummary"><dt class="text-xs text-muted-foreground">付款备注</dt><dd class="mt-1 whitespace-pre-line break-words">{{ order.paymentSummary }}</dd></div>
+      </dl>
+
+      <OrderContactCard
+        v-if="buyerContactSnapshot"
+        class="mt-4"
+        :snapshot="buyerContactSnapshot"
+        side="buyer"
+        title="买家联系方式"
+        compact
+        :show-contacted-action="false"
+        :show-issue-actions="false"
+      />
+
+      <div v-if="canConfirmPayment" class="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button v-if="canReportPaymentIssue" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="paymentIssueDialogOpen = true">
+          <ShieldAlert class="h-4 w-4" />付款有问题
+        </Button>
+        <Button :disabled="actionBusy" @click="confirmPayment"><CheckCircle2 class="h-4 w-4" />确认已收款</Button>
+      </div>
+    </section>
 
     <Card class="overflow-hidden border-border/80">
       <div class="border-b border-border bg-muted/20 px-4 py-5">
@@ -642,12 +812,7 @@ onBeforeUnmount(() => {
             <WalletCards class="h-4 w-4" />补充并重新提交
           </Button>
           <template v-else-if="canConfirmPayment">
-            <Button size="lg" :disabled="actionBusy" @click="confirmPayment">
-              <CheckCircle2 class="h-4 w-4" />确认已收款
-            </Button>
-            <Button v-if="canReportPaymentIssue" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="paymentIssueDialogOpen = true">
-              <ShieldAlert class="h-4 w-4" />报告付款问题
-            </Button>
+            <Badge variant="trust">请在上方“收款核对”区处理</Badge>
           </template>
           <Button v-else-if="canSubmitDelivery" size="lg" :disabled="actionBusy" @click="scrollToDeliveryForm">
             <KeyRound class="h-4 w-4" />继续填写交付信息
@@ -673,10 +838,19 @@ onBeforeUnmount(() => {
       <Clock3 />
       <AlertTitle>商户处理已超时，订单不会自动取消</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
-        <span>你已提交付款状态，请勿重复付款。可以先联系商户，仍未解决时申请平台介入。</span>
-        <Button v-if="canOpenDispute" size="sm" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />申请平台介入</Button>
+        <span>你已提交付款状态，请勿重复付款。可发起订单纠纷，与商户在订单内协商处理。</span>
+        <Button v-if="canOpenDispute" size="sm" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       </AlertDescription>
     </Alert>
+
+		<Alert v-if="order.status === 'completed' && canOpenDispute" class="border-warning/30 bg-warning/5">
+			<Clock3 class="text-warning" />
+			<AlertTitle>仍在 24 小时补报期内</AlertTitle>
+			<AlertDescription>
+				仅可补报服务有效期内已经发生的问题；补报期不会延长 API 有效期，也不代表平台保证退款。
+				<span v-if="order.afterSalesExpiresAt" class="mt-1 block">补报截止：{{ formatOrderDateTime(order.afterSalesExpiresAt) }}</span>
+			</AlertDescription>
+		</Alert>
 
     <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.1fr)_minmax(280px,0.8fr)]">
       <Collapsible v-model:open="orderDetailsOpen" as-child>
@@ -707,7 +881,7 @@ onBeforeUnmount(() => {
               <div><span class="text-muted-foreground">号池</span><div>{{ accountPoolSnapshotLabel(order.quotaSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户声明最大并发</span><div>{{ concurrencySnapshotLabel(order.quotaSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户退款承诺</span><div>{{ refundCommitmentSnapshotLabel(order.quotaSnapshot) }}</div></div>
-              <div><span class="text-muted-foreground">退款规则版本</span><div>{{ refundPolicyVersionSnapshotLabel(order.quotaSnapshot) }}</div></div>
+							<div><span class="text-muted-foreground">退款规则版本</span><ApiRefundPolicyEvidence class="mt-1" :snapshot="order.quotaSnapshot" /></div>
               <div><span class="text-muted-foreground">承诺适用截止</span><div>{{ serviceValiditySnapshotLabel(order.quotaSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">预计交付</span><div>{{ getApiQuotaDeliveryModeLabel(order.quotaSnapshot.deliveryMode) }} · ≤ {{ order.quotaSnapshot.deliveryEtaMinutes }} 分钟</div></div>
               <div v-if="order.quotaSnapshot.performanceConfirmedAt"><span class="text-muted-foreground">体验确认时间</span><div>{{ formatOrderDateTime(order.quotaSnapshot.performanceConfirmedAt) }}</div></div>
@@ -721,7 +895,7 @@ onBeforeUnmount(() => {
               <div><span class="text-muted-foreground">号池</span><div>{{ accountPoolSnapshotLabel(order.intentSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户声明最大并发</span><div>{{ concurrencySnapshotLabel(order.intentSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">商户退款承诺</span><div>{{ refundCommitmentSnapshotLabel(order.intentSnapshot) }}</div></div>
-              <div><span class="text-muted-foreground">退款规则版本</span><div>{{ refundPolicyVersionSnapshotLabel(order.intentSnapshot) }}</div></div>
+							<div><span class="text-muted-foreground">退款规则版本</span><ApiRefundPolicyEvidence class="mt-1" :snapshot="order.intentSnapshot" /></div>
               <div><span class="text-muted-foreground">服务有效期</span><div>{{ orderServiceValidityLabel }}</div></div>
               <div><span class="text-muted-foreground">用量核对</span><div>{{ orderUsageVisibilityLabel }}</div></div>
               <div><span class="text-muted-foreground">付款截止</span><div>{{ formatOrderDateTime(order.paymentExpiresAt) }}</div></div>
@@ -893,10 +1067,10 @@ onBeforeUnmount(() => {
       </Card>
     </Collapsible>
 
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 px-5 py-4">
-      <div><div class="text-sm font-medium">遇到订单问题？</div><div class="mt-1 text-xs text-muted-foreground">付款、收款或交付出现异常时，可从当前订单申请平台介入。</div></div>
-      <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />申请平台介入</Button>
-      <Badge v-else-if="order.disputeStatus === 'open'" variant="status">平台介入中</Badge>
+    <div class="flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-4">
+      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">发起后先由双方协商；无法达成一致时再申请平台审核。</div></div>
+      <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
+      <Badge v-else-if="showDisputeStatus" variant="status">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</Badge>
     </div>
 
     <Dialog v-model:open="completionConfirmOpen">
@@ -914,6 +1088,37 @@ onBeforeUnmount(() => {
           <Button variant="outline" @click="completionConfirmOpen = false">返回核验</Button>
           <Button :disabled="actionBusy" @click="confirmComplete">{{ actionBusy ? '提交中…' : '确认凭证可用' }}</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="latePaymentDialogOpen">
+      <DialogContent class="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>报告逾期付款</DialogTitle>
+          <DialogDescription>仅用于订单因付款超时取消，但你已经实际转账的情况。</DialogDescription>
+        </DialogHeader>
+        <Alert class="border-warning/35 bg-warning/10">
+          <ShieldAlert class="text-warning" />
+          <AlertTitle>不会恢复原订单</AlertTitle>
+          <AlertDescription>报告后不会恢复库存或抢购资格。如卖家确认到账，原则上由双方线下协商退款。</AlertDescription>
+        </Alert>
+        <label class="block space-y-2">
+          <span class="text-sm font-medium">付款核对信息（选填）</span>
+          <Textarea v-model="latePaymentNote" class="min-h-24" maxlength="500" placeholder="可填付款时间、金额、备注或交易尾号，不要填写完整账号。" />
+        </label>
+        <DialogFooter><Button variant="outline" @click="latePaymentDialogOpen = false">取消</Button><Button :disabled="actionBusy" @click="reportLatePayment">确认报告</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="latePaymentResolutionOpen">
+      <DialogContent class="sm:max-w-[520px]">
+        <DialogHeader><DialogTitle>核对逾期付款</DialogTitle><DialogDescription>只记录实际到账结果，不得恢复原订单履约。</DialogDescription></DialogHeader>
+        <RadioGroup v-model="latePaymentResolution" class="space-y-2">
+          <label class="flex items-start gap-3 rounded-md border border-border p-3"><RadioGroupItem value="not_received" class="mt-0.5" /><span><strong class="text-sm">未查到到账</strong><span class="mt-1 block text-xs text-muted-foreground">收款记录中没有对应转账。</span></span></label>
+          <label class="flex items-start gap-3 rounded-md border border-border p-3"><RadioGroupItem value="received_refund_pending" class="mt-0.5" /><span><strong class="text-sm">已到账，待退款</strong><span class="mt-1 block text-xs text-muted-foreground">原订单保持取消，与买家线下协商退款。</span></span></label>
+        </RadioGroup>
+        <label class="block space-y-2"><span class="text-sm font-medium">核对说明（选填）</span><Textarea v-model="latePaymentResolutionNote" class="min-h-24" maxlength="500" /></label>
+        <DialogFooter><Button variant="outline" @click="latePaymentResolutionOpen = false">取消</Button><Button :disabled="actionBusy" @click="resolveLatePayment">提交结果</Button></DialogFooter>
       </DialogContent>
     </Dialog>
 
@@ -952,9 +1157,38 @@ onBeforeUnmount(() => {
     <Dialog v-model:open="disputeDialogOpen">
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>提交订单问题</DialogTitle>
-          <DialogDescription>请说明付款、收款或交付中遇到的问题。平台会将说明关联到当前订单。</DialogDescription>
+          <DialogTitle>发起订单纠纷</DialogTitle>
+          <DialogDescription>提交后进入双方协商；任一方可在无法达成一致时申请平台审核。</DialogDescription>
         </DialogHeader>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">问题类型</span>
+            <Select v-model="disputeIssueCode">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="(label, value) in apiOrderDisputeIssueLabels" :key="value" :value="value">{{ label }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">处理诉求</span>
+            <Select v-model="disputeRequestedResolution">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="(label, value) in newDisputeResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
+        <label v-if="disputeRequestedResolution === 'partial_refund'" class="block space-y-2">
+          <span class="text-sm font-medium">部分退款金额</span>
+          <Input v-model="disputeRequestedAmount" inputmode="decimal" placeholder="不超过订单金额" />
+        </label>
+				<label v-if="order.status === 'completed'" class="block space-y-2">
+					<span class="text-sm font-medium">问题实际发生时间</span>
+					<Input v-model="disputeIssueOccurredAt" type="datetime-local" :max="disputeOccurrenceMax" />
+					<span class="block text-xs leading-5 text-muted-foreground">必须发生在所购服务有效期内。24 小时补报期只延长提交入口，不延长服务有效期。</span>
+				</label>
         <label class="block space-y-2">
           <span class="text-sm font-medium">问题说明</span>
           <Textarea v-model="disputeReason" class="min-h-32" maxlength="500" placeholder="请描述发生时间、当前状态和希望协助处理的事项。不要填写密码、API Key、验证码等敏感信息。" />
@@ -962,12 +1196,12 @@ onBeforeUnmount(() => {
         </label>
         <Alert>
           <ShieldAlert />
-          <AlertTitle>提交后进入平台处理</AlertTitle>
-          <AlertDescription>同一订单无需重复提交；处理进展请留意通知。</AlertDescription>
+          <AlertTitle>请勿提交敏感信息</AlertTitle>
+          <AlertDescription>不要填写完整 API Key、密码、验证码、Cookie 或支付账号。</AlertDescription>
         </Alert>
         <DialogFooter>
           <Button variant="outline" @click="disputeDialogOpen = false">取消</Button>
-          <Button :disabled="!disputeReason.trim() || actionBusy" @click="submitOrderDispute">{{ actionBusy ? '提交中…' : '提交订单问题' }}</Button>
+          <Button :disabled="!canSubmitDispute || actionBusy" @click="submitOrderDispute">{{ actionBusy ? '提交中…' : '发起纠纷' }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -996,9 +1230,18 @@ onBeforeUnmount(() => {
             <div v-if="paymentInstructions.paymentInstructions" class="px-4 py-3"><div class="text-muted-foreground">商户说明</div><div class="mt-1 whitespace-pre-line leading-6">{{ paymentInstructions.paymentInstructions }}</div></div>
           </div>
 
+          <OrderContactCard
+            v-if="merchantContactSnapshot"
+            :snapshot="merchantContactSnapshot"
+            title="付款有疑问？直接联系商户"
+            compact
+            :show-contacted-action="false"
+            :show-issue-actions="false"
+          />
+
           <label class="block space-y-2">
             <span class="text-sm font-medium">付款备注（选填）</span>
-            <Textarea v-model="paymentSummary" class="min-h-20" maxlength="500" placeholder="可填写付款时间、备注或尾号，便于商户核对。" />
+            <Textarea v-model="paymentSummary" class="min-h-20" maxlength="500" placeholder="可填写付款时间、订单号后 6 位或交易尾号，便于商户核对。" />
           </label>
 
           <Alert>
@@ -1036,7 +1279,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>报告付款核对问题</DialogTitle>
-          <DialogDescription>请选择明确原因并通知买家补充。订单将保留当前锁定额度，不会自动取消。</DialogDescription>
+          <DialogDescription>请先通过订单内微信或 linux.do 私信联系买家核对；仍需补充时再选择明确原因。订单将保留当前锁定额度。</DialogDescription>
         </DialogHeader>
         <RadioGroup v-model="paymentIssueReason" class="gap-3">
           <div
@@ -1123,7 +1366,7 @@ onBeforeUnmount(() => {
             <Alert variant="destructive">
               <ShieldAlert />
               <AlertTitle>请确认尚未付款</AlertTitle>
-              <AlertDescription>如果已经付款，请不要取消订单，应等待商户处理或申请平台介入。</AlertDescription>
+              <AlertDescription>如果已经付款，请不要取消订单。先通过微信或 linux.do 私信联系商户；双方沟通后仍未解决再申请平台介入。</AlertDescription>
             </Alert>
 
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">

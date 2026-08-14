@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	contactmodule "c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/reputation"
 )
 
 type blockingReputationRepository struct {
 	reputation.Repository
-	calls []reputationActionCall
+	calls                  []reputationActionCall
+	restrictedContactUsers map[string]struct{}
 }
 
 type reputationActionCall struct {
@@ -22,6 +24,12 @@ type reputationActionCall struct {
 
 func (r *blockingReputationRepository) FindActiveRestriction(_ context.Context, userID, role, action string, now time.Time) (*reputation.UserRestriction, *domain.AppError) {
 	r.calls = append(r.calls, reputationActionCall{userID: userID, role: role, action: action})
+	if action != reputation.ActionContactView {
+		return nil, nil
+	}
+	if _, restricted := r.restrictedContactUsers[userID]; !restricted {
+		return nil, nil
+	}
 	return &reputation.UserRestriction{
 		ID:           "restriction-1",
 		UserID:       userID,
@@ -41,29 +49,43 @@ func TestAPIPurchaseIntentContactDisclosureChecksReputationAction(t *testing.T) 
 		Repositories{Reputation: repo},
 	)
 	ctx := context.Background()
+	owner := createTestBoundUser(t, service, "seller-1")
+	buyer := createTestBoundUser(t, service, "buyer-1")
+	repo.restrictedContactUsers = map[string]struct{}{owner.ID: {}, buyer.ID: {}}
+	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_restricted", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_restricted", contactmodule.DefaultUsageScopes())
+	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
+	repo.calls = nil
 
 	if _, appErr := service.CreateAPIPurchaseIntentWithIdempotency(
 		ctx,
-		"buyer-1",
+		buyer,
 		"POST /api/v1/api-services/{id}/purchase-intents",
 		"restricted-create",
 		"hash-create",
-		CreateAPIPurchaseIntentInput{},
-		nil,
+		CreateAPIPurchaseIntentInput{
+			APIServiceID:          apiService.ID,
+			BuyerContactMethodID:  buyerContact.ID,
+			RequestedCNYAmount:    "16.00",
+			RequestedUSDAllowance: "20.000000",
+			SelectedAccessMode:    "buyer_dedicated_sub_key",
+			RequestID:             "request-create-restricted",
+		},
+		testAPIPurchaseIntentCompletion,
 	); appErr == nil || appErr.Code != domain.CodeReputationActionRestricted {
 		t.Fatalf("expected restricted API intent create, got %#v", appErr)
 	}
-	if _, appErr := service.MyAPIPurchaseIntent(ctx, User{ID: "buyer-1"}, "intent-1", "request-buyer"); appErr == nil || appErr.Code != domain.CodeReputationActionRestricted {
+	if _, appErr := service.MyAPIPurchaseIntent(ctx, User{ID: buyer.ID}, "intent-1", "request-buyer"); appErr == nil || appErr.Code != domain.CodeReputationActionRestricted {
 		t.Fatalf("expected restricted buyer detail, got %#v", appErr)
 	}
-	if _, appErr := service.OwnerAPIPurchaseIntent(ctx, User{ID: "seller-1"}, "intent-1", "request-seller"); appErr == nil || appErr.Code != domain.CodeReputationActionRestricted {
+	if _, appErr := service.OwnerAPIPurchaseIntent(ctx, owner, "intent-1", "request-seller"); appErr == nil || appErr.Code != domain.CodeReputationActionRestricted {
 		t.Fatalf("expected restricted seller detail, got %#v", appErr)
 	}
 
 	expected := []reputationActionCall{
-		{userID: "buyer-1", role: reputation.RoleBuyer, action: reputation.ActionContactView},
-		{userID: "buyer-1", role: reputation.RoleBuyer, action: reputation.ActionContactView},
-		{userID: "seller-1", role: reputation.RoleSeller, action: reputation.ActionContactView},
+		{userID: buyer.ID, role: reputation.RoleBuyer, action: reputation.ActionContactView},
+		{userID: buyer.ID, role: reputation.RoleBuyer, action: reputation.ActionContactView},
+		{userID: owner.ID, role: reputation.RoleSeller, action: reputation.ActionContactView},
 	}
 	if len(repo.calls) != len(expected) {
 		t.Fatalf("expected %d reputation checks, got %#v", len(expected), repo.calls)

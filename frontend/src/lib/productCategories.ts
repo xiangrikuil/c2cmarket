@@ -1,6 +1,6 @@
-export type ProductCategoryKey = 'all' | 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other'
+export type ProductCategoryKey = string
 
-export type ConcreteProductCategoryKey = Exclude<ProductCategoryKey, 'all'>
+export type ConcreteProductCategoryKey = string
 
 export type ProductCategoryOption = {
   key: ProductCategoryKey

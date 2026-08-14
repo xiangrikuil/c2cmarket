@@ -48,6 +48,135 @@ func TestCancelAndCloseIntentWithOrderReturnDedicatedConflict(t *testing.T) {
 	}
 }
 
+func TestCreateWithIdempotencyRunsDynamicGuardAfterBeginAndCancelsOnRejection(t *testing.T) {
+	now := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
+	events := []string{}
+	idempotencyRepo := &createOrderingIdempotencyRepository{
+		events: &events,
+		beginEntry: &idempotency.Entry{
+			UserID:      "buyer-1",
+			RouteKey:    "api-intent-create",
+			Key:         "intent-key",
+			RequestHash: "request-hash",
+			State:       "processing",
+			CreatedAt:   now,
+			ExpiresAt:   now.Add(idempotency.ProcessingLifetime),
+		},
+	}
+	resolver := &createOrderingServiceResolver{
+		events:  &events,
+		service: apimarket.Service{ID: "service-1", OwnerUserID: "seller-1"},
+	}
+	manager := NewManager(nil, resolver, nil, idempotency.NewService(idempotencyRepo, func() time.Time { return now }), func() time.Time { return now })
+	manager.SetCreateGuard(func(context.Context, string, apimarket.Service) *domain.AppError {
+		events = append(events, "guard")
+		return domain.NewError(http.StatusForbidden, domain.CodeReputationActionRestricted, "Reputation action restricted", "当前信誉限制不允许执行该操作。")
+	})
+
+	_, _, created, appErr := manager.CreateWithIdempotency(context.Background(), "buyer-1", "api-intent-create", "intent-key", "request-hash", CreateIntentInput{
+		APIServiceID: "service-1",
+	}, testAPIIntentCompletion)
+	if appErr == nil || appErr.Code != domain.CodeReputationActionRestricted {
+		t.Fatalf("expected dynamic guard rejection, got %#v", appErr)
+	}
+	if created {
+		t.Fatal("guard rejection must not report a created purchase intent")
+	}
+	wantEvents := []string{"begin", "resolve", "guard", "cancel"}
+	if len(events) != len(wantEvents) {
+		t.Fatalf("unexpected execution events: got %v want %v", events, wantEvents)
+	}
+	for index := range wantEvents {
+		if events[index] != wantEvents[index] {
+			t.Fatalf("unexpected execution order: got %v want %v", events, wantEvents)
+		}
+	}
+	if len(manager.intents) != 0 {
+		t.Fatalf("guard rejection mutated purchase intents: %+v", manager.intents)
+	}
+}
+
+func TestCreateWithIdempotencyCompletedReplaySkipsMutableServiceAndGuardChecks(t *testing.T) {
+	now := time.Date(2026, 8, 13, 9, 30, 0, 0, time.UTC)
+	events := []string{}
+	idempotencyRepo := &createOrderingIdempotencyRepository{
+		events: &events,
+		beginEntry: &idempotency.Entry{
+			UserID:           "buyer-1",
+			RouteKey:         "api-intent-create",
+			Key:              "intent-key",
+			RequestHash:      "request-hash",
+			State:            "completed",
+			Status:           http.StatusCreated,
+			ContentType:      "application/json",
+			BodyCacheAllowed: false,
+			ResourceType:     resourceType,
+			ResourceID:       "intent-1",
+			CreatedAt:        now,
+			ExpiresAt:        now.Add(idempotency.CompletedRetention),
+		},
+	}
+	resolver := &createOrderingServiceResolver{
+		events: &events,
+		appErr: domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。"),
+	}
+	manager := NewManager(nil, resolver, nil, idempotency.NewService(idempotencyRepo, func() time.Time { return now }), func() time.Time { return now })
+	manager.intents["intent-1"] = Intent{
+		ID:          "intent-1",
+		BuyerUserID: "buyer-1",
+		OwnerUserID: "seller-1",
+		Status:      StatusOpen,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Version:     1,
+	}
+	manager.SetCreateGuard(func(context.Context, string, apimarket.Service) *domain.AppError {
+		events = append(events, "guard")
+		return domain.NewError(http.StatusForbidden, domain.CodeReputationActionRestricted, "Reputation action restricted", "当前信誉限制不允许执行该操作。")
+	})
+
+	intent, completion, created, appErr := manager.CreateWithIdempotency(context.Background(), "buyer-1", "api-intent-create", "intent-key", "request-hash", CreateIntentInput{
+		APIServiceID: "service-1",
+		RequestID:    "request-replay",
+	}, testAPIIntentCompletion)
+	if appErr != nil {
+		t.Fatalf("completed replay should not depend on mutable service state: %v", appErr)
+	}
+	if created || intent.ID != "intent-1" || completion.ResourceID != "intent-1" {
+		t.Fatalf("unexpected completed replay: created=%v intent=%+v completion=%+v", created, intent, completion)
+	}
+	if len(events) != 1 || events[0] != "begin" {
+		t.Fatalf("completed replay performed mutable checks: %v", events)
+	}
+}
+
+func TestCreateWithIdempotencyHashConflictStopsBeforeMutableChecks(t *testing.T) {
+	events := []string{}
+	idempotencyRepo := &createOrderingIdempotencyRepository{
+		events:   &events,
+		beginErr: domain.NewError(http.StatusConflict, domain.CodeIdempotencyKeyReused, "Idempotency key reused", "同一个 Idempotency-Key 不能用于不同请求。"),
+	}
+	resolver := &createOrderingServiceResolver{events: &events}
+	manager := NewManager(nil, resolver, nil, idempotency.NewService(idempotencyRepo, time.Now), time.Now)
+	manager.SetCreateGuard(func(context.Context, string, apimarket.Service) *domain.AppError {
+		events = append(events, "guard")
+		return nil
+	})
+
+	_, _, created, appErr := manager.CreateWithIdempotency(context.Background(), "buyer-1", "api-intent-create", "intent-key", "different-request-hash", CreateIntentInput{
+		APIServiceID: "service-paused",
+	}, testAPIIntentCompletion)
+	if appErr == nil || appErr.Code != domain.CodeIdempotencyKeyReused {
+		t.Fatalf("expected idempotency key reuse conflict, got %#v", appErr)
+	}
+	if created {
+		t.Fatal("hash conflict must not report a created purchase intent")
+	}
+	if len(events) != 1 || events[0] != "begin" {
+		t.Fatalf("hash conflict performed mutable checks: %v", events)
+	}
+}
+
 func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	duration := 3
@@ -68,7 +197,7 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 			ServiceModelID:      "service-model-1",
 			ModelCatalogID:      "model-1",
 			ModelPriceVersionID: "price-version-1",
-			ModelNameSnapshot:   "GPT-5.6",
+			ModelKey:            "GPT-5.6",
 			ProviderSnapshot:    "OpenAI",
 			MerchantMultiplier:  "0.0100",
 		}},
@@ -89,14 +218,14 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 		DurationDays   int    `json:"durationDays"`
 		Models         []struct {
 			ModelPriceVersionID string `json:"modelPriceVersionId"`
-			ModelNameSnapshot   string `json:"modelNameSnapshot"`
+			ModelKey            string `json:"modelKey"`
 			MerchantMultiplier  string `json:"merchantMultiplier"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal([]byte(intent.SelectedPackageSnapshot), &snapshot); err != nil {
 		t.Fatalf("decode package snapshot: %v", err)
 	}
-	if snapshot.PanelAllowance != "5.000000" || snapshot.DurationDays != 3 || len(snapshot.Models) != 1 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[0].ModelPriceVersionID != "price-version-1" || snapshot.Models[0].MerchantMultiplier != "0.0100" {
+	if snapshot.PanelAllowance != "5.000000" || snapshot.DurationDays != 3 || len(snapshot.Models) != 1 || snapshot.Models[0].ModelKey != "GPT-5.6" || snapshot.Models[0].ModelPriceVersionID != "price-version-1" || snapshot.Models[0].MerchantMultiplier != "0.0100" {
 		t.Fatalf("unexpected package snapshot: %+v", snapshot)
 	}
 	if intent.QuotaUsagePolicySnapshot != service.Packages[0].QuotaUsagePolicy {
@@ -127,8 +256,8 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	service.MerchantRefundCommitment = true
 	service.MerchantSupportNote = apimarket.MerchantSupportNote(true)
 	service.Models = []apimarket.ServiceModel{
-		{ID: "model-1", ModelNameSnapshot: "GPT-5.6", MerchantMultiplier: "1.0000", Enabled: true},
-		{ID: "model-2", ModelNameSnapshot: "GPT-5 mini", MerchantMultiplier: "0.2000", Enabled: true},
+		{ID: "model-1", ModelKey: "GPT-5.6", MerchantMultiplier: "1.0000", Enabled: true},
+		{ID: "model-2", ModelKey: "GPT-5 mini", MerchantMultiplier: "0.2000", Enabled: true},
 	}
 
 	intent, appErr := NewIntent(CreateIntentInput{
@@ -144,7 +273,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 
 	var snapshot struct {
 		Models []struct {
-			ModelNameSnapshot  string `json:"modelNameSnapshot"`
+			ModelKey           string `json:"modelKey"`
 			MerchantMultiplier string `json:"merchantMultiplier"`
 		} `json:"models"`
 		UsageVisibility             string `json:"usageVisibility"`
@@ -160,7 +289,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	if err := json.Unmarshal([]byte(intent.PricingSnapshot), &snapshot); err != nil {
 		t.Fatalf("decode pricing snapshot: %v", err)
 	}
-	if len(snapshot.Models) != 2 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[1].MerchantMultiplier != "0.2000" {
+	if len(snapshot.Models) != 2 || snapshot.Models[0].ModelKey != "GPT-5.6" || snapshot.Models[1].MerchantMultiplier != "0.2000" {
 		t.Fatalf("unexpected model snapshot: %+v", snapshot.Models)
 	}
 	if snapshot.UsageVisibility != service.UsageVisibility || snapshot.MerchantNote != service.MerchantNote || snapshot.MerchantSupportNote != service.MerchantSupportNote {
@@ -198,7 +327,7 @@ func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
 func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	duration := 3
-	model := []apimarket.ServicePackageModel{{ServiceModelID: "service-model-1", ModelCatalogID: "model-1", ModelNameSnapshot: "GPT-5.6", MerchantMultiplier: "1.0000"}}
+	model := []apimarket.ServicePackageModel{{ServiceModelID: "service-model-1", ModelCatalogID: "model-1", ModelKey: "GPT-5.6", MerchantMultiplier: "1.0000"}}
 	service := limitedPackageIntentService(now, []apimarket.ServicePackage{
 		{ID: "sold-out", Name: "售罄套餐", PriceCNY: "9.90", PanelAllowance: "5", DurationDays: &duration, StockTotal: 1, StockAvailable: 0, Enabled: true, Models: model},
 		{ID: "available", Name: "有货套餐", PriceCNY: "19.90", PanelAllowance: "10", DurationDays: &duration, StockTotal: 1, StockAvailable: 1, Enabled: true, Models: model},
@@ -221,6 +350,8 @@ func limitedPackageIntentService(now time.Time, packages []apimarket.ServicePack
 		ID:                   "service-1",
 		OwnerUserID:          "seller-1",
 		OwnerContactMethodID: "owner-contact-1",
+		ProbeConnectionID:    "probe-connection-1",
+		ProbeReady:           true,
 		Title:                "限时套餐服务",
 		DistributionSystem:   apimarket.ServiceDistributionSub2API,
 		BillingMode:          apimarket.ServiceBillingModeFixedPackage,
@@ -245,6 +376,42 @@ type staticOrderExistenceChecker bool
 
 func (s staticOrderExistenceChecker) HasOrderForIntent(string) bool {
 	return bool(s)
+}
+
+type createOrderingServiceResolver struct {
+	events  *[]string
+	service apimarket.Service
+	appErr  *domain.AppError
+}
+
+func (r *createOrderingServiceResolver) PublicService(context.Context, string) (apimarket.Service, *domain.AppError) {
+	*r.events = append(*r.events, "resolve")
+	return r.service, r.appErr
+}
+
+type createOrderingIdempotencyRepository struct {
+	events     *[]string
+	beginEntry *idempotency.Entry
+	beginErr   *domain.AppError
+}
+
+func (r *createOrderingIdempotencyRepository) BeginIdempotency(context.Context, idempotency.Entry) (*idempotency.Entry, *domain.AppError) {
+	*r.events = append(*r.events, "begin")
+	if r.beginErr != nil {
+		return nil, r.beginErr
+	}
+	entry := *r.beginEntry
+	return &entry, nil
+}
+
+func (r *createOrderingIdempotencyRepository) CompleteIdempotency(context.Context, *idempotency.Entry, idempotency.Completion, time.Time) *domain.AppError {
+	*r.events = append(*r.events, "complete")
+	return nil
+}
+
+func (r *createOrderingIdempotencyRepository) CancelIdempotency(context.Context, *idempotency.Entry, time.Time) *domain.AppError {
+	*r.events = append(*r.events, "cancel")
+	return nil
 }
 
 func testAPIIntentCompletion(intent Intent) (idempotency.Completion, *domain.AppError) {

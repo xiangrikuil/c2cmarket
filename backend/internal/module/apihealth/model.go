@@ -1,31 +1,30 @@
 package apihealth
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
+)
 
 const (
-	ProtocolOpenAIChatCompletionsV1 = "openai_chat_completions_v1"
-
-	AuthorizationPending  = "pending"
-	AuthorizationVerified = "verified"
-	AuthorizationApproved = "approved"
-	AuthorizationRejected = "rejected"
-
-	AuthorizationMethodDNSTXT        = "dns_txt"
-	AuthorizationMethodHTTPChallenge = "http_challenge"
-	AuthorizationMethodAdminApproval = "admin_approval"
-
-	AuthorizationActionChallengeCreated      = "challenge_created"
-	AuthorizationActionVerificationSucceeded = "verification_succeeded"
-	AuthorizationActionVerificationFailed    = "verification_failed"
-	AuthorizationActionAdminApproved         = "admin_approved"
-	AuthorizationActionAdminRejected         = "admin_rejected"
-	AuthorizationActionOriginInvalidated     = "origin_invalidated"
-	AuthorizationActionConfigDeleted         = "config_deleted"
-	AuthorizationReasonMeasurementChanged    = "measurement_identity_changed"
+	VerificationUnverified = "unverified"
+	VerificationVerified   = "verified"
+	VerificationFailed     = "failed"
 
 	SampleStatusRunning   = "running"
 	SampleStatusSucceeded = "succeeded"
 	SampleStatusFailed    = "failed"
+
+	OutcomeFirstSuccess     = "first_success"
+	OutcomeFirstSuccessSlow = "first_success_slow"
+	OutcomeRetryRecovered   = "retry_recovered"
+	OutcomeFinalFailure     = "final_failure"
+
+	ProtocolResponsesV1       = "openai_responses_v1"
+	ProtocolChatCompletionsV1 = "openai_chat_completions_v1"
+	ProbeEnvironmentUSWestV1  = "us-west-v1"
+	DefaultGPTProbeModel      = "gpt-5.6-luna"
 
 	HealthStateNormal      = "normal"
 	HealthStateFluctuating = "fluctuating"
@@ -34,10 +33,11 @@ const (
 
 	AvailabilityUnconfigured           = "unconfigured"
 	AvailabilityDisabled               = "disabled"
-	AvailabilityUnauthorized           = "unauthorized"
+	AvailabilityUnverified             = "unverified"
 	AvailabilityInsufficient           = "insufficient"
 	AvailabilityStale                  = "stale"
 	AvailabilityTemporarilyUnavailable = "temporarily_unavailable"
+	AvailabilityRunnerDisabled         = "runner_disabled"
 
 	TransportSecurityHTTPS   = "secure_https"
 	TransportSecurityHTTP    = "insecure_http"
@@ -56,120 +56,250 @@ const (
 	ErrorTimeout              = "timeout"
 	ErrorHTTP4xx              = "http_4xx"
 	ErrorHTTP5xx              = "http_5xx"
+	ErrorRateLimited          = "rate_limited"
 	ErrorResponseTooLarge     = "response_too_large"
-	ErrorInvalidStream        = "invalid_stream"
-	ErrorEmptyResponse        = "empty_response"
+	ErrorInvalidResponse      = "invalid_response"
+	ErrorStreamInterrupted    = "stream_interrupted"
+	ErrorModelUnavailable     = "model_unavailable"
+	ErrorProtocolUnavailable  = "protocol_unavailable"
 	ErrorDecryptFailed        = "decrypt_failed"
 	ErrorInternal             = "internal"
 	ErrorInternalTimeout      = "internal_timeout"
 )
 
 const (
-	ProbeSlotDuration   = 5 * time.Minute
-	SummaryWindow       = time.Hour
-	SummarySlotCount    = 12
-	MinimumFinalSamples = 3
-	SummaryStaleAfter   = 10 * time.Minute
+	ProbeAuditCreated         = "created"
+	ProbeAuditUpdated         = "updated"
+	ProbeAuditModelChanged    = "model_changed"
+	ProbeAuditVerifySucceeded = "verify_succeeded"
+	ProbeAuditVerifyFailed    = "verify_failed"
+	ProbeAuditEnabled         = "enabled"
+	ProbeAuditDisabled        = "disabled"
+	ProbeAuditDeleted         = "deleted"
 )
 
-type Config struct {
-	ID                   string
-	APIServiceID         string
-	OwnerUserID          string
-	ServiceTitle         string
-	OwnerUsername        string
-	OwnerDisplayName     string
-	Protocol             string
-	BaseURL              string
-	NormalizedOrigin     string
-	Model                string
-	CredentialConfigured bool
-	Enabled              bool
-	AuthorizationStatus  string
-	AuthorizationMethod  string
-	VerifiedOrigin       string
-	VerifiedAt           *time.Time
-	ApprovedByAdminID    string
-	ApprovedAt           *time.Time
-	RejectionReason      string
-	ChallengeExpiresAt   *time.Time
-	MeasurementVersion   int64
-	LastConfigErrorCode  string
-	Version              int64
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+const (
+	ProbeSlotDuration         = 5 * time.Minute
+	SummaryWindow             = 24 * time.Hour
+	SummarySlotCount          = 24
+	SummaryTheoreticalSamples = 288
+	MinimumFinalSamples       = 3
+	SummaryStaleAfter         = 10 * time.Minute
+	ModelChangeNoticeDuration = 24 * time.Hour
+	ProbeInputTokenUpperBound = 8
+	ProbeOutputTokenLimit     = 32
+)
+
+type ServiceReference struct {
+	ID    string
+	Title string
 }
 
-type ConfigInput struct {
+type PriceSnapshot struct {
+	VersionID                  string
+	InputPricePerMillion       string
+	CachedInputPricePerMillion string
+	OutputPricePerMillion      string
+	Currency                   string
+}
+
+type Connection struct {
+	ID                        string
+	OwnerUserID               string
+	Name                      string
+	BaseURL                   string
+	NormalizedBaseURL         string
+	CredentialConfigured      bool
+	Enabled                   bool
+	VerificationStatus        string
+	VerifiedAt                *time.Time
+	LastVerificationErrorCode string
+	ProbeModel                string
+	ProbeProtocol             string
+	AvailableModels           []string
+	ProbeEnvironment          string
+	ProbeModelChangedAt       *time.Time
+	Price                     PriceSnapshot
+	MeasurementVersion        int64
+	Version                   int64
+	References                []ServiceReference
+	HealthSummary             Summary
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}
+
+type ConnectionInput struct {
+	Name                    string
 	BaseURL                 string
-	Model                   string
 	Credential              *string
+	ProbeModel              string
+	PreflightToken          string
 	Enabled                 bool
 	AcknowledgeInsecureHTTP bool
 }
 
-type Challenge struct {
-	Token         string
-	Method        string
-	DNSRecordName string
-	HTTPURL       string
-	ExpiresAt     time.Time
-	ConfigVersion int64
+// ProbeAuditMutation 只承载安全审计上下文，不包含探针地址或凭据。
+type ProbeAuditMutation struct {
+	Action     string
+	RequestID  string
+	OccurredAt time.Time
 }
 
-type StoredChallenge struct {
-	Config    Config
-	Method    string
-	TokenHash []byte
-	ExpiresAt time.Time
-}
+// MutationCompletionBuilder 在数据库事务内根据最终连接状态生成可重放响应。
+type MutationCompletionBuilder func(Connection) (idempotency.Completion, *domain.AppError)
 
-type AuthorizationEvent struct {
-	ID             string
-	ProbeConfigID  string
-	APIServiceID   string
-	ActorUserID    string
-	Action         string
-	Method         string
-	OriginSnapshot string
-	Reason         string
-	CreatedAt      time.Time
+type VerificationResult struct {
+	TotalDurationMS int
+	HTTPStatus      int
+	ErrorCode       string
+	AvailableModels []string
+	ProbeModel      string
+	ProbeProtocol   string
+	Attempt         ProbeAttempt
 }
 
 type ProbeJob struct {
 	Sample          Sample
-	Config          Config
+	Connection      Connection
 	Credential      string
 	CredentialError bool
+	LatencyRule     *LatencyRule
+}
+
+type TokenUsage struct {
+	InputTokens       *int64
+	CachedInputTokens *int64
+	OutputTokens      *int64
+	ReasoningTokens   *int64
+}
+
+func (usage TokenUsage) Complete() bool {
+	return usage.InputTokens != nil && usage.OutputTokens != nil
+}
+
+type ProbeAttempt struct {
+	AttemptNumber   int
+	StartedAt       time.Time
+	FirstTextAt     *time.Time
+	FinishedAt      time.Time
+	HTTPStatus      int
+	TTFTMS          *int
+	TotalDurationMS int
+	Succeeded       bool
+	Retryable       bool
+	ErrorCode       string
+	RetryAfterMS    int
+	Usage           TokenUsage
+	CostUSD         string
 }
 
 type ProbeResult struct {
-	TTFTMS          int
-	TotalDurationMS int
-	HTTPStatusClass int
-	ErrorCode       string
+	Outcome                     string
+	Attempts                    []ProbeAttempt
+	TotalDurationMS             int
+	HTTPStatus                  int
+	HTTPStatusClass             int
+	ErrorCode                   string
+	FirstAttemptTTFTMS          *int
+	FirstAttemptTotalDurationMS *int
+	RecoveryDurationMS          *int
+	Usage                       TokenUsage
+	UsageComplete               bool
+	BaseCostUSD                 string
+	RetryCostUSD                string
 }
 
 type SummaryInput struct {
-	Config  *Config
-	Samples []Sample
+	Connection *Connection
+	Samples    []Sample
+}
+
+type RunnerStatus struct {
+	Enabled              bool
+	LastSuccessfulScanAt time.Time
+	ScanInterval         time.Duration
+}
+
+type RunnerStatusProvider interface {
+	ProbeRunnerStatus() RunnerStatus
 }
 
 type Sample struct {
-	ID                 string
-	APIServiceID       string
-	ProbeConfigID      string
-	MeasurementVersion int64
-	ProbeModelSnapshot string
-	SlotStartedAt      time.Time
-	Status             string
-	TTFTMS             *int
-	TotalDurationMS    *int
-	HTTPStatusClass    *int
-	ErrorCode          string
-	StartedAt          time.Time
-	FinishedAt         *time.Time
-	CreatedAt          time.Time
+	ID                          string
+	ConnectionID                string
+	MeasurementVersion          int64
+	SlotStartedAt               time.Time
+	Status                      string
+	ProbeModel                  string
+	ProbeProtocol               string
+	ProbeEnvironment            string
+	LatencyRuleVersionID        string
+	Outcome                     string
+	AttemptCount                int
+	FirstAttemptTTFTMS          *int
+	FirstAttemptTotalDurationMS *int
+	RecoveryDurationMS          *int
+	TotalDurationMS             *int
+	HTTPStatusClass             *int
+	FinalHTTPStatus             *int
+	ErrorCode                   string
+	Usage                       TokenUsage
+	UsageComplete               bool
+	BaseCostUSD                 string
+	RetryCostUSD                string
+	StartedAt                   time.Time
+	FinishedAt                  *time.Time
+	CreatedAt                   time.Time
+}
+
+type HourlyBucket struct {
+	HourStartedAt         time.Time
+	State                 string
+	CompletedCycles       int
+	FirstAttemptSuccesses int
+	RetryRecoveries       int
+	FinalFailures         int
+	SlowSuccesses         int
+	FinalSuccessPercent   *string
+	AverageTTFTMS         *int
+}
+
+type CostSummary struct {
+	KnownBaseCostUSD      string
+	KnownRetryCostUSD     string
+	ProjectedDailyCostUSD string
+	HasUnknownUsage       bool
+	KnownUsageSamples     int
+}
+
+type Summary struct {
+	State                 string
+	AvailabilityReason    string
+	TransportSecurity     string
+	StabilityPercent      *string
+	FinalSuccessPercent   *string
+	CoveragePercent       string
+	CompletedCycles       int
+	TheoreticalSlots      int
+	FirstAttemptSuccesses int
+	RetryRecoveries       int
+	FinalFailures         int
+	AverageTTFTMS         *int
+	P50TTFTMS             *int
+	P95TTFTMS             *int
+	LastSampledAt         *time.Time
+	ProbeModel            string
+	ProbeProtocol         string
+	ProbeEnvironment      string
+	ProbeModelChangedAt   *time.Time
+	AccumulatingSamples   bool
+	HourlyBuckets         []HourlyBucket
+	Cost                  CostSummary
+	// Legacy aliases remain during the API response transition.
+	SuccessRatePercent *string
+	SuccessfulSamples  int
+	TotalSamples       int
+	Samples            []HealthSlot
 }
 
 type HealthSlot struct {
@@ -177,19 +307,55 @@ type HealthSlot struct {
 	State         string
 }
 
-type Summary struct {
-	State              string
-	AvailabilityReason string
-	TransportSecurity  string
-	SuccessRatePercent *string
-	SuccessfulSamples  int
-	TotalSamples       int
-	MedianTTFTMS       *int
-	ProbeModel         *string
-	LastSampledAt      *time.Time
-	Samples            []HealthSlot
+type LatencyRule struct {
+	ID                   string
+	Model                string
+	Protocol             string
+	Environment          string
+	Version              int64
+	SlowTTFTMS           int
+	HardTimeoutMS        int
+	ObservationStartedAt time.Time
+	ObservationEndedAt   time.Time
+	CompleteCalendarDays int
+	ConnectionCount      int
+	SampleCount          int64
+	P50TTFTMS            *int
+	P90TTFTMS            *int
+	P95TTFTMS            *int
+	P99TTFTMS            *int
+	Status               string
+	PublishedByAdminID   string
+	PublishedAt          time.Time
+	SupersededAt         *time.Time
+}
+
+type Calibration struct {
+	Model                string
+	Protocol             string
+	Environment          string
+	ObservationStartedAt time.Time
+	ObservationEndedAt   time.Time
+	CompleteCalendarDays int
+	ConnectionCount      int
+	SampleCount          int64
+	P50TTFTMS            *int
+	P90TTFTMS            *int
+	P95TTFTMS            *int
+	P99TTFTMS            *int
+	Ready                bool
+}
+
+type LatencyRulePreview struct {
+	Calibration        Calibration
+	SlowTTFTMS         int
+	HardTimeoutMS      int
+	SlowSampleCount    int64
+	SlowPercent        string
+	OverTimeoutCount   int64
+	OverTimeoutPercent string
 }
 
 func TemporarilyUnavailableSummary(now time.Time) Summary {
-	return noSampleSummary(AvailabilityTemporarilyUnavailable, nil, TransportSecurityUnknown, now)
+	return noSampleSummary(AvailabilityTemporarilyUnavailable, TransportSecurityUnknown, now)
 }

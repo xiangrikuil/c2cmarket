@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS ux_email_verification_codes_active_password_reset;

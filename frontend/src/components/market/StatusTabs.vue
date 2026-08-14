@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 const props = defineProps<{
   items: string[]
   modelValue?: string
+  counts?: Record<string, number>
 }>()
 
 const emit = defineEmits<{
@@ -29,7 +30,14 @@ function select(item: string) {
       :variant="active === item ? 'default' : 'outline'"
       @click="select(item)"
     >
-      {{ item }}
+      <span>{{ item }}</span>
+      <span
+        v-if="props.counts?.[item] !== undefined"
+        class="tabular-nums"
+        :class="active === item ? 'text-primary-foreground/80' : 'text-muted-foreground'"
+      >
+        {{ props.counts[item] }}
+      </span>
     </Button>
   </div>
 </template>

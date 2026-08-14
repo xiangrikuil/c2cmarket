@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 38
-- **Last Active**: 2026-08-06
+- **Total Sessions**: 56
+- **Last Active**: 2026-08-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1327 | Active |
+| `journal-1.md` | ~1749 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,24 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 56 | 2026-08-14 | 修复 PR 36 CI 并中文化摘要 | `2c9afc0` | `codex/login-student-registration-redesign` |
+| 55 | 2026-08-14 | Login and student registration redesign | `afc96ff`, `23565ed` | `codex/login-student-registration-redesign` |
+| 54 | 2026-08-14 | API order and rush-sale launch hardening | `38333b6` | `codex/transaction-review-dialog` |
+| 53 | 2026-08-12 | API 纠纷发布限制与唯一 linux.do 联系方式 | `f65ead0` | `staging` |
+| 52 | 2026-08-10 | API order after-sales contacts and refund evidence | `3b29dc8` | `codex/api-order-after-sales-contacts` |
+| 51 | 2026-08-10 | Development personas and user switcher | `d995824` | `codex/dev-user-switcher` |
+| 50 | 2026-08-10 | 管理员 API 订单监管分页与筛选 | `51103da` | `codex/admin-api-order-supervision` |
+| 49 | 2026-08-10 | 完善审计发现的未完成功能 | `284cfd526d924c275c0ba738e5f32af3146c36a3`, `5830894022420d114ec6f04e3704d81e980cf807`, `34dbb85389bcb91f3e6a4af37085e1c73248016a` | `codex/complete-unfinished-workflows` |
+| 48 | 2026-08-10 | 公告体验与首页公告条收口 | `72c5967`, `3b2fbbb`, `82f9a9c`, `6490c09` | `codex/api-health-probe-repeat-prompts` |
+| 47 | 2026-08-10 | 全仓半成品功能审计 | - | `codex/api-health-probe-repeat-prompts` |
+| 46 | 2026-08-09 | 工作区剩余改动原子提交整理 | `332bd00`…`a7fc49e` | `codex/api-health-probe-repeat-prompts` |
+| 45 | 2026-08-09 | API 订单纠纷处罚治理 | `68be0c5` | `codex/api-health-probe-repeat-prompts` |
+| 44 | 2026-08-09 | 收紧前端 Reka UI 依赖边界 | `523e44e` | `codex/api-health-probe-repeat-prompts` |
+| 43 | 2026-08-08 | 真实模型探针与 24 小时健康度 | `fd7e1e1` | `codex/api-health-probe-repeat-prompts` |
+| 42 | 2026-08-08 | API 模型目录同步修复与紧凑界面改版 | `3beccd9`, `110d11e` | `codex/api-health-probe-repeat-prompts` |
+| 41 | 2026-08-08 | API model catalog models.dev pricing sync | `7d79e8d` | `codex/api-health-probe-repeat-prompts` |
+| 40 | 2026-08-08 | API probe sharing and model tester | `e9bc73d` | `codex/api-health-probe-repeat-prompts` |
+| 39 | 2026-08-07 | 修复健康探针重复授权与 HTTP 确认 | `ba6c07c` | `codex/api-health-probe-repeat-prompts` |
 | 38 | 2026-08-06 | README product positioning | `3155d11` | `codex/readme-official-rewrite` |
 | 37 | 2026-08-06 | README official rewrite | `4174eb8` | `codex/readme-official-rewrite` |
 | 36 | 2026-08-04 | P1 first transaction guidance | `04e6bae` | `codex/p0-p1-launch-closure` |

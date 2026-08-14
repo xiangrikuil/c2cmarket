@@ -41,7 +41,7 @@ const totalUsd = computed(() => Number(props.draft.usdAllowance || 0) * Number(p
           <span class="flex items-center gap-2 text-xs font-medium text-orange-800"><PackageCheck class="h-4 w-4" />买家额度包卡片</span>
           <Badge variant="status">固定场次</Badge>
         </div>
-        <h2 class="mt-3 break-words text-lg font-semibold">{{ draft.name || '限时额度包' }}</h2>
+        <h2 class="mt-3 break-words text-lg font-semibold">{{ draft.name || '限量额度包' }}</h2>
         <p class="mt-1 break-words text-sm text-muted-foreground">{{ serviceTitle || '待选择基础服务' }}</p>
       </div>
 

@@ -49,7 +49,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { BackendProblemError, backendErrorMessage } from '@/lib/backendClient'
+import { BackendProblemError, backendErrorMessage, reauthenticatePassword, startAdminGrantReauthentication } from '@/lib/backendClient'
 import {
   adminUserDirectoryRouteQuery,
   normalizeAdminUserDirectoryQuery,
@@ -82,7 +82,13 @@ const searchDraft = ref(directoryQuery.value.search)
 const activeDrawerTab = ref('overview')
 const pendingAction = ref<AdminUserGovernanceAction | null>(null)
 const reason = ref('')
+const publicReason = ref('')
+const internalNote = ref('')
+const suspensionMode = ref<'finite' | 'indefinite'>('finite')
+const suspensionExpiresAt = ref('')
+const reauthenticationPassword = ref('')
 const confirmed = ref(false)
+const oauthReauthenticationPending = ref(false)
 const detailQuery = useAdminUserDetail(selectedUserId)
 
 const rows = computed(() => directoryRequest.data.value?.items ?? [])
@@ -211,6 +217,11 @@ function openManagement(user: AdminUser, tab = 'overview') {
   activeDrawerTab.value = tab
   pendingAction.value = null
   reason.value = ''
+	publicReason.value = ''
+	internalNote.value = ''
+	suspensionMode.value = 'finite'
+	suspensionExpiresAt.value = ''
+	reauthenticationPassword.value = ''
   confirmed.value = false
   managementOpen.value = true
 }
@@ -223,6 +234,11 @@ function setManagementOpen(open: boolean) {
 function resetPendingAction() {
   pendingAction.value = null
   reason.value = ''
+	publicReason.value = ''
+	internalNote.value = ''
+	suspensionMode.value = 'finite'
+	suspensionExpiresAt.value = ''
+	reauthenticationPassword.value = ''
   confirmed.value = false
 }
 
@@ -233,6 +249,11 @@ function openAction(action: AdminUserGovernanceAction) {
   }
   pendingAction.value = action
   reason.value = ''
+	publicReason.value = ''
+	internalNote.value = ''
+	suspensionMode.value = 'finite'
+	suspensionExpiresAt.value = ''
+	reauthenticationPassword.value = ''
   confirmed.value = false
 }
 
@@ -248,6 +269,10 @@ async function confirmAction() {
     toast.warning('请完成二次确认。')
     return
   }
+	if (action.action === 'suspend' && suspensionMode.value === 'finite' && !suspensionExpiresAt.value) {
+		toast.warning('请选择暂停到期时间。')
+		return
+	}
   try {
     if (action.kind === 'status' && action.targetStatus) {
       await statusMutation.mutateAsync({
@@ -255,8 +280,19 @@ async function confirmAction() {
         version: detail.user.version,
         status: action.targetStatus,
         reason: reason.value,
+			publicReason: publicReason.value,
+			internalNote: internalNote.value,
+			expiresAt: action.action === 'suspend' && suspensionMode.value === 'finite'
+				? new Date(suspensionExpiresAt.value).toISOString()
+				: undefined,
+			isIndefinite: action.action === 'suspend' && suspensionMode.value === 'indefinite',
       })
     } else if (action.kind === 'permission' && action.targetIsAdmin !== undefined) {
+		if (action.action === 'grant_admin') {
+			if (reauthenticationPassword.value) {
+				await reauthenticatePassword(reauthenticationPassword.value, 'grant_admin')
+			}
+		}
       await permissionMutation.mutateAsync({
         userId: detail.user.id,
         version: detail.user.version,
@@ -276,12 +312,22 @@ async function confirmAction() {
   }
 }
 
+async function startGrantAdminOAuthReauthentication() {
+	try {
+		oauthReauthenticationPending.value = true
+		const result = await startAdminGrantReauthentication(route.fullPath)
+		window.location.assign(result.authorizationUrl)
+	} catch (error) {
+		toast.error(backendErrorMessage(error, '无法启动 linux.do 管理员重验。'))
+		oauthReauthenticationPending.value = false
+	}
+}
+
 function governanceActionLabel(action: AdminUserGovernanceAction) {
   if (action.action === 'grant_admin') return '授予管理员权限'
   if (action.action === 'revoke_admin') return '撤销管理员权限'
   if (action.action === 'suspend') return '暂停账号'
   if (action.action === 'ban') return '封禁账号'
-  if (action.action === 'archive') return '归档账号'
   if (selectedDetail.value?.user.accountStatus === 'banned') return '解除封禁'
   if (selectedDetail.value?.user.accountStatus === 'archived') return '重新启用账号'
   return '恢复账号'
@@ -290,7 +336,6 @@ function governanceActionLabel(action: AdminUserGovernanceAction) {
 function actionIcon(action: AdminUserGovernanceAction) {
   if (action.action === 'suspend') return PauseCircle
   if (action.action === 'ban') return Ban
-  if (action.action === 'archive') return Archive
   if (action.action === 'restore') return RotateCcw
   return ShieldCheck
 }
@@ -673,6 +718,37 @@ function auditTransition(entry: {
                     <Textarea v-model="reason" maxlength="500" class="min-h-28" placeholder="填写具体、可审计的操作原因" />
                     <span class="block text-right text-xs text-muted-foreground">{{ reason.length }}/500</span>
                   </label>
+					<div v-if="pendingAction.action === 'suspend'" class="space-y-3 border-y border-border py-4">
+						<label class="block space-y-2">
+							<span class="text-sm font-medium">暂停方式</span>
+							<Select v-model="suspensionMode"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="finite">指定到期时间</SelectItem><SelectItem value="indefinite">长期暂停</SelectItem></SelectContent></Select>
+						</label>
+						<label v-if="suspensionMode === 'finite'" class="block space-y-2">
+							<span class="text-sm font-medium">到期时间</span>
+							<Input v-model="suspensionExpiresAt" type="datetime-local" />
+						</label>
+					</div>
+					<label class="block space-y-2">
+						<span class="text-sm font-medium">对用户公开的原因</span>
+						<Textarea v-model="publicReason" maxlength="500" class="min-h-20" placeholder="留空时使用操作原因" />
+					</label>
+					<label class="block space-y-2">
+						<span class="text-sm font-medium">内部备注</span>
+						<Textarea v-model="internalNote" maxlength="2000" class="min-h-20" />
+					</label>
+					<div v-if="pendingAction.action === 'grant_admin'" class="space-y-3 border-y border-border py-4">
+						<label class="block space-y-2">
+							<span class="text-sm font-medium">当前管理员密码</span>
+							<Input v-model="reauthenticationPassword" type="password" autocomplete="current-password" />
+						</label>
+						<div class="flex items-center justify-between gap-3">
+							<span class="text-sm text-muted-foreground">仅使用 linux.do 登录的管理员可通过绑定身份完成重验。</span>
+							<Button type="button" variant="outline" :disabled="oauthReauthenticationPending" @click="startGrantAdminOAuthReauthentication">
+								<Link2 class="mr-2 size-4" />
+								{{ oauthReauthenticationPending ? '正在跳转...' : '使用 linux.do 重验' }}
+							</Button>
+						</div>
+					</div>
                   <label class="flex items-start gap-3 border border-border p-3 text-sm leading-5">
                     <Checkbox v-model="confirmed" class="mt-0.5" />
                     <span>我已核对目标账号和操作影响，确认执行“{{ actionTitle }}”。</span>

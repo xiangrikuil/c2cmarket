@@ -20,8 +20,8 @@ const (
 
 type PublicReader interface {
 	PublicOfficialPriceRecords(ctx context.Context) ([]officialprice.Record, *domain.AppError)
-	PublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
-	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
+	PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
+	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 }
 
 type Service struct {
@@ -101,7 +101,7 @@ func (s *Service) searchInMemory(ctx context.Context, keyword string) ([]Result,
 
 	carpoolCursor := ""
 	for {
-		carpoolPage, appErr := s.reader.PublicCarpoolListings(ctx, domain.PageRequest{Limit: 100, Cursor: carpoolCursor})
+		carpoolPage, appErr := s.reader.PublicCarpoolListings(ctx, carpool.ListingFilter{}, domain.PageRequest{Limit: 100, Cursor: carpoolCursor})
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -125,28 +125,35 @@ func (s *Service) searchInMemory(ctx context.Context, keyword string) ([]Result,
 		carpoolCursor = *carpoolPage.NextCursor
 	}
 
-	services, appErr := s.reader.PublicAPIServices(ctx, apimarket.PublicServiceFilter{})
-	if appErr != nil {
-		return nil, appErr
-	}
-	for _, item := range services {
-		models := serviceModelNames(item)
-		terms := append([]string{item.Title, item.ShortDescription, item.MerchantDisplayName}, models...)
-		if item.MerchantIdentityMode == "public_profile" {
-			terms = append(terms, item.MerchantProfileSlug)
+	apiServiceCursor := ""
+	for {
+		services, appErr := s.reader.PublicAPIServices(ctx, apimarket.PublicServiceFilter{}, domain.PageRequest{Limit: 100, Cursor: apiServiceCursor})
+		if appErr != nil {
+			return nil, appErr
 		}
-		if !matches(q, terms...) {
-			continue
+		for _, item := range services.Items {
+			models := serviceModelNames(item)
+			terms := append([]string{item.Title, item.ShortDescription, item.MerchantDisplayName}, models...)
+			if item.MerchantIdentityMode == "public_profile" {
+				terms = append(terms, item.MerchantProfileSlug)
+			}
+			if !matches(q, terms...) {
+				continue
+			}
+			results = append(results, Result{
+				ID:       "api-" + item.ID,
+				Type:     TypeAPIService,
+				Title:    item.Title,
+				Subtitle: merchantName(item) + " · " + strings.Join(limitStrings(models, 3), " / "),
+				Badge:    "在线",
+				To:       "/api-market/" + item.ID,
+				RankTime: item.UpdatedAt,
+			})
 		}
-		results = append(results, Result{
-			ID:       "api-" + item.ID,
-			Type:     TypeAPIService,
-			Title:    item.Title,
-			Subtitle: merchantName(item) + " · " + strings.Join(limitStrings(models, 3), " / "),
-			Badge:    "在线",
-			To:       "/api-market/" + item.ID,
-			RankTime: item.UpdatedAt,
-		})
+		if services.NextCursor == nil {
+			break
+		}
+		apiServiceCursor = *services.NextCursor
 	}
 
 	results = limitByType(results, s.perType, s.typeOrder)
@@ -201,7 +208,7 @@ func serviceModelNames(service apimarket.Service) []string {
 	models := make([]string, 0, len(service.Models))
 	for _, model := range service.Models {
 		if model.Enabled {
-			models = append(models, model.ModelNameSnapshot)
+			models = append(models, model.ModelKey)
 		}
 	}
 	return models

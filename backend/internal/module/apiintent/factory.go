@@ -15,6 +15,19 @@ import (
 )
 
 func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact contact.ContactMethod, buyerVersion contact.ContactMethodVersion, ownerContact contact.ContactMethod, ownerVersion contact.ContactMethodVersion, now time.Time) (Intent, *domain.AppError) {
+	return NewIntentWithOwnerContacts(input, service, buyerContact, buyerVersion, []OwnerContactSnapshot{{
+		ContactMethodID:        ownerContact.ID,
+		ContactMethodVersionID: ownerVersion.ID,
+		Type:                   ownerContact.Type,
+		Label:                  ownerContact.Label,
+	}}, now)
+}
+
+func NewIntentWithOwnerContacts(input CreateIntentInput, service apimarket.Service, buyerContact contact.ContactMethod, buyerVersion contact.ContactMethodVersion, ownerContacts []OwnerContactSnapshot, now time.Time) (Intent, *domain.AppError) {
+	if len(ownerContacts) == 0 {
+		return Intent{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
+	}
+	primaryOwnerContact := ownerContacts[0]
 	selectedAccessMode := strings.TrimSpace(input.SelectedAccessMode)
 	selectedPackageSnapshot := ""
 	quotaUsagePolicy := service.QuotaUsagePolicy
@@ -42,8 +55,8 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 		OwnerUserID:                              service.OwnerUserID,
 		BuyerContactMethodID:                     strings.TrimSpace(input.BuyerContactMethodID),
 		BuyerContactMethodVersionID:              buyerVersion.ID,
-		OwnerContactMethodID:                     service.OwnerContactMethodID,
-		OwnerContactMethodVersionID:              ownerVersion.ID,
+		OwnerContactMethodID:                     primaryOwnerContact.ContactMethodID,
+		OwnerContactMethodVersionID:              primaryOwnerContact.ContactMethodVersionID,
 		Status:                                   StatusOpen,
 		RequestedCNYAmount:                       decimalStringMust(input.RequestedCNYAmount, 2),
 		RequestedUSDAllowance:                    decimalStringOptional(input.RequestedUSDAllowance, 6),
@@ -56,8 +69,8 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 		BillingModeSnapshot:                      service.BillingMode,
 		BuyerContactTypeSnapshot:                 buyerContact.Type,
 		BuyerContactLabelSnapshot:                buyerContact.Label,
-		OwnerContactTypeSnapshot:                 ownerContact.Type,
-		OwnerContactLabelSnapshot:                ownerContact.Label,
+		OwnerContactTypeSnapshot:                 primaryOwnerContact.Type,
+		OwnerContactLabelSnapshot:                primaryOwnerContact.Label,
 		DeclaredCNYPerUSDAllowanceSnapshot:       decimalStringOptional(service.DeclaredCNYPerUSDAllowance, 4),
 		DeclaredMaxUSDAllowancePerIntentSnapshot: decimalStringOptional(service.DeclaredMaxUSDAllowancePerIntent, 6),
 		MinimumIntentCNYSnapshot:                 decimalStringMust(service.MinimumIntentCNY, 2),
@@ -69,6 +82,7 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 		CreatedAt:                                now,
 		UpdatedAt:                                now,
 		Version:                                  1,
+		OwnerContactSnapshots:                    append([]OwnerContactSnapshot(nil), ownerContacts...),
 	}, nil
 }
 
@@ -82,7 +96,7 @@ func servicePricingSnapshotJSON(service apimarket.Service, purchasedQuotaUsagePo
 			"id":                                  model.ID,
 			"modelCatalogId":                      model.ModelCatalogID,
 			"modelPriceVersionId":                 model.ModelPriceVersionID,
-			"modelNameSnapshot":                   model.ModelNameSnapshot,
+			"modelKey":                            model.ModelKey,
 			"providerSnapshot":                    model.ProviderSnapshot,
 			"capabilitiesSnapshot":                model.CapabilitiesSnapshot,
 			"merchantMultiplier":                  model.MerchantMultiplier,
@@ -141,7 +155,7 @@ func packageSnapshot(pack apimarket.ServicePackage) map[string]any {
 			"serviceModelId":      model.ServiceModelID,
 			"modelCatalogId":      model.ModelCatalogID,
 			"modelPriceVersionId": model.ModelPriceVersionID,
-			"modelNameSnapshot":   model.ModelNameSnapshot,
+			"modelKey":            model.ModelKey,
 			"providerSnapshot":    model.ProviderSnapshot,
 			"merchantMultiplier":  model.MerchantMultiplier,
 		})

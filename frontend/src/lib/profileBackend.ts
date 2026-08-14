@@ -6,14 +6,14 @@ import {
   requireBackendSession,
 } from '@/lib/backendClient'
 import type {
-  PublicCompletionRecord,
   PublicDisputeRecord,
+  PublicProfileAPIService,
+  PublicProfileCarpool,
+  PublicProfileCompletion,
   PublicReviewRecord,
 } from '@/data/mock'
 import type {
   ContactMethodType,
-  ApiService,
-  Carpool,
   PublicMerchantProfile,
   PublicUserProfile,
   SaveContactMethodRequest,
@@ -21,9 +21,9 @@ import type {
   UserContactMethod,
   UserProfile,
 } from '@/lib/api'
-import { backendPublicUserReviews } from '@/lib/reviewBackend'
 import type { ReputationSnapshot } from '@/types/reputation'
 import { mapBackendReputationSnapshot } from '@/lib/reputationBackend'
+import { normalizeCapabilities } from '@/lib/capabilities'
 
 type ListResponse<T> = {
   items: T[]
@@ -56,6 +56,7 @@ type BackendProfile = {
   avatarMode: 'linuxdo' | 'custom_url'
   accountStatus: string
   permissions: Array<'admin'>
+  capabilities: string[]
   linuxDoBinding: {
     bound: boolean
     linuxDoUserId: string | null
@@ -109,20 +110,17 @@ export type BackendMerchantProfile = {
   version: number
 }
 
-type BackendPublicUserProfileBundle = {
-  profile: PublicUserProfile
-  reputations?: ReputationSnapshot[] | null
-  carpools: Carpool[]
-  services: ApiService[]
-  completions: PublicCompletionRecord[]
-  reviews: PublicReviewRecord[]
-  disputes: PublicDisputeRecord[]
+type BackendPublicUserProfile = Omit<PublicUserProfile, 'badges' | 'privacy'> & {
+  badges: string[]
+  privacy: BackendPrivacy
 }
 
-type BackendPublicMerchantProfileBundle = {
-  profile: PublicMerchantProfile
-  services: ApiService[]
-  completions: PublicCompletionRecord[]
+type BackendPublicUserProfileBundle = {
+  profile: BackendPublicUserProfile
+  reputations?: ReputationSnapshot[] | null
+  carpools: PublicProfileCarpool[]
+  services: PublicProfileAPIService[]
+  completions: PublicProfileCompletion[]
   reviews: PublicReviewRecord[]
   disputes: PublicDisputeRecord[]
 }
@@ -141,9 +139,23 @@ export async function backendUpdateMyProfile(payload: UpdateMyProfileRequest): P
     timezone: payload.timezone ?? '',
     avatarMode: payload.avatarMode,
     avatarUrl: payload.avatarUrl ?? '',
-    privacy: payload.privacy,
+    privacy: payload.privacy ? toBackendPrivacy(payload.privacy) : undefined,
   }, { method: 'PATCH' })
   return mapProfile(response)
+}
+
+export async function backendUseLinuxDoAvatar(): Promise<UserProfile> {
+  const current = await backendMyProfile()
+  return backendUpdateMyProfile({
+    displayName: current.displayName,
+    username: current.username,
+    bio: current.bio,
+    regionCode: current.regionCode,
+    timezone: current.timezone,
+    avatarMode: 'linuxdo',
+    avatarUrl: null,
+    privacy: current.privacy,
+  })
 }
 
 export async function backendSetPassword(payload: { currentPassword?: string, newPassword: string }): Promise<void> {
@@ -177,20 +189,28 @@ export async function backendCreateContact(payload: SaveContactMethodRequest): P
 export async function backendUpdateContact(contactId: string, payload: SaveContactMethodRequest): Promise<UserContactMethod> {
   const response = await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}`, toContactPayload(payload), {
     method: 'PATCH',
+    idempotencyPrefix: 'profile-contact-update',
   })
   return mapContact(response, payload.displayValue)
 }
 
 export async function backendDeleteContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}`, {}, { method: 'DELETE' }))
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}`, {}, {
+    method: 'DELETE',
+    idempotencyPrefix: 'profile-contact-delete',
+  }))
 }
 
 export async function backendSetDefaultContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/set-default`, {}))
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/set-default`, {}, {
+    idempotencyPrefix: 'profile-contact-default',
+  }))
 }
 
 export async function backendVerifyContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/verify`, {}))
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/verify`, {}, {
+    idempotencyPrefix: 'profile-contact-verify',
+  }))
 }
 
 export async function backendMyMerchantProfile(): Promise<BackendMerchantProfile | null> {
@@ -214,29 +234,35 @@ export async function backendUpsertMerchantProfile(payload: { slug: string, disp
 
 export async function backendPublicUserProfile(username: string) {
   const encodedUsername = encodeURIComponent(username)
-  const [response, reviews] = await Promise.all([
-    backendRequest<BackendPublicUserProfileBundle>(`/api/v1/users/${encodedUsername}/public-profile`),
-    backendPublicUserReviews(username),
-  ])
+  const response = await backendRequest<BackendPublicUserProfileBundle>(`/api/v1/users/${encodedUsername}/public-profile`)
   return {
-    profile: response.profile,
+    profile: mapPublicProfile(response.profile),
     reputations: (response.reputations ?? []).map(mapBackendReputationSnapshot),
     carpools: response.carpools,
     services: response.services,
     completions: response.completions,
-    reviews,
+    reviews: response.reviews,
     disputes: response.disputes,
   }
 }
 
 export async function backendPublicMerchantProfile(slug: string) {
-  const response = await backendRequest<BackendPublicMerchantProfileBundle>(`/api/v1/merchant-profiles/${encodeURIComponent(slug)}`)
+  return backendRequest<PublicMerchantProfile>(`/api/v1/merchant-profiles/${encodeURIComponent(slug)}`)
+}
+
+function mapPublicProfile(value: BackendPublicUserProfile): PublicUserProfile {
   return {
-    profile: response.profile,
-    services: response.services,
-    completions: response.completions,
-    reviews: response.reviews,
-    disputes: response.disputes,
+    ...value,
+    accountStatus: value.accountStatus as PublicUserProfile['accountStatus'],
+    badges: value.badges.map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
+    privacy: {
+      showCreatedAt: value.privacy.showCreatedAt,
+      showLastActiveAt: value.privacy.showLastActiveAt,
+      showCompletionStats: value.privacy.showCompletedCarpoolCount || value.privacy.showCompletedApiIntentCount,
+      showResponseMedian: value.privacy.showResponseMedian,
+      showResolvedDisputeSummary: value.privacy.showResolvedDisputeSummary,
+      allowPublicProfileReport: value.privacy.allowPublicProfileReport,
+    },
   }
 }
 
@@ -266,6 +292,7 @@ function mapProfile(value: BackendProfile): UserProfile {
     badges: (value.badges ?? []).map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
     accountStatus: value.accountStatus as UserProfile['accountStatus'],
     permissions: value.permissions,
+    capabilities: normalizeCapabilities(value.capabilities),
     restrictions: value.restrictions ?? [],
     usernameChangePolicy: value.usernameChangePolicy,
     privacy: {
@@ -278,6 +305,18 @@ function mapProfile(value: BackendProfile): UserProfile {
     },
     createdAt: value.createdAt,
     lastActiveAt: value.lastActiveAt ?? '',
+  }
+}
+
+function toBackendPrivacy(value: UserProfile['privacy']): BackendPrivacy {
+  return {
+    showCreatedAt: value.showCreatedAt,
+    showLastActiveAt: value.showLastActiveAt,
+    showCompletedCarpoolCount: value.showCompletionStats,
+    showCompletedApiIntentCount: value.showCompletionStats,
+    showResponseMedian: value.showResponseMedian,
+    showResolvedDisputeSummary: value.showResolvedDisputeSummary,
+    allowPublicProfileReport: value.allowPublicProfileReport,
   }
 }
 

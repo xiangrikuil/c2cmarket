@@ -22,6 +22,7 @@ function problemResponse(body: unknown, status: number) {
 
 function adminSession() {
   return {
+		audience: 'normal',
     csrfToken: 'csrf-admin',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {
@@ -30,6 +31,7 @@ function adminSession() {
       displayName: 'Admin',
       isAdmin: true,
       permissions: ['admin'],
+      capabilities: ['admin.access'],
       linuxDoBinding: { bound: false },
     },
   }

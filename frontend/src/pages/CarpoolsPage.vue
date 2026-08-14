@@ -9,29 +9,23 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import FilterBar from '@/components/market/FilterBar.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
-import { usePagination } from '@/composables/usePagination'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
+import { useCursorPagination } from '@/composables/useCursorPagination'
+import { shouldUseRealBackend } from '@/lib/backendClient'
 import { getProductCategoryIconSrc, getProductIconSrc as getCatalogProductIconSrc } from '@/lib/productCategoryIcon'
-import { useCarpools, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useCarpoolProductCatalog, useCarpoolsPage, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
-import { compareByTradablePrice, getPricingDisplay } from '@/lib/pricing'
-import { formatWeeklyMonthlyQuota } from '@/lib/quota'
+import { getPricingDisplay } from '@/lib/pricing'
+import { formatDailyWeeklyQuota } from '@/lib/quota'
 import {
   allProductPlanValue,
   getProductCategory,
-  getProductCategoryLabel,
-  getProductPlanOptions,
   isHighRiskGptCarpoolPlan,
-  normalizeProductCategory,
-  normalizeProductPlan,
-  productCategoryOptions,
-  productMatchesCategory,
-  productMatchesPlan,
-  type ProductCategoryKey,
 } from '@/lib/productCategories'
 import { adminAccountLabel, distributionMethodLabel, openingChannelLabels, paymentMethodLabels } from '@/components/carpool-publish/utils'
 import type { Carpool } from '@/lib/api'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 
 const filters = [
   { label: '开通区', items: ['全部', '菲律宾区', '日本区', '土耳其区', '香港区'], active: '全部' },
@@ -43,29 +37,37 @@ const filters = [
 
 const route = useRoute()
 const router = useRouter()
+const isRealBackend = shouldUseRealBackend()
 const selected = ref(Object.fromEntries(filters.map(group => [group.label, group.active ?? group.items[0]])))
-const carpoolsQuery = useCarpools()
 const productCategoriesQuery = useProductCategories()
-const { data } = carpoolsQuery
+const productCatalogQuery = useCarpoolProductCatalog()
 const { data: myProfile } = useMyProfileQuery(import.meta.client)
 const { data: catalogCategories } = productCategoriesQuery
-prefetchQueriesOnServer(carpoolsQuery, productCategoriesQuery)
-const canModerateCarpools = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
+const canModerateCarpools = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
-const selectedCategory = ref<ProductCategoryKey>(normalizeProductCategory(route.query.category))
-const selectedPlan = ref(normalizeProductPlan(selectedCategory.value, route.query.plan))
+const productCategoryOptions = computed(() => [
+  { key: 'all', label: '全部' },
+  ...(catalogCategories.value ?? []).map(category => ({ key: category.code, label: category.displayName })),
+])
+const selectedCategory = ref(normalizeCategoryQuery(route.query.category))
+const selectedPlan = ref(normalizePlanQuery(route.query.plan))
+const planOptions = computed(() => (productCatalogQuery.data.value ?? [])
+  .filter(item => selectedCategory.value !== 'all' && item.categoryCode === selectedCategory.value)
+  .map(item => ({ slug: item.slug, label: item.displayName, note: item.policyNote })))
+const selectedPlanMeta = computed(() => selectedPlan.value === allProductPlanValue ? null : planOptions.value.find(item => item.slug === selectedPlan.value) ?? null)
+const selectedCategoryLabel = computed(() => productCategoryOptions.value.find(item => item.key === selectedCategory.value)?.label ?? selectedCategory.value)
 
 watch(
   () => route.query,
   query => {
-    const category = normalizeProductCategory(query.category)
+    const category = normalizeCategoryQuery(query.category)
     selectedCategory.value = category
-    selectedPlan.value = normalizeProductPlan(category, query.plan)
+    selectedPlan.value = normalizePlanQuery(query.plan)
   },
 )
 
 watch([selectedCategory, selectedPlan], ([category, plan]) => {
-  const normalizedPlan = normalizeProductPlan(category, plan)
+  const normalizedPlan = plan === allProductPlanValue || planOptions.value.some(item => item.slug === plan) ? plan : allProductPlanValue
   if (normalizedPlan !== plan) {
     selectedPlan.value = normalizedPlan
     return
@@ -80,40 +82,68 @@ watch([selectedCategory, selectedPlan], ([category, plan]) => {
   })
 }, { immediate: true })
 
-const planOptions = computed(() => getProductPlanOptions(selectedCategory.value))
-const selectedPlanMeta = computed(() => selectedPlan.value === allProductPlanValue ? null : planOptions.value.find(item => item.slug === selectedPlan.value) ?? null)
+watch(productCategoryOptions, options => {
+  if (selectedCategory.value === 'all' || options.some(item => item.key === selectedCategory.value)) return
+  selectedCategory.value = 'all'
+  selectedPlan.value = allProductPlanValue
+})
 
-function selectCategory(category: ProductCategoryKey) {
+function selectCategory(category: string) {
   selectedCategory.value = category
   selectedPlan.value = allProductPlanValue
 }
 
-const rows = computed(() => {
-  const filtered = (data.value ?? []).filter(row => {
-    return productMatchesCategory(row.product, selectedCategory.value)
-      && productMatchesPlan(row.product, selectedPlan.value)
-      && (selected.value['开通区'] === '全部' || row.region === selected.value['开通区'])
-      && (selected.value['车主类型'] === '全部' || row.ownerType === selected.value['车主类型'])
-      && (selected.value['车主承诺'] === '全部' || row.warranty === selected.value['车主承诺'])
-      && (selected.value['开通方式'] === '全部' || row.openingMethod === selected.value['开通方式'])
-  })
-
-  return [...filtered].sort((a, b) => {
-    if (selected.value['排序'] === '最低月费') return compareByTradablePrice(a, b)
-    if (selected.value['排序'] === '最近确认') return a.confirmedAt.localeCompare(b.confirmedAt)
-    if (selected.value['排序'] === '剩余名额') return availableSeatsForList(b) - availableSeatsForList(a)
-    return Number(b.confirmedWithin48h) - Number(a.confirmedWithin48h)
-      || Number(a.ownerType !== '商户车源') - Number(b.ownerType !== '商户车源')
-      || compareByTradablePrice(a, b)
-  })
+const regionFilter = computed(() => selected.value['开通区'])
+const ownerTypeFilter = computed(() => selected.value['车主类型'])
+const warrantyFilter = computed(() => selected.value['车主承诺'])
+const openingMethodFilter = computed(() => selected.value['开通方式'])
+const sortFilter = computed(() => selected.value['排序'])
+const matchingProductPlanIds = computed(() => {
+  if (selectedCategory.value === 'all' && selectedPlan.value === allProductPlanValue) return undefined
+  return (productCatalogQuery.data.value ?? [])
+    .filter(item => selectedCategory.value === 'all' || item.categoryCode === selectedCategory.value)
+    .filter(item => selectedPlan.value === allProductPlanValue || item.slug === selectedPlan.value)
+    .map(item => item.id)
 })
-
-const pagination = usePagination(rows)
+const pageFilters = computed(() => {
+  const selectedProductFilter = selectedCategory.value !== 'all' || selectedPlan.value !== allProductPlanValue
+  const realBackendFilterHasNoMatches = isRealBackend && (
+    !['全部', '个人车主'].includes(ownerTypeFilter.value)
+    || !['全部', '车主承诺'].includes(warrantyFilter.value)
+    || openingMethodFilter.value !== '全部'
+  )
+  return {
+    category: selectedCategory.value === 'all' ? undefined : selectedCategory.value,
+    plan: selectedPlan.value === allProductPlanValue ? undefined : selectedPlan.value,
+    productPlanIds: matchingProductPlanIds.value,
+    region: regionFilter.value === '全部' ? undefined : regionFilter.value,
+    ownerType: ownerTypeFilter.value === '全部' ? undefined : ownerTypeFilter.value,
+    warranty: warrantyFilter.value === '全部' ? undefined : warrantyFilter.value,
+    openingMethod: openingMethodFilter.value === '全部' ? undefined : openingMethodFilter.value,
+    sort: sortFilter.value === '最低月费' ? 'price_asc' as const
+      : sortFilter.value === '最近确认' ? 'updated_desc' as const
+        : sortFilter.value === '剩余名额' ? 'seats_desc' as const
+          : 'recommended' as const,
+    none: realBackendFilterHasNoMatches || (selectedProductFilter && matchingProductPlanIds.value?.length === 0),
+  }
+})
+const pagination = useCursorPagination([
+  selectedCategory,
+  selectedPlan,
+  regionFilter,
+  ownerTypeFilter,
+  warrantyFilter,
+  openingMethodFilter,
+  sortFilter,
+])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const carpoolsQuery = useCarpoolsPage(pageFilters, pageRequest)
+const rows = computed(() => carpoolsQuery.data.value?.items ?? [])
+prefetchQueriesOnServer(carpoolsQuery, productCategoriesQuery, productCatalogQuery)
 
 const availableCount = computed(() => rows.value.filter(row => listStatusForCarpool(row) === '可上车').length)
 const recentlyConfirmedCount = computed(() => rows.value.filter(row => row.confirmedWithin48h).length)
 const boundaryConfirmationCount = computed(() => rows.value.filter(row => isHighRiskGptCarpoolPlan(row.product)).length)
-const selectedCategoryLabel = computed(() => getProductCategoryLabel(selectedCategory.value))
 const categoryNotice = computed(() => {
   if (selectedCategory.value === 'gpt') {
     return 'GPT 分类会包含 Business、Plus、Pro 5x Web、Pro 20x Web；部分套餐申请前需要确认发布和使用边界。'
@@ -188,14 +218,13 @@ function listStatusForCarpool(row: CarpoolListSeatRow) {
   return '已满'
 }
 
-function categoryIconSrc(category: ProductCategoryKey) {
+function categoryIconSrc(category: string) {
   return getProductCategoryIconSrc(category, categoryIconByCode.value)
 }
 
-function categoryIconComponent(category: ProductCategoryKey) {
-  if (category === 'cursor') return Code2
-  if (category === 'perplexity') return Search
+function categoryIconComponent(category: string) {
   if (category === 'other') return PackageSearch
+  if (!['gpt', 'claude', 'grok'].includes(category)) return Code2
   return Sparkles
 }
 
@@ -207,8 +236,16 @@ function productIconComponent(product: string) {
   return categoryIconComponent(getProductCategory(product))
 }
 
-function categoryIconAlt(category: ProductCategoryKey) {
-  return `${getProductCategoryLabel(category)} 图标`
+function categoryIconAlt(category: string) {
+  return `${productCategoryOptions.value.find(item => item.key === category)?.label ?? category} 图标`
+}
+
+function normalizeCategoryQuery(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : 'all'
+}
+
+function normalizePlanQuery(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : allProductPlanValue
 }
 
 function productToneClass(product: string) {
@@ -321,12 +358,12 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
     <Alert v-if="canModerateCarpools" class="mb-4">
       <ShieldCheck />
       <AlertTitle>管理员巡查模式</AlertTitle>
-      <AlertDescription>当前列表就是公开车源巡查入口。打开任意车源详情可执行下架或要求复核；暂停和遗留审核记录请前往车源异常处理。</AlertDescription>
+      <AlertDescription>当前列表就是公开车源巡查入口。打开任意车源详情可执行下架或要求复核；暂停和遗留审核记录可在车源管理的异常车源视图处理。</AlertDescription>
     </Alert>
     <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无可展示车源。</div>
     <SoftTable v-else :columns="['车源', '价格', '车位', '额度 / 接入', '车主', '状态']">
       <tr
-        v-for="row in pagination.paginatedRows.value"
+        v-for="row in rows"
         :key="row.id"
         class="carpool-table-row cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         role="link"
@@ -361,7 +398,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
           </div>
         </td>
         <td>
-          <div class="whitespace-nowrap text-sm font-semibold text-slate-900">{{ formatWeeklyMonthlyQuota(row) }}</div>
+          <div class="whitespace-nowrap text-sm font-semibold text-slate-900">{{ formatDailyWeeklyQuota(row) }}</div>
           <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span>{{ quotaResetLabel(row.followsOfficialQuotaReset) }}</span>
             <span aria-hidden="true">·</span>
@@ -412,12 +449,13 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
         </td>
       </tr>
       <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="rows.length"
+          :has-next-page="Boolean(carpoolsQuery.data.value?.nextCursor)"
+          :loading="carpoolsQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(carpoolsQuery.data.value?.nextCursor)"
         />
       </template>
       </SoftTable>

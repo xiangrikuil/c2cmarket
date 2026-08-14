@@ -33,6 +33,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	sessionActive := uuid.NewString()
 	sessionRecentlyRevoked := uuid.NewString()
 	verificationExpired := uuid.NewString()
+	passwordResetExpired := uuid.NewString()
 	verificationActive := uuid.NewString()
 	verificationRecentlyConsumed := uuid.NewString()
 	contactSessionID := uuid.NewString()
@@ -54,7 +55,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM notifications WHERE id = ANY($1::uuid[])`, []string{oldReadNotificationID, oldUnreadNotificationID, recentNotificationID})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM domain_events WHERE id = ANY($1::uuid[])`, []string{oldReadEventID, oldUnreadEventID, oldReferencedEventID})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM idempotency_keys WHERE id = ANY($1::uuid[])`, idempotencyIDs)
-		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM email_verification_codes WHERE id = ANY($1::uuid[])`, []string{verificationExpired, verificationActive, verificationRecentlyConsumed})
+		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM email_verification_codes WHERE id = ANY($1::uuid[])`, []string{verificationExpired, passwordResetExpired, verificationActive, verificationRecentlyConsumed})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM auth_sessions WHERE id = ANY($1::uuid[])`, []string{sessionExpired, sessionActive, sessionRecentlyRevoked})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM moderation_audit_logs WHERE id = $1`, moderationAuditID)
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM admin_audit_logs WHERE id = $1`, adminAuditID)
@@ -67,6 +68,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	insertLifecycleSession(t, store, sessionRecentlyRevoked, buyer.ID, "revoked-"+uuid.NewString(), now.Add(-20*24*time.Hour), now.Add(-8*24*time.Hour), &recentlyRevokedAt)
 
 	insertLifecycleVerification(t, store, verificationExpired, seller.ID, "expired@example.com", now.Add(-72*time.Hour), now.Add(-48*time.Hour), nil)
+	insertLifecycleVerificationForPurpose(t, store, passwordResetExpired, seller.ID, "reset-expired@example.com", "password_reset", now.Add(-72*time.Hour), now.Add(-48*time.Hour), nil)
 	insertLifecycleVerification(t, store, verificationActive, buyer.ID, "active@example.com", now.Add(-time.Hour), now.Add(time.Hour), nil)
 	recentlyConsumedAt := now.Add(-time.Hour)
 	insertLifecycleVerification(t, store, verificationRecentlyConsumed, buyer.ID, "consumed@example.com", now.Add(-72*time.Hour), now.Add(-48*time.Hour), &recentlyConsumedAt)
@@ -138,7 +140,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	}
 	if !result.LockAcquired ||
 		result.SessionsDeleted != 1 ||
-		result.VerificationCodesDeleted != 1 ||
+		result.VerificationCodesDeleted != 2 ||
 		result.IdempotencyEntriesDeleted != 2 ||
 		result.ContactSessionsExpired != 1 ||
 		result.NotificationsDeleted != 2 ||
@@ -150,6 +152,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 	assertLifecycleRowExists(t, store, "auth_sessions", sessionActive)
 	assertLifecycleRowExists(t, store, "auth_sessions", sessionRecentlyRevoked)
 	assertLifecycleRowMissing(t, store, "email_verification_codes", verificationExpired)
+	assertLifecycleRowMissing(t, store, "email_verification_codes", passwordResetExpired)
 	assertLifecycleRowExists(t, store, "email_verification_codes", verificationActive)
 	assertLifecycleRowExists(t, store, "email_verification_codes", verificationRecentlyConsumed)
 	assertLifecycleRowExists(t, store, "contact_access_logs", accessLogID)
@@ -208,6 +211,86 @@ func TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld(t *testing.T) {
 	}
 	if result.LockAcquired {
 		t.Fatalf("maintenance acquired an already-held advisory lock: %+v", result)
+	}
+}
+
+func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testing.T) {
+	store := connectLifecycleTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 9, 18, 0, 0, 0, time.UTC)
+	sellerID := uuid.NewString()
+	sellerContactID := uuid.NewString()
+	buyerID := uuid.NewString()
+	buyerContactID := uuid.NewString()
+	serviceID := uuid.NewString()
+	seedQuotaServiceForTest(t, ctx, store.pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now.Add(-24*time.Hour))
+	order := insertLifecycleCompletedCredentialOrder(t, store, serviceID, sellerID, sellerContactID, buyerID, buyerContactID, now.Add(-2*time.Hour), now.Add(-3*time.Hour), "", nil)
+	disputeID := insertLifecycleDispute(t, store, order.OrderID, buyerID, sellerID, report.DisputeStatusResolved, now.Add(-72*time.Hour))
+	remedyID := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM notifications WHERE target_id = $1`, disputeID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM dispute_events WHERE entity_id = $1`, disputeID)
+		cleanupLifecycleCredentialFixtures(t, context.Background(), store, sellerID, buyerID, "")
+	})
+	if _, err := store.pool.Exec(ctx, `
+		UPDATE api_orders
+		SET dispute_status = 'fulfillment_confirmation', dispute_case_id = $2, updated_at = $3
+		WHERE id = $1
+	`, order.OrderID, disputeID, now.Add(-49*time.Hour)); err != nil {
+		t.Fatalf("attach lifecycle remedy dispute: %v", err)
+	}
+	if _, err := store.pool.Exec(ctx, `
+		INSERT INTO api_order_dispute_remedies (
+			id, dispute_case_id, action, responsible_user_id, beneficiary_user_id,
+			instructions, status, due_at, claimed_at, confirmation_due_at,
+			claim_note, created_by_admin_id, created_request_id, claim_request_id,
+			created_at, updated_at, version
+		)
+		VALUES ($1, $2, 'continue_fulfillment', $3, $4,
+		        '请继续完成订单交付。', 'claimed_fulfilled', $5, $6, $7,
+		        '已声明继续履行。', $3, $8, $9, $10, $6, 2)
+	`, remedyID, disputeID, sellerID, buyerID, now.Add(24*time.Hour), now.Add(-49*time.Hour), now,
+		"remedy-created-"+remedyID, "remedy-claimed-"+remedyID, now.Add(-72*time.Hour)); err != nil {
+		t.Fatalf("seed claimed remedy: %v", err)
+	}
+
+	result, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
+	if appErr != nil {
+		t.Fatalf("run remedy confirmation lifecycle: %v", appErr)
+	}
+	if result.DisputeRemedyConfirmationsExpired != 1 {
+		t.Fatalf("expected one expired remedy confirmation, got %+v", result)
+	}
+	var remedyStatus, responseNote, disputeStatus, publicResult, orderDisputeStatus string
+	if err := store.pool.QueryRow(ctx, `SELECT status, response_note FROM api_order_dispute_remedies WHERE id = $1`, remedyID).Scan(&remedyStatus, &responseNote); err != nil {
+		t.Fatalf("read expired remedy: %v", err)
+	}
+	if err := store.pool.QueryRow(ctx, `SELECT status, public_result FROM dispute_cases WHERE id = $1`, disputeID).Scan(&disputeStatus, &publicResult); err != nil {
+		t.Fatalf("read closed remedy dispute: %v", err)
+	}
+	if err := store.pool.QueryRow(ctx, `SELECT dispute_status FROM api_orders WHERE id = $1`, order.OrderID).Scan(&orderDisputeStatus); err != nil {
+		t.Fatalf("read closed order projection: %v", err)
+	}
+	if remedyStatus != report.RemedyStatusConfirmationExpired || responseNote != report.RemedyConfirmationExpiredNote ||
+		disputeStatus != report.DisputeStatusClosed || publicResult != report.RemedyConfirmationExpiredPublicResult ||
+		orderDisputeStatus != apiorder.DisputeStatusClosed {
+		t.Fatalf("unexpected neutral timeout state remedy=%q note=%q dispute=%q result=%q order=%q", remedyStatus, responseNote, disputeStatus, publicResult, orderDisputeStatus)
+	}
+	var notificationCount int
+	if err := store.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM notifications
+		WHERE target_id = $1 AND source_event_type = 'dispute.remedy_confirmation_expired'
+	`, disputeID).Scan(&notificationCount); err != nil {
+		t.Fatalf("count remedy timeout notifications: %v", err)
+	}
+	if notificationCount != 2 {
+		t.Fatalf("expected both participants to receive neutral timeout notification, got %d", notificationCount)
+	}
+
+	second, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
+	if appErr != nil || second.DisputeRemedyConfirmationsExpired != 0 {
+		t.Fatalf("remedy timeout rerun must be idempotent: result=%+v err=%v", second, appErr)
 	}
 }
 
@@ -863,6 +946,7 @@ func cleanupLifecycleCredentialFixtures(t *testing.T, ctx context.Context, store
 		{`UPDATE contact_methods SET current_version_id = NULL WHERE user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM contact_method_versions WHERE owner_user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM contact_methods WHERE user_id IN ($1, $2)`, []any{sellerID, buyerID}},
+		{`DELETE FROM domain_events WHERE actor_user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM users WHERE id IN ($1, $2)`, []any{sellerID, buyerID}},
 	}
 	for _, statement := range statements {
@@ -902,13 +986,17 @@ func insertLifecycleSession(t *testing.T, store *Store, id, userID, token string
 }
 
 func insertLifecycleVerification(t *testing.T, store *Store, id, userID, email string, createdAt, expiresAt time.Time, consumedAt *time.Time) {
+	insertLifecycleVerificationForPurpose(t, store, id, userID, email, "bind_email", createdAt, expiresAt, consumedAt)
+}
+
+func insertLifecycleVerificationForPurpose(t *testing.T, store *Store, id, userID, email, purpose string, createdAt, expiresAt time.Time, consumedAt *time.Time) {
 	t.Helper()
 	if _, err := store.pool.Exec(context.Background(), `
 		INSERT INTO email_verification_codes (
 			id, user_id, email, purpose, code_hash, expires_at, consumed_at, created_at
 		)
-		VALUES ($1, $2, $3, 'bind_email', $4, $5, $6, $7)
-	`, id, userID, email, "hash-"+id, expiresAt, consumedAt, createdAt); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, id, userID, email, purpose, "hash-"+id, expiresAt, consumedAt, createdAt); err != nil {
 		t.Fatalf("insert lifecycle verification %s: %v", id, err)
 	}
 }

@@ -48,7 +48,7 @@ WHERE target_type = 'user';
 - JSON fields marked required in OpenAPI must be distinguishable from Go zero values. In particular, decode `isAdmin` as `*bool`, reject `nil`, then project to the service's explicit grant/revoke boolean.
 - A successful mutation increments `users.version`. Leaving `active` revokes all live target sessions.
 - User/permission changes, session revocation, domain event, safe administrator audit, target notification, response encoding, and idempotency completion commit in one transaction.
-- Self-target changes are forbidden. A table-level transaction lock plus an active-administrator count prevents concurrent removal of the last active administrator.
+- Self-target changes are forbidden. A dedicated transaction-scoped advisory lock serializes administrator status/permission governance before the target row lock; the active-administrator count then prevents concurrent removal of the last active administrator. Do not use a strong `users`/`user_permissions` table lock here: it can deadlock with ordinary profile, authentication, or linux.do-link writes that already hold PostgreSQL's normal `RowExclusive` table lock.
 - Real frontend mode surfaces backend failure. Deterministic mock behavior is allowed only when `NUXT_PUBLIC_API_MODE=mock` was explicitly selected.
 
 ### 4. Validation & Error Matrix
@@ -102,3 +102,151 @@ if request.IsAdmin == nil {
 }
 input.Grant = *request.IsAdmin
 ```
+
+## Scenario: Persistent Global Administrator Audit Log
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing `/admin/logs`, administrator dashboard recent actions, or global reads from `admin_audit_logs`.
+- This read model is distinct from the user-detail governance audit projection above.
+
+### 2. Signatures
+
+```text
+GET /api/v1/admin/audit-logs?limit&cursor&search&action&targetType&actorUserId&targetId
+```
+
+```go
+ListAdminAuditLogs(context.Context, auth.AdminAuditLogFilter, domain.PageRequest) (domain.Page[auth.AdminAuditLog], *domain.AppError)
+```
+
+```ts
+function backendAdminAuditLogRowsPage(filters, page): Promise<CursorPage<AdminRow>>
+```
+
+### 3. Contracts
+
+- The endpoint requires an authenticated administrator and is read-only.
+- PostgreSQL applies all filters before `LIMIT`, orders by `created_at DESC, id DESC`, and returns an opaque keyset cursor. Limit defaults to 20 and remains bounded by the shared page parser.
+- The safe DTO exposes actor ID/username, action, target type/ID, reason, request ID, optional before/after status summaries, and creation time.
+- Raw `before_json` / `after_json`, credentials, contacts, payment data, and unrelated internal payload fields never leave the server.
+- `/admin/logs` and dashboard recent actions consume this endpoint in real mode. Backend failure is visible and never falls back to an in-memory Mock audit store.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Caller is not an administrator | `403 PERMISSION_DENIED`. |
+| Cursor is malformed | `422 VALIDATION_FAILED`. |
+| Actor or target filter is not a UUID | `422 VALIDATION_FAILED` or the shared invalid-filter response before SQL execution. |
+| No rows match | `items=[]`, `nextCursor=null`. |
+| More than `limit` rows match | Return `limit` rows and a non-empty opaque `nextCursor`. |
+| PostgreSQL read fails | Return a problem response; real UI shows an error state. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a persisted price-maintenance action remains visible after page refresh and can be found by actor, action, target, or request trace.
+- Base: an audit entry has no recognized status fields, so both status summaries are null while the row remains useful.
+- Bad: the real admin page reads `adminAuditLogStore`, exposes raw JSON, or filters only the current frontend page.
+
+### 6. Tests Required
+
+- Auth/service tests for authorization and filter forwarding.
+- PostgreSQL integration for stable two-page cursor traversal and SQL-side filtering.
+- HTTP/OpenAPI tests for safe DTO shape, auth failure, and pagination.
+- Frontend adapter/page tests for filter serialization, cursor propagation, read-only actions, and no real-to-Mock fallback.
+- Authenticated desktop/mobile browser checks for search, next/previous pagination, and table overflow containment.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (section === 'logs') return adminAuditLogStore
+```
+
+#### Correct
+
+```ts
+if (shouldUseRealBackend() && section === 'logs') {
+  return backendAdminAuditLogRowsPage(filters, page)
+}
+```
+
+## Scenario: Versioned Account Governance And Purpose-Bound Administrator Reauthentication
+
+Date: 2026-08-13
+Author: Codex
+
+### 1. Scope / Trigger
+
+- Trigger: changing account status, suspension duration, administrator permission, account restoration, or administrator reauthentication.
+- Goal: serialize governance, invalidate stale sessions/tasks, restore only account eligibility, and require a one-use ten-minute proof before granting administrator authority.
+
+### 2. Signatures
+
+```go
+type AdminUserStatusInput struct {
+    Status string
+    ExpiresAt *time.Time
+    IsIndefinite bool
+    ReasonCode, PublicReason, InternalNote string
+}
+
+CreateAdminReauthenticationGrant(ctx, sessionHash, "grant_admin", method, verifiedAt, expiresAt)
+StartAdminReauthenticationOAuth(ctx, sessionHash, stateHash, "grant_admin_reauth", expiresAt, now)
+```
+
+```text
+finite suspension:  expiresAt != null && isIndefinite=false
+long suspension:    expiresAt == null && isIndefinite=true
+reauth lifetime:    verifiedAt + 10 minutes
+```
+
+### 3. Contracts
+
+- Each status mutation supersedes the previous effective action, increments `governance_version`, and points the user projection at the new immutable action. Generic status mutation supports active/suspended/banned; archived rows remain readable but are not created or restored through this endpoint.
+- Leaving active atomically removes administrator permission, revokes normal/restricted sessions and unconsumed reauthentication grants, and writes audit/notification facts. Restoration returns an ordinary active account only; it does not restore administrator authority or sessions.
+- A finite suspension creates an expiry job bound to the exact action ID, governance version, and expected expiry. The worker restores only when every value still matches and there is no security lock; later suspension, extension, ban, or version change marks the old job `noop_superseded` once.
+- Administrator grant requires the current active administrator's normal session plus a purpose `grant_admin` proof. Password and dedicated linux.do OAuth are valid methods; OAuth subject must match the existing binding and does not create a login session or alter bindings.
+- Target version/eligibility checks happen before grant consumption in the same transaction. A successful grant consumes exactly one proof; failure leaves it retryable until expiry.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Suspension has neither or both expiry modes | `422 VALIDATION_FAILED` |
+| Old expiry job sees a different action/version/expiry or security lock | `noop_superseded`; no restore/notification |
+| Administrator grant lacks valid purpose-bound proof | `403 RECENT_REAUTHENTICATION_REQUIRED` |
+| OAuth subject differs from current administrator binding | Same generic reauthentication error; state remains unconsumed |
+| Target version/eligibility fails | Existing proof remains unconsumed |
+| Grant succeeds, then proof is reused | `403 RECENT_REAUTHENTICATION_REQUIRED` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a ten-minute suspension restores once, revokes its restricted session, emits one notification, and leaves `admin=false`.
+- Base: the administrator extends or replaces the suspension before expiry; the old job completes as `noop_superseded`.
+- Good: an OAuth-only administrator verifies the already-bound linux.do subject and grants one target once.
+- Bad: restore a snapshot of the user's old administrator flag or upgrade a restricted cookie.
+- Bad: consume reauthentication before detecting a stale target version.
+
+### 6. Tests Required
+
+- Unit and PostgreSQL tests assert suspension shape, exact-action/version restore, later-governance no-op, rerun idempotency, one notification, no administrator restoration, and restricted-session revocation.
+- Password/OAuth tests assert purpose, session, administrator eligibility, existing subject binding, no auth mutation, state/grant one-time use, failure non-consumption, and invalidation after session/permission/status change.
+- Existing PostgreSQL last-administrator and student-only grant tests remain mandatory.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE users SET account_status = 'active'
+WHERE account_status = 'suspended' AND expires_at <= now();
+```
+
+#### Correct
+
+Lock the expiry job and user, compare the current action ID, governance version,
+expected expiry, status, action status, and security lock, then restore or record
+`noop_superseded` atomically.

@@ -23,7 +23,7 @@
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/community-linux.do-1D4ED8?logo=discourse&logoColor=white" alt="linux.do 社区"></a>
-  <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
+  <img src="https://img.shields.io/badge/Go-1.26.6-00ADD8?logo=go&logoColor=white" alt="Go 1.26.6">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
 
@@ -60,7 +60,7 @@ C2CMarket 把订阅拼车、API 服务、求车需求和官网公开价记录放
 | 层级 | 技术 |
 | --- | --- |
 | 前端 | Nuxt 4、Vue 3、TypeScript、Pinia、TanStack Query、Tailwind CSS |
-| 后端 | Go 1.26.5、chi、pgx |
+| 后端 | Go 1.26.6、chi、pgx |
 | 数据库 | PostgreSQL 18、版本化 SQL migrations |
 | 部署 | Docker Compose、Cloudflare Workers、VPS/Caddy、GHCR |
 | 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami |
@@ -72,7 +72,7 @@ C2CMarket 把订阅拼车、API 服务、求车需求和官网公开价记录放
 - Docker 和 Docker Compose
 - Node.js `>=24.11 <25`
 - pnpm `>=10 <11`
-- Go 1.26.5（仅在 Docker 外运行后端时需要）
+- Go 1.26.6（仅在 Docker 外运行后端时需要）
 
 ### 1. 获取代码与配置
 
@@ -112,6 +112,33 @@ pnpm --dir frontend dev
 
 打开 `http://127.0.0.1:5173`。开发命令通过 Nuxt 同源代理连接本地后端；如需纯前端演示，运行 `pnpm --dir frontend dev:mock`。
 
+### 开发账号与快速切换
+
+本地后端启用开发认证后，可以一次准备三个固定账号：
+
+```bash
+node scripts/dev-personas.mjs
+```
+
+| 身份 | 用户名 | 预置状态 |
+| --- | --- | --- |
+| 买家 | `dev-buyer` | 已绑定 linux.do、已验证邮箱、备份密码、linux.do 与微信联系方式 |
+| 卖家 | `dev-seller` | 买家状态加可用商户资料和微信收款方式 |
+| 管理员 | `dev-admin` | 已绑定 linux.do、已验证邮箱、备份密码、真实管理员权限 |
+
+表中的用户名是首选值。如果本地数据库已有同名账号，开发身份不会接管该账号，而会使用带稳定后缀的隔离用户名；之后的切换仍会复用同一个开发身份。
+
+三个账号的本地备份密码都是 `DevPersona#2026`。也可以只准备一个身份，或指定其他本地后端：
+
+```bash
+node scripts/dev-personas.mjs seller
+node scripts/dev-personas.mjs admin --base-url http://127.0.0.1:18090
+```
+
+脚本把 Cookie、CSRF token 和会话响应写入被 Git 忽略的 `output/dev-sessions/*.json`：目录权限为 `0700`，文件权限为 `0600`，终端不会输出原始凭据。真实 API 模式的开发页面顶部也会显示账号切换按钮，切换后使用后端签发的正常会话并刷新用户数据。
+
+这些入口只用于本地开发：后端关闭开发认证时不会注册 `/api/v1/auth/dev-persona-session`，生产构建也不会显示账号切换器。不要把开发会话文件复制到共享目录或提交到仓库。
+
 停止本地服务：
 
 ```bash
@@ -139,6 +166,7 @@ node scripts/check-compose-exposure.mjs
 NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_PUBLIC_TURNSTILE_SITE_KEY=0x4AAAAAAENOJxBZnePMzh-y \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \
 pnpm --dir frontend build
 ```

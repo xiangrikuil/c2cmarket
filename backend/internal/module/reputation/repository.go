@@ -33,3 +33,12 @@ type SourceAuthorRepository interface {
 type AuditRepository interface {
 	LoadAdminReputationEvidence(ctx context.Context, userID string, now time.Time) (AdminReputationEvidence, *domain.AppError)
 }
+
+type APIOrderSanctionRepository interface {
+	GetAPIOrderSanctionRecommendation(ctx context.Context, disputeCaseID string, now time.Time) (APIOrderSanctionRecommendation, *domain.AppError)
+	ApplyAPIOrderSanctionWithIdempotency(ctx context.Context, entry idempotency.Entry, input ApplyAPIOrderSanctionInput, now time.Time, buildCompletion GovernanceCompletionBuilder) (GovernanceMutationResult, idempotency.Completion, *domain.AppError)
+}
+
+type ActiveRestrictionRepository interface {
+	ListActiveRestrictions(ctx context.Context, userID string, now time.Time) ([]UserRestriction, *domain.AppError)
+}

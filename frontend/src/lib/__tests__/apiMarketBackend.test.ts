@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
-import type { Carpool } from '../api'
+import type { Carpool, UserContactMethod } from '../api'
 import { apiQuotaOffers } from '../../data/mock'
 
 type ApiModule = typeof import('../api')
@@ -34,6 +34,24 @@ function createStorage() {
   }
 }
 
+function buyerContact(overrides: Partial<UserContactMethod> = {}): UserContactMethod {
+  return {
+    id: 'contact-wechat',
+    userId: 'student-buyer',
+    type: 'wechat',
+    label: '微信',
+    maskedValue: 'student_***',
+    displayValue: 'student-buyer',
+    usageScopes: ['buyer', 'dispute'],
+    isDefault: false,
+    enabled: true,
+    verified: false,
+    createdAt: '2026-08-14T00:00:00Z',
+    updatedAt: '2026-08-14T00:00:00Z',
+    ...overrides,
+  }
+}
+
 async function loadAPIMarketModules(): Promise<{ api: ApiModule, apiMarketBackend: ApiMarketBackendModule }> {
   vi.resetModules()
   const sessionStorage = createStorage()
@@ -51,6 +69,42 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.resetModules()
+})
+
+test('selects the default eligible buyer contact before linux.do', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const linuxdo = buyerContact({ id: 'contact-linuxdo', type: 'linuxdo', label: 'linux.do', verified: true })
+  const wechat = buyerContact({ isDefault: true })
+
+  assert.equal(apiMarketBackend.selectBuyerContactMethod([linuxdo, wechat]), wechat)
+})
+
+test('allows a verified email contact for student API purchases', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const email = buyerContact({ id: 'contact-email', type: 'email', label: '邮箱', verified: true })
+
+  assert.equal(apiMarketBackend.selectBuyerContactMethod([email]), email)
+})
+
+test('skips unverified email contacts and falls back to another eligible buyer contact', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const email = buyerContact({ id: 'contact-email', type: 'email', label: '邮箱', verified: false, isDefault: true })
+  const linuxdo = buyerContact({ id: 'contact-linuxdo', type: 'linuxdo', label: 'linux.do', verified: true })
+
+  assert.equal(apiMarketBackend.selectBuyerContactMethod([email, linuxdo]), linuxdo)
+})
+
+test('explains how to configure a contact when no buyer contact is eligible', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+
+  assert.throws(
+    () => apiMarketBackend.selectBuyerContactMethod([
+      buyerContact({ enabled: false }),
+      buyerContact({ id: 'contact-seller', usageScopes: ['api_merchant'] }),
+      buyerContact({ id: 'contact-email', type: 'email', verified: false }),
+    ]),
+    /个人中心配置可用于买家交易的联系方式/,
+  )
 })
 
 function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
@@ -90,7 +144,7 @@ function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
     models: [{
       id: 'model-row-1',
       modelCatalogId: 'gpt-5-mini',
-      modelNameSnapshot: 'GPT-5 mini',
+      modelKeySnapshot: 'gpt-5-mini',
       providerSnapshot: 'OpenAI',
       capabilitiesSnapshot: ['text', 'chat'],
       merchantMultiplier: '1.0000',
@@ -209,14 +263,13 @@ test('maps platform health for public quota offers without projecting seller TTF
   const { apiMarketBackend } = await loadAPIMarketModules()
   const source = {
     ...structuredClone(apiQuotaOffers[1]!),
+    merchantAvatarUrl: 'https://cdn.example.com/quota-seller.webp',
     healthSummary: {
       state: 'no_sample' as const,
       availabilityReason: 'unconfigured' as const,
       successRatePercent: null,
       successfulSamples: 0,
       totalSamples: 0,
-      medianTtftMs: null,
-      probeModel: null,
       transportSecurity: null,
       lastSampledAt: null,
       samples: Array.from({ length: 12 }, (_, index) => ({
@@ -244,6 +297,7 @@ test('maps platform health for public quota offers without projecting seller TTF
   assert.equal(mapped.usdAllowance, '100.000000')
   assert.equal(mapped.priceCny, '8.80')
   assert.equal(mapped.modelMultiplier, '1.0000')
+  assert.equal(mapped.merchantAvatarUrl, 'https://cdn.example.com/quota-seller.webp')
   assert.deepEqual(mapped.healthSummary, source.healthSummary)
   assert.equal(mapped.declaredTtftBand, undefined)
   assert.equal(mapped.declaredMaxConcurrency, 5)
@@ -272,8 +326,6 @@ test('maps required owner sales and health summaries without changing the public
     successRatePercent: null,
     successfulSamples: 0,
     totalSamples: 0,
-    medianTtftMs: null,
-    probeModel: null,
     transportSecurity: null,
     lastSampledAt: null,
     samples: [],

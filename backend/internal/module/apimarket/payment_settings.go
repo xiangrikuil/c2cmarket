@@ -81,6 +81,11 @@ func validateAccountPaymentSettingsInput(input UpdateAccountPaymentSettingsInput
 	return nil
 }
 
+func HasSingleUsableAccountPaymentOption(options []PaymentOptionInput) bool {
+	enabledCount, appErr := validatePaymentOptionInputs(options)
+	return appErr == nil && enabledCount == 1
+}
+
 func validatePaymentOptionInputs(options []PaymentOptionInput) (int, *domain.AppError) {
 	if len(options) == 0 {
 		return 0, domain.NewFieldError(

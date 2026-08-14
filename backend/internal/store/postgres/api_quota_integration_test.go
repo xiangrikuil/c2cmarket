@@ -46,7 +46,7 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
 	store := &Store{pool: pool}
 	manager := apiquota.NewManager(store, func() time.Time { return now })
 	user := auth.User{ID: sellerID}
@@ -237,7 +237,7 @@ func TestOwnerAPIServiceSalesProjectionTransitionsFromSellingToExpired(t *testin
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
 	t.Cleanup(func() {
 		cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
 	})
@@ -368,14 +368,14 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 		t.Fatalf("refusing to run inventory integration test against non-dedicated database %q", databaseName)
 	}
 
-	slotStartsAt := time.Date(2026, 7, 25, 1, 0, 0, 0, time.UTC)
+	slotStartsAt := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	currentTime := slotStartsAt.Add(-2 * time.Hour)
 	sellerID := uuid.NewString()
 	contactID := uuid.NewString()
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
 	t.Cleanup(func() {
 		cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
 	})
@@ -409,7 +409,7 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 			Copies:             2,
 			DeliveryMode:       apiquota.DeliveryModeManual,
 			DeliveryETAMinutes: 1,
-			SlotKey:            "2026-07-25@09:00",
+			SlotKey:            "2026-07-25@20:00",
 			ExpiresAt:          slotStartsAt.Add(90 * time.Minute),
 			SourceConfirmedAt:  currentTime,
 		},
@@ -517,7 +517,7 @@ func TestAPIQuotaPostgresPublicRoundsStayOfferSpecific(t *testing.T) {
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
 	store := &Store{pool: pool}
 	manager := apiquota.NewManager(store, func() time.Time { return now })
 	user := auth.User{ID: sellerID}
@@ -608,7 +608,7 @@ func TestAPIQuotaPostgresTimeoutAndRoundRetirementReturnAllowance(t *testing.T) 
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
 	store := &Store{pool: pool}
 	manager := apiquota.NewManager(store, func() time.Time { return currentTime })
 	user := auth.User{ID: sellerID}
@@ -784,7 +784,7 @@ func TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversHistoricalPreimportedC
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
 	store := &Store{pool: pool, contactCodec: codec}
 	manager := apiquota.NewManager(store, func() time.Time { return currentTime })
 	user := auth.User{ID: sellerID}
@@ -929,7 +929,7 @@ func TestAPIQuotaPostgresRush1500BuyersFor1000Copies(t *testing.T) {
 	serviceID := uuid.NewString()
 	firstBuyerID := uuid.NewString()
 	firstBuyerContactID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, firstBuyerID, firstBuyerContactID, serviceID, now)
+	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, firstBuyerID, firstBuyerContactID, serviceID, now)
 
 	buyerIDs := make([]uuid.UUID, buyerCount)
 	buyerContactIDs := make([]string, buyerCount)
@@ -1108,6 +1108,7 @@ func cleanupAPIQuotaRushTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		{`DELETE FROM api_quota_batches WHERE owner_user_id = $1`, []any{sellerID}},
 		{`DELETE FROM api_service_payment_options WHERE api_service_id IN (SELECT id FROM api_services WHERE owner_user_id = $1)`, []any{sellerID}},
 		{`DELETE FROM api_services WHERE owner_user_id = $1`, []any{sellerID}},
+		{`DELETE FROM api_probe_connections WHERE owner_user_id = $1`, []any{sellerID}},
 		{`UPDATE contact_methods SET current_version_id = NULL WHERE user_id = $1 OR user_id = ANY($2::uuid[])`, []any{sellerID, buyerIDs}},
 		{`DELETE FROM contact_method_versions WHERE owner_user_id = $1 OR owner_user_id = ANY($2::uuid[])`, []any{sellerID, buyerIDs}},
 		{`DELETE FROM contact_methods WHERE user_id = $1 OR user_id = ANY($2::uuid[])`, []any{sellerID, buyerIDs}},
@@ -1127,6 +1128,41 @@ func integrationQuotaUsagePolicy() apimarket.QuotaUsagePolicy {
 	}
 }
 
+func seedOrderableQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sellerID, contactID, buyerID, buyerContactID, serviceID string, now time.Time) {
+	t.Helper()
+	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	connectionID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO api_probe_connections (
+			id, owner_user_id, name, base_url, normalized_base_url,
+			credential_ciphertext, credential_nonce, credential_key_version,
+			credential_cipher_format, credential_fingerprint,
+			probe_model, probe_protocol,
+			enabled, verification_status, verified_at,
+			measurement_version, version, created_at, updated_at
+		) VALUES (
+			$1, $2, '额度集成测试探针', 'https://quota.example.com/v1', 'https://quota.example.com/v1',
+			decode('0102', 'hex'), decode('000000000000000000000000', 'hex'), 'test-v1',
+			'test-v1', decode('0304', 'hex'),
+			'gpt-5-mini', 'openai_responses_v1',
+			true, 'verified', $3, 1, 1, $3, $3
+		)
+	`, connectionID, sellerID, now); err != nil {
+		t.Fatalf("seed verified probe connection: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE api_services SET probe_connection_id = $2 WHERE id = $1`, serviceID, connectionID); err != nil {
+		t.Fatalf("bind verified probe connection: %v", err)
+	}
+}
+
+func seedLimitedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sellerID, contactID, buyerID, buyerContactID, serviceID string, now time.Time) {
+	t.Helper()
+	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	if _, err := pool.Exec(ctx, `UPDATE api_services SET available_usd_allowance = 0 WHERE id = $1`, serviceID); err != nil {
+		t.Fatalf("close flexible quota sales: %v", err)
+	}
+}
+
 func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sellerID, contactID, buyerID, buyerContactID, serviceID string, now time.Time) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
@@ -1136,8 +1172,8 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatalf("seed seller: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['api_merchant']::text[], true, true, $3, $3)
 	`, contactID, sellerID, now); err != nil {
 		t.Fatalf("seed contact method: %v", err)
 	}
@@ -1149,8 +1185,8 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatalf("seed buyer: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['buyer']::text[], true, true, $3, $3)
 	`, buyerContactID, buyerID, now); err != nil {
 		t.Fatalf("seed buyer contact method: %v", err)
 	}
@@ -1181,6 +1217,18 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		VALUES ($1, 'buyer_dedicated_sub_key', '买家专属子 Key')
 	`, serviceID); err != nil {
 		t.Fatalf("seed access mode: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO api_service_models (
+			id, api_service_id, distribution_system, model_catalog_id,
+			model_key_snapshot, provider_snapshot, capabilities_snapshot,
+			merchant_multiplier, enabled, created_at, updated_at
+		) VALUES (
+			$1, $2, 'sub2api', '00000000-0000-0000-0000-000000000a01',
+			'gpt-4.1', 'OpenAI', ARRAY['text']::text[], 1, true, $3, $3
+		)
+	`, uuid.NewString(), serviceID, now); err != nil {
+		t.Fatalf("seed active API service model: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO api_service_payment_options (
@@ -1246,6 +1294,7 @@ func cleanupQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool
 		{`DELETE FROM api_quota_batches WHERE owner_user_id = $1`, []any{sellerID}},
 		{`DELETE FROM api_service_payment_options WHERE api_service_id IN (SELECT id FROM api_services WHERE owner_user_id = $1)`, []any{sellerID}},
 		{`DELETE FROM api_services WHERE owner_user_id = $1`, []any{sellerID}},
+		{`DELETE FROM api_probe_connections WHERE owner_user_id = $1`, []any{sellerID}},
 		{`UPDATE contact_methods SET current_version_id = NULL WHERE user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM contact_method_versions WHERE owner_user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM contact_methods WHERE user_id IN ($1, $2)`, []any{sellerID, buyerID}},

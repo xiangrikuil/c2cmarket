@@ -99,7 +99,10 @@ func (s *Store) ListAdminUsers(ctx context.Context, query auth.AdminUserDirector
 		       u.created_at,
 		       u.updated_at,
 		       u.last_active_at,
-		       u.version
+		       u.version,
+		       u.governance_version,
+		       COALESCE(u.current_governance_action_id::text, ''),
+		       u.security_locked_at
 		FROM users u
 		LEFT JOIN linux_do_bindings binding ON binding.user_id = u.id
 		`+adminUserDirectoryWhereSQL+`
@@ -125,6 +128,9 @@ func (s *Store) ListAdminUsers(ctx context.Context, query auth.AdminUserDirector
 			&item.UpdatedAt,
 			&item.LastActiveAt,
 			&item.Version,
+			&item.GovernanceVersion,
+			&item.CurrentGovernanceActionID,
+			&item.SecurityLockedAt,
 		); err != nil {
 			return auth.AdminUserDirectory{}, internalStoreError()
 		}
@@ -246,12 +252,12 @@ func loadAdminUserDetail(ctx context.Context, q queryer, userID string, now time
 		       (
 		         SELECT count(*)::int FROM api_orders order_row
 		         WHERE (order_row.buyer_user_id = u.id OR order_row.seller_user_id = u.id)
-		           AND (order_row.status NOT IN ('completed', 'cancelled') OR order_row.dispute_status = 'open')
+		           AND (order_row.status NOT IN ('completed', 'cancelled') OR order_row.dispute_status NOT IN ('none', 'closed'))
 		       ) AS open_api_orders,
 		       (
 		         SELECT count(*)::int FROM dispute_cases dispute
 		         WHERE (dispute.primary_user_id = u.id OR dispute.counterparty_user_id = u.id)
-		           AND dispute.status IN ('open', 'waiting_info')
+		           AND dispute.status IN ('negotiating', 'open', 'waiting_info')
 		       ) AS open_disputes
 		FROM users u
 		LEFT JOIN linux_do_bindings binding ON binding.user_id = u.id
@@ -380,6 +386,8 @@ type adminAccountAuditProjection struct {
 	IsAdmin       *bool  `json:"isAdmin"`
 }
 
+const adminUserGovernanceAdvisoryLockName = "admin_user_governance"
+
 func applyAdminAccountAuditProjection(entry *auth.AdminAccountAuditEntry, beforeJSON, afterJSON []byte) {
 	var before adminAccountAuditProjection
 	var after adminAccountAuditProjection
@@ -404,10 +412,10 @@ func (s *Store) UpdateAdminUserStatusWithIdempotency(ctx context.Context, entry 
 	if appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
-	if appErr := lockAccountGovernanceUser(ctx, tx, input.TargetUserID); appErr != nil {
+	if appErr := lockAdminUserGovernance(ctx, tx); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
-	if appErr := lockAdminUserGovernanceTables(ctx, tx); appErr != nil {
+	if appErr := lockAccountGovernanceUser(ctx, tx, input.TargetUserID); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
 	current, appErr := lockAdminUserForGovernance(ctx, tx, input.TargetUserID)
@@ -430,24 +438,133 @@ func (s *Store) UpdateAdminUserStatusWithIdempotency(ctx context.Context, entry 
 		}
 	}
 	before := adminAccountAuditProjection{AccountStatus: current.Status, IsAdmin: boolPointerForStore(current.IsAdmin)}
+	nextGovernanceVersion := current.GovernanceVersion + 1
+	actionType := governanceActionTypeForStatus(input.Status)
+	actionID := uuid.NewString()
+	if current.CurrentGovernanceActionID != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE account_governance_actions
+			SET status = 'superseded', superseded_at = $2, updated_at = $2
+			WHERE id = $1 AND status = 'effective'
+		`, current.CurrentGovernanceActionID, now); err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+	}
+	var expiresAt any
+	if input.ExpiresAt != nil {
+		expiresAt = *input.ExpiresAt
+	}
+	var supersedesActionID any
+	if current.CurrentGovernanceActionID != "" {
+		supersedesActionID = current.CurrentGovernanceActionID
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO account_governance_actions (
+			id, target_user_id, action_type, status, governance_version,
+			reason_code, public_reason, internal_note,
+			linked_case_type, linked_case_id,
+			effective_at, expires_at, is_indefinite,
+			supersedes_action_id, actor_user_id, request_id,
+			created_at, updated_at
+		)
+		VALUES (
+			$1, $2, $3, 'effective', $4,
+			$5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''),
+			$10, $11, $12, $13, $14, $15, $10, $10
+		)
+	`, actionID, current.ID, actionType, nextGovernanceVersion,
+		input.ReasonCode, input.PublicReason, input.InternalNote,
+		input.LinkedCaseType, input.LinkedCaseID,
+		now, expiresAt, input.IsIndefinite, supersedesActionID,
+		input.AdminUserID, input.RequestID); err != nil {
+		return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+	}
 	err = tx.QueryRow(ctx, `
 		UPDATE users
 		SET account_status = $2,
-		    updated_at = $3,
+		    current_governance_action_id = $3,
+		    governance_version = $4,
+		    updated_at = $5,
 		    version = version + 1
 		WHERE id = $1
-		RETURNING account_status, updated_at, version
-	`, current.ID, input.Status, now).Scan(&current.Status, &current.UpdatedAt, &current.Version)
+		RETURNING account_status, updated_at, version, governance_version,
+		          current_governance_action_id::text
+	`, current.ID, input.Status, actionID, nextGovernanceVersion, now).Scan(
+		&current.Status,
+		&current.UpdatedAt,
+		&current.Version,
+		&current.GovernanceVersion,
+		&current.CurrentGovernanceActionID,
+	)
 	if err != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
 	}
 	if before.AccountStatus == auth.AccountStatusActive && current.Status != auth.AccountStatusActive {
+		if current.IsAdmin {
+			if _, err := tx.Exec(ctx, `
+				DELETE FROM user_permissions
+				WHERE user_id = $1 AND permission = 'admin'
+			`, current.ID); err != nil {
+				return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+			}
+			current.IsAdmin = false
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE auth_sessions
 			SET revoked_at = COALESCE(revoked_at, $2),
 			    updated_at = $2
 			WHERE user_id = $1 AND revoked_at IS NULL
 		`, current.ID, now); err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE restricted_business_sessions
+			SET revoked_at = COALESCE(revoked_at, $2), last_seen_at = GREATEST(last_seen_at, $2)
+			WHERE user_id = $1 AND revoked_at IS NULL
+		`, current.ID, now); err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE admin_reauthentication_grants grant_record
+			SET revoked_at = COALESCE(grant_record.revoked_at, $2)
+			FROM auth_sessions session
+			WHERE grant_record.auth_session_id = session.id
+			  AND session.user_id = $1
+			  AND grant_record.consumed_at IS NULL
+			  AND grant_record.revoked_at IS NULL
+		`, current.ID, now); err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+	}
+	if input.Status == auth.AccountStatusActive {
+		if _, err := tx.Exec(ctx, `
+			UPDATE restricted_business_sessions
+			SET revoked_at = COALESCE(revoked_at, $2), last_seen_at = GREATEST(last_seen_at, $2)
+			WHERE user_id = $1 AND revoked_at IS NULL
+		`, current.ID, now); err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+	}
+	if input.Status == auth.AccountStatusSuspended && input.ExpiresAt != nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO account_governance_expiry_jobs (
+				target_user_id, suspension_action_id, expected_governance_version,
+				expected_expires_at, available_at, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $4, $5, $5)
+		`, current.ID, actionID, current.GovernanceVersion, *input.ExpiresAt, now); err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+	}
+	if auth.IsRestrictedBusinessAccountStatus(input.Status) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO account_governance_jobs (
+				target_user_id, governance_action_id, expected_governance_version,
+				status, phase, available_at, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, 'pending', 'sales', $4, $4, $4)
+			ON CONFLICT (governance_action_id) DO NOTHING
+		`, current.ID, actionID, current.GovernanceVersion, now); err != nil {
 			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
 		}
 	}
@@ -486,7 +603,7 @@ func (s *Store) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, en
 	if appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
-	if appErr := lockAdminUserGovernanceTables(ctx, tx); appErr != nil {
+	if appErr := lockAdminUserGovernance(ctx, tx); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
 	current, appErr := lockAdminUserForGovernance(ctx, tx, input.TargetUserID)
@@ -501,6 +618,18 @@ func (s *Store) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, en
 	}
 	if input.Grant && current.Status != auth.AccountStatusActive {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, adminUserStoreInvalidTransition("只能向有效账号授予管理员权限。")
+	}
+	if input.Grant {
+		studentOnly, appErr := studentOnlyAdminTargetInTx(ctx, tx, current.ID)
+		if appErr != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
+		}
+		if studentOnly {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, adminUserStoreInvalidTransition("高校邮箱账号绑定 Linux.do 后才能获得管理员权限。")
+		}
+		if appErr := validateAdminReauthenticationGrantInTx(ctx, tx, input, now); appErr != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
+		}
 	}
 	if !input.Grant && current.Status == auth.AccountStatusActive {
 		activeAdmins, appErr := activeAdminCountInTx(ctx, tx)
@@ -525,6 +654,26 @@ func (s *Store) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, en
 	}
 	if err != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+	}
+	if input.Grant {
+		command, err := tx.Exec(ctx, `
+			UPDATE admin_reauthentication_grants grant_record
+			SET consumed_at = $3
+			FROM auth_sessions session
+			WHERE grant_record.auth_session_id = session.id
+			  AND session.session_token_hash = $1
+			  AND grant_record.admin_user_id = $2
+			  AND grant_record.purpose = 'grant_admin'
+			  AND grant_record.consumed_at IS NULL
+			  AND grant_record.revoked_at IS NULL
+			  AND grant_record.expires_at > $3
+		`, input.AdminSessionTokenHash, input.AdminUserID, now)
+		if err != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+		if command.RowsAffected() != 1 {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, auth.RecentReauthenticationRequiredError()
+		}
 	}
 	current.IsAdmin = input.Grant
 	err = tx.QueryRow(ctx, `
@@ -559,8 +708,41 @@ func (s *Store) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, en
 	return result, completion, nil
 }
 
-func lockAdminUserGovernanceTables(ctx context.Context, tx pgx.Tx) *domain.AppError {
-	if _, err := tx.Exec(ctx, `LOCK TABLE users, user_permissions IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+func validateAdminReauthenticationGrantInTx(ctx context.Context, tx pgx.Tx, input auth.AdminUserPermissionInput, now time.Time) *domain.AppError {
+	var grantID string
+	err := tx.QueryRow(ctx, `
+		SELECT grant_record.id::text
+		FROM admin_reauthentication_grants grant_record
+		JOIN auth_sessions session ON session.id = grant_record.auth_session_id
+		JOIN users admin_user ON admin_user.id = grant_record.admin_user_id
+		WHERE session.session_token_hash = $1
+		  AND grant_record.admin_user_id = $2
+		  AND grant_record.purpose = 'grant_admin'
+		  AND grant_record.consumed_at IS NULL
+		  AND grant_record.revoked_at IS NULL
+		  AND grant_record.expires_at > $3
+		  AND session.revoked_at IS NULL
+		  AND session.expires_at > $3
+		  AND session.absolute_expires_at > $3
+		  AND admin_user.account_status = 'active'
+		  AND admin_user.security_locked_at IS NULL
+		  AND EXISTS (
+		    SELECT 1 FROM user_permissions permission
+		    WHERE permission.user_id = admin_user.id AND permission.permission = 'admin'
+		  )
+		FOR UPDATE OF grant_record, session, admin_user
+	`, input.AdminSessionTokenHash, input.AdminUserID, now).Scan(&grantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.RecentReauthenticationRequiredError()
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func lockAdminUserGovernance(ctx context.Context, tx pgx.Tx) *domain.AppError {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, adminUserGovernanceAdvisoryLockName); err != nil {
 		return internalStoreError()
 	}
 	return nil
@@ -580,7 +762,10 @@ func lockAdminUserForGovernance(ctx context.Context, tx pgx.Tx, userID string) (
 		       u.created_at,
 		       u.updated_at,
 		       u.last_active_at,
-		       u.version
+		       u.version,
+		       u.governance_version,
+		       COALESCE(u.current_governance_action_id::text, ''),
+		       u.security_locked_at
 		FROM users u
 		WHERE u.id = $1
 		FOR UPDATE
@@ -594,6 +779,9 @@ func lockAdminUserForGovernance(ctx context.Context, tx pgx.Tx, userID string) (
 		&item.UpdatedAt,
 		&item.LastActiveAt,
 		&item.Version,
+		&item.GovernanceVersion,
+		&item.CurrentGovernanceActionID,
+		&item.SecurityLockedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return auth.AdminUser{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "User not found", "用户不存在。")
@@ -617,6 +805,32 @@ func activeAdminCountInTx(ctx context.Context, tx pgx.Tx) (int, *domain.AppError
 		return 0, internalStoreError()
 	}
 	return count, nil
+}
+
+func governanceActionTypeForStatus(status string) string {
+	switch status {
+	case auth.AccountStatusSuspended:
+		return auth.GovernanceActionSuspend
+	case auth.AccountStatusBanned:
+		return auth.GovernanceActionBan
+	default:
+		return auth.GovernanceActionRestore
+	}
+}
+
+func studentOnlyAdminTargetInTx(ctx context.Context, tx pgx.Tx, userID string) (bool, *domain.AppError) {
+	var studentOnly bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		         SELECT 1 FROM student_email_claims claim WHERE claim.user_id = $1
+		       )
+		   AND NOT EXISTS (
+		         SELECT 1 FROM linux_do_bindings binding WHERE binding.user_id = $1
+		       )
+	`, userID).Scan(&studentOnly); err != nil {
+		return false, internalStoreError()
+	}
+	return studentOnly, nil
 }
 
 func insertAdminUserGovernanceSideEffects(ctx context.Context, tx pgx.Tx, user auth.AdminUser, adminUserID, eventType, reason, requestID string, before, after adminAccountAuditProjection, now time.Time) *domain.AppError {

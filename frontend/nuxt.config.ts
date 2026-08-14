@@ -12,6 +12,13 @@ const serverApiBaseURL = process.env.NUXT_API_BASE_URL
   || publicApiBaseURL
   || devApiProxyTarget
 const siteURL = process.env.NUXT_PUBLIC_SITE_URL ?? 'https://c2cmarket.shop'
+const turnstileSiteKey = process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY ?? ''
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN?.trim()
+const sentryRelease = process.env.SENTRY_RELEASE?.trim()
+  || process.env.GITHUB_SHA?.trim()
+  || process.env.CF_PAGES_COMMIT_SHA?.trim()
+  || process.env.GIT_COMMIT?.trim()
+  || ''
 const isProductionBuild = process.env.NODE_ENV === 'production' && process.argv.includes('build')
 const privateRouteRule = {
   cache: false,
@@ -46,6 +53,10 @@ if (isProductionBuild && !process.env.NUXT_API_BASE_URL) {
   throw new Error('Production frontend builds must set NUXT_API_BASE_URL.')
 }
 
+if (isProductionBuild && !turnstileSiteKey) {
+  throw new Error('Production frontend builds must set NUXT_PUBLIC_TURNSTILE_SITE_KEY.')
+}
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-15',
   srcDir: 'src/',
@@ -67,7 +78,20 @@ export default defineNuxtConfig({
       exclude: ['../src/**/__tests__/**'],
     },
   },
-  modules: ['@nuxtjs/sitemap', '@formkit/auto-animate/nuxt'],
+  modules: ['@sentry/nuxt/module', '@nuxtjs/sitemap', '@formkit/auto-animate/nuxt'],
+  sentry: {
+    org: 'c2cmarket',
+    project: 'javascript-nuxt',
+    authToken: sentryAuthToken,
+    telemetry: false,
+    silent: !sentryAuthToken,
+    sourcemaps: {
+      disable: !sentryAuthToken,
+      filesToDeleteAfterUpload: ['.output/public/**/*.map'],
+    },
+    release: sentryRelease ? { name: sentryRelease } : undefined,
+    autoInjectServerSentry: 'top-level-import',
+  },
   hooks: {
     async 'vite:serverCreated'(server, { isServer }) {
       if (!isServer || process.env.NODE_ENV !== 'development') return
@@ -93,6 +117,14 @@ export default defineNuxtConfig({
       apiMode,
       apiBaseUrl: publicApiBaseURL,
       siteUrl: siteURL,
+      turnstileSiteKey,
+      sentry: {
+        enabled: false,
+        dsn: '',
+        environment: 'development',
+        release: sentryRelease,
+        tracesSampleRate: 0.05,
+      },
       umamiEnabled: false,
       umamiScriptUrl: '',
       umamiWebsiteId: '',
@@ -110,6 +142,7 @@ export default defineNuxtConfig({
     exclude: [
       '/search/**',
       '/login',
+      '/password-reset',
       '/auth/**',
       '/my/**',
       '/merchant/**',
@@ -128,6 +161,7 @@ export default defineNuxtConfig({
     '/u/**': privateRouteRule,
     '/search/**': privateRouteRule,
     '/login': privateRouteRule,
+    '/password-reset': privateRouteRule,
     '/auth/**': privateRouteRule,
     '/my/**': privateRouteRule,
     '/merchant/**': privateRouteRule,
@@ -141,11 +175,13 @@ export default defineNuxtConfig({
     preset: 'cloudflare_module',
     compressPublicAssets: true,
   },
+  sourcemap: {
+    client: sentryAuthToken ? 'hidden' : false,
+  },
   vite: {
     plugins: [tailwindcss()],
     optimizeDeps: {
       include: [
-        '@radix-icons/vue',
         '@tanstack/vue-query',
         '@vueuse/core',
         'class-variance-authority',

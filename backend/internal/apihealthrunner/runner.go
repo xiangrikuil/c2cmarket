@@ -32,6 +32,7 @@ type RunResult struct {
 }
 
 type Stats struct {
+	Enabled             bool
 	RunSuccessTotal     uint64
 	RunFailureTotal     uint64
 	ProbeSuccessTotal   uint64
@@ -39,16 +40,20 @@ type Stats struct {
 	Inflight            int64
 	LastDurationSeconds float64
 	LastSuccessAt       time.Time
+	LastClaimed         int
+	LastFinalized       int
 }
 
 type runnerStats struct {
-	runSuccess   atomic.Uint64
-	runFailure   atomic.Uint64
-	probeSuccess atomic.Uint64
-	probeFailure atomic.Uint64
-	inflight     atomic.Int64
-	lastDuration atomic.Int64
-	lastSuccess  atomic.Int64
+	runSuccess    atomic.Uint64
+	runFailure    atomic.Uint64
+	probeSuccess  atomic.Uint64
+	probeFailure  atomic.Uint64
+	inflight      atomic.Int64
+	lastDuration  atomic.Int64
+	lastSuccess   atomic.Int64
+	lastClaimed   atomic.Int64
+	lastFinalized atomic.Int64
 }
 
 type Runner struct {
@@ -87,10 +92,15 @@ func New(repository Repository, prober apihealth.Prober, options Options, now fu
 }
 
 func (r *Runner) Start(parent context.Context) {
-	if r == nil || !r.options.Enabled {
+	if r == nil {
+		return
+	}
+	if !r.options.Enabled {
+		r.logger.Printf("API 真实模型探针任务未启动 enabled=false")
 		return
 	}
 	r.startOnce.Do(func() {
+		r.logger.Printf("API 真实模型探针任务启动 enabled=true scan_interval=%s concurrency=%d batch_size=%d", r.options.ScanInterval, r.options.Concurrency, r.options.BatchSize)
 		ctx, cancel := context.WithCancel(parent)
 		r.cancel = cancel
 		go r.loop(ctx)
@@ -123,6 +133,8 @@ func (r *Runner) execute(ctx context.Context) {
 	}
 	r.stats.runSuccess.Add(1)
 	r.stats.lastSuccess.Store(r.now().UnixNano())
+	r.stats.lastClaimed.Store(int64(result.Claimed))
+	r.stats.lastFinalized.Store(int64(result.Finalized))
 	r.logger.Printf("API 探针任务完成 claimed=%d succeeded=%d failed=%d finalized=%d", result.Claimed, result.Succeeded, result.Failed, result.Finalized)
 }
 
@@ -131,7 +143,8 @@ func (r *Runner) RunOnce(ctx context.Context) (RunResult, *domain.AppError) {
 		return RunResult{}, nil
 	}
 	now := r.now().UTC()
-	jobs, appErr := r.repository.ClaimDueProbes(ctx, apihealth.SlotStart(now), now, r.options.BatchSize, r.options.Timeout)
+	cycleTimeout := 2*r.options.Timeout + 5*time.Second
+	jobs, appErr := r.repository.ClaimDueProbes(ctx, apihealth.SlotStart(now), now, r.options.BatchSize, cycleTimeout)
 	if appErr != nil {
 		return RunResult{}, appErr
 	}
@@ -159,7 +172,7 @@ func (r *Runner) RunOnce(ctx context.Context) (RunResult, *domain.AppError) {
 				r.stats.inflight.Add(1)
 				probeResult := apihealth.ProbeResult{ErrorCode: apihealth.ErrorDecryptFailed}
 				if !job.CredentialError {
-					probeCtx, cancel := context.WithTimeout(ctx, r.options.Timeout)
+					probeCtx, cancel := context.WithTimeout(ctx, cycleTimeout)
 					probeResult = r.prober.Probe(probeCtx, job)
 					cancel()
 				}
@@ -222,9 +235,20 @@ func (r *Runner) Stats() Stats {
 		lastSuccess = time.Unix(0, value).UTC()
 	}
 	return Stats{
+		Enabled:         r.options.Enabled,
 		RunSuccessTotal: r.stats.runSuccess.Load(), RunFailureTotal: r.stats.runFailure.Load(),
 		ProbeSuccessTotal: r.stats.probeSuccess.Load(), ProbeFailureTotal: r.stats.probeFailure.Load(),
 		Inflight: r.stats.inflight.Load(), LastDurationSeconds: time.Duration(r.stats.lastDuration.Load()).Seconds(),
-		LastSuccessAt: lastSuccess,
+		LastSuccessAt: lastSuccess, LastClaimed: int(r.stats.lastClaimed.Load()), LastFinalized: int(r.stats.lastFinalized.Load()),
+	}
+}
+
+func (r *Runner) ProbeRunnerStatus() apihealth.RunnerStatus {
+	if r == nil {
+		return apihealth.RunnerStatus{}
+	}
+	stats := r.Stats()
+	return apihealth.RunnerStatus{
+		Enabled: stats.Enabled, LastSuccessfulScanAt: stats.LastSuccessAt, ScanInterval: r.options.ScanInterval,
 	}
 }

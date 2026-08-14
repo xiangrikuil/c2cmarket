@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, KeyRound } from 'lucide-vue-next'
+import { CheckCircle2, Eye, KeyRound } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
@@ -19,7 +19,7 @@ import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import {
   confirmApiOrderPayment,
   getApiMerchantVisibilityLabel,
@@ -27,14 +27,16 @@ import {
   getApiOrderNextAction,
   isApiOrderReceiptConfirmed,
   type ApiOrder,
+  type ApiOrderStatus,
 } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { addDecimal, compareDecimal, formatDecimal } from '@/lib/decimal'
-import { useMerchantApiOrders } from '@/queries/useMarketQueries'
+import { addDecimal, formatDecimal } from '@/lib/decimal'
+import { useMerchantApiOrders, useMerchantApiOrdersPage } from '@/queries/useMarketQueries'
 
 const queryClient = useQueryClient()
-const { data, isLoading, error, refetch } = useMerchantApiOrders({ sort: 'default_merchant' })
+const router = useRouter()
+const { data } = useMerchantApiOrders({ sort: 'default_merchant' })
 const activeTab = ref('全部')
 const keyword = ref('')
 const timeRange = ref<'all' | 'today' | '7d' | '30d'>('all')
@@ -56,14 +58,6 @@ const baseFilteredRows = computed(() => {
   })
 })
 
-const filteredRows = computed(() => baseFilteredRows.value.filter(item => activeTab.value === '全部'
-  || (activeTab.value === '待买家付款' && item.status === 'pending_payment')
-  || (activeTab.value === '待确认收款' && item.status === 'payment_submitted')
-  || (activeTab.value === '等待买家补充' && item.status === 'payment_issue')
-  || (activeTab.value === '待交付' && item.status === 'paid_confirmed')
-  || (activeTab.value === '已完成交付' && deliveredStatuses.includes(item.status))
-  || (activeTab.value === '已取消' && item.status === 'cancelled')))
-
 const confirmedReceiptAmount = computed(() => baseFilteredRows.value
   .filter(item => isApiOrderReceiptConfirmed(item.status))
   .reduce(
@@ -81,16 +75,30 @@ const stats = computed(() => [
   { label: '已确认收款金额', value: `¥${formatDecimal(confirmedReceiptAmount.value, 2, 2)}` },
 ])
 
-const rows = computed(() => [...filteredRows.value].sort((a, b) => {
-  if (sortMode.value === 'amount') return compareDecimal(b.amountDecimal ?? String(b.amount), a.amountDecimal ?? String(a.amount))
-  if (sortMode.value === 'updated') return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  const aAction = a.status === 'payment_submitted' || a.status === 'paid_confirmed'
-  const bAction = b.status === 'payment_submitted' || b.status === 'paid_confirmed'
-  return Number(bAction) - Number(aAction)
-    || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+const statusByTab: Partial<Record<string, ApiOrderStatus | ApiOrderStatus[]>> = {
+  待买家付款: 'pending_payment',
+  待确认收款: 'payment_submitted',
+  等待买家补充: 'payment_issue',
+  待交付: 'paid_confirmed',
+  已完成交付: deliveredStatuses as ApiOrderStatus[],
+  已取消: 'cancelled',
+}
+const pageFilters = computed(() => ({
+  status: statusByTab[activeTab.value],
+  serviceId: serviceFilter.value === 'all' ? undefined : serviceFilter.value,
+  search: keyword.value.trim() || undefined,
+  dateRange: timeRange.value,
+  sort: sortMode.value === 'amount' ? 'amount_desc' as const
+    : sortMode.value === 'updated' ? 'updated_desc' as const
+      : 'default_merchant' as const,
 }))
-
-const pagination = usePagination(rows)
+const pagination = useCursorPagination([activeTab, keyword, timeRange, serviceFilter, sortMode])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = useMerchantApiOrdersPage(pageFilters, pageRequest)
+const rows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
+const error = pageQuery.error
+const refetch = pageQuery.refetch
 const serviceOptions = computed(() => {
   const seen = new Map<string, string>()
   for (const item of data.value ?? []) seen.set(item.apiServiceId, item.serviceTitle)
@@ -118,6 +126,11 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
     busyId.value = ''
   }
 }
+
+function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
+  if (event.target instanceof Element && event.target.closest('a,button')) return
+  router.push(`/merchant/api-orders/${id}`)
+}
 </script>
 
 <template>
@@ -139,7 +152,7 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
     <SkeletonTable v-else-if="isLoading" :columns="6" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无订单" description="调整筛选条件后再试；新订单到达后会在这里显示。" />
     <SoftTable v-else animate-rows class="[&_table]:min-w-[760px]" :columns="['订单', '买家 / 服务', '订单金额 / 购买额度', '状态', '更新', '操作']">
-      <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
+      <tr v-for="item in rows" :key="item.id" class="cursor-pointer" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
         <td><div class="font-medium"><ShortId :value="item.orderNo" full copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
         <td>
           <div class="font-medium">{{ item.buyer }}</div>
@@ -156,22 +169,28 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
         <td class="text-xs text-muted-foreground"><LocalTime :value="item.updatedAt" /></td>
         <td>
           <div class="flex flex-wrap gap-1">
+            <RouterLink :to="`/merchant/api-orders/${item.id}`">
+              <Button size="sm" variant="outline">
+                <KeyRound v-if="item.status === 'paid_confirmed'" class="h-4 w-4" />
+                <Eye v-else class="h-4 w-4" />
+                {{ item.status === 'paid_confirmed' ? '填写交付' : '查看详情' }}
+              </Button>
+            </RouterLink>
             <Button v-if="item.status === 'payment_submitted'" size="sm" :disabled="busyId === item.id" @click="runAction(item, () => confirmApiOrderPayment(item.id, item.version), '已确认收款。')">
               <CheckCircle2 class="h-4 w-4" />确认已收款
             </Button>
-            <RouterLink v-if="item.status === 'paid_confirmed'" :to="`/merchant/api-orders/${item.id}`"><Button size="sm" variant="outline"><KeyRound class="h-4 w-4" />填写交付</Button></RouterLink>
-            <RouterLink v-if="item.status !== 'payment_submitted' && item.status !== 'paid_confirmed'" :to="`/merchant/api-orders/${item.id}`"><Button size="sm" variant="outline">查看</Button></RouterLink>
             <span v-if="item.status === 'delivery_submitted' || item.status === 'completed'" class="text-xs text-muted-foreground">{{ getApiOrderNextAction(item, 'merchant') }}</span>
           </div>
         </td>
       </tr>
       <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="rows.length"
+          :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+          :loading="pageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageQuery.data.value?.nextCursor)"
         />
       </template>
     </SoftTable>

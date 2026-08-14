@@ -26,25 +26,26 @@ const markAllReadMutation = useMarkAllNotificationsReadMutation()
 const notifications = computed(() => notificationRows.value ?? [])
 const announcementRows = computed(() => announcements.value ?? [])
 const unreadCount = computed(() => notifications.value.filter(item => item.unread).length)
-type NotificationTab = 'todo' | 'transactions' | 'system'
+type NotificationTab = 'todo' | 'transactions' | 'system' | 'announcements'
 const activeTab = computed<NotificationTab>(() => {
   if (route.query.tab === 'transactions') return 'transactions'
-  if (route.query.tab === 'system' || route.query.tab === 'announcements') return 'system'
+  if (route.query.tab === 'system') return 'system'
+  if (route.query.tab === 'announcements') return 'announcements'
   return 'todo'
 })
-const reviewCount = computed(() => notifications.value.filter(item => item.type === '审核结果' || item.type === '管理操作').length)
-const carpoolCount = computed(() => notifications.value.filter(item => item.type === '上车申请').length)
-const apiCount = computed(() => notifications.value.filter(item => item.type === 'API 意向' || item.type === 'API 订单').length)
 const notificationCategory = (item: typeof notifications.value[number]): NotificationTab => {
   if (['审核结果', '管理操作', '边界提醒'].includes(item.type)) return 'system'
   if (item.unread) return 'todo'
   return 'transactions'
 }
+const todoCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'todo').length)
+const transactionCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'transactions').length)
+const systemCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'system').length)
 const visibleNotifications = computed(() => notifications.value.filter(item => notificationCategory(item) === activeTab.value))
 const stats = computed(() => [
-  { label: '待办未读', value: notifications.value.filter(item => notificationCategory(item) === 'todo').length },
-  { label: '交易通知', value: notifications.value.filter(item => notificationCategory(item) === 'transactions').length },
-  { label: '系统通知', value: notifications.value.filter(item => notificationCategory(item) === 'system').length },
+  { label: '待办未读', value: todoCount.value },
+  { label: '交易通知', value: transactionCount.value },
+  { label: '系统通知', value: systemCount.value },
   { label: '平台公告', value: announcementUnreadCount.value ?? 0 },
 ])
 
@@ -85,22 +86,35 @@ function setTab(tab: NotificationTab) {
 
 <template>
   <div class="notification-reference-page space-y-5">
-    <div class="notification-reference-heading rounded-xl border px-5 py-4"><PageTitle title="通知中心" description="查看后端记录的站内业务通知；平台公告继续在独立标签中展示。" /></div>
+    <div class="notification-reference-heading rounded-xl border px-5 py-4">
+      <PageTitle
+        :title="activeTab === 'announcements' ? '平台公告' : '通知中心'"
+        :description="activeTab === 'announcements' ? '查看平台规则、功能更新与治理公告。' : '查看后端记录的站内业务通知。'"
+      />
+    </div>
 
     <CompactStats :items="stats" />
 
     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
       <Tabs :model-value="activeTab" @update:model-value="value => setTab(value as NotificationTab)">
         <TabsList>
-          <TabsTrigger value="todo">待办 {{ unreadCount }}</TabsTrigger>
-          <TabsTrigger value="transactions">交易 {{ carpoolCount + apiCount }}</TabsTrigger>
-          <TabsTrigger value="system">系统 {{ reviewCount + (announcementUnreadCount ?? 0) }}</TabsTrigger>
+          <TabsTrigger value="todo">待办 {{ todoCount }}</TabsTrigger>
+          <TabsTrigger value="transactions">交易 {{ transactionCount }}</TabsTrigger>
+          <TabsTrigger value="system">系统 {{ systemCount }}</TabsTrigger>
+          <TabsTrigger value="announcements">平台公告 {{ announcementUnreadCount ?? 0 }}</TabsTrigger>
         </TabsList>
       </Tabs>
-      <Button v-if="activeTab !== 'system'" variant="outline" :disabled="!unreadCount || markAllReadMutation.isPending.value" @click="markAllRead">全部标记已读</Button>
+      <Button
+        v-if="activeTab === 'todo' || activeTab === 'transactions'"
+        variant="outline"
+        :disabled="!unreadCount || markAllReadMutation.isPending.value"
+        @click="markAllRead"
+      >
+        全部标记已读
+      </Button>
     </div>
 
-    <Card v-if="activeTab !== 'system'" class="notification-reference-list divide-y divide-border p-0">
+    <Card v-if="activeTab === 'todo' || activeTab === 'transactions'" class="notification-reference-list divide-y divide-border p-0">
       <div v-for="item in visibleNotifications" :key="item.id" class="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
         <div class="flex min-w-0 gap-3">
           <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-accent">
@@ -130,14 +144,17 @@ function setTab(tab: NotificationTab) {
       <EmptyState v-if="visibleNotifications.length === 0" title="当前分类暂无通知" description="状态变化和下一动作会在对应分类中显示。" />
     </Card>
 
-    <div v-else class="space-y-4">
-      <Card v-if="visibleNotifications.length" class="divide-y divide-border p-0">
-        <div v-for="item in visibleNotifications" :key="item.id" class="p-4"><RouterLink :to="item.to" class="font-semibold hover:underline">{{ item.title }}</RouterLink><p class="mt-1 text-sm text-muted-foreground">{{ item.detail }}</p></div>
-      </Card>
-      <Card class="divide-y divide-border p-0">
+    <Card v-else-if="activeTab === 'system'" class="divide-y divide-border p-0">
+      <div v-for="item in visibleNotifications" :key="item.id" class="p-4">
+        <RouterLink :to="item.to" class="font-semibold hover:underline">{{ item.title }}</RouterLink>
+        <p class="mt-1 text-sm text-muted-foreground">{{ item.detail }}</p>
+      </div>
+      <EmptyState v-if="visibleNotifications.length === 0" title="暂无系统通知" description="审核结果、管理操作和边界提醒会显示在这里。" />
+    </Card>
+
+    <Card v-else class="divide-y divide-border p-0">
       <AnnouncementListItem v-for="item in announcementRows" :key="item.id" :announcement="item" />
-        <EmptyState v-if="announcementRows.length === 0" title="暂无平台公告" description="平台更新和治理公告会显示在这里。" />
-      </Card>
-    </div>
+      <EmptyState v-if="announcementRows.length === 0" title="暂无平台公告" description="平台更新和治理公告会显示在这里。" />
+    </Card>
   </div>
 </template>

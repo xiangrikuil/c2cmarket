@@ -50,7 +50,7 @@ const showSourceAuthorVerification = computed(() => {
 const amountError = computed(() => {
   const decimalPattern = /^\d+(\.\d{1,2})?$/
   if (fixedPackageMode.value) {
-    if (!selectedPackage.value) return '请选择有库存的限时流量包。'
+    if (!selectedPackage.value) return '请选择有库存的短期流量包。'
     if (props.amount !== selectedPackage.value.priceCny) return '订单金额必须与套餐固定价格一致。'
     return ''
   }
@@ -107,7 +107,7 @@ async function shareService() {
 
     <div class="space-y-4 border-t border-border p-5">
       <div v-if="fixedPackageMode" class="space-y-2">
-        <div class="text-sm font-semibold">选择限时流量包</div>
+        <div class="text-sm font-semibold">选择短期流量包</div>
         <Select :model-value="selectedPackageId" @update:model-value="value => emit('update:selectedPackageId', String(value))">
           <SelectTrigger class="w-full"><SelectValue placeholder="请选择套餐" /></SelectTrigger>
           <SelectContent>

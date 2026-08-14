@@ -59,7 +59,11 @@ func (s *Service) ListMine(ctx context.Context, userID string) ([]ReviewCenterRo
 	}
 	now := s.now()
 	if s.repo != nil {
-		return s.repo.ListMyReviewCenterRows(ctx, userID, now)
+		rows, appErr := s.repo.ListMyReviewCenterRows(ctx, userID, now)
+		if appErr != nil {
+			return nil, appErr
+		}
+		return decorateReviewCenterRows(rows), nil
 	}
 	if s.resolver == nil {
 		return nil, internalReviewError("评价交易解析器不可用。")
@@ -82,7 +86,7 @@ func (s *Service) ListMine(ctx context.Context, userID string) ([]ReviewCenterRo
 		}
 		return rows[i].CompletedAt.After(rows[j].CompletedAt)
 	})
-	return rows, nil
+	return decorateReviewCenterRows(rows), nil
 }
 
 func (s *Service) SubmitWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input SubmitReviewInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -115,7 +119,7 @@ func (s *Service) SubmitWithIdempotency(ctx context.Context, userID, routeKey, k
 		s.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
 	}
-	reviewerRole, _, ok := transactionRoles(transaction, userID)
+	reviewerRole, revieweeRole, ok := transactionRoles(transaction, userID)
 	if !ok {
 		s.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, reviewTransactionNotFound()
@@ -125,6 +129,11 @@ func (s *Service) SubmitWithIdempotency(ctx context.Context, userID, routeKey, k
 		s.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, reviewWindowClosed()
 	}
+	if !ValidateTagsForScenario(input.Tags, transaction.Type, reviewerRole, revieweeRole) {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, validationError("tags", "所选体验标签不适用于当前交易评价。")
+	}
+	input.Tags = NormalizeTagCodes(input.Tags)
 	if s.authorizer != nil {
 		if appErr := s.authorizer.CheckActionAllowed(ctx, userID, reviewerRole, "review_submit"); appErr != nil {
 			s.idempotency.Cancel(ctx, entry)
@@ -292,7 +301,7 @@ func (s *Service) saveMemory(transaction Transaction, input SubmitReviewInput, n
 		item.Version++
 	}
 	item.Rating = input.Rating
-	item.Tags = NormalizeTags(input.Tags)
+	item.Tags = NormalizeTagCodes(input.Tags)
 	item.Note = strings.TrimSpace(input.Note)
 	item.UpdatedAt = now
 	s.reviews[key] = item
@@ -476,7 +485,7 @@ func ValidateSubmitInput(input SubmitReviewInput) *domain.AppError {
 	if input.Rating < 1 || input.Rating > 5 {
 		return validationError("rating", "评分必须在 1-5 分之间。")
 	}
-	tags := NormalizeTags(input.Tags)
+	tags := NormalizeTagCodes(input.Tags)
 	if len(tags) > 5 {
 		return validationError("tags", "体验标签最多 5 个。")
 	}
@@ -484,13 +493,13 @@ func ValidateSubmitInput(input SubmitReviewInput) *domain.AppError {
 		if utf8.RuneCountInString(tag) > 16 {
 			return validationError("tags", "单个体验标签最多 16 字。")
 		}
-		if !IsPresetTag(tag) {
+		if !IsKnownTag(tag) {
 			return validationError("tags", "只能选择平台预设的体验标签。")
 		}
 	}
 	note := strings.TrimSpace(input.Note)
-	if note == "" {
-		return validationError("note", "评价说明不能为空。")
+	if note == "" && len(tags) == 0 {
+		return validationError("content", "请至少选择一个体验标签或填写评价说明。")
 	}
 	if utf8.RuneCountInString(note) > 600 {
 		return validationError("note", "评价说明最多 600 字。")
@@ -502,29 +511,23 @@ func ValidateSubmitInput(input SubmitReviewInput) *domain.AppError {
 }
 
 func NormalizeTags(tags []string) []string {
-	result := make([]string, 0, len(tags))
-	seen := map[string]struct{}{}
-	for _, tag := range tags {
-		value := strings.TrimSpace(tag)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
+	return NormalizeTagCodes(tags)
 }
 
 func IsPresetTag(tag string) bool {
-	for _, allowed := range PresetTags {
-		if tag == allowed {
-			return true
+	return IsKnownTag(tag)
+}
+
+func decorateReviewCenterRows(rows []ReviewCenterRow) []ReviewCenterRow {
+	visibleRows := make([]ReviewCenterRow, 0, len(rows))
+	for index := range rows {
+		if rows[index].Direction == DirectionReceived && rows[index].Visibility == VisibilitySealed {
+			continue
 		}
+		rows[index].AllowedTags = AllowedTags(rows[index].TransactionType, rows[index].ReviewerRole, rows[index].RevieweeRole)
+		visibleRows = append(visibleRows, rows[index])
 	}
-	return false
+	return visibleRows
 }
 
 func transactionRoles(transaction Transaction, userID string) (string, string, bool) {

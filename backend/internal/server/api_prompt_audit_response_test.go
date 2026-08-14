@@ -42,3 +42,14 @@ func TestHistoricalPromptAuditFieldsRemainExplicitJSONNull(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicAPIQuotaOfferProjectsMerchantAvatar(t *testing.T) {
+	t.Parallel()
+
+	response := toPublicAPIQuotaOfferResponse(apiquota.OfferCard{
+		MerchantAvatarURL: "https://cdn.example.com/quota-seller.webp",
+	})
+	if response.MerchantAvatarURL != "https://cdn.example.com/quota-seller.webp" {
+		t.Fatalf("expected quota offer merchant avatar, got %+v", response)
+	}
+}

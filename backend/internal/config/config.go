@@ -52,6 +52,9 @@ type Config struct {
 	Maintenance             MaintenanceConfig
 	APIHealth               APIHealthConfig
 	MetricsBearerToken      string
+	TurnstileSecret         string
+	TurnstileHostnames      []string
+	Sentry                  SentryConfig
 }
 
 type SMTPConfig struct {
@@ -81,7 +84,14 @@ type APIHealthConfig struct {
 	Concurrency   int
 	BatchSize     int
 	Retention     time.Duration
-	ChallengeTTL  time.Duration
+}
+
+type SentryConfig struct {
+	Enabled          bool
+	DSN              string
+	Environment      string
+	Release          string
+	TracesSampleRate float64
 }
 
 const (
@@ -100,19 +110,25 @@ const (
 	defaultAPIDeliveryCredentialRetention = 30 * 24 * time.Hour
 	defaultDatabaseSlowQueryAfter         = time.Second
 	defaultAPIHealthScanInterval          = time.Minute
-	defaultAPIHealthTimeout               = 10 * time.Second
+	defaultAPIHealthTimeout               = 30 * time.Second
 	defaultAPIHealthConcurrency           = 4
 	defaultAPIHealthBatchSize             = 50
-	defaultAPIHealthRetention             = 7 * 24 * time.Hour
-	defaultAPIHealthChallengeTTL          = 15 * time.Minute
+	defaultAPIHealthRetention             = 8 * 24 * time.Hour
 )
 
 func Load() (Config, error) {
 	cfg := Config{
-		Port:                    strings.TrimSpace(os.Getenv("PORT")),
-		AppEnv:                  strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
-		DatabaseURL:             strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		MetricsBearerToken:      strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")),
+		Port:               strings.TrimSpace(os.Getenv("PORT")),
+		AppEnv:             strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
+		DatabaseURL:        strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		MetricsBearerToken: strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")),
+		TurnstileSecret:    strings.TrimSpace(os.Getenv("TURNSTILE_SECRET")),
+		TurnstileHostnames: parseTurnstileHostnames(os.Getenv("TURNSTILE_HOSTNAMES")),
+		Sentry: SentryConfig{
+			DSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
+			Environment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
+			Release:     strings.TrimSpace(os.Getenv("SENTRY_RELEASE")),
+		},
 		FrontendOrigin:          strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")),
 		AllowedOrigins:          parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS")),
 		OAuthProviderMode:       strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
@@ -205,7 +221,7 @@ func Load() (Config, error) {
 	if cfg.Maintenance.UnreadNotificationRetention < cfg.Maintenance.ReadNotificationRetention {
 		return Config{}, fmt.Errorf("UNREAD_NOTIFICATION_RETENTION must not be shorter than READ_NOTIFICATION_RETENTION")
 	}
-	cfg.APIHealth.RunnerEnabled, err = parseBoolEnv("API_HEALTH_RUNNER_ENABLED", os.Getenv("API_HEALTH_RUNNER_ENABLED"), false)
+	cfg.APIHealth.RunnerEnabled, err = parseBoolEnv("API_HEALTH_RUNNER_ENABLED", os.Getenv("API_HEALTH_RUNNER_ENABLED"), true)
 	if err != nil {
 		return Config{}, err
 	}
@@ -244,18 +260,44 @@ func Load() (Config, error) {
 	if cfg.APIHealth.Retention < 24*time.Hour || cfg.APIHealth.Retention > 30*24*time.Hour {
 		return Config{}, fmt.Errorf("API_HEALTH_SAMPLE_RETENTION must be between 24h and 720h")
 	}
-	cfg.APIHealth.ChallengeTTL, err = parseDurationEnv("API_HEALTH_CHALLENGE_TTL", os.Getenv("API_HEALTH_CHALLENGE_TTL"), defaultAPIHealthChallengeTTL)
-	if err != nil {
-		return Config{}, err
-	}
-	if cfg.APIHealth.ChallengeTTL < 5*time.Minute || cfg.APIHealth.ChallengeTTL > time.Hour {
-		return Config{}, fmt.Errorf("API_HEALTH_CHALLENGE_TTL must be between 5m and 1h")
-	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"
 	}
 	if cfg.AppEnv == "" {
 		cfg.AppEnv = EnvDevelopment
+	}
+	cfg.Sentry.Enabled, err = parseBoolEnv(
+		"SENTRY_ENABLED",
+		os.Getenv("SENTRY_ENABLED"),
+		cfg.AppEnv == EnvProduction && cfg.Sentry.DSN != "",
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Sentry.TracesSampleRate, err = parseFloatEnv(
+		"SENTRY_TRACES_SAMPLE_RATE",
+		os.Getenv("SENTRY_TRACES_SAMPLE_RATE"),
+		0.1,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.Sentry.TracesSampleRate < 0 || cfg.Sentry.TracesSampleRate > 1 {
+		return Config{}, fmt.Errorf("SENTRY_TRACES_SAMPLE_RATE must be between 0 and 1")
+	}
+	if cfg.Sentry.Environment == "" {
+		cfg.Sentry.Environment = cfg.AppEnv
+	}
+	if cfg.Sentry.DSN != "" {
+		if err := validateSentryDSN(cfg.Sentry.DSN); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.Sentry.Enabled && cfg.Sentry.DSN == "" {
+		return Config{}, fmt.Errorf("SENTRY_DSN is required when SENTRY_ENABLED=true")
+	}
+	if len(cfg.TurnstileHostnames) == 0 && cfg.AppEnv != EnvProduction {
+		cfg.TurnstileHostnames = []string{"localhost", "127.0.0.1"}
 	}
 	if cfg.FrontendOrigin == "" && cfg.AppEnv != EnvProduction {
 		cfg.FrontendOrigin = "http://127.0.0.1:5173"
@@ -329,6 +371,9 @@ func Load() (Config, error) {
 	if cfg.TrustXForwardedFor && len(cfg.TrustedProxies) == 0 {
 		return Config{}, fmt.Errorf("TRUSTED_PROXIES is required when TRUST_X_FORWARDED_FOR=true")
 	}
+	if err := validateTurnstileHostnames(cfg.TurnstileHostnames); err != nil {
+		return Config{}, err
+	}
 
 	devAuthRaw := strings.TrimSpace(os.Getenv("ENABLE_DEV_AUTH"))
 	switch strings.ToLower(devAuthRaw) {
@@ -375,6 +420,12 @@ func Load() (Config, error) {
 		}
 		if len([]byte(cfg.MetricsBearerToken)) < 32 {
 			return Config{}, fmt.Errorf("METRICS_BEARER_TOKEN must be at least 32 bytes in production")
+		}
+		if cfg.TurnstileSecret == "" {
+			return Config{}, fmt.Errorf("TURNSTILE_SECRET is required in production")
+		}
+		if len(cfg.TurnstileHostnames) == 0 {
+			return Config{}, fmt.Errorf("TURNSTILE_HOSTNAMES is required in production")
 		}
 		if cfg.EmailProvider != "aliyun_directmail" {
 			return Config{}, fmt.Errorf("EMAIL_PROVIDER=aliyun_directmail is required in production")
@@ -598,6 +649,32 @@ func parseIntEnv(name, raw string, fallback int) (int, error) {
 	return parsed, nil
 }
 
+func parseFloatEnv(name, raw string, fallback float64) (float64, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", name)
+	}
+	return parsed, nil
+}
+
+func validateSentryDSN(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User == nil {
+		return fmt.Errorf("SENTRY_DSN must be an absolute HTTP(S) Sentry DSN")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("SENTRY_DSN must use http or https")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("SENTRY_DSN must not include a query or fragment")
+	}
+	return nil
+}
+
 func parseAllowedOrigins(values ...string) []string {
 	return parseCommaSeparated(values...)
 }
@@ -639,6 +716,46 @@ func parseCommaSeparated(values ...string) []string {
 		}
 	}
 	return result
+}
+
+func parseTurnstileHostnames(values ...string) []string {
+	parsed := parseCommaSeparated(values...)
+	result := make([]string, 0, len(parsed))
+	seen := map[string]struct{}{}
+	for _, value := range parsed {
+		value = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func validateTurnstileHostnames(values []string) error {
+	for _, value := range values {
+		if _, err := netip.ParseAddr(value); err == nil {
+			continue
+		}
+		if len(value) > 253 || strings.ContainsAny(value, "/:?#[]@") || strings.HasPrefix(value, ".") {
+			return fmt.Errorf("TURNSTILE_HOSTNAMES contains invalid hostname %q", value)
+		}
+		for _, label := range strings.Split(value, ".") {
+			if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+				return fmt.Errorf("TURNSTILE_HOSTNAMES contains invalid hostname %q", value)
+			}
+			for _, char := range label {
+				if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+					return fmt.Errorf("TURNSTILE_HOSTNAMES contains invalid hostname %q", value)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func validateTrustedProxies(values []string) error {

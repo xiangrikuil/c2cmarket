@@ -12,16 +12,34 @@ import type {
   PaymentMethodOption,
   RegionOption,
   SaveCarpoolDraftPayload,
+	OwnerCarpoolEditData,
+	OwnerCarpoolView,
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
-import { backendCreateContactMethod } from '@/lib/apiMarketBackend'
+import { backendBoundLinuxDoContactMethod } from '@/lib/apiMarketBackend'
 import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@/data/mock'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
+import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import type { ReputationSummary } from '@/types/reputation'
 import { trackAnalytics } from '@/lib/analytics'
+import { collectCursorPages, normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
 
-type ListResponse<T> = { items: T[] }
+type ListResponse<T> = { items: T[], nextCursor?: string | null }
+
+export type CarpoolPageFilters = {
+  q?: string
+  productPlanIds?: string[]
+  region?: string
+  carpoolId?: string
+  ownerType?: string
+  warranty?: string
+  statuses?: string[]
+	view?: 'public' | 'exceptions' | OwnerCarpoolView
+  risk?: 'all' | 'high' | 'has_note'
+  sort?: 'recommended' | 'updated_desc' | 'created_desc' | 'default_buyer' | 'default_owner' | 'price_asc' | 'seats_desc'
+  none?: boolean
+}
 
 type BackendProductPlan = {
   id: string
@@ -70,8 +88,8 @@ type BackendCarpoolListing = {
   sellerReputation?: ReputationSummary | null
   priceMonthlyCny: string
   serviceMultiplier: string
-  weeklyQuotaAmount: string | null
-  monthlyQuotaAmount: string
+  dailyQuotaAmount: string | null
+  weeklyQuotaAmount: string
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string | null
   supportsMainlandChinaDirectConnection: boolean | null
@@ -205,12 +223,11 @@ function formatTime(value: string | undefined) {
 }
 
 function mapProviderCode(value: string): CarpoolProductCatalogItem['providerCode'] {
-  return value === 'openai' || value === 'anthropic' ? value : 'other'
+  return value
 }
 
 function mapCategoryCode(value: string): CarpoolProductCatalogItem['categoryCode'] {
-  if (value === 'gpt' || value === 'claude' || value === 'cursor' || value === 'gemini' || value === 'perplexity') return value
-  return 'other'
+  return value
 }
 
 function mapPublishPolicy(value: string): CarpoolProductCatalogItem['publishPolicy'] {
@@ -327,8 +344,8 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
   const plan = await productPlan(listing.productPlanId)
   const monthly = numberFromDecimal(listing.priceMonthlyCny)
   const serviceMultiplier = numberFromDecimal(listing.serviceMultiplier)
-  const weeklyQuotaAmount = listing.weeklyQuotaAmount ? numberFromDecimal(listing.weeklyQuotaAmount) : undefined
-  const monthlyQuotaAmount = numberFromDecimal(listing.monthlyQuotaAmount)
+  const dailyQuotaAmount = listing.dailyQuotaAmount ? numberFromDecimal(listing.dailyQuotaAmount) : undefined
+  const weeklyQuotaAmount = numberFromDecimal(listing.weeklyQuotaAmount)
   const activeSeats = Math.max(0, listing.activeBuyerMembers)
   const totalSeats = Math.max(1, listing.buyerSeatCapacity)
   const availableSeats = Math.max(0, listing.availableSeats)
@@ -338,8 +355,8 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     region: listing.regionName,
     monthly,
     serviceMultiplier,
+    dailyQuotaAmount,
     weeklyQuotaAmount,
-    monthlyQuotaAmount,
     followsOfficialQuotaReset: listing.followsOfficialQuotaReset,
     vpsRegion: listing.vpsRegion,
     supportsMainlandChinaDirectConnection: listing.supportsMainlandChinaDirectConnection,
@@ -394,9 +411,35 @@ async function mapListings(rows: BackendCarpoolListing[]) {
   return Promise.all(rows.map(mapBackendCarpoolListing))
 }
 
+function carpoolPageQuery(filters: CarpoolPageFilters, page: CursorPageRequest) {
+  const params = new URLSearchParams()
+  if (filters.q?.trim()) params.set('q', filters.q.trim())
+  if (filters.productPlanIds?.length) params.set('productPlanIds', filters.productPlanIds.join(','))
+  if (filters.region) params.set('region', filters.region)
+  if (filters.carpoolId) params.set('carpoolId', filters.carpoolId)
+  if (filters.ownerType) params.set('ownerType', filters.ownerType)
+  if (filters.warranty) params.set('warranty', filters.warranty)
+  if (filters.statuses?.length) params.set('statuses', filters.statuses.join(','))
+  if (filters.view) params.set('view', filters.view)
+  if (filters.risk && filters.risk !== 'all') params.set('risk', filters.risk)
+  if (filters.sort && filters.sort !== 'recommended') params.set('sort', filters.sort)
+  if (filters.none) params.set('none', '1')
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export async function backendGetCarpoolsPage(filters: CarpoolPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
+  const response = await backendRequest<ListResponse<BackendCarpoolListing>>(`/api/v1/carpools${carpoolPageQuery(filters, page)}`)
+  return {
+    items: await mapListings(response.items),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
 export async function backendGetCarpools() {
-  const response = await backendRequest<ListResponse<BackendCarpoolListing>>('/api/v1/carpools')
-  return mapListings(response.items)
+  return collectCursorPages(page => backendGetCarpoolsPage({}, page))
 }
 
 export async function backendGetCarpoolById(id: string) {
@@ -409,10 +452,67 @@ export async function backendCarpoolApplicationEligibility(id: string) {
   return backendRequest<BackendCarpoolApplicationEligibility>(`/api/v1/carpools/${id}/eligibility`)
 }
 
-export async function backendOwnerCarpools() {
+export async function backendOwnerCarpoolsPage(view?: OwnerCarpoolView, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
   await ensureBackendSession('owner', false)
-  const response = await backendRequest<ListResponse<BackendCarpoolListing>>('/api/v1/me/carpools')
-  return mapListings(response.items)
+  const response = await backendRequest<ListResponse<BackendCarpoolListing>>(`/api/v1/me/carpools${carpoolPageQuery({ view }, page)}`)
+  return {
+    items: await mapListings(response.items),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
+export async function backendOwnerCarpools(view?: OwnerCarpoolView) {
+  return collectCursorPages(page => backendOwnerCarpoolsPage(view, page))
+}
+
+function ownerCarpoolEditData(listing: BackendCarpoolListing, plan: BackendProductPlan): OwnerCarpoolEditData {
+	return {
+		id: listing.id,
+		version: listing.version,
+		backendStatus: listing.status,
+		ownerContactMethodId: listing.ownerContactMethodId ?? '',
+		payload: {
+			productId: listing.productPlanId,
+			customProductName: listing.title !== plan.displayName ? listing.title : null,
+			regionCode: listing.regionCode,
+			customRegionName: listing.regionCode === 'other' ? listing.regionName : null,
+			monthlyPriceCny: numberFromDecimal(listing.priceMonthlyCny),
+			serviceMultiplier: numberFromDecimal(listing.serviceMultiplier),
+			dailyQuotaAmount: listing.dailyQuotaAmount ? numberFromDecimal(listing.dailyQuotaAmount) : null,
+			weeklyQuotaAmount: numberFromDecimal(listing.weeklyQuotaAmount),
+			followsOfficialQuotaReset: listing.followsOfficialQuotaReset,
+			vpsRegion: listing.vpsRegion ?? '',
+			supportsMainlandChinaDirectConnection: listing.supportsMainlandChinaDirectConnection,
+			totalSeats: listing.buyerSeatCapacity,
+			occupiedSeats: listing.activeBuyerMembers,
+			openingChannelCode: listing.openingChannelCode ?? '',
+			customOpeningChannel: listing.customOpeningChannel ?? '',
+			paymentMethodCode: listing.paymentMethodCode ?? '',
+			customPaymentMethod: listing.customPaymentMethod ?? '',
+			distributionMethod: listing.distributionMethod,
+			distributionMethodNote: listing.distributionMethodNote,
+			providesAdminAccount: listing.providesAdminAccount,
+			accessArrangementMode: mapAccessMode(plan.accessMode),
+			accessArrangementNote: listing.accessArrangement,
+			riskAcknowledged: listing.riskAckRequired,
+			policyVersion: listing.policyVersion,
+			riskNoticeCode: listing.riskNoticeCode ?? null,
+			warranty: {
+				mode: 'remaining_days_compensation',
+				fixedWarrantyDays: null,
+				compensationMethod: listing.cycleTerm?.exitPolicy ?? '',
+				exclusions: '',
+			},
+			rulesNote: listing.cycleTerm?.usageRules ?? listing.summary,
+			status: 'draft',
+		},
+	}
+}
+
+export async function backendOwnerCarpoolForEdit(id: string): Promise<OwnerCarpoolEditData> {
+	await ensureBackendSession('owner', false)
+	const listing = await backendRequest<BackendCarpoolListing>(`/api/v1/me/carpools/${encodeURIComponent(id)}`)
+	return ownerCarpoolEditData(listing, await productPlan(listing.productPlanId))
 }
 
 function applicationStatus(application: BackendCarpoolApplication, membership?: BackendCarpoolMembership): CarpoolApplicationWithMeta['status'] {
@@ -475,7 +575,7 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
       regionName: listing?.regionName || '其他',
       monthlyPriceCny: monthly,
       serviceMultiplier: listing ? numberFromDecimal(listing.serviceMultiplier) : undefined,
-      monthlyQuotaAmount: listing ? numberFromDecimal(listing.monthlyQuotaAmount) : undefined,
+      weeklyQuotaAmount: listing ? numberFromDecimal(listing.weeklyQuotaAmount) : undefined,
       quotaLabel: listing?.quotaLabel || plan.quotaLabel || defaultQuotaLabel,
       quotaUnit: listing?.quotaUnit || plan.quotaUnit || defaultQuotaUnit,
       quotaPeriod: listing?.quotaPeriod || plan.quotaPeriod || defaultQuotaPeriod,
@@ -533,37 +633,64 @@ function filterApplications(rows: CarpoolApplicationWithMeta[], filters: Carpool
 }
 
 async function loadBuyerMemberships() {
-  const response = await backendRequest<ListResponse<BackendCarpoolMembership>>('/api/v1/me/carpool-memberships')
+	const items = await collectCursorPages(async (page) => {
+		const response = await backendRequest<ListResponse<BackendCarpoolMembership>>(`/api/v1/me/carpool-memberships${carpoolPageQuery({}, page)}`)
+		return { items: response.items, nextCursor: normalizeNextCursor(response.nextCursor) }
+	})
   backendMembershipsByApplication.clear()
-  for (const membership of response.items) {
+	for (const membership of items) {
     backendMembershipsByApplication.set(membership.carpoolApplicationId, membership)
   }
-  return response.items
+	return items
 }
 
 async function loadOwnerMemberships() {
-  const response = await backendRequest<ListResponse<BackendCarpoolMembership>>('/api/v1/owner/carpool-memberships')
+	const items = await collectCursorPages(async (page) => {
+		const response = await backendRequest<ListResponse<BackendCarpoolMembership>>(`/api/v1/owner/carpool-memberships${carpoolPageQuery({}, page)}`)
+		return { items: response.items, nextCursor: normalizeNextCursor(response.nextCursor) }
+	})
   backendMembershipsByApplicationOwner.clear()
-  for (const membership of response.items) {
+	for (const membership of items) {
     backendMembershipsByApplicationOwner.set(membership.carpoolApplicationId, membership)
   }
-  return response.items
+	return items
+}
+
+function carpoolApplicationPageFilters(filters: CarpoolApplicationFilters): CarpoolPageFilters {
+  return {
+    q: filters.search,
+    statuses: Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : undefined,
+    carpoolId: filters.carpoolId,
+    sort: filters.sort,
+  }
+}
+
+export async function backendMyCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolApplicationWithMeta>> {
+  await ensureBackendSession('buyer', false)
+  await loadBuyerMemberships()
+	const response = await backendRequest<ListResponse<BackendCarpoolApplication>>(`/api/v1/me/carpool-applications${carpoolPageQuery(carpoolApplicationPageFilters(filters), page)}`)
+	return {
+		items: await mapApplications(response.items, 'buyer'),
+		nextCursor: normalizeNextCursor(response.nextCursor),
+	}
 }
 
 export async function backendMyCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
-  await ensureBackendSession('buyer', false)
-  await loadBuyerMemberships()
-  const response = await backendRequest<ListResponse<BackendCarpoolApplication>>('/api/v1/me/carpool-applications')
-  const rows = await mapApplications(response.items, 'buyer')
-  return filterApplications(rows, filters)
+  return collectCursorPages(page => backendMyCarpoolApplicationsPage(filters, page))
+}
+
+export async function backendMerchantCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolApplicationWithMeta>> {
+  await ensureBackendSession('owner', false)
+  await loadOwnerMemberships()
+	const response = await backendRequest<ListResponse<BackendCarpoolApplication>>(`/api/v1/owner/carpool-applications${carpoolPageQuery(carpoolApplicationPageFilters(filters), page)}`)
+	return {
+		items: await mapApplications(response.items, 'owner'),
+		nextCursor: normalizeNextCursor(response.nextCursor),
+	}
 }
 
 export async function backendMerchantCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
-  await ensureBackendSession('owner', false)
-  await loadOwnerMemberships()
-  const response = await backendRequest<ListResponse<BackendCarpoolApplication>>('/api/v1/owner/carpool-applications')
-  const rows = await mapApplications(response.items, 'owner')
-  return filterApplications(rows, filters)
+  return collectCursorPages(page => backendMerchantCarpoolApplicationsPage(filters, page))
 }
 
 export async function backendCarpoolApplicationById(id: string) {
@@ -605,7 +732,7 @@ function contactItem(item: BackendContactSessionContacts['items'][number]): Orde
     displayValue: item.value,
     verified: item.type === 'linuxdo',
     usageScope,
-    actionUrl: item.type === 'linuxdo' ? `https://linux.do/u/${item.value.replace(/^@/, '')}/messages/new` : undefined,
+    actionUrl: item.type === 'linuxdo' ? linuxDoProfileSummaryUrl(item.value) : undefined,
   }
 }
 
@@ -672,9 +799,9 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
     regionCode: payload.regionCode,
     regionName,
     priceMonthlyCny: String(monthly),
-    serviceMultiplier: '1',
+    serviceMultiplier: String(payload.serviceMultiplier ?? 1),
+    dailyQuotaAmount: String(payload.dailyQuotaAmount ?? 0),
     weeklyQuotaAmount: String(payload.weeklyQuotaAmount ?? 0),
-    monthlyQuotaAmount: String(payload.monthlyQuotaAmount ?? 0),
     followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
     vpsRegion: payload.vpsRegion.trim(),
     supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
@@ -691,19 +818,36 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
 export async function backendSubmitCarpool(payload: SaveCarpoolDraftPayload) {
   await ensureBackendSession('owner', false)
   const plan = await productPlan(payload.productId)
-  const ownerContact = await backendCreateContactMethod({
-    type: 'linuxdo',
-    label: 'linux.do 私信',
-    displayValue: '@owner',
-    usageScopes: ['carpool_owner'],
-    isDefault: true,
-    enabled: true,
-  })
+	const ownerContact = await backendBoundLinuxDoContactMethod()
   const publish = payload.status === 'reviewing'
   const listing = await backendMutation<BackendCarpoolListing>(publish ? '/api/v1/carpools/publish' : '/api/v1/carpools', toListingRequest(payload, ownerContact.id, plan), {
     idempotencyPrefix: publish ? 'carpool-publish' : 'carpool-listing',
   })
   return mapBackendCarpoolListing(listing)
+}
+
+export async function backendUpdateOwnerCarpool(
+	id: string,
+	payload: SaveCarpoolDraftPayload,
+	version: number,
+	ownerContactMethodId: string,
+	submitForReview: boolean,
+) {
+	await ensureBackendSession('owner', false)
+	const plan = await productPlan(payload.productId)
+	let listing = await backendMutation<BackendCarpoolListing>(
+		`/api/v1/carpools/${encodeURIComponent(id)}`,
+		toListingRequest(payload, ownerContactMethodId, plan),
+		{ method: 'PATCH', ifMatch: version, idempotencyPrefix: 'carpool-update' },
+	)
+	if (submitForReview) {
+		listing = await backendMutation<BackendCarpoolListing>(
+			`/api/v1/carpools/${encodeURIComponent(id)}/submit-review`,
+			{},
+			{ ifMatch: listing.version, idempotencyPrefix: 'carpool-submit-review' },
+		)
+	}
+	return mapBackendCarpoolListing(listing)
 }
 
 export async function backendCreateCarpoolApplication(carpoolId: string, payload: { rulesAccepted: boolean }) {
@@ -712,14 +856,7 @@ export async function backendCreateCarpoolApplication(carpoolId: string, payload
   const listing = await backendRequest<BackendCarpoolListing>(`/api/v1/carpools/${carpoolId}`)
   backendCarpoolListings.set(listing.id, listing)
   const plan = await productPlan(listing.productPlanId)
-  const buyerContact = await backendCreateContactMethod({
-    type: 'linuxdo',
-    label: 'linux.do 私信',
-    displayValue: '@buyer',
-    usageScopes: ['buyer'],
-    isDefault: true,
-    enabled: true,
-  })
+	const buyerContact = await backendBoundLinuxDoContactMethod()
   const response = await backendMutation<BackendCarpoolApplication>(`/api/v1/carpools/${carpoolId}/applications`, {
     buyerContactMethodId: buyerContact.id,
     riskAcknowledgement: riskAcknowledgement(plan, listing.riskNoticeCode, listing.policyVersion, true),
@@ -879,10 +1016,17 @@ async function carpoolAdminRow(listing: BackendCarpoolListing): Promise<AdminRow
   }
 }
 
-export async function backendAdminCarpoolRows() {
+export async function backendAdminCarpoolRowsPage(filters: CarpoolPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendCarpoolListing>>('/api/v1/admin/carpools')
-  return Promise.all(response.items.map(carpoolAdminRow))
+	const response = await backendRequest<ListResponse<BackendCarpoolListing>>(`/api/v1/admin/carpools${carpoolPageQuery(filters, page)}`)
+	return {
+		items: await Promise.all(response.items.map(carpoolAdminRow)),
+		nextCursor: normalizeNextCursor(response.nextCursor),
+	}
+}
+
+export async function backendAdminCarpoolRows() {
+  return collectCursorPages(page => backendAdminCarpoolRowsPage({}, page))
 }
 
 async function backendAdminCarpoolAction(id: string, action: 'approve' | 'request-changes' | 'reject' | 'pause' | 'restore', reason: string) {

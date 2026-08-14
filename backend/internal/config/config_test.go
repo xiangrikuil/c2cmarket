@@ -17,6 +17,7 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	t.Setenv("MAINTENANCE_INTERVAL", "")
 	t.Setenv("MAINTENANCE_BATCH_SIZE", "")
 	t.Setenv("API_DELIVERY_CREDENTIAL_RETENTION", "")
+	clearSentryEnv(t)
 	clearAPIHealthEnv(t)
 	clearDatabaseOptionEnv(t)
 
@@ -45,10 +46,9 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	if cfg.Maintenance.APIDeliveryCredentialRetention != 30*24*time.Hour {
 		t.Fatalf("unexpected API delivery credential retention: %s", cfg.Maintenance.APIDeliveryCredentialRetention)
 	}
-	if cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != time.Minute ||
-		cfg.APIHealth.Timeout != 10*time.Second || cfg.APIHealth.Concurrency != 4 ||
-		cfg.APIHealth.BatchSize != 50 || cfg.APIHealth.Retention != 7*24*time.Hour ||
-		cfg.APIHealth.ChallengeTTL != 15*time.Minute {
+	if !cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != time.Minute ||
+		cfg.APIHealth.Timeout != 30*time.Second || cfg.APIHealth.Concurrency != 4 ||
+		cfg.APIHealth.BatchSize != 50 || cfg.APIHealth.Retention != 8*24*time.Hour {
 		t.Fatalf("unexpected API health defaults: %+v", cfg.APIHealth)
 	}
 	if cfg.Database != database.DefaultPostgresOptions() {
@@ -56,6 +56,91 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	}
 	if cfg.DatabaseSlowQueryAfter != time.Second {
 		t.Fatalf("unexpected slow query threshold: %s", cfg.DatabaseSlowQueryAfter)
+	}
+	if strings.Join(cfg.TurnstileHostnames, ",") != "localhost,127.0.0.1" {
+		t.Fatalf("unexpected local Turnstile hostnames: %v", cfg.TurnstileHostnames)
+	}
+	if cfg.Sentry.Enabled || cfg.Sentry.Environment != EnvDevelopment || cfg.Sentry.TracesSampleRate != 0.1 {
+		t.Fatalf("unexpected Sentry defaults: %+v", cfg.Sentry)
+	}
+}
+
+func TestLoadParsesSentryConfig(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("SENTRY_ENABLED", "true")
+	t.Setenv("SENTRY_DSN", "https://public@example.ingest.sentry.io/123")
+	t.Setenv("SENTRY_ENVIRONMENT", "staging")
+	t.Setenv("SENTRY_RELEASE", "0123456789abcdef")
+	t.Setenv("SENTRY_TRACES_SAMPLE_RATE", "0.25")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load Sentry config: %v", err)
+	}
+	if !cfg.Sentry.Enabled || cfg.Sentry.DSN == "" || cfg.Sentry.Environment != "staging" ||
+		cfg.Sentry.Release != "0123456789abcdef" || cfg.Sentry.TracesSampleRate != 0.25 {
+		t.Fatalf("unexpected Sentry config: %+v", cfg.Sentry)
+	}
+}
+
+func TestLoadRejectsInvalidSentryConfig(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "missing DSN", key: "SENTRY_ENABLED", value: "true"},
+		{name: "invalid DSN", key: "SENTRY_DSN", value: "not-a-dsn"},
+		{name: "invalid sample rate", key: "SENTRY_TRACES_SAMPLE_RATE", value: "1.1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearSentryEnv(t)
+			t.Setenv("APP_ENV", EnvDevelopment)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SENTRY_") {
+				t.Fatalf("expected Sentry configuration error, got %v", err)
+			}
+		})
+	}
+}
+
+func clearSentryEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"SENTRY_ENABLED",
+		"SENTRY_DSN",
+		"SENTRY_ENVIRONMENT",
+		"SENTRY_RELEASE",
+		"SENTRY_TRACES_SAMPLE_RATE",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
+func TestLoadParsesTurnstileConfig(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TURNSTILE_SECRET", "test-turnstile-secret")
+	t.Setenv("TURNSTILE_HOSTNAMES", "C2CMarket.Shop, staging.c2cmarket.shop.,c2cmarket.shop")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load Turnstile config: %v", err)
+	}
+	if cfg.TurnstileSecret != "test-turnstile-secret" {
+		t.Fatal("expected configured Turnstile secret")
+	}
+	if strings.Join(cfg.TurnstileHostnames, ",") != "c2cmarket.shop,staging.c2cmarket.shop" {
+		t.Fatalf("unexpected Turnstile hostnames: %v", cfg.TurnstileHostnames)
+	}
+}
+
+func TestLoadRejectsInvalidTurnstileHostname(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TURNSTILE_HOSTNAMES", "https://c2cmarket.shop")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TURNSTILE_HOSTNAMES") {
+		t.Fatalf("expected invalid Turnstile hostname to fail, got %v", err)
 	}
 }
 
@@ -67,7 +152,6 @@ func TestLoadParsesAPIHealthRuntimeConfig(t *testing.T) {
 	t.Setenv("API_HEALTH_MAX_CONCURRENCY", "8")
 	t.Setenv("API_HEALTH_CLAIM_BATCH_SIZE", "120")
 	t.Setenv("API_HEALTH_SAMPLE_RETENTION", "240h")
-	t.Setenv("API_HEALTH_CHALLENGE_TTL", "30m")
 
 	cfg, err := Load()
 	if err != nil {
@@ -75,8 +159,7 @@ func TestLoadParsesAPIHealthRuntimeConfig(t *testing.T) {
 	}
 	if !cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != 45*time.Second ||
 		cfg.APIHealth.Timeout != 12*time.Second || cfg.APIHealth.Concurrency != 8 ||
-		cfg.APIHealth.BatchSize != 120 || cfg.APIHealth.Retention != 10*24*time.Hour ||
-		cfg.APIHealth.ChallengeTTL != 30*time.Minute {
+		cfg.APIHealth.BatchSize != 120 || cfg.APIHealth.Retention != 10*24*time.Hour {
 		t.Fatalf("unexpected API health config: %+v", cfg.APIHealth)
 	}
 }
@@ -93,7 +176,6 @@ func TestLoadRejectsInvalidAPIHealthRuntimeConfig(t *testing.T) {
 		{name: "concurrency", key: "API_HEALTH_MAX_CONCURRENCY", value: "0"},
 		{name: "batch size", key: "API_HEALTH_CLAIM_BATCH_SIZE", value: "201"},
 		{name: "retention", key: "API_HEALTH_SAMPLE_RETENTION", value: "12h"},
-		{name: "challenge ttl", key: "API_HEALTH_CHALLENGE_TTL", value: "2m"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,7 +198,6 @@ func clearAPIHealthEnv(t *testing.T) {
 		"API_HEALTH_MAX_CONCURRENCY",
 		"API_HEALTH_CLAIM_BATCH_SIZE",
 		"API_HEALTH_SAMPLE_RETENTION",
-		"API_HEALTH_CHALLENGE_TTL",
 	} {
 		t.Setenv(name, "")
 	}
@@ -311,6 +392,8 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	t.Setenv("MAIL_FROM_ADDRESS", "noreply@example.com")
 	t.Setenv("MAIL_FROM_NAME", "C2CMarket")
 	t.Setenv("METRICS_BEARER_TOKEN", "test-only-metrics-token-at-least-32-bytes")
+	t.Setenv("TURNSTILE_SECRET", "test-only-turnstile-secret")
+	t.Setenv("TURNSTILE_HOSTNAMES", "c2cmarket.example")
 
 	cfg, err := Load()
 	if err != nil {
@@ -328,6 +411,19 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	if cfg.EmailProvider != "aliyun_directmail" || cfg.SMTP.Host != "smtpdm.aliyun.com" || cfg.SMTP.Port != 465 || cfg.SMTP.FromAddress != "noreply@example.com" {
 		t.Fatalf("unexpected SMTP config: provider=%s smtp=%+v", cfg.EmailProvider, cfg.SMTP)
 	}
+	if cfg.TurnstileSecret == "" || strings.Join(cfg.TurnstileHostnames, ",") != "c2cmarket.example" {
+		t.Fatalf("unexpected production Turnstile config: hostnames=%v", cfg.TurnstileHostnames)
+	}
+	t.Setenv("TURNSTILE_SECRET", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TURNSTILE_SECRET") {
+		t.Fatalf("expected missing production Turnstile secret to fail, got %v", err)
+	}
+	t.Setenv("TURNSTILE_SECRET", "test-only-turnstile-secret")
+	t.Setenv("TURNSTILE_HOSTNAMES", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TURNSTILE_HOSTNAMES") {
+		t.Fatalf("expected missing production Turnstile hostnames to fail, got %v", err)
+	}
+	t.Setenv("TURNSTILE_HOSTNAMES", "c2cmarket.example")
 	t.Setenv("METRICS_BEARER_TOKEN", "too-short")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "METRICS_BEARER_TOKEN") {
 		t.Fatalf("expected short production metrics token to fail, got %v", err)

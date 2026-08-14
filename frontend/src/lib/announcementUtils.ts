@@ -206,6 +206,8 @@ export function validateAnnouncementFormInput(input: AnnouncementFormInput): Ann
   const title = input.title.trim()
   const summary = input.summary.trim()
   const content = input.contentMarkdown.trim()
+  const ctaLabel = input.ctaLabel?.trim()
+  const ctaUrl = input.ctaUrl?.trim()
 
   if (title.length < 2 || title.length > 80) errors.title = '标题需为 2 至 80 个字符。'
   if (summary.length < 10 || summary.length > 160) errors.summary = '摘要需为 10 至 160 个字符。'
@@ -217,7 +219,9 @@ export function validateAnnouncementFormInput(input: AnnouncementFormInput): Ann
   if (input.publishAt && input.expireAt && new Date(input.expireAt).getTime() <= new Date(input.publishAt).getTime()) {
     errors.expireAt = '结束时间必须晚于发布时间。'
   }
-  if (input.ctaUrl?.trim() && !sanitizeAnnouncementUrl(input.ctaUrl)) errors.ctaUrl = '跳转地址只允许站内相对路径或白名单 HTTPS 地址。'
+  if (ctaUrl && !ctaLabel) errors.ctaLabel = '填写跳转链接后，也需要填写按钮文案。'
+  if (ctaLabel && !ctaUrl) errors.ctaUrl = '填写按钮文案后，也需要填写跳转链接。'
+  if (ctaUrl && !sanitizeAnnouncementUrl(ctaUrl)) errors.ctaUrl = '跳转地址只允许站内相对路径或白名单 HTTPS 地址。'
 
   return {
     valid: Object.keys(errors).length === 0,

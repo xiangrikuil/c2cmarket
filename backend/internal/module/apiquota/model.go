@@ -42,15 +42,21 @@ const (
 	SystemSlotStateActive             = "active"
 	SystemSlotStateEnded              = "ended"
 
-	OrderabilityOrderable          = "orderable"
-	OrderabilityServiceUnavailable = "service_unavailable"
-	OrderabilityBatchPaused        = "batch_paused"
-	OrderabilityOfferPaused        = "offer_paused"
-	OrderabilityNotStarted         = "not_started"
-	OrderabilityRoundEnded         = "round_ended"
-	OrderabilitySoldOut            = "sold_out"
-	OrderabilityBatchExpired       = "batch_expired"
-	OrderabilityCredentialShortage = "credential_unavailable"
+	OrderabilityOrderable           = "orderable"
+	OrderabilityServiceUnavailable  = "service_unavailable"
+	OrderabilityBatchPaused         = "batch_paused"
+	OrderabilityOfferPaused         = "offer_paused"
+	OrderabilityNotStarted          = "not_started"
+	OrderabilityRoundEnded          = "round_ended"
+	OrderabilitySoldOut             = "sold_out"
+	OrderabilityBatchExpired        = "batch_expired"
+	OrderabilityCredentialShortage  = "credential_unavailable"
+	OrderabilityConfirmationMissing = "fulfillment_confirmation_required"
+
+	PublicOfferSortUpdatedDesc   = "updated_desc"
+	PublicOfferSortUnitPriceAsc  = "unit_price_asc"
+	PublicOfferSortAllowanceDesc = "allowance_desc"
+	PublicOfferSortDeliveryAsc   = "delivery_asc"
 )
 
 type Batch struct {
@@ -103,19 +109,20 @@ type Offer struct {
 }
 
 type SaleRound struct {
-	ID            string
-	BatchID       string
-	APIServiceID  string
-	OwnerUserID   string
-	SystemSlotKey string
-	Name          string
-	StartsAt      time.Time
-	EndsAt        time.Time
-	Status        string
-	Allocations   []Allocation
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	Version       int64
+	ID                     string
+	BatchID                string
+	APIServiceID           string
+	OwnerUserID            string
+	SystemSlotKey          string
+	Name                   string
+	StartsAt               time.Time
+	EndsAt                 time.Time
+	Status                 string
+	FulfillmentConfirmedAt *time.Time
+	Allocations            []Allocation
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	Version                int64
 }
 
 type SystemSaleSlot struct {
@@ -153,6 +160,7 @@ type OfferCard struct {
 	ServiceOrderable          bool
 	SellerDisplayName         string
 	SellerIdentityType        string
+	MerchantAvatarURL         string
 	SellerLinuxDOBound        bool
 	DeclaredTTFTBand          string
 	DeclaredMaxConcurrency    int
@@ -179,6 +187,7 @@ type CreateBatchInput struct {
 	SaleCutoffAt              time.Time
 	ExpiresAt                 time.Time
 	SourceConfirmedAt         time.Time
+	RequestID                 string
 }
 
 type CreateOfferInput struct {
@@ -194,6 +203,7 @@ type CreateOfferInput struct {
 	SaleMode           string
 	ContinuousCopies   int
 	SortOrder          int
+	RequestID          string
 }
 
 type RoundOfferInput struct {
@@ -208,6 +218,7 @@ type CreateRoundInput struct {
 	StartsAt    time.Time
 	EndsAt      time.Time
 	Offers      []RoundOfferInput
+	RequestID   string
 }
 
 type CreateOrderInput struct {
@@ -228,11 +239,24 @@ type BatchActionInput struct {
 	RequestID       string
 }
 
+type SaleRoundActionInput struct {
+	SaleRoundID     string
+	OwnerUserID     string
+	ExpectedVersion int64
+	RequestID       string
+}
+
 type PublicOfferFilter struct {
 	DistributionSystem string
+	ModelCatalogID     string
 	OnlyOneMultiplier  bool
+	MaxMultiplier      string
 	OnlyOrderable      bool
+	SaleMode           string
 	SystemSlotKey      string
+	Search             string
+	ExcludeSystemSlots bool
+	Sort               string
 }
 
 type CredentialSummary struct {
@@ -247,6 +271,7 @@ type CredentialImportInput struct {
 	OfferID      string
 	DeliveryKind string
 	CSV          io.Reader
+	RequestID    string
 }
 
 type CredentialImportRow struct {
@@ -281,6 +306,7 @@ type CreateRushOfferInput struct {
 	SourceConfirmedAt  time.Time
 	DeliveryKind       string
 	CredentialRows     []CredentialImportRow
+	RequestID          string
 }
 
 type RushOfferPublication struct {
@@ -289,6 +315,12 @@ type RushOfferPublication struct {
 	Round              SaleRound
 	CredentialSummary  CredentialSummary
 	CredentialImported int
+	RequestID          string
 }
 
 type RushOfferCompletionBuilder func(RushOfferPublication) (idempotency.Completion, *domain.AppError)
+
+type BatchCompletionBuilder func(Batch) (idempotency.Completion, *domain.AppError)
+type OfferCompletionBuilder func(Offer) (idempotency.Completion, *domain.AppError)
+type SaleRoundCompletionBuilder func(SaleRound) (idempotency.Completion, *domain.AppError)
+type CredentialImportCompletionBuilder func(CredentialImportResult) (idempotency.Completion, *domain.AppError)

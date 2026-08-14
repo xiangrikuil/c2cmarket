@@ -8,225 +8,358 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apihealth"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/go-chi/chi/v5"
 )
 
-type apiHealthProbeConfigRequest struct {
+type apiProbeConnectionRequest struct {
+	Name                    string  `json:"name"`
 	BaseURL                 string  `json:"baseUrl"`
-	Model                   string  `json:"model"`
 	Credential              *string `json:"credential"`
+	ProbeModel              string  `json:"probeModel"`
+	PreflightToken          string  `json:"preflightToken"`
 	Enabled                 *bool   `json:"enabled"`
 	AcknowledgeInsecureHTTP bool    `json:"acknowledgeInsecureHttp"`
 }
 
-type apiHealthProbeChallengeRequest struct {
-	Method string `json:"method"`
+type apiProbeConnectionServiceResponse struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
-type ownerAPIHealthProbeConfigResponse struct {
-	ID                   string     `json:"id"`
-	APIServiceID         string     `json:"apiServiceId"`
-	Protocol             string     `json:"protocol"`
-	BaseURL              string     `json:"baseUrl"`
-	NormalizedOrigin     string     `json:"normalizedOrigin"`
-	Model                string     `json:"model"`
-	CredentialConfigured bool       `json:"credentialConfigured"`
-	Enabled              bool       `json:"enabled"`
-	AuthorizationStatus  string     `json:"authorizationStatus"`
-	AuthorizationMethod  *string    `json:"authorizationMethod"`
-	VerifiedOrigin       *string    `json:"verifiedOrigin"`
-	VerifiedAt           *time.Time `json:"verifiedAt"`
-	ApprovedAt           *time.Time `json:"approvedAt"`
-	RejectionReason      *string    `json:"rejectionReason"`
-	ChallengeExpiresAt   *time.Time `json:"challengeExpiresAt"`
-	MeasurementVersion   int64      `json:"measurementVersion"`
-	LastConfigErrorCode  *string    `json:"lastConfigErrorCode"`
-	Version              int64      `json:"version"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
+type ownerAPIProbeConnectionResponse struct {
+	ID                         string                              `json:"id"`
+	Name                       string                              `json:"name"`
+	BaseURL                    string                              `json:"baseUrl"`
+	NormalizedBaseURL          string                              `json:"normalizedBaseUrl"`
+	CredentialConfigured       bool                                `json:"credentialConfigured"`
+	Enabled                    bool                                `json:"enabled"`
+	VerificationStatus         string                              `json:"verificationStatus"`
+	VerifiedAt                 *time.Time                          `json:"verifiedAt"`
+	LastVerificationErrorCode  *string                             `json:"lastVerificationErrorCode"`
+	ProbeModel                 *string                             `json:"probeModel"`
+	ProbeProtocol              *string                             `json:"probeProtocol"`
+	AvailableModels            []string                            `json:"availableModels"`
+	ProbeEnvironment           string                              `json:"probeEnvironment"`
+	ProbeModelChangedAt        *time.Time                          `json:"probeModelChangedAt"`
+	DailyBaseCostUpperBoundUSD *string                             `json:"dailyBaseCostUpperBoundUsd"`
+	PriceUnavailable           bool                                `json:"priceUnavailable"`
+	MeasurementVersion         int64                               `json:"measurementVersion"`
+	Version                    int64                               `json:"version"`
+	ReferencedServices         []apiProbeConnectionServiceResponse `json:"referencedServices"`
+	HealthSummary              apiServiceHealthSummaryResponse     `json:"healthSummary"`
+	CreatedAt                  time.Time                           `json:"createdAt"`
+	UpdatedAt                  time.Time                           `json:"updatedAt"`
 }
 
-type apiHealthProbeChallengeResponse struct {
-	Token         string    `json:"token"`
-	Method        string    `json:"method"`
-	DNSRecordName *string   `json:"dnsRecordName"`
-	HTTPURL       *string   `json:"httpUrl"`
-	ExpiresAt     time.Time `json:"expiresAt"`
-	ConfigVersion int64     `json:"configVersion"`
+type apiProbeConnectionPreflightResponse struct {
+	ErrorCode                  *string  `json:"errorCode"`
+	AvailableModels            []string `json:"availableModels"`
+	ProbeModel                 *string  `json:"probeModel"`
+	ProbeProtocol              *string  `json:"probeProtocol"`
+	ProbeEnvironment           string   `json:"probeEnvironment"`
+	DailyBaseCostUpperBoundUSD *string  `json:"dailyBaseCostUpperBoundUsd"`
+	PriceUnavailable           bool     `json:"priceUnavailable"`
+	PreflightToken             *string  `json:"preflightToken"`
 }
 
-func (s *Server) handleOwnerAPIHealthProbe(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handlePreflightOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
 	setAPIHealthPrivateHeaders(w)
-	user, _, appErr := s.requireSession(w, r)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	if appErr = s.requireAPIHealthService(); appErr != nil {
-		writeProblem(w, r, appErr)
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
 		return
 	}
-	config, found, appErr := s.apiHealth.OwnerConfig(r.Context(), user, chi.URLParam(r, "id"))
+	input, appErr := decodeStrictJSONOnly[apiProbeConnectionRequest](request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
+		return
+	}
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	result, appErr := server.apiHealth.PreflightOwnerConnection(request.Context(), user, toAPIProbeConnectionInput(input))
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPIProbeConnectionPreflightResponse(result))
+}
+
+func (server *Server) handlePreflightExistingOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
+	setAPIHealthPrivateHeaders(w)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	input, appErr := decodeStrictJSONOnly[apiProbeConnectionRequest](request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	result, appErr := server.apiHealth.PreflightExistingOwnerConnection(request.Context(), user, chi.URLParam(request, "id"), toAPIProbeConnectionInput(input), version)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPIProbeConnectionPreflightResponse(result))
+}
+
+func (server *Server) handleOwnerAPIProbeConnections(w http.ResponseWriter, request *http.Request) {
+	setAPIHealthPrivateHeaders(w)
+	user, _, appErr := server.requireSession(w, request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	connections, appErr := server.apiHealth.OwnerConnections(request.Context(), user)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	items := make([]ownerAPIProbeConnectionResponse, 0, len(connections))
+	for _, connection := range connections {
+		items = append(items, toOwnerAPIProbeConnectionResponse(connection))
+	}
+	writeJSON(w, http.StatusOK, listResponse[ownerAPIProbeConnectionResponse]{Items: items})
+}
+
+func (server *Server) handleOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
+	setAPIHealthPrivateHeaders(w)
+	user, _, appErr := server.requireSession(w, request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	connection, found, appErr := server.apiHealth.OwnerConnection(request.Context(), user, chi.URLParam(request, "id"))
+	if appErr != nil {
+		writeProblem(w, request, appErr)
 		return
 	}
 	if !found {
-		writeProblem(w, r, apiHealthProbeNotFoundError())
+		writeProblem(w, request, apiHealthProbeNotFoundError())
 		return
 	}
-	setETag(w, config.Version)
-	writeJSON(w, http.StatusOK, toOwnerAPIHealthProbeConfigResponse(config))
+	setETag(w, connection.Version)
+	writeJSON(w, http.StatusOK, toOwnerAPIProbeConnectionResponse(connection))
 }
 
-func (s *Server) handlePutOwnerAPIHealthProbe(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleCreateOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
 	setAPIHealthPrivateHeaders(w)
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	request, appErr := decodeStrictJSONOnly[apiHealthProbeConfigRequest](r)
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	body, input, appErr := decodeStrictJSON[apiProbeConnectionRequest](request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	if request.Enabled == nil {
-		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe enabled state required", "必须明确指定是否启用探针。", "enabled", "required", "必须提供 enabled。"))
+	if input.Enabled == nil {
+		writeProblem(w, request, probeEnabledRequiredError())
 		return
 	}
-	version, appErr := requireIfMatchVersionAllowZero(r)
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	routeKey := "POST /api/v1/owner/api-probe-connections"
+	completion, appErr := server.apiHealth.CreateOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		requestHash(request.Method, routeKey, body), toAPIProbeConnectionInput(input), requestIDFrom(request),
+		func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return apiHealthIdempotencyCompletion(http.StatusCreated, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
+		},
+	)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	if appErr = s.requireAPIHealthService(); appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	config, appErr := s.apiHealth.PutOwnerConfig(r.Context(), user, chi.URLParam(r, "id"), apihealth.ConfigInput{
-		BaseURL: request.BaseURL, Model: request.Model, Credential: request.Credential, Enabled: *request.Enabled,
-		AcknowledgeInsecureHTTP: request.AcknowledgeInsecureHTTP,
-	}, version)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	setETag(w, config.Version)
-	writeJSON(w, http.StatusOK, toOwnerAPIHealthProbeConfigResponse(config))
+	writeAPIHealthMutationCompletion(w, completion)
 }
 
-func (s *Server) handleDeleteOwnerAPIHealthProbe(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleUpdateOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
 	setAPIHealthPrivateHeaders(w)
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	version, appErr := requireIfMatchVersion(r)
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	body, input, appErr := decodeStrictJSON[apiProbeConnectionRequest](request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	if appErr = s.requireAPIHealthService(); appErr != nil {
-		writeProblem(w, r, appErr)
+	if input.Enabled == nil {
+		writeProblem(w, request, probeEnabledRequiredError())
 		return
 	}
-	if appErr := s.apiHealth.DeleteOwnerConfig(r.Context(), user, chi.URLParam(r, "id"), version); appErr != nil {
-		writeProblem(w, r, appErr)
+	version, appErr := requireIfMatchVersion(request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	connectionID := chi.URLParam(request, "id")
+	routeKey := "PUT /api/v1/owner/api-probe-connections/{id}"
+	completion, appErr := server.apiHealth.UpdateOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		apiHealthMutationRequestHash(request, routeKey, body, connectionID, version), connectionID,
+		toAPIProbeConnectionInput(input), version, requestIDFrom(request),
+		func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return apiHealthIdempotencyCompletion(http.StatusOK, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
+		},
+	)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeAPIHealthMutationCompletion(w, completion)
 }
 
-func (s *Server) handleCreateOwnerAPIHealthProbeChallenge(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleDeleteOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
 	setAPIHealthPrivateHeaders(w)
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	body, request, appErr := decodeStrictJSON[apiHealthProbeChallengeRequest](r)
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	version, appErr := requireIfMatchVersion(request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	version, appErr := requireIfMatchVersion(r)
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	connectionID := chi.URLParam(request, "id")
+	routeKey := "DELETE /api/v1/owner/api-probe-connections/{id}"
+	completion, appErr := server.apiHealth.DeleteOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		apiHealthMutationRequestHash(request, routeKey, nil, connectionID, version), connectionID,
+		version, requestIDFrom(request), func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return idempotency.Completion{
+				Status: http.StatusNoContent, ResourceType: "api_probe_connection", ResourceID: connection.ID,
+			}, nil
+		},
+	)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	if appErr = s.requireAPIHealthService(); appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	serviceID := chi.URLParam(r, "id")
-	routeKey := "POST /api/v1/owner/api-services/{id}/health-probe/challenges:" + serviceID
-	s.withAPIHealthIdempotency(w, r, user.ID, routeKey, body, func() (idempotency.Completion, *domain.AppError) {
-		challenge, appErr := s.apiHealth.CreateChallenge(r.Context(), user, serviceID, request.Method, version)
-		if appErr != nil {
-			return idempotency.Completion{}, appErr
-		}
-		return apiHealthIdempotencyCompletion(
-			http.StatusCreated,
-			toAPIHealthProbeChallengeResponse(challenge),
-			challenge.ConfigVersion,
-			serviceID,
-		)
-	})
+	writeAPIHealthMutationCompletion(w, completion)
 }
 
-func (s *Server) handleVerifyOwnerAPIHealthProbe(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleVerifyOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
 	setAPIHealthPrivateHeaders(w)
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	version, appErr := requireIfMatchVersion(r)
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	version, appErr := requireIfMatchVersion(request)
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
-	if appErr = s.requireAPIHealthService(); appErr != nil {
-		writeProblem(w, r, appErr)
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
 		return
 	}
-	serviceID := chi.URLParam(r, "id")
-	routeKey := "POST /api/v1/owner/api-services/{id}/health-probe/verify:" + serviceID
-	s.withAPIHealthIdempotency(w, r, user.ID, routeKey, nil, func() (idempotency.Completion, *domain.AppError) {
-		config, appErr := s.apiHealth.VerifyChallenge(r.Context(), user, serviceID, version)
-		if appErr != nil {
-			return idempotency.Completion{}, appErr
-		}
-		return apiHealthIdempotencyCompletion(
-			http.StatusOK,
-			toOwnerAPIHealthProbeConfigResponse(config),
-			config.Version,
-			config.ID,
-		)
-	})
+	connectionID := chi.URLParam(request, "id")
+	routeKey := "POST /api/v1/owner/api-probe-connections/{id}/verify"
+	completion, appErr := server.apiHealth.VerifyOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		apiHealthMutationRequestHash(request, routeKey, nil, connectionID, version), connectionID,
+		version, requestIDFrom(request), func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return apiHealthIdempotencyCompletion(http.StatusOK, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
+		},
+	)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeAPIHealthMutationCompletion(w, completion)
 }
 
-func (s *Server) withAPIHealthIdempotency(
+func apiHealthMutationRequestHash(request *http.Request, routeKey string, body []byte, connectionID string, version int64) string {
+	prefix := []byte(connectionID + "\n" + strconv.FormatInt(version, 10) + "\n")
+	payload := make([]byte, 0, len(prefix)+len(body))
+	payload = append(payload, prefix...)
+	payload = append(payload, body...)
+	return requestHash(request.Method, routeKey, payload)
+}
+
+func writeAPIHealthMutationCompletion(w http.ResponseWriter, completion idempotency.Completion) {
+	if completion.Status == http.StatusNoContent {
+		completion.ContentType = ""
+		completion.Body = nil
+	}
+	restoreAPIHealthETag(&completion)
+	writeNoStoreIdempotencyCompletion(w, completion)
+}
+
+func (server *Server) withAPIHealthIdempotency(
 	w http.ResponseWriter,
-	r *http.Request,
+	request *http.Request,
 	userID string,
 	routeKey string,
 	body []byte,
 	run func() (idempotency.Completion, *domain.AppError),
 ) {
-	entry, appErr := s.app.BeginIdempotency(
-		r.Context(),
-		userID,
-		routeKey,
-		r.Header.Get("Idempotency-Key"),
-		requestHash(r.Method, routeKey, body),
-	)
+	entry, appErr := server.app.BeginIdempotency(request.Context(), userID, routeKey, request.Header.Get("Idempotency-Key"), requestHash(request.Method, routeKey, body))
 	if appErr != nil {
-		writeProblem(w, r, appErr)
+		writeProblem(w, request, appErr)
 		return
 	}
 	if entry.State == "completed" {
@@ -235,24 +368,15 @@ func (s *Server) withAPIHealthIdempotency(
 		writeNoStoreIdempotencyCompletion(w, completion)
 		return
 	}
-
 	completion, appErr := run()
 	if appErr != nil {
-		s.app.CancelIdempotency(r.Context(), entry)
-		writeProblem(w, r, appErr)
+		server.app.CancelIdempotency(request.Context(), entry)
+		writeProblem(w, request, appErr)
 		return
 	}
-	if appErr := s.app.CompleteIdempotency(
-		r.Context(),
-		entry,
-		completion.Status,
-		completion.ContentType,
-		completion.Body,
-		completion.ResourceType,
-		completion.ResourceID,
-	); appErr != nil {
-		s.app.CancelIdempotency(r.Context(), entry)
-		writeProblem(w, r, appErr)
+	if appErr := server.app.CompleteIdempotency(request.Context(), entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		server.app.CancelIdempotency(request.Context(), entry)
+		writeProblem(w, request, appErr)
 		return
 	}
 	writeNoStoreIdempotencyCompletion(w, completion)
@@ -264,14 +388,9 @@ func apiHealthIdempotencyCompletion(status int, payload any, version int64, reso
 		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
 	return idempotency.Completion{
-		Status:       status,
-		ContentType:  "application/json; charset=utf-8",
-		Body:         body,
-		ResourceType: "api_health_probe_config",
-		ResourceID:   resourceID,
-		Headers: map[string]string{
-			"ETag": `"` + strconv.FormatInt(version, 10) + `"`,
-		},
+		Status: status, ContentType: "application/json; charset=utf-8", Body: body,
+		ResourceType: "api_probe_connection", ResourceID: resourceID,
+		Headers: map[string]string{"ETag": `"` + strconv.FormatInt(version, 10) + `"`},
 	}, nil
 }
 
@@ -280,56 +399,71 @@ func restoreAPIHealthETag(completion *idempotency.Completion) {
 		return
 	}
 	var payload struct {
-		Version       int64 `json:"version"`
-		ConfigVersion int64 `json:"configVersion"`
+		Version int64 `json:"version"`
 	}
-	if err := json.Unmarshal(completion.Body, &payload); err != nil {
-		return
-	}
-	version := payload.Version
-	if version == 0 {
-		version = payload.ConfigVersion
-	}
-	if version <= 0 {
+	if err := json.Unmarshal(completion.Body, &payload); err != nil || payload.Version <= 0 {
 		return
 	}
 	if completion.Headers == nil {
 		completion.Headers = make(map[string]string)
 	}
-	completion.Headers["ETag"] = `"` + strconv.FormatInt(version, 10) + `"`
+	completion.Headers["ETag"] = `"` + strconv.FormatInt(payload.Version, 10) + `"`
 }
 
-func toOwnerAPIHealthProbeConfigResponse(config apihealth.Config) ownerAPIHealthProbeConfigResponse {
-	return ownerAPIHealthProbeConfigResponse{
-		ID: config.ID, APIServiceID: config.APIServiceID, Protocol: config.Protocol,
-		BaseURL: config.BaseURL, NormalizedOrigin: config.NormalizedOrigin, Model: config.Model,
-		CredentialConfigured: config.CredentialConfigured, Enabled: config.Enabled,
-		AuthorizationStatus: config.AuthorizationStatus, AuthorizationMethod: apiHealthStringPointer(config.AuthorizationMethod),
-		VerifiedOrigin: apiHealthStringPointer(config.VerifiedOrigin), VerifiedAt: config.VerifiedAt,
-		ApprovedAt: config.ApprovedAt, RejectionReason: apiHealthStringPointer(config.RejectionReason),
-		ChallengeExpiresAt: config.ChallengeExpiresAt, MeasurementVersion: config.MeasurementVersion,
-		LastConfigErrorCode: apiHealthStringPointer(config.LastConfigErrorCode), Version: config.Version,
-		CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt,
+func toAPIProbeConnectionInput(request apiProbeConnectionRequest) apihealth.ConnectionInput {
+	return apihealth.ConnectionInput{
+		Name: request.Name, BaseURL: request.BaseURL, Credential: request.Credential, ProbeModel: request.ProbeModel,
+		PreflightToken: request.PreflightToken, Enabled: request.Enabled != nil && *request.Enabled,
+		AcknowledgeInsecureHTTP: request.AcknowledgeInsecureHTTP,
 	}
 }
 
-func toAPIHealthProbeChallengeResponse(challenge apihealth.Challenge) apiHealthProbeChallengeResponse {
-	return apiHealthProbeChallengeResponse{
-		Token: challenge.Token, Method: challenge.Method,
-		DNSRecordName: apiHealthStringPointer(challenge.DNSRecordName), HTTPURL: apiHealthStringPointer(challenge.HTTPURL),
-		ExpiresAt: challenge.ExpiresAt, ConfigVersion: challenge.ConfigVersion,
+func toOwnerAPIProbeConnectionResponse(connection apihealth.Connection) ownerAPIProbeConnectionResponse {
+	references := make([]apiProbeConnectionServiceResponse, 0, len(connection.References))
+	for _, reference := range connection.References {
+		references = append(references, apiProbeConnectionServiceResponse{ID: reference.ID, Title: reference.Title})
+	}
+	dailyCost := apiHealthOptionalString(apihealth.DailyBaseCostUpperBoundUSD(connection.Price))
+	return ownerAPIProbeConnectionResponse{
+		ID: connection.ID, Name: connection.Name, BaseURL: connection.BaseURL, NormalizedBaseURL: connection.NormalizedBaseURL,
+		CredentialConfigured: connection.CredentialConfigured, Enabled: connection.Enabled,
+		VerificationStatus: connection.VerificationStatus, VerifiedAt: connection.VerifiedAt,
+		LastVerificationErrorCode: apiHealthStringPointer(connection.LastVerificationErrorCode),
+		ProbeModel:                apiHealthOptionalString(connection.ProbeModel), ProbeProtocol: apiHealthOptionalString(connection.ProbeProtocol),
+		AvailableModels: append([]string(nil), connection.AvailableModels...), ProbeEnvironment: connection.ProbeEnvironment,
+		ProbeModelChangedAt: connection.ProbeModelChangedAt, DailyBaseCostUpperBoundUSD: dailyCost,
+		PriceUnavailable:   dailyCost == nil,
+		MeasurementVersion: connection.MeasurementVersion, Version: connection.Version,
+		ReferencedServices: references, HealthSummary: toAPIServiceHealthSummaryResponse(connection.HealthSummary),
+		CreatedAt: connection.CreatedAt, UpdatedAt: connection.UpdatedAt,
 	}
 }
 
-func (s *Server) requireAPIHealthService() *domain.AppError {
-	if s.apiHealth != nil {
+func toAPIProbeConnectionPreflightResponse(result apihealth.PreflightResult) apiProbeConnectionPreflightResponse {
+	return apiProbeConnectionPreflightResponse{
+		ErrorCode:       apiHealthStringPointer(result.Verification.ErrorCode),
+		AvailableModels: append([]string(nil), result.Verification.AvailableModels...),
+		ProbeModel:      apiHealthOptionalString(result.Verification.ProbeModel), ProbeProtocol: apiHealthOptionalString(result.Verification.ProbeProtocol),
+		ProbeEnvironment:           apihealth.ProbeEnvironmentUSWestV1,
+		DailyBaseCostUpperBoundUSD: apiHealthOptionalString(result.DailyBaseCostUpperBoundUSD),
+		PriceUnavailable:           result.PriceUnavailable,
+		PreflightToken:             apiHealthOptionalString(result.PreflightToken),
+	}
+}
+
+func (server *Server) requireAPIHealthService() *domain.AppError {
+	if server.apiHealth != nil {
 		return nil
 	}
 	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "API health unavailable", "探针服务暂时不可用。")
 }
 
 func apiHealthProbeNotFoundError() *domain.AppError {
-	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Probe config not found", "探针配置不存在。")
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Probe connection not found", "探针连接不存在。")
+}
+
+func probeEnabledRequiredError() *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe enabled state required", "必须明确指定是否启用探针连接。", "enabled", "required", "必须提供 enabled。")
 }
 
 func setAPIHealthPrivateHeaders(w http.ResponseWriter) {

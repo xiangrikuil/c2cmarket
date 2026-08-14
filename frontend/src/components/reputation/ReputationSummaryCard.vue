@@ -34,10 +34,6 @@ const faultRate = computed(() => {
   const value = props.summary?.roleFaultCancelRate
   return value === null || value === undefined ? '暂无数据' : `${Math.round(value * 100)}%`
 })
-const rating = computed(() => {
-  const value = props.summary?.weightedRating
-  return value === null || value === undefined ? '暂无数据' : value.toFixed(2)
-})
 </script>
 
 <template>
@@ -99,8 +95,8 @@ const rating = computed(() => {
           <dd class="mt-0.5 font-medium">{{ summary.unresolvedDisputes }}</dd>
         </div>
         <div>
-          <dt class="text-xs text-muted-foreground">修正评分</dt>
-          <dd class="mt-0.5 font-medium">{{ rating }}</dd>
+          <dt class="text-xs text-muted-foreground">有效评价</dt>
+          <dd class="mt-0.5 font-medium">{{ summary.verifiedReviewCount }}</dd>
         </div>
       </dl>
     </template>

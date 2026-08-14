@@ -18,9 +18,11 @@ import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSo
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
 import FixedPackageSection from '@/components/api-service-publish/FixedPackageSection.vue'
 import MerchantIdentitySection from '@/components/api-service-publish/MerchantIdentitySection.vue'
+import MerchantContactMethodsSection from '@/components/api-service-publish/MerchantContactMethodsSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import PriceInventorySection from '@/components/api-service-publish/PriceInventorySection.vue'
+import ProbeConnectionSection from '@/components/api-service-publish/ProbeConnectionSection.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
 import SelectedModelsPricingTable from '@/components/api-service-publish/SelectedModelsPricingTable.vue'
 import PublishStepSection from '@/components/api-service-publish/PublishStepSection.vue'
@@ -42,26 +44,31 @@ import {
   merchantNoteTemplate,
   modelProviderCategory,
   paymentMethodLabels,
-  providerCategoryLabels,
+  providerCategoryLabel,
   selectedCatalogItems,
   sub2ApiPricingPolicy,
 } from '@/components/api-service-publish/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { backendErrorMessage } from '@/lib/backendClient'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
-import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useApiPaymentAccountSettingsQuery, useMerchantApiOrders, useModelCatalog, useMyContactMethodsQuery, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
   | 'merchantIdentity'
   | 'merchantDisplayName'
+	| 'ownerContactMethods'
   | 'distributionSystem'
+  | 'probeConnection'
   | 'defaultMultiplier'
   | 'providerCategory'
   | 'cnyPerUsdCredit'
@@ -83,6 +90,9 @@ type ApiServicePublishStep = 1 | 2 | 3
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const { data: myProfile, isLoading: profileLoading } = useMyProfileQuery()
+const contactMethodsQuery = useMyContactMethodsQuery()
+const activeDisputesQuery = useMerchantApiOrders({ dispute: 'active' })
+const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const queryClient = useQueryClient()
 const route = useRoute()
 const router = useRouter()
@@ -96,7 +106,7 @@ const currentStep = ref<ApiServicePublishStep>(1)
 const completedSteps = ref<ApiServicePublishStep[]>([])
 const publishSteps = computed(() => isLimitedQuotaMode.value
   ? [
-      { title: '销售模式', description: '限时额度包' },
+      { title: '销售模式', description: '限量额度包' },
       { title: '配置基础服务', description: '接入、模型与体验' },
       { title: '设置额度包', description: '定价、库存与放量' },
     ]
@@ -116,6 +126,8 @@ const formDirty = ref(false)
 useUnsavedChangesGuard(formDirty, 'API 服务配置尚未发布，确认离开当前页面？')
 
 const form = reactive<ApiServicePublishForm>({
+	probeConnectionId: '',
+	ownerContactMethodIds: [],
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -167,9 +179,20 @@ const catalog = computed(() => modelCatalog.value ?? [])
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === form.providerCategory))
 const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, item])))
 const selectedModels = computed(() => selectedCatalogItems(form, catalogById.value))
+const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
+  contact.enabled && contact.usageScopes.includes('api_merchant')
+)))
+const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === form.probeConnectionId) ?? null)
+const probeConnectionReady = computed(() => Boolean(
+  selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
+))
+const probeConnectionError = computed(() => probeConnectionsQuery.error.value
+  ? backendErrorMessage(probeConnectionsQuery.error.value, '探针连接暂时无法读取。')
+  : '')
 const incompatibleSelectedModels = computed(() => selectedModels.value.filter(item => modelProviderCategory(item.provider) !== form.providerCategory))
 const missingSelectedModels = computed(() => form.selectedModels.filter(item => item.enabled && !catalogById.value.has(item.modelId)))
-const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.value ? providerCategoryLabels[pendingProviderCategory.value] : '')
+const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.value ? providerCategoryLabel(pendingProviderCategory.value) : '')
 const quotaForMinimumPurchase = computed(() => formatUsdQuotaForCny(form.cnyPerUsdCredit, form.minimumPurchaseCny ?? 0))
 const enabledPackages = computed(() => form.packages.filter(item => item.enabled))
 const enabledPayments = computed(() => enabledPaymentOptions(form))
@@ -209,6 +232,15 @@ function syncHiddenPublishFields() {
 syncHiddenPublishFields()
 
 watch(profileMerchantDisplayName, () => syncMerchantDisplayNameSnapshot(), { immediate: true })
+
+watch(availableOwnerContacts, contacts => {
+  const availableIds = new Set(contacts.map(contact => contact.id))
+  form.ownerContactMethodIds = form.ownerContactMethodIds.filter(id => availableIds.has(id))
+  if (form.ownerContactMethodIds.length || !contacts.length) return
+  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
+  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
+  form.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
+}, { immediate: true })
 
 watch([catalog, () => form.providerCategory], () => {
   if (!catalog.value.length) return
@@ -289,7 +321,9 @@ function displayNameLength(value: string) {
 const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 3,
   merchantDisplayName: 3,
+	ownerContactMethods: 3,
   distributionSystem: 2,
+  probeConnection: 2,
   defaultMultiplier: 2,
   providerCategory: 2,
   cnyPerUsdCredit: 1,
@@ -310,7 +344,9 @@ const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
 const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 2,
   merchantDisplayName: 2,
+	ownerContactMethods: 2,
   distributionSystem: 2,
+  probeConnection: 2,
   defaultMultiplier: 2,
   providerCategory: 2,
   cnyPerUsdCredit: 2,
@@ -337,6 +373,7 @@ function collectValidationErrors() {
   const next: FieldErrors<Field> = {}
   const merchantDisplayName = form.merchantDisplayName.trim()
   if (!['public_profile', 'store_alias'].includes(form.merchantIdentityMode)) next.merchantIdentity = '请选择对外展示身份。'
+	if (!form.ownerContactMethodIds.length) next.ownerContactMethods = '请至少选择一种订单联系方式。'
   if (form.merchantIdentityMode === 'store_alias') {
     if (!merchantDisplayName) next.merchantDisplayName = profileLoading.value ? '正在读取个人资料显示名称。' : '请先到个人中心设置显示名称。'
     else if (displayNameLength(merchantDisplayName) > 32) next.merchantDisplayName = '商家展示名最多 32 个字符，请到个人中心调整。'
@@ -344,6 +381,8 @@ function collectValidationErrors() {
     else if (hasMisleadingMerchantName(merchantDisplayName)) next.merchantDisplayName = '商家展示名不能包含官方、担保、兜底等误导词，请到个人中心调整。'
   }
   if (!['sub2api', 'other'].includes(form.distributionSystem)) next.distributionSystem = '请选择接入类型。'
+  if (!form.probeConnectionId) next.probeConnection = '请选择已验证且启用的探针连接。'
+  else if (!probeConnectionReady.value) next.probeConnection = '所选探针连接当前不可用，请重新验证、启用或选择其他连接。'
   if (!Number.isFinite(form.defaultMultiplier) || form.defaultMultiplier <= 0) {
     next.defaultMultiplier = '默认服务倍率必须大于 0。'
   }
@@ -436,6 +475,8 @@ const completeness = computed(() => {
   const items: Array<{ label: string, status: 'done' | 'pending' | 'conflict' }> = [
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.distributionSystem ? done('接入类型') : pending('接入类型'),
+    probeConnectionReady.value ? done('探针连接') : pending('探针连接'),
+		form.ownerContactMethodIds.length ? done('订单联系方式') : pending('订单联系方式'),
     form.distributionSystem === 'sub2api' || (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) ? done('服务倍率') : pending('服务倍率'),
   ]
   if (!isLimitedQuotaMode.value) {
@@ -464,6 +505,16 @@ const completeness = computed(() => {
   return items
 })
 const publishAssistant = computed(() => apiPublishAssistantSummary(completeness.value))
+const activeDisputeCount = computed(() => activeDisputesQuery.data.value?.length ?? 0)
+const disputePublishBlocked = computed(() => (
+	activeDisputesQuery.isLoading.value || activeDisputesQuery.isError.value || activeDisputeCount.value > 0
+))
+const disputeRuleText = computed(() => {
+	if (activeDisputesQuery.isLoading.value) return '正在检查当前账号是否存在未解决的 API 订单纠纷，检查完成前不能提交发布。'
+	if (activeDisputesQuery.isError.value) return '暂时无法确认纠纷状态，为避免违规接单，当前不能提交发布。请重试。'
+	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 个未解决的 API 订单纠纷。处理完成前不能发布或恢复 API 服务与额度，也不会接收新订单。`
+	return '发布规则：账号存在未解决的 API 订单纠纷时，不能发布或恢复 API 服务与额度，也不会接收新订单。'
+})
 
 const risks = computed(() => {
   const rows: string[] = []
@@ -476,7 +527,8 @@ const risks = computed(() => {
 
 const canSubmit = computed(() => completeness.value.every(item => item.status === 'done'))
 const publishBlockReason = computed(() => {
-  if (canSubmit.value) return ''
+	if (disputePublishBlocked.value) return disputeRuleText.value
+	if (canSubmit.value) return ''
   const pendingItem = completeness.value.find(item => item.status !== 'done')
   if (pendingItem?.label === '收款方式') {
     if (!paymentWindowValid.value) return '买家确认付款窗口固定为 10 分钟。'
@@ -494,18 +546,19 @@ const paymentSummary = computed(() => {
   return labels.length ? `${labels.join(' / ')} · ${form.paymentWindowMinutes} 分钟确认` : '收款方式待配置'
 })
 const stepOneSummary = computed(() => {
-  if (isLimitedQuotaMode.value) return '限时额度包 · 当前先配置可复用基础服务'
+  if (isLimitedQuotaMode.value) return '限量额度包 · 当前先配置可复用基础服务'
   if (isFixedPackageMode.value) {
     const totalStock = enabledPackages.value.reduce((sum, item) => sum + item.stockTotal, 0)
     return `${sellingModeLabels.package} · ${enabledPackages.value.length} 个套餐 · 总库存 ${totalStock}`
   }
   const expiry = form.quotaExpiresAt ? form.quotaExpiresAt.slice(0, 10).replaceAll('-', '/') : '待填写有效期'
-  return `自由额度 · ¥${form.cnyPerUsdCredit ?? 0} / $1 · 可售 $${form.availableCreditUsd ?? 0} · 有效至 ${expiry}`
+  return `自选额度 · ¥${form.cnyPerUsdCredit ?? 0} / $1 · 可售 $${form.availableCreditUsd ?? 0} · 有效至 ${expiry}`
 })
 const stepTwoSummary = computed(() => {
   const multiplier = form.distributionSystem === 'sub2api' ? '1.00x' : `${form.defaultMultiplier.toFixed(2)}x`
   const modelCount = selectedModels.value.length
-  return `${form.distributionSystem === 'sub2api' ? 'Sub2API' : '其他 API 接入'} · ${providerCategoryLabels[form.providerCategory]} · ${modelCount ? `${modelCount} 个模型` : '待选择模型'} · 统一倍率 ${multiplier}`
+  const connection = selectedProbeConnection.value?.name ?? '待选择连接'
+  return `${form.distributionSystem === 'sub2api' ? 'Sub2API' : '其他 API 接入'} · ${connection} · ${providerCategoryLabel(form.providerCategory)} · ${modelCount ? `${modelCount} 个模型` : '待选择模型'} · 统一倍率 ${multiplier}`
 })
 const stepThreeSummary = computed(() => `${paymentSummary.value} · ${form.merchantIdentityMode === 'store_alias' ? '商家展示名' : '公开个人身份'}`)
 const primaryActionLabel = computed(() => {
@@ -527,6 +580,10 @@ const actionBlockReason = computed(() => {
   if (!isLimitedQuotaMode.value && currentStep.value === 3) return publishBlockReason.value
   return ''
 })
+const currentActionPublishes = computed(() => (
+	(isLimitedQuotaMode.value && currentStep.value === 2)
+	|| (!isLimitedQuotaMode.value && currentStep.value === 3)
+))
 
 const publishMutation = useMutation({
   mutationFn: () => {
@@ -666,7 +723,11 @@ function runPrimaryAction() {
 }
 
 function publishService() {
-  syncHiddenPublishFields()
+	if (disputePublishBlocked.value) {
+		toast.warning(disputeRuleText.value)
+		return
+	}
+	syncHiddenPublishFields()
   if (!validateAll()) {
     const errorStep = firstErrorStep(errors, currentFieldSteps()) as ApiServicePublishStep | undefined
     if (errorStep) {
@@ -726,7 +787,7 @@ function confirmProviderCategoryChange() {
       <div class="py-3 sm:py-6">
         <div class="mb-6">
           <h1 class="text-xl font-semibold">发布 API 额度</h1>
-          <p class="mt-1 text-sm text-muted-foreground">先选择销售模式，再配置对应的价格、额度和交付方式。</p>
+          <p class="mt-1 text-sm text-muted-foreground">先选择销售模式，再配置对应的价格、额度和交付方式；存在未解决纠纷时不能发布或恢复额度。</p>
         </div>
         <SellingModeSelector @select="chooseSellingMode" />
       </div>
@@ -750,6 +811,15 @@ function confirmProviderCategoryChange() {
         </div>
       </div>
 
+      <Alert :variant="activeDisputeCount > 0 || activeDisputesQuery.isError.value ? 'destructive' : 'default'">
+        <Info />
+        <AlertTitle>发布前纠纷规则</AlertTitle>
+        <AlertDescription>
+          {{ disputeRuleText }}
+          <Button v-if="activeDisputesQuery.isError.value" type="button" size="sm" variant="outline" class="mt-3" @click="activeDisputesQuery.refetch()">重新检查</Button>
+        </AlertDescription>
+      </Alert>
+
       <PublishWorkflowStepper
         :steps="publishSteps"
         :current-step="currentStep"
@@ -762,7 +832,7 @@ function confirmProviderCategoryChange() {
         <PublishStepSection
           :step="1"
           :title="isLimitedQuotaMode ? '销售模式' : `配置${sellingModeLabels[isFixedPackageMode ? 'package' : 'free']}`"
-          :description="isLimitedQuotaMode ? '已选择限时额度包。' : isFixedPackageMode ? '设置买家可选择的固定规格、价格与库存。' : '设置美元额度售价、可售额度和有效期。'"
+          :description="isLimitedQuotaMode ? '已选择限量额度包。' : isFixedPackageMode ? '设置买家可选择的固定规格、价格与库存。' : '设置美元额度售价、可售额度和有效期。'"
           :status="publishStepStatus(1, currentStep, completedSteps)"
           :summary="stepOneSummary"
           @edit="selectStep"
@@ -795,6 +865,14 @@ function confirmProviderCategoryChange() {
         >
           <div class="space-y-3">
             <ApiAccessSourceSection :form="form" :errors="errors" :selling-mode="editorSellingMode" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
+            <ProbeConnectionSection
+              v-model="form.probeConnectionId"
+              :connections="probeConnections"
+              :loading="probeConnectionsQuery.isLoading.value"
+              :error="probeConnectionError"
+              :field-error="errors.probeConnection"
+              @refresh="probeConnectionsQuery.refetch()"
+            />
             <AccountPaymentSummarySection
               v-if="isLimitedQuotaMode"
               :form="form"
@@ -802,7 +880,7 @@ function confirmProviderCategoryChange() {
               :loading="paymentSettingsLoading"
               @edit="paymentSettingsDialogOpen = true"
             />
-            <ProviderCategorySelector :model-value="form.providerCategory" :selected-count="selectedModels.length" @update:model-value="requestProviderCategory" />
+            <ProviderCategorySelector :model-value="form.providerCategory" :selected-count="selectedModels.length" :catalog="catalog" @update:model-value="requestProviderCategory" />
             <Card class="api-publish-card">
               <div class="api-publish-card-header">
                 <div class="flex flex-wrap items-start justify-between gap-3">
@@ -827,6 +905,12 @@ function confirmProviderCategoryChange() {
               </div>
             </Card>
             <template v-if="isLimitedQuotaMode">
+              <MerchantContactMethodsSection
+                :form="form"
+                :contacts="availableOwnerContacts"
+                :loading="contactMethodsQuery.isLoading.value"
+                :error="errors.ownerContactMethods"
+              />
               <MerchantNoteSection :form="form" :errors="errors" />
               <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
             </template>
@@ -849,6 +933,12 @@ function confirmProviderCategoryChange() {
               :loading="paymentSettingsLoading"
               @edit="paymentSettingsDialogOpen = true"
             />
+            <MerchantContactMethodsSection
+              :form="form"
+              :contacts="availableOwnerContacts"
+              :loading="contactMethodsQuery.isLoading.value"
+              :error="errors.ownerContactMethods"
+            />
             <MerchantNoteSection :form="form" :errors="errors" />
             <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
           </div>
@@ -867,7 +957,7 @@ function confirmProviderCategoryChange() {
           <div class="grid grid-cols-2 gap-1.5 md:flex md:shrink-0 md:items-center md:gap-3">
             <Button v-if="currentStep > 1" variant="outline" :disabled="publishMutation.isPending.value" @click="goBack"><ArrowLeft class="h-4 w-4" />上一步</Button>
             <Button v-if="!isLimitedQuotaMode && currentStep === 3" type="button" variant="outline" class="min-[1241px]:hidden" @click="preview"><Eye class="h-4 w-4" />预览</Button>
-            <Button class="col-span-2 md:col-span-1" :disabled="publishMutation.isPending.value" @click="runPrimaryAction">
+            <Button class="col-span-2 md:col-span-1" :disabled="publishMutation.isPending.value || (currentActionPublishes && disputePublishBlocked)" @click="runPrimaryAction">
               <Send v-if="!isLimitedQuotaMode && currentStep === 3" class="h-4 w-4" />
               <ArrowRight v-else class="h-4 w-4" />
               {{ primaryActionLabel }}

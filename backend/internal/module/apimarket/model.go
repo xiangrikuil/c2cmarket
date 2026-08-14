@@ -3,6 +3,8 @@ package apimarket
 import (
 	"time"
 
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 )
 
@@ -37,6 +39,11 @@ const (
 	PaymentMethodWechat = "wechat"
 	PaymentMethodAlipay = "alipay"
 
+	PublicServiceSortUpdatedDesc        = "updated_desc"
+	PublicServiceSortPriceAsc           = "price_asc"
+	PublicServiceSortMinimumPurchaseAsc = "minimum_purchase_asc"
+	PublicServiceSortPackagePriceAsc    = "package_price_asc"
+
 	DefaultPaymentWindowMinutes = 10
 
 	OwnerSalesViewActive  = "active"
@@ -67,6 +74,11 @@ type Service struct {
 	MerchantProfileSlug              string
 	MerchantAvatarURL                string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
+	ProbeConnectionID                string
+	ProbeReady                       bool
+	ProbeBaseURL                     string
+	NormalizedProbeBaseURL           string
 	Title                            string
 	ShortDescription                 string
 	SourceURL                        string
@@ -127,7 +139,7 @@ type ServiceModel struct {
 	DistributionSystem                  string
 	ModelCatalogID                      string
 	ModelPriceVersionID                 string
-	ModelNameSnapshot                   string
+	ModelKey                            string
 	ProviderSnapshot                    string
 	CapabilitiesSnapshot                []string
 	MerchantMultiplier                  string
@@ -161,7 +173,7 @@ type ServicePackageModel struct {
 	ServiceModelID      string
 	ModelCatalogID      string
 	ModelPriceVersionID string
-	ModelNameSnapshot   string
+	ModelKey            string
 	ProviderSnapshot    string
 	MerchantMultiplier  string
 }
@@ -183,6 +195,8 @@ type CreateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
+	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string
 	SourceURL                        string
@@ -206,6 +220,7 @@ type CreateServiceInput struct {
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
+	RequestID                        string
 }
 
 type UpdateServiceInput struct {
@@ -214,6 +229,8 @@ type UpdateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
+	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string
 	SourceURL                        string
@@ -239,6 +256,14 @@ type UpdateServiceInput struct {
 	Packages                         []ServicePackageInput
 	ExpectedVersion                  int64
 	RequestID                        string
+}
+
+type UpdateProbeConnectionInput struct {
+	ServiceID         string
+	OwnerUserID       string
+	ProbeConnectionID string
+	ExpectedVersion   int64
+	RequestID         string
 }
 
 type ServiceAccessModeInput struct {
@@ -284,7 +309,18 @@ type ServiceAdminActionInput struct {
 }
 
 type PublicServiceFilter struct {
-	PaymentMethod string
+	PaymentMethod         string
+	BillingMode           string
+	Search                string
+	ModelCatalogID        string
+	DistributionSystem    string
+	MaxCNYPerUSD          string
+	MinimumIntentCNYMax   string
+	PackageModelCatalogID string
+	PackageDurationDays   int
+	PackagePriceCNYMax    string
+	PackageMultiplierMax  string
+	Sort                  string
 }
 
 type OwnerServiceFilter struct {
@@ -334,4 +370,19 @@ type UpdateAccountPaymentSettingsInput struct {
 	UserID               string
 	PaymentWindowMinutes int
 	PaymentOptions       []PaymentOptionInput
+}
+
+type ServiceCompletionBuilder func(Service) (idempotency.Completion, *domain.AppError)
+
+// ServiceAuditEvent 在内存模式下镜像 PostgreSQL 中的安全操作事实。
+// 这里只保存动作、资源版本和字段名，绝不保存联系方式、收款信息或探针密钥。
+type ServiceAuditEvent struct {
+	EventType        string
+	ActorUserID      string
+	ActorKind        string
+	RequestID        string
+	AggregateID      string
+	AggregateVersion int64
+	ChangedFields    []string
+	CreatedAt        time.Time
 }

@@ -1325,3 +1325,425 @@ Added fresh-query-gated first transaction guidance to the personal center, cover
 ### Status
 
 [OK] **Completed**
+
+
+## Session 39: 修复健康探针重复授权与 HTTP 确认
+
+**Date**: 2026-08-07
+**Task**: 修复健康探针重复授权与 HTTP 确认
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+拆分测量身份与 Origin 授权身份，复用已保存 HTTP 地址的确认状态，并完成后端、PostgreSQL、前端与 Mock 全链路验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ba6c07c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 40: API probe sharing and model tester
+
+**Date**: 2026-08-08
+**Task**: API probe sharing and model tester
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+Replaced service-scoped challenge probes with reusable seller connections, froze and verified delivery targets, added the temporary buyer model tester, unified canonical model keys, and passed full backend/frontend/PostgreSQL gates.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e9bc73d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 41: API model catalog models.dev pricing sync
+
+**Date**: 2026-08-08
+**Task**: API model catalog models.dev pricing sync
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+Added administrator-reviewed models.dev preview/apply, atomic price version updates, explicit model activation, bulk status controls, OpenAPI contracts, responsive frontend workflow, and full local verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d79e8d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 42: API 模型目录同步修复与紧凑界面改版
+
+**Date**: 2026-08-08
+**Task**: API 模型目录同步修复与紧凑界面改版
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+修复 models.dev 同步与模型启停稳定性，并将管理员 API 模型目录改为紧凑页签、组合筛选、明确开关状态和批量操作界面；完成全量测试、类型检查、real-mode 构建及桌面/移动端浏览器验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3beccd9` | (see git log) |
+| `110d11e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 43: 真实模型探针与 24 小时健康度
+
+**Date**: 2026-08-08
+**Task**: 真实模型探针与 24 小时健康度
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+完成真实流式模型探针、一次性预检凭证、24 小时健康摘要、Runner 告警、成本统计和美西延迟校准，并通过全量与 PostgreSQL/浏览器验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fd7e1e1` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 44: 收紧前端 Reka UI 依赖边界
+
+**Date**: 2026-08-09
+**Task**: 收紧前端 Reka UI 依赖边界
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+移除 5 个业务组件对 Reka UI 类型的直接引用，新增 shadcn-vue 依赖边界测试，并将规则写入前端组件规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `523e44e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 45: API 订单纠纷处罚治理
+
+**Date**: 2026-08-09
+**Task**: API 订单纠纷处罚治理
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+实现管理员确认逾期后的 180 天阶梯处罚、两条 API 新订单事务门禁、公开限制明细与管理端显式确认，并完成全量本地验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68be0c5` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 46: 工作区剩余改动原子提交整理
+
+**Date**: 2026-08-09
+**Task**: 工作区剩余改动原子提交整理
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+将 182 条未提交状态按业务意图重写为 10 个可独立审查和回退的原子提交，修正 shadcn-vue、通用分页、卖家订单和公告分页的历史归组边界；最终树与整理前完全一致，并通过全量 Go、Vitest、typecheck、real-mode build、OpenAPI、migration 和 diff 门禁。保留 `frontend/src/lib/api.ts` 的纯缩进改动、既有 stash 和纠纷处罚隔离工作树，未 push、部署或执行生产 migration。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `332bd00` | `refactor(frontend): align shadcn primitives with official registry` |
+| `8b843f0` | `fix(catalog): refresh model preview after conflicts` |
+| `98ff952` | `fix(announcements): preserve publication lifecycle timestamps` |
+| `22640fe` | `feat(carpools): collect daily and weekly quotas` |
+| `9c9e660` | `feat(admin): align listing moderation workflows` |
+| `39ffba9` | `feat(pagination): paginate market and workspace lists` |
+| `d70a1cc` | `fix(contacts): link linuxdo profiles to summary pages` |
+| `84c35ac` | `feat(api-orders): add seller payment reconciliation details` |
+| `8f5f865` | `feat(announcements): redesign admin and notification workflows` |
+| `a7fc49e` | `refactor(frontend): remove legacy array pagination` |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 47: 全仓半成品功能审计
+
+**Date**: 2026-08-10
+**Task**: 全仓半成品功能审计
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+完成全仓半成品审计；确认无 P0、2 个 P1、4 个 P2、1 个 P3，并记录 smoke 漂移与 36 个 Trellis 归档候选。
+
+### Main Changes
+
+- 生成跨前端、后端、OpenAPI、smoke 和 Trellis 台账的证据化审计报告。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] Go test/vet、104 文件 572 项 Vitest、Nuxt typecheck/real build、OpenAPI、migration、Compose 与本地 health/profile 复现通过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 优先修复头像真实模式和公开用户资料，再修我的车源、管理员日志与 smoke。
+
+
+## Session 48: 公告体验与首页公告条收口
+
+**Date**: 2026-08-10
+**Task**: 公告体验与首页公告条收口
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+完成用户公告详情单栏化、可选跳转按钮、首页公告条与响应式视觉收口，并通过完整前端门禁。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `72c5967` | (see git log) |
+| `3b2fbbb` | (see git log) |
+| `82f9a9c` | (see git log) |
+| `6490c09` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 49: 完善审计发现的未完成功能
+
+**Date**: 2026-08-10
+**Task**: 完善审计发现的未完成功能
+**Package**: frontend
+**Branch**: `codex/complete-unfinished-workflows`
+
+### Summary
+
+完成真实头像 mutation、公开资料聚合、我的车源四视图与编辑、持久化管理员审计、linux.do 动作收口、商户资料合同收缩及可重复的 11 项 smoke；完整本地门禁和浏览器验收通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `284cfd526d924c275c0ba738e5f32af3146c36a3` | (see git log) |
+| `5830894022420d114ec6f04e3704d81e980cf807` | (see git log) |
+| `34dbb85389bcb91f3e6a4af37085e1c73248016a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 50: 管理员 API 订单监管分页与筛选
+
+**Date**: 2026-08-10
+**Task**: 管理员 API 订单监管分页与筛选
+**Package**: frontend
+**Branch**: `codex/admin-api-order-supervision`
+
+### Summary
+
+完成管理员 API 订单数据库级组合筛选、稳定 keyset 分页、OpenAPI/前端/Mock 对齐及双视口验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51103da` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 51: Development personas and user switcher
+
+**Date**: 2026-08-10
+**Task**: Development personas and user switcher
+**Package**: frontend
+**Branch**: `codex/dev-user-switcher`
+
+### Summary
+
+Added fixed buyer, seller, and admin development personas, protected session bootstrap tooling, a dev-only responsive switcher, exact admin permission handling, session cache race protection, OpenAPI coverage, PostgreSQL integration tests, and local browser verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d995824` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 52: API order after-sales contacts and refund evidence
+
+**Date**: 2026-08-10
+**Task**: API order after-sales contacts and refund evidence
+**Package**: frontend
+**Branch**: `codex/api-order-after-sales-contacts`
+
+### Summary
+
+Added multi-contact merchant snapshots, completed-order 24-hour dispute reporting grace period, frozen refund policy evidence, migration 89, and frontend/backend coverage.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3b29dc8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 53: API 纠纷发布限制与唯一 linux.do 联系方式
+
+**Date**: 2026-08-12
+**Task**: API 纠纷发布限制与唯一 linux.do 联系方式
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+活动纠纷暂停对应 API 订单，阻止卖家发布、恢复与新接单；linux.do 只投影账号唯一绑定。完成 Migration 90、全量测试和本地运行验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f65ead0` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 54: API order and rush-sale launch hardening
+
+**Date**: 2026-08-14
+**Task**: API order and rush-sale launch hardening
+**Package**: frontend
+**Branch**: `codex/transaction-review-dialog`
+
+### Summary
+
+Added authoritative seller deadlines, late-payment recovery facts, pending-order capacity, daily 20:00 rush confirmation and copy limits, flexible/limited channel exclusion, updated OpenAPI/frontend flows, and passed local quality gates.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `38333b6` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 55: Login and student registration redesign
+
+**Date**: 2026-08-14
+**Task**: Login and student registration redesign
+**Package**: frontend
+**Branch**: `codex/login-student-registration-redesign`
+
+### Summary
+
+Redesigned login and student registration, added student-claim password reset across migration/backend/OpenAPI/frontend, completed full regression and responsive browser QA.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `afc96ff` | (see git log) |
+| `23565ed` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 56: 修复 PR 36 CI 并中文化摘要
+
+**Date**: 2026-08-14
+**Task**: 修复 PR 36 CI 并中文化摘要
+**Package**: frontend
+**Branch**: `codex/login-student-registration-redesign`
+
+### Summary
+
+同步 migration 98 活动契约文档，更新 PR 中文摘要，并确认 GitHub Actions release-gate 全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2c9afc0` | (see git log) |
+
+### Status
+
+[OK] **Completed**

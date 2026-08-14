@@ -7,7 +7,10 @@ GO_BIN="${GO_BIN:-go}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18-alpine@sha256:96d56f7f57c6aacd1fcb908bc83b345ec5f83231ee486dd66a1baadce274db88}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-migrate/migrate:v4.18.3@sha256:39b59b389634e43bb3f2d4e94bc1edef0775ec2a9a3540ce6a2cf330e5daae55}"
-EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-80}"
+EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-$(
+  sed -nE 's/^const ExpectedMigrationVersion int64 = ([0-9]+)$/\1/p' \
+    "${ROOT_DIR}/backend/internal/database/postgres.go"
+)}"
 
 POSTGRES_USER="c2c_prelaunch"
 POSTGRES_PASSWORD="c2c_prelaunch_test_password"
@@ -25,6 +28,14 @@ fail() {
   echo "PostgreSQL integration gate failed: $*" >&2
   exit 1
 }
+
+[[ "${EXPECTED_MIGRATION_VERSION}" =~ ^[0-9]+$ ]] ||
+  fail "could not resolve ExpectedMigrationVersion from backend/internal/database/postgres.go"
+
+CURRENT_MIGRATION_ROLLBACK_BASE_VERSION=76
+CURRENT_MIGRATION_ROLLBACK_STEPS=$((EXPECTED_MIGRATION_VERSION - CURRENT_MIGRATION_ROLLBACK_BASE_VERSION))
+((CURRENT_MIGRATION_ROLLBACK_STEPS > 0)) ||
+  fail "ExpectedMigrationVersion must be greater than rollback baseline ${CURRENT_MIGRATION_ROLLBACK_BASE_VERSION}"
 
 cleanup() {
   if [[ "${postgres_container}" == c2c-prelaunch-*-postgres ]]; then
@@ -97,7 +108,7 @@ done
   "${MIGRATE_IMAGE}" \
   -path=/migrations \
   -database="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${postgres_container}:5432/${GENERAL_DATABASE}?sslmode=disable" \
-  down 4
+  down "${CURRENT_MIGRATION_ROLLBACK_STEPS}"
 
 current_migration_rollback_state="$(
   "${DOCKER_BIN}" exec "${postgres_container}" \
@@ -106,8 +117,9 @@ current_migration_rollback_state="$(
     --dbname "${GENERAL_DATABASE}" \
     --command "SELECT version::text || ':' || dirty::text || ':' || (to_regclass('public.api_service_probe_configs') IS NULL)::text || ':' || (to_regclass('public.account_appeal_sessions') IS NULL)::text || ':' || (to_regclass('public.moderation_info_requests') IS NULL)::text || ':' || (EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('api_order_delivery_credentials', 'api_quota_credentials') AND column_name = 'destroyed_at'))::text FROM schema_migrations"
 )"
-[[ "${current_migration_rollback_state}" == "76:false:true:true:true:true" ]] ||
-  fail "current migration rollback state is ${current_migration_rollback_state}, expected 76:false:true:true:true:true"
+expected_migration_rollback_state="${CURRENT_MIGRATION_ROLLBACK_BASE_VERSION}:false:true:true:true:true"
+[[ "${current_migration_rollback_state}" == "${expected_migration_rollback_state}" ]] ||
+  fail "current migration rollback state is ${current_migration_rollback_state}, expected ${expected_migration_rollback_state}"
 
 "${DOCKER_BIN}" run --rm \
   --network "${network_name}" \
@@ -115,7 +127,7 @@ current_migration_rollback_state="$(
   "${MIGRATE_IMAGE}" \
   -path=/migrations \
   -database="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${postgres_container}:5432/${GENERAL_DATABASE}?sslmode=disable" \
-  up 4
+  up "${CURRENT_MIGRATION_ROLLBACK_STEPS}"
 
 "${DOCKER_BIN}" exec "${postgres_container}" \
   createdb --username "${POSTGRES_USER}" "${MULTIPLIER_UPGRADE_DATABASE}"
@@ -183,6 +195,28 @@ run_go_test() {
   local package="$2"
   local pattern="$3"
 
+  local expected_expression
+  expected_expression="${pattern#^}"
+  expected_expression="${expected_expression%\$}"
+  expected_expression="${expected_expression#\(}"
+  expected_expression="${expected_expression%\)}"
+
+  local listed_tests
+  listed_tests="$(
+    cd "${ROOT_DIR}/backend"
+    "${GO_BIN}" test "${package}" -list "${pattern}"
+  )" || fail "could not enumerate tests for ${package} with pattern ${pattern}"
+
+  local expected_tests
+  local expected_test
+  IFS='|' read -r -a expected_tests <<< "${expected_expression}"
+  for expected_test in "${expected_tests[@]}"; do
+    [[ "${expected_test}" =~ ^Test[A-Za-z0-9_]+$ ]] ||
+      fail "unsupported test pattern component ${expected_test} in ${pattern}"
+    grep -Fqx "${expected_test}" <<< "${listed_tests}" ||
+      fail "expected test ${expected_test} is missing from ${package}"
+  done
+
   (
     cd "${ROOT_DIR}/backend"
     C2C_TEST_DATABASE_URL="$(database_url "${database}")" \
@@ -193,17 +227,17 @@ run_go_test() {
 run_go_test "${GENERAL_DATABASE}" ./internal/database \
   '^TestOpenPostgresWithOptionsAppliesPoolAndSessionTimeouts$'
 run_go_test "${GENERAL_DATABASE}" ./internal/store/postgres \
-  '^(TestPostgresOAuthIdentityOwnershipAndConcurrency|TestPostgresBootstrapAdminIsCreateOnlyAndProvenanced|TestPostgresBootstrapAdminRejectsConflictsAndRollsBack|TestPostgresSessionRenewalUpdatesExactlyOnceAtBoundary|TestPostgresAccountAppealSessionIsExistingIdentityOnlyAndFixed|TestPostgresAccountAppealSessionLifecycleCleanupIsBounded|TestPostgresAdminStatusUsesAccountGovernanceAdvisoryLock|TestPostgresAccountGovernanceAppealLifecycle|TestPostgresContactReencryptDryRunAndApply|TestPostgresContactReencryptAndLifecycleSkipDestroyedOrLockedAPICredentials|TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory|TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld|TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAnchor|TestPostgresAPIOrderCredentialReadSerializesWithDestruction|TestPostgresModerationInfoSupplementLifecycle|TestPostgresSupplementAndAdminCloseUseParentFirstLockOrder|TestSlowActiveQueryCountIntegration|TestPostgresEmailVerificationChallengeLifecycle|TestPostgresIdempotencyLifecycleBoundsBodiesAndRejectsStaleGeneration|TestAPIAccountPaymentSettingsPersistOneEnabledMethod|TestPromotionRewardPostgresLifecycle)$'
+  '^(TestPostgresOAuthIdentityOwnershipAndConcurrency|TestPostgresBootstrapAdminIsCreateOnlyAndProvenanced|TestPostgresBootstrapAdminRejectsConflictsAndRollsBack|TestPostgresSessionRenewalUpdatesExactlyOnceAtBoundary|TestPostgresLogoutRevokesExactlyOnceHashedSession|TestPostgresStudentRegistrationLifecycleAndConcurrencyAreAtomic|TestPostgresPasswordResetIsAtomicAndPurposeBound|TestPostgresPasswordResetEligibilityAndConfirmationRecheck|TestPostgresStudentOnlyAccountCannotReceiveAdminPermission|TestPostgresAdminGrantAndLinuxDoLinkUseOneLockOrder|TestPostgresAdminGovernanceDoesNotDeadlockWithOrdinaryUserUpdate|TestPostgresAccountGovernanceOAuthSessionsAndAdminReauthentication|TestPostgresAccountGovernanceSuspensionExpiryIsExactAndIdempotent|TestPostgresAccountGovernanceBusinessCenterProjectionAndClaimDeadline|TestPostgresAccountGovernanceEmptyDispositionJobCompletesIdempotently|TestPostgresAccountGovernanceAPIOrderReleasesReservationExactlyOnceForBothParties|TestPostgresRestrictedAPIOrderRequiresCurrentPreservedDisposition|TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition|TestPostgresRestrictedDisputeRequiresPreservedTargetDisposition|TestPostgresAccountAppealSessionIsExistingIdentityOnlyAndFixed|TestPostgresAccountAppealSessionLifecycleCleanupIsBounded|TestPostgresAdminStatusUsesAccountGovernanceAdvisoryLock|TestPostgresAccountGovernanceAppealLifecycle|TestPostgresContactReencryptDryRunAndApply|TestPostgresContactReencryptAndLifecycleSkipDestroyedOrLockedAPICredentials|TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory|TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld|TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAnchor|TestPostgresAPIOrderCredentialReadSerializesWithDestruction|TestPostgresModerationInfoSupplementLifecycle|TestPostgresSupplementAndAdminCloseUseParentFirstLockOrder|TestSlowActiveQueryCountIntegration|TestPostgresEmailVerificationChallengeLifecycle|TestPostgresIdempotencyLifecycleBoundsBodiesAndRejectsStaleGeneration|TestAPIAccountPaymentSettingsPersistOneEnabledMethod|TestPromotionRewardPostgresLifecycle|TestOperationAuditSingleSourcePlansIntegration|TestOperationAuditMixedSourceCursorIntegration|TestPostgresContactUsageScopesRoundTrip|TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic)$'
 run_go_test "${GENERAL_DATABASE}" ./internal/server \
-  '^(TestPostgresAdminOfficialPriceRecordFlow|TestPostgresProductCatalogReadAPIs|TestPostgresAPIServiceFlow|TestPostgresAPIServiceIntegrityConstraints|TestPostgresAPIPurchaseIntentFlow|TestPostgresAPIOrderReleasesPurchaseIntent|TestPostgresAPIPurchaseIntentIntegrityConstraints|TestPostgresIdempotencyProcessingReplay|TestPostgresContactSessionFlow|TestPostgresContactIntegrityConstraints|TestPostgresCarpoolMembershipIntegrityConstraints|TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent|TestPostgresCarpoolApplicationFlow|TestPostgresAPIPromotionCapacityAndLifecycle)$'
+  '^(TestPostgresHTTPLogoutRevokesRawSessionToken|TestPostgresDevPersonaSessionReadinessAndIdempotency|TestPostgresAdminOfficialPriceRecordFlow|TestPostgresProductCatalogReadAPIs|TestPostgresAPIServiceFlow|TestPostgresAPIServiceIntegrityConstraints|TestPostgresAPIPurchaseIntentFlow|TestPostgresAPIOrderReleasesPurchaseIntent|TestPostgresAPIPurchaseIntentIntegrityConstraints|TestPostgresIdempotencyProcessingReplay|TestPostgresContactSessionFlow|TestPostgresContactIntegrityConstraints|TestPostgresCarpoolMembershipIntegrityConstraints|TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent|TestPostgresCarpoolApplicationFlow|TestPostgresAPIPromotionCapacityAndLifecycle)$'
 
 run_go_test "${QUOTA_DATABASE}" ./internal/store/postgres \
-  '^(TestAPIQuotaPostgres|TestAPIHealthPostgres)'
+  '^(TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory|TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity|TestAPIQuotaPostgresPublicRoundsStayOfferSpecific|TestAPIQuotaPostgresTimeoutAndRoundRetirementReturnAllowance|TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversHistoricalPreimportedCredential|TestAPIQuotaPostgresRush1500BuyersFor1000Copies|TestAPIHealthPostgresVersionConflictUsesPreconditionFailed|TestPostgresAPIProbeConnectionLifecycle|TestPostgresAPIProbeCalibrationEmptyDatasetIsZero|TestPostgresAPIProbeCalibrationUsesOnlyCompleteUTCDaysAndPublishesImmutableVersions|TestPostgresAPIModelTesterAuthorizesDecryptsAndRejectsDestroyedOrderCredential|TestPostgresAPIServiceProbeConnectionBindingEnforcesOwnerAndReadiness|TestAPIQuotaAuditAndIdempotencyAreAtomic|TestPostgresAPIProbeMutationAuditAndIdempotencyCompletionAreAtomic)$'
 run_go_test "${QUOTA_DATABASE}" ./internal/server \
   '^TestPostgresAPIQuotaHTTPFlow$'
 
 run_go_test "${REPUTATION_DATABASE}" ./internal/store/postgres \
-  '^(TestReputationEnginePostgres|TestReputationPostgres|TestSourceAuthorVerificationPostgres|TestEffectiveSourceAuthorVerificationTracks|TestTransactionReviewPostgres)'
+  '^(TestReputationEnginePostgresSnapshotsHistoryAndDirtyTriggers|TestReputationEnginePostgresAggregatesCompletedOrderReviewAndBatchConsistency|TestReputationEnginePostgresAttributesRoleControlledTimeouts|TestReputationPostgresAggregationAndExclusionAudit|TestReputationPostgresGovernanceRestrictionAndAppealReversal|TestSourceAuthorVerificationPostgresLifecycleAndAudit|TestEffectiveSourceAuthorVerificationTracksExpiryAndResourceDrift|TestTransactionReviewPostgresLifecycle|TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles)$'
 
 run_go_test "${GROWTH_DATABASE}" ./internal/store/postgres \
   '^TestGrowthOverviewPostgresMetricsAndDailyActivity$'

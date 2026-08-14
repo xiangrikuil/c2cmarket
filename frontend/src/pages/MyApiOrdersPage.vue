@@ -9,28 +9,28 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import PageTitle from '@/components/market/PageTitle.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import {
   getApiMerchantVisibilityLabel,
   getApiOrderDisplayStatus,
   getApiOrderNextAction,
+  type ApiOrderStatus,
 } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
-import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { compareDecimal, formatDecimal } from '@/lib/decimal'
+import { formatDecimal } from '@/lib/decimal'
 import { functionalMotion } from '@/lib/motion'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
-import { useMyApiOrders } from '@/queries/useMarketQueries'
+import { useMyApiOrders, useMyApiOrdersPage } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
-const { data, isLoading, error, refetch } = useMyApiOrders({ sort: 'default_buyer' })
+const { data } = useMyApiOrders({ sort: 'default_buyer' })
 const { data: catalogCategories } = useProductCategories()
 const router = useRouter()
 const activeTab = ref('全部')
@@ -40,36 +40,32 @@ const sortMode = ref<'default' | 'updated' | 'created' | 'amount'>('default')
 
 const activeStatuses = ['pending_payment', 'payment_issue', 'delivery_submitted']
 
-const rows = computed(() => {
-  const q = keyword.value.trim()
-  return [...(data.value ?? [])]
-    .filter(item => {
-      const createdAt = new Date(item.createdAt).getTime()
-      const rangeMs = timeRange.value === 'today' ? 24 * 60 * 60 * 1000 : timeRange.value === '7d' ? 7 * 24 * 60 * 60 * 1000 : timeRange.value === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
-      const tabMatched = activeTab.value === '全部'
-        || (activeTab.value === '待付款' && item.status === 'pending_payment')
-        || (activeTab.value === '待补充' && item.status === 'payment_issue')
-        || (activeTab.value === '已付款' && item.status === 'payment_submitted')
-        || (activeTab.value === '待交付' && item.status === 'paid_confirmed')
-        || (activeTab.value === '待核验' && item.status === 'delivery_submitted')
-        || (activeTab.value === '已完成' && item.status === 'completed')
-        || (activeTab.value === '已取消' && item.status === 'cancelled')
-      return tabMatched
-        && (!rangeMs || Date.now() - createdAt <= rangeMs)
-        && matchesApiOrderSearch(q, [item.orderNo, item.id, item.serviceTitle, item.seller])
-    })
-    .sort((a, b) => {
-      if (sortMode.value === 'amount') return compareDecimal(b.amountDecimal ?? String(b.amount), a.amountDecimal ?? String(a.amount))
-      if (sortMode.value === 'created') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      if (sortMode.value === 'updated') return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      const aAction = activeStatuses.includes(a.status)
-      const bAction = activeStatuses.includes(b.status)
-      return Number(bAction) - Number(aAction)
-        || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    })
-})
-
-const pagination = usePagination(rows)
+const tabStatusByLabel: Partial<Record<string, ApiOrderStatus>> = {
+  待付款: 'pending_payment',
+  待补充: 'payment_issue',
+  已付款: 'payment_submitted',
+  待交付: 'paid_confirmed',
+  待核验: 'delivery_submitted',
+  已完成: 'completed',
+  已取消: 'cancelled',
+}
+const tabStatus = computed(() => tabStatusByLabel[activeTab.value])
+const pageFilters = computed(() => ({
+  status: tabStatus.value,
+  search: keyword.value.trim() || undefined,
+  dateRange: timeRange.value,
+  sort: sortMode.value === 'amount' ? 'amount_desc' as const
+    : sortMode.value === 'created' ? 'created_desc' as const
+      : sortMode.value === 'updated' ? 'updated_desc' as const
+        : 'default_buyer' as const,
+}))
+const pagination = useCursorPagination([activeTab, keyword, timeRange, sortMode])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = useMyApiOrdersPage(pageFilters, pageRequest)
+const rows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
+const error = pageQuery.error
+const refetch = pageQuery.refetch
 const totalAmount = computed(() => (data.value ?? []).reduce((sum, item) => sum + Number(item.amountDecimal ?? item.amount), 0))
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 
@@ -111,7 +107,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
           <template #action><RouterLink to="/api-market"><Button>浏览 API 服务</Button></RouterLink></template>
         </EmptyState>
         <div v-else v-auto-animate="functionalMotion" class="my-transaction-list">
-          <Card v-for="item in pagination.paginatedRows.value" :key="item.id" class="my-transaction-row my-api-order-row" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
+          <Card v-for="item in rows" :key="item.id" class="my-transaction-row my-api-order-row" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
             <div class="my-transaction-product">
               <span class="my-transaction-icon my-transaction-icon--api">
                 <img v-if="orderProductIconSrc(item)" :src="orderProductIconSrc(item) ?? undefined" alt="" />
@@ -129,7 +125,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
             <div class="my-transaction-state"><StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'buyer')" /><span>{{ getApiOrderNextAction(item, 'buyer') }}</span></div>
             <ArrowRight class="my-transaction-arrow" />
           </Card>
-          <div class="my-transaction-pagination"><TablePagination v-model:page="pagination.page.value" :page-count="pagination.pageCount.value" :total="pagination.total.value" :start-item="pagination.startItem.value" :end-item="pagination.endItem.value" /></div>
+          <div class="my-transaction-pagination"><CursorTablePagination :page="pagination.page.value" :item-count="rows.length" :has-next-page="Boolean(pageQuery.data.value?.nextCursor)" :loading="pageQuery.isFetching.value" @previous="pagination.previous" @next="pagination.next(pageQuery.data.value?.nextCursor)" /></div>
         </div>
       </main>
       <aside class="my-api-orders-aside space-y-3">

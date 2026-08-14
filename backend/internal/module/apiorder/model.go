@@ -10,6 +10,12 @@ import (
 )
 
 const (
+	MerchantConfirmWindow = 10 * time.Minute
+	DefaultDeliveryWindow = 10 * time.Minute
+	LatePaymentWindow     = 24 * time.Hour
+)
+
+const (
 	PurchaseKindAPIService        = "api_service"
 	PurchaseKindLimitedQuotaOffer = "limited_quota_offer"
 
@@ -21,15 +27,33 @@ const (
 	StatusCompleted         = "completed"
 	StatusCancelled         = "cancelled"
 
-	DisputeStatusNone   = "none"
-	DisputeStatusOpen   = "open"
-	DisputeStatusClosed = "closed"
+	DisputeStatusNone                    = "none"
+	DisputeStatusNegotiating             = "negotiating"
+	DisputeStatusOpen                    = "open"
+	DisputeStatusAwaitingFulfillment     = "awaiting_fulfillment"
+	DisputeStatusFulfillmentConfirmation = "fulfillment_confirmation"
+	DisputeStatusClosed                  = "closed"
+
+	DisputeIssueServiceUnavailable  = "service_unavailable"
+	DisputeIssueDescriptionMismatch = "description_mismatch"
+	DisputeIssueQuotaShortage       = "quota_shortage"
+	DisputeIssueExpiredEarly        = "expired_early"
+	DisputeIssueNotDelivered        = "not_delivered"
+	DisputeIssueRefundNotReceived   = "refund_not_received"
+	DisputeIssuePaymentDispute      = "payment_dispute"
+	DisputeIssueOther               = "other"
+
+	DisputeResolutionFullRefund          = "full_refund"
+	DisputeResolutionPartialRefund       = "partial_refund"
+	DisputeResolutionContinueFulfillment = "continue_fulfillment"
+	DisputeResolutionOther               = "other"
 
 	CompletionSourceBuyerConfirmed = "buyer_confirmed"
 	CompletionSourceAutoCompleted  = "auto_completed"
 
-	CancelReasonBuyer          = "buyer_cancelled"
-	CancelReasonPaymentTimeout = "payment_timeout"
+	CancelReasonBuyer             = "buyer_cancelled"
+	CancelReasonPaymentTimeout    = "payment_timeout"
+	CancelReasonAccountGovernance = "ACCOUNT_GOVERNANCE_CANCELLED"
 
 	EventCreated                 = "api_order.created"
 	EventPaymentInstructionsRead = "api_order.payment_instructions_read"
@@ -40,9 +64,20 @@ const (
 	EventCompleted               = "api_order.completed"
 	EventCancelled               = "api_order.cancelled"
 	EventPaymentTimeoutCancelled = "api_order.payment_timeout_cancelled"
+	EventGovernanceCancelled     = "api_order.governance_cancelled"
 	EventDisputeOpened           = "api_order.dispute_opened"
+	EventDisputeRemedyAwaiting   = "api_order.dispute_remedy_awaiting"
+	EventDisputeRemedyClaimed    = "api_order.dispute_remedy_claimed"
+	EventLatePaymentReported     = "api_order.late_payment_reported"
+	EventLatePaymentResolved     = "api_order.late_payment_resolved"
+	EventDisputeRemedyContested  = "api_order.dispute_remedy_contested"
+	EventDisputeClosed           = "api_order.dispute_closed"
 	EventDeliveryReviewReminder  = "api_order.delivery_review_reminder_sent"
 	EventAutoCompleted           = "api_order.auto_completed"
+	EventCatalogRiskHoldCreated  = "api_order.catalog_risk_hold_created"
+	EventCatalogRiskHoldRestored = "api_order.catalog_risk_hold_restored"
+	EventCatalogRefundPending    = "api_order.catalog_risk_refund_pending"
+	EventCatalogDisputeOpened    = "api_order.catalog_risk_dispute_opened"
 
 	DeliveryKindAPIKeyEndpoint = "api_key_endpoint"
 	DeliveryKindLoginAccount   = "login_account"
@@ -54,6 +89,42 @@ const (
 	DeliveryReviewWindow       = 24 * time.Hour
 	DeliveryReviewReminderLead = 2 * time.Hour
 )
+
+const (
+	LatePaymentStatusReported              = "reported"
+	LatePaymentStatusNotReceived           = "not_received"
+	LatePaymentStatusReceivedRefundPending = "received_refund_pending"
+)
+
+func IsDisputeActive(status string) bool {
+	switch status {
+	case DisputeStatusNegotiating, DisputeStatusOpen, DisputeStatusAwaitingFulfillment, DisputeStatusFulfillmentConfirmation:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsDisputeIssueCode(value string) bool {
+	switch value {
+	case DisputeIssueServiceUnavailable, DisputeIssueDescriptionMismatch, DisputeIssueQuotaShortage,
+		DisputeIssueExpiredEarly, DisputeIssueNotDelivered, DisputeIssueRefundNotReceived,
+		DisputeIssuePaymentDispute, DisputeIssueOther:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsDisputeResolution(value string) bool {
+	switch value {
+	case DisputeResolutionFullRefund, DisputeResolutionPartialRefund,
+		DisputeResolutionContinueFulfillment, DisputeResolutionOther:
+		return true
+	default:
+		return false
+	}
+}
 
 type Order struct {
 	ID                            string
@@ -75,6 +146,9 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	ProbeConnectionIDSnapshot     string
+	APIBaseURLSnapshot            string
+	NormalizedAPIBaseURLSnapshot  string
 	QuotaUsagePolicySnapshot      apimarket.QuotaUsagePolicy
 	PromptAuditEnabledSnapshot    *bool
 	PackageStockReserved          bool
@@ -112,10 +186,14 @@ type Order struct {
 	PaymentQRCodeDataURLSnapshot  string
 	PaymentSummary                string
 	PaymentSubmittedAt            *time.Time
+	MerchantConfirmDueAt          *time.Time
+	MerchantConfirmOverdue        bool
 	PaymentIssueReason            string
 	PaymentIssueNote              string
 	PaymentIssueReportedAt        *time.Time
 	PaidConfirmedAt               *time.Time
+	DeliveryDueAt                 *time.Time
+	DeliveryOverdue               bool
 	DeliveryNote                  string
 	DeliverySubmittedAt           *time.Time
 	DeliveryReviewExpiresAt       *time.Time
@@ -125,11 +203,40 @@ type Order struct {
 	CompletedAt                   *time.Time
 	CancelledAt                   *time.Time
 	CancelReason                  string
+	LatePaymentStatus             string
+	LatePaymentReportedAt         *time.Time
+	LatePaymentNote               string
+	LatePaymentResolvedAt         *time.Time
+	CanReportLatePayment          bool
+	AfterSalesExpiresAt           *time.Time
+	CanOpenDispute                bool
+	DisputeEligibilityReason      string
 	CreatedAt                     time.Time
 	UpdatedAt                     time.Time
 	Version                       int64
 	BuyerReputation               *reputation.ReputationSnapshot
 	SellerReputation              *reputation.ReputationSnapshot
+	CatalogRiskHold               *CatalogRiskHold
+}
+
+const (
+	CatalogRiskHoldActive        = "active"
+	CatalogRiskHoldRestored      = "restored"
+	CatalogRiskHoldRefundPending = "refund_pending"
+	CatalogRiskHoldDisputeOpened = "dispute_opened"
+)
+
+type CatalogRiskHold struct {
+	ID             string
+	SourceType     string
+	SourceID       string
+	Status         string
+	Reason         string
+	CreatedAt      time.Time
+	ResolvedBy     string
+	ResolvedAt     *time.Time
+	ResolutionNote string
+	Version        int64
 }
 
 type Event struct {
@@ -178,16 +285,36 @@ type CreateInput struct {
 }
 
 type ActionInput struct {
-	OrderID            string
-	ActorUserID        string
-	PaymentSummary     string
-	PaymentIssueReason string
-	PaymentIssueNote   string
-	DeliveryNote       string
-	DeliveryCredential DeliveryCredentialInput
-	Reason             string
-	ExpectedVersion    int64
-	RequestID          string
+	OrderID                string
+	ActorUserID            string
+	ActorAudience          string
+	ParticipantRole        string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	PaymentSummary         string
+	PaymentIssueReason     string
+	PaymentIssueNote       string
+	LatePaymentStatus      string
+	LatePaymentNote        string
+	DeliveryNote           string
+	DeliveryCredential     DeliveryCredentialInput
+	Reason                 string
+	IssueCode              string
+	RequestedResolution    string
+	RequestedAmountCNY     string
+	IssueOccurredAt        string
+	ExpectedVersion        int64
+	RequestID              string
+}
+
+type CatalogRiskHoldActionInput struct {
+	OrderID         string
+	AdminUserID     string
+	Resolution      string
+	ResolutionNote  string
+	ExpectedVersion int64
+	RequestID       string
 }
 
 type DeliveryCredentialInput struct {
@@ -209,14 +336,18 @@ type PaymentInstructionsView struct {
 }
 
 type DisputeCaseInput struct {
-	OrderID      string
-	ServiceTitle string
-	BuyerUserID  string
-	SellerUserID string
-	ActorUserID  string
-	Reason       string
-	RequestID    string
-	Now          time.Time
+	OrderID             string
+	ServiceTitle        string
+	BuyerUserID         string
+	SellerUserID        string
+	ActorUserID         string
+	Reason              string
+	IssueCode           string
+	RequestedResolution string
+	RequestedAmountCNY  string
+	IssueOccurredAt     *time.Time
+	RequestID           string
+	Now                 time.Time
 }
 
 type CompletionBuilder func(Order) (idempotency.Completion, *domain.AppError)

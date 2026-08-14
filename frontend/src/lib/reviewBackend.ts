@@ -1,6 +1,7 @@
 import type { PublicReviewRecord } from '@/data/mock'
-import type { ReviewCenterData, ReviewCenterRow, SubmitReviewPayload } from '@/lib/api'
+import type { ReviewCenterData, ReviewCenterRow, ReviewTag, SubmitReviewPayload } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
+import { collectCursorPages, normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
 
 type ListResponse<T> = {
   items: T[]
@@ -19,7 +20,7 @@ type BackendReviewCenterRow = {
   revieweeRole: 'buyer' | 'seller'
   status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
-  counterpartySubmitted: boolean
+  allowedTags: ReviewTag[]
   canCreate: boolean
   canEdit: boolean
   rating: number | null
@@ -37,7 +38,12 @@ type BackendReviewCenterRow = {
 
 type BackendReviewCenterResponse = {
   items: BackendReviewCenterRow[]
-  presetTags: string[]
+  presetTags: ReviewTag[]
+  nextCursor?: string | null
+}
+
+export type ReviewCenterPage = CursorPage<ReviewCenterRow> & {
+  presetTags: ReviewTag[]
 }
 
 type BackendPublicReview = {
@@ -64,7 +70,7 @@ function mapReviewCenterRow(row: BackendReviewCenterRow): ReviewCenterRow {
     revieweeRole: row.revieweeRole,
     status: row.status,
     visibility: row.visibility,
-    counterpartySubmitted: row.counterpartySubmitted,
+    allowedTags: Array.isArray(row.allowedTags) ? row.allowedTags : [],
     canCreate: row.canCreate,
     canEdit: row.canEdit,
     rating: row.rating ?? null,
@@ -94,13 +100,29 @@ function mapPublicReview(row: BackendPublicReview): PublicReviewRecord {
   }
 }
 
-export async function backendReviewCenterRows(): Promise<ReviewCenterData> {
+export async function backendReviewCenterPage(direction: ReviewCenterRow['direction'] | undefined, page: CursorPageRequest = {}): Promise<ReviewCenterPage> {
   await ensureBackendSession('buyer', false)
-  const response = await backendRequest<BackendReviewCenterResponse>('/api/v1/me/reviews')
+  const params = new URLSearchParams()
+  if (direction) params.set('direction', direction)
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
+  const query = params.toString()
+  const response = await backendRequest<BackendReviewCenterResponse>(`/api/v1/me/reviews${query ? `?${query}` : ''}`)
   return {
     items: response.items.map(mapReviewCenterRow),
     presetTags: Array.isArray(response.presetTags) ? response.presetTags : [],
+    nextCursor: normalizeNextCursor(response.nextCursor),
   }
+}
+
+export async function backendReviewCenterRows(): Promise<ReviewCenterData> {
+  let presetTags: ReviewTag[] = []
+  const items = await collectCursorPages(async (page) => {
+    const response = await backendReviewCenterPage(undefined, page)
+    presetTags = response.presetTags
+    return response
+  })
+  return { items, presetTags }
 }
 
 export async function backendSubmitReview(payload: SubmitReviewPayload): Promise<ReviewCenterRow> {

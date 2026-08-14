@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 )
 
@@ -24,8 +25,12 @@ type Repository interface {
 	UpdateAppealAdminWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminActionInput, now time.Time, buildCompletion AdminCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)
 
 	ListDisputesByUser(ctx context.Context, userID string) ([]DisputeCase, *domain.AppError)
+	ListDisputesForActor(ctx context.Context, actor auth.BusinessActor) ([]DisputeCase, *domain.AppError)
+	GetDisputeForParticipant(ctx context.Context, id, userID string) (DisputeCase, *domain.AppError)
+	GetDisputeForActor(ctx context.Context, actor auth.BusinessActor, id string) (DisputeCase, *domain.AppError)
 	ListAdminDisputes(ctx context.Context) ([]DisputeCase, *domain.AppError)
 	GetAdminDispute(ctx context.Context, id string) (DisputeCase, *domain.AppError)
+	UpdateDisputeParticipantWithIdempotency(ctx context.Context, entry idempotency.Entry, input DisputeParticipantActionInput, now time.Time, buildCompletion DisputeParticipantCompletionBuilder) (DisputeCase, idempotency.Completion, *domain.AppError)
 	UpdateDisputeAdminWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminActionInput, now time.Time, buildCompletion AdminCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)
 	ListPublicUserDisputes(ctx context.Context, username string) ([]PublicDispute, *domain.AppError)
 	PublicUserDisputeStats(ctx context.Context, username string, now time.Time) (PublicStats, *domain.AppError)

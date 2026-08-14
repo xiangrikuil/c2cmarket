@@ -25,8 +25,19 @@ type reputationScopeResponse struct {
 }
 
 type myReputationResponse struct {
-	RuleVersion string                          `json:"ruleVersion"`
-	Items       []reputation.ReputationSnapshot `json:"items"`
+	RuleVersion        string                              `json:"ruleVersion"`
+	Items              []reputation.ReputationSnapshot     `json:"items"`
+	ActiveRestrictions []publicActiveReputationRestriction `json:"activeRestrictions"`
+}
+
+type publicActiveReputationRestriction struct {
+	RestrictionType string  `json:"restrictionType"`
+	RoleScope       string  `json:"roleScope"`
+	ActionCode      string  `json:"actionCode"`
+	ReasonCode      string  `json:"reasonCode"`
+	PublicReason    string  `json:"publicReason"`
+	StartsAt        string  `json:"startsAt"`
+	EndsAt          *string `json:"endsAt"`
 }
 
 type adminReputationAuditResponse struct {
@@ -166,10 +177,32 @@ func (s *Server) handleMyReputation(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	restrictions, appErr := s.reputation.MyActiveReputationRestrictions(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	publicRestrictions := make([]publicActiveReputationRestriction, 0, len(restrictions))
+	for _, item := range restrictions {
+		publicRestrictions = append(publicRestrictions, toPublicActiveReputationRestriction(item))
+	}
 	writeJSON(w, http.StatusOK, myReputationResponse{
-		RuleVersion: reputation.RuleVersion,
-		Items:       items,
+		RuleVersion:        reputation.RuleVersion,
+		Items:              items,
+		ActiveRestrictions: publicRestrictions,
 	})
+}
+
+func toPublicActiveReputationRestriction(item reputation.UserRestriction) publicActiveReputationRestriction {
+	return publicActiveReputationRestriction{
+		RestrictionType: item.RestrictionType,
+		RoleScope:       item.RoleScope,
+		ActionCode:      item.ActionCode,
+		ReasonCode:      item.ReasonCode,
+		PublicReason:    item.PublicReason,
+		StartsAt:        item.StartsAt.UTC().Format(time.RFC3339),
+		EndsAt:          formatOptionalTime(item.EndsAt),
+	}
 }
 
 func (s *Server) handleAdminUserReputation(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +405,7 @@ type userRestrictionResponse struct {
 	StartsAt               string  `json:"startsAt"`
 	EndsAt                 *string `json:"endsAt,omitempty"`
 	SourceDisputeOutcomeID string  `json:"sourceDisputeOutcomeId,omitempty"`
+	SourceDisputeRemedyID  string  `json:"sourceDisputeRemedyId,omitempty"`
 	CreatedByAdminID       string  `json:"createdByAdminId"`
 	RevokedAt              *string `json:"revokedAt,omitempty"`
 	RevokedByAdminID       string  `json:"revokedByAdminId,omitempty"`
@@ -380,6 +414,100 @@ type userRestrictionResponse struct {
 	UpdatedAt              string  `json:"updatedAt"`
 	Version                int64   `json:"version"`
 	UserVersion            int64   `json:"userVersion,omitempty"`
+}
+
+type apiOrderSanctionRecommendationResponse struct {
+	Eligible                 bool                     `json:"eligible"`
+	ReasonCode               string                   `json:"reasonCode"`
+	RemedyID                 string                   `json:"remedyId,omitempty"`
+	OutcomeID                string                   `json:"outcomeId,omitempty"`
+	SubjectUserID            string                   `json:"subjectUserId,omitempty"`
+	ConfirmedBreaches180Days int                      `json:"confirmedBreaches180Days"`
+	RecommendedDays          int                      `json:"recommendedDays"`
+	AlreadyApplied           bool                     `json:"alreadyApplied"`
+	ExistingRestriction      *userRestrictionResponse `json:"existingRestriction,omitempty"`
+	SubjectUserVersion       int64                    `json:"subjectUserVersion,omitempty"`
+}
+
+type applyAPIOrderSanctionRequest struct {
+	InternalReason string `json:"internalReason"`
+}
+
+func (s *Server) handleAPIOrderSanctionRecommendation(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	recommendation, appErr := s.reputation.AdminAPIOrderSanctionRecommendation(r.Context(), user, chi.URLParam(r, "id"))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	response := toAPIOrderSanctionRecommendationResponse(recommendation)
+	if recommendation.SubjectUserVersion > 0 {
+		w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(recommendation.SubjectUserVersion, 10)))
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleApplyAPIOrderSanction(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[applyAPIOrderSanctionRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	disputeID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/admin/disputes/{id}/sanction:" + disputeID
+	completion, appErr := s.reputation.AdminApplyAPIOrderSanctionWithIdempotency(
+		r.Context(),
+		user,
+		routeKey,
+		r.Header.Get("Idempotency-Key"),
+		requestHash(r.Method, routeKey, body),
+		reputation.ApplyAPIOrderSanctionInput{
+			DisputeCaseID:       disputeID,
+			InternalReason:      req.InternalReason,
+			ExpectedUserVersion: version,
+			RequestID:           requestIDFrom(r),
+		},
+		reputationGovernanceCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	restoreReputationGovernanceETag(&completion)
+	writeIdempotencyCompletion(w, completion)
+}
+
+func toAPIOrderSanctionRecommendationResponse(item reputation.APIOrderSanctionRecommendation) apiOrderSanctionRecommendationResponse {
+	response := apiOrderSanctionRecommendationResponse{
+		Eligible:                 item.Eligible,
+		ReasonCode:               item.ReasonCode,
+		RemedyID:                 item.RemedyID,
+		OutcomeID:                item.OutcomeID,
+		SubjectUserID:            item.SubjectUserID,
+		ConfirmedBreaches180Days: item.ConfirmedBreaches180Days,
+		RecommendedDays:          item.RecommendedDays,
+		AlreadyApplied:           item.AlreadyApplied,
+		SubjectUserVersion:       item.SubjectUserVersion,
+	}
+	if item.ExistingRestriction != nil {
+		restriction := toUserRestrictionResponse(*item.ExistingRestriction)
+		response.ExistingRestriction = &restriction
+	}
+	return response
 }
 
 type reputationGovernanceMutationResponse struct {
@@ -652,6 +780,7 @@ func toUserRestrictionResponse(item reputation.UserRestriction) userRestrictionR
 		StartsAt:               item.StartsAt.UTC().Format(time.RFC3339),
 		EndsAt:                 formatOptionalTime(item.EndsAt),
 		SourceDisputeOutcomeID: item.SourceDisputeOutcomeID,
+		SourceDisputeRemedyID:  item.SourceDisputeRemedyID,
 		CreatedByAdminID:       item.CreatedByAdminID,
 		RevokedAt:              formatOptionalTime(item.RevokedAt),
 		RevokedByAdminID:       item.RevokedByAdminID,

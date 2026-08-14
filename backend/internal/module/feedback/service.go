@@ -118,7 +118,7 @@ func (s *Service) MyTickets(ctx context.Context, user auth.User, page domain.Pag
 		}
 	}
 	sortTickets(items)
-	return domain.PageItems(items, page), nil
+	return domain.PageItems(items, page)
 }
 
 func (s *Service) MyTicket(ctx context.Context, user auth.User, id string) (Ticket, *domain.AppError) {

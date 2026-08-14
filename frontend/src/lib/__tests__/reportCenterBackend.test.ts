@@ -17,6 +17,7 @@ function problemResponse(detail: string, status = 503) {
 
 function sessionResponse() {
   return jsonResponse({
+		audience: 'normal',
     csrfToken: 'csrf-report-center',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {
@@ -33,6 +34,7 @@ function sessionResponse() {
 
 function adminSessionResponse() {
   return jsonResponse({
+		audience: 'normal',
     csrfToken: 'csrf-admin-report',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {
@@ -42,6 +44,7 @@ function adminSessionResponse() {
       displayName: 'Moderator',
       isAdmin: true,
       permissions: ['admin:reports'],
+      capabilities: ['admin.access'],
       linuxDoBinding: { bound: true },
     },
   })
@@ -148,6 +151,64 @@ describe('举报与申诉中心真实后端适配器', () => {
       openInfoRequestId: 'request-1',
       body: '订单状态与付款记录时间不一致，请复核。',
     })
+  })
+
+  it('整改参与方动作使用独立端点且声明不会发送关闭指令', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sessionResponse())
+      .mockResolvedValueOnce(jsonResponse({ id: 'dispute-1', status: 'resolved', remedies: [{ status: 'claimed_fulfilled' }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'dispute-1', status: 'closed', remedies: [{ status: 'confirmed' }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'dispute-1', status: 'open', remedies: [{ status: 'contested' }] }))
+    const { backend } = await loadBackend(fetchMock)
+
+    await backend.backendClaimDisputeRemedy('dispute-1', '已按裁决继续履行。')
+    await backend.backendConfirmDisputeRemedy('dispute-1', '')
+    await backend.backendContestDisputeRemedy('dispute-1', '仍未收到履行结果。')
+
+    const mutations = fetchMock.mock.calls.slice(1) as Array<[string, RequestInit]>
+    assert.deepEqual(mutations.map(([url]) => url), [
+      '/api/v1/me/disputes/dispute-1/remedy/claim',
+      '/api/v1/me/disputes/dispute-1/remedy/confirm',
+      '/api/v1/me/disputes/dispute-1/remedy/contest',
+    ])
+    assert.deepEqual(mutations.map(([, init]) => JSON.parse(String(init.body))), [
+      { note: '已按裁决继续履行。' },
+      {},
+      { reason: '仍未收到履行结果。' },
+    ])
+    assert.equal(mutations.some(([url]) => url.includes('/close')), false)
+  })
+
+  it('管理员裁决显式发送整改要求或 null，并以版本保护逾期确认', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(adminSessionResponse())
+      .mockResolvedValueOnce(jsonResponse({ dispute: { id: 'dispute-1', status: 'resolved', version: 4 } }))
+      .mockResolvedValueOnce(jsonResponse({ dispute: { id: 'dispute-1', status: 'closed', version: 5 } }))
+    const { backend } = await loadBackend(fetchMock)
+
+    await backend.backendResolveAdminDispute({
+      disputeId: 'dispute-1',
+      expectedVersion: 3,
+      reason: '平台裁决卖家继续履行。',
+      publicSummary: 'API 订单履约争议',
+      publicResultCode: 'api_delivery_issue',
+      publicResult: '卖家应继续履行',
+      remedy: {
+        action: 'continue_fulfillment',
+        responsibleUserId: 'seller-1',
+        instructions: '请在期限内继续完成交付。',
+        dueAt: '2026-08-10T12:00:00Z',
+      },
+    })
+    await backend.backendMarkAdminDisputeRemedyOverdue({ disputeId: 'dispute-1', expectedVersion: 4, reason: '责任方已超过裁决期限。' })
+
+    const resolveCall = fetchMock.mock.calls[1] as [string, RequestInit]
+    assert.equal(resolveCall[0], '/api/v1/admin/disputes/dispute-1/resolve')
+    assert.equal(new Headers(resolveCall[1].headers).get('If-Match'), '"3"')
+    assert.equal(JSON.parse(String(resolveCall[1].body)).remedy.responsibleUserId, 'seller-1')
+    const overdueCall = fetchMock.mock.calls[2] as [string, RequestInit]
+    assert.equal(overdueCall[0], '/api/v1/admin/disputes/dispute-1/remedy/mark-overdue')
+    assert.equal(new Headers(overdueCall[1].headers).get('If-Match'), '"4"')
   })
 
   it('管理员要求举报人补充时显式发送所选用户 ID', async () => {

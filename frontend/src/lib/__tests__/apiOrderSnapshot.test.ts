@@ -11,9 +11,9 @@ describe('API 订单意向快照投影', () => {
   it('读取冻结模型、倍率、用量规则与商户售后说明', () => {
     const snapshot = projectAPIIntentPricingSnapshot(JSON.stringify({
       models: [
-        { modelNameSnapshot: 'GPT-5.6', merchantMultiplier: '1.0000' },
-        { modelNameSnapshot: 'GPT-5 mini', merchantMultiplier: '0.2000' },
-        { modelNameSnapshot: 'GPT-5.6', merchantMultiplier: '1.0000' },
+        { modelKey: 'gpt-5.6', merchantMultiplier: '1.0000' },
+        { modelKey: 'gpt-5-mini', merchantMultiplier: '0.2000' },
+        { modelKey: 'gpt-5.6', merchantMultiplier: '1.0000' },
       ],
       usageVisibility: 'offsite_panel_readonly',
       merchantNote: '高峰期可能响应变慢。',
@@ -27,7 +27,7 @@ describe('API 订单意向快照投影', () => {
     }))
 
     expect(snapshot).toMatchObject({
-      models: ['GPT-5.6', 'GPT-5 mini'],
+      models: ['gpt-5.6', 'gpt-5-mini'],
       multiplier: '按模型分别计算',
       defaultMultiplier: 1,
       usageVisibility: 'panel_realtime',
@@ -46,9 +46,9 @@ describe('API 订单意向快照投影', () => {
   })
 
   it('对旧快照明确标记未冻结的售后和用量字段', () => {
-    const snapshot = projectAPIIntentPricingSnapshot('{"models":[{"modelNameSnapshot":"GPT-5.6","merchantMultiplier":"1.0000"}],"recommendedConcurrency":7}')
+    const snapshot = projectAPIIntentPricingSnapshot('{"models":[{"modelKey":"gpt-5.6","merchantMultiplier":"1.0000"}],"recommendedConcurrency":7}')
 
-    expect(snapshot.models).toEqual(['GPT-5.6'])
+    expect(snapshot.models).toEqual(['gpt-5.6'])
     expect(snapshot.multiplier).toBe('1.00x')
     expect(snapshot.merchantSupportNote).toBe('历史订单未冻结商户售后说明')
     expect(snapshot.usageVisibilitySnapshotMissing).toBe(true)

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const passwordInputSource = readFileSync(new URL('../../components/personal-center/PasswordVisibilityInput.vue', import.meta.url), 'utf8')
+const passwordInputSource = readFileSync(new URL('../../components/auth/PasswordInput.vue', import.meta.url), 'utf8')
 const myCenterSource = readFileSync(new URL('../../pages/MyCenterPage.vue', import.meta.url), 'utf8')
 
 describe('备用密码显隐控件', () => {
@@ -22,12 +22,14 @@ describe('备用密码显隐控件', () => {
     expect(passwordInputSource).toContain('dark:bg-destructive/10')
   })
 
-  it('为备用密码流程的三个密码字段统一启用显隐控件', () => {
-    expect(myCenterSource.match(/<PasswordVisibilityInput/g)).toHaveLength(3)
+  it('为备用密码和 linux.do 近期验证字段统一启用显隐控件', () => {
+    expect(myCenterSource.match(/<PasswordVisibilityInput/g)).toHaveLength(4)
     expect(myCenterSource).toContain('id="account-current-password"')
     expect(myCenterSource).toContain('id="account-new-password"')
     expect(myCenterSource).toContain('id="account-confirm-password"')
     expect(myCenterSource).toContain(":described-by=\"confirmPasswordMismatch ? 'account-confirm-password-error' : undefined\"")
     expect(myCenterSource).toContain('id="account-confirm-password-error"')
+    expect(myCenterSource).toContain('id="linuxdo-link-password"')
+    expect(myCenterSource).toContain('@click="confirmRecentPassword"')
   })
 })

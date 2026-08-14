@@ -41,6 +41,21 @@ const extractCallRoutes = (source, receiver, prefix = '') => {
   return routes
 }
 
+const extractCatalogLifecycleRoutes = (source, prefix = '') => {
+  const routes = []
+  const actions = ['deprecate', 'block', 'reactivate', 'unblock']
+  const pattern = /\bregisterCatalogLifecycleRoutes\(r, "([^"]+)"/g
+
+  for (const match of source.matchAll(pattern)) {
+    const basePath = prefix ? joinPaths(prefix, match[1]) : normalizePath(match[1])
+    for (const action of actions) {
+      routes.push(routePair('POST', joinPaths(basePath, `/${action}`)))
+    }
+  }
+
+  return routes
+}
+
 const extractRouteGroupBody = (source, prefix) => {
   const routeCall = `s.mux.Route("${prefix}"`
   const start = source.indexOf(routeCall)
@@ -73,8 +88,9 @@ const backendRoutePairs = () => {
   const rootRoutes = extractCallRoutes(source, 's\\.mux')
   const apiV1Body = extractRouteGroupBody(source, '/api/v1')
   const apiV1Routes = extractCallRoutes(apiV1Body, 'r', '/api/v1')
+  const catalogLifecycleRoutes = extractCatalogLifecycleRoutes(apiV1Body, '/api/v1')
 
-  return new Set([...rootRoutes, ...apiV1Routes])
+  return new Set([...rootRoutes, ...apiV1Routes, ...catalogLifecycleRoutes])
 }
 
 const openApiRoutePairs = () => {
@@ -106,7 +122,7 @@ const openApiRoutePairs = () => {
       continue
     }
 
-    const methodMatch = line.match(/^    (get|post|put|patch|delete):\s*$/)
+    const methodMatch = line.match(/^    (get|post|put|patch|delete):(?:\s.*)?$/)
     if (methodMatch) {
       routes.add(routePair(methodMatch[1], currentPath))
     }

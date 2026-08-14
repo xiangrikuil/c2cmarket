@@ -70,11 +70,85 @@ func (s *Store) EnsureUser(ctx context.Context, username string, isAdmin bool, n
 	}, now); err != nil {
 		return auth.User{}, internalStoreError()
 	}
+	devSubject := "dev-session:" + user.ID
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO auth_identities (user_id, provider, provider_subject, created_at, last_login_at)
+		VALUES ($1, 'linux_do', $2, $3, $3)
+		ON CONFLICT (provider, provider_subject) DO UPDATE
+		SET last_login_at = EXCLUDED.last_login_at
+	`, user.ID, devSubject, now); err != nil {
+		return auth.User{}, internalStoreError()
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO linux_do_bindings (
+		  user_id, linux_do_user_id, linux_do_username, trust_level,
+		  bound_at, last_synced_at
+		)
+		VALUES ($1, $2, $3, 1, $4, $4)
+		ON CONFLICT (user_id) DO NOTHING
+	`, user.ID, devSubject, username, now); err != nil {
+		return auth.User{}, internalStoreError()
+	}
+	var binding authLinuxDoBindingScan
+	if err = tx.QueryRow(ctx, `
+		SELECT linux_do_user_id, linux_do_username, trust_level, avatar_url, bound_at, last_synced_at
+		FROM linux_do_bindings
+		WHERE user_id = $1
+	`, user.ID).Scan(&binding.userID, &binding.username, &binding.trustLevel, &binding.avatarURL, &binding.boundAt, &binding.lastSyncedAt); err != nil {
+		return auth.User{}, internalStoreError()
+	}
+	applyAuthLinuxDoBinding(&user, binding)
 
 	if err := tx.Commit(ctx); err != nil {
 		return auth.User{}, internalStoreError()
 	}
-	return user, nil
+	return auth.HydrateCapabilities(user), nil
+}
+
+func (s *Store) SetDevAdminPermission(ctx context.Context, userID string, isAdmin bool, now time.Time) *domain.AppError {
+	if s == nil || s.pool == nil {
+		return internalStoreError()
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Development persona not found", "开发身份不存在。")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists); err != nil {
+		return internalStoreError()
+	}
+	if !exists {
+		return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Development persona not found", "开发身份不存在。")
+	}
+	if isAdmin {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO user_permissions (user_id, permission)
+			VALUES ($1, 'admin')
+			ON CONFLICT DO NOTHING
+		`, userID)
+	} else {
+		_, err = tx.Exec(ctx, `
+			DELETE FROM user_permissions
+			WHERE user_id = $1 AND permission = 'admin'
+		`, userID)
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	if _, err = tx.Exec(ctx, `UPDATE users SET updated_at = $2 WHERE id = $1`, userID, now); err != nil {
+		return internalStoreError()
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return internalStoreError()
+	}
+	return nil
 }
 
 func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain.AppError) {
@@ -90,6 +164,7 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+		       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
 		FROM users u
@@ -101,6 +176,9 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
+		&user.GovernanceVersion,
+		&user.CurrentGovernanceActionID,
+		&user.SecurityLockedAt,
 		&user.IsAdmin,
 		&binding.userID,
 		&binding.username,
@@ -116,6 +194,9 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 		return auth.User{}, internalStoreError()
 	}
 	applyAuthLinuxDoBinding(&user, binding)
+	if err := hydrateAuthStudentClaim(ctx, s.pool, &user); err != nil {
+		return auth.User{}, internalStoreError()
+	}
 	return user, nil
 }
 
@@ -172,7 +253,7 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 		if err := tx.Commit(ctx); err != nil {
 			return auth.OAuthUserResult{}, internalStoreError()
 		}
-		return auth.OAuthUserResult{User: user}, nil
+		return auth.OAuthUserResult{User: auth.HydrateCapabilities(user)}, nil
 	}
 
 	var createdUser auth.User
@@ -214,7 +295,7 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 		if reloadErr != nil || !found {
 			return auth.OAuthUserResult{}, internalStoreError()
 		}
-		return auth.OAuthUserResult{User: winner}, nil
+		return auth.OAuthUserResult{User: auth.HydrateCapabilities(winner)}, nil
 	}
 	if err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
@@ -235,7 +316,7 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 	if err := tx.Commit(ctx); err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}
-	return auth.OAuthUserResult{User: createdUser, Created: true}, nil
+	return auth.OAuthUserResult{User: auth.HydrateCapabilities(createdUser), Created: true}, nil
 }
 
 func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.PasswordCredential, now time.Time) (auth.BootstrapAdminResult, *domain.AppError) {
@@ -268,6 +349,9 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 		       u.username,
 		       u.display_name,
 		       u.account_status,
+		       u.governance_version,
+		       COALESCE(u.current_governance_action_id::text, ''),
+		       u.security_locked_at,
 		       r.username_snapshot,
 		       EXISTS(
 		         SELECT 1 FROM user_permissions p
@@ -300,7 +384,7 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 			return auth.BootstrapAdminResult{}, auth.AdminBootstrapConflictError()
 		}
 		existing.IsAdmin = true
-		return auth.BootstrapAdminResult{User: existing}, nil
+		return auth.BootstrapAdminResult{User: auth.HydrateCapabilities(existing)}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return auth.BootstrapAdminResult{}, internalStoreError()
@@ -376,7 +460,7 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 		return auth.BootstrapAdminResult{}, internalStoreError()
 	}
 	user.IsAdmin = true
-	return auth.BootstrapAdminResult{User: user, Created: true}, nil
+	return auth.BootstrapAdminResult{User: auth.HydrateCapabilities(user), Created: true}, nil
 }
 
 func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject string, lock bool) (auth.User, bool, error) {
@@ -389,10 +473,13 @@ func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject strin
 	err := q.QueryRow(ctx, `
 		SELECT u.id::text,
 		       u.analytics_user_id::text,
-		       u.username,
-		       u.display_name,
-		       u.account_status,
-		       EXISTS(
+			       u.username,
+			       u.display_name,
+			       u.account_status,
+			       u.governance_version,
+			       COALESCE(u.current_governance_action_id::text, ''),
+			       u.security_locked_at,
+			       EXISTS(
 		         SELECT 1 FROM user_permissions p
 		         WHERE p.user_id = u.id AND p.permission = 'admin'
 		       ) AS is_admin,
@@ -412,6 +499,9 @@ func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject strin
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
+		&user.GovernanceVersion,
+		&user.CurrentGovernanceActionID,
+		&user.SecurityLockedAt,
 		&user.IsAdmin,
 		&binding.userID,
 		&binding.username,
@@ -427,6 +517,9 @@ func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject strin
 		return auth.User{}, false, err
 	}
 	applyAuthLinuxDoBinding(&user, binding)
+	if err := hydrateAuthStudentClaim(ctx, q, &user); err != nil {
+		return auth.User{}, false, err
+	}
 	return user, true, nil
 }
 
@@ -500,6 +593,7 @@ func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.P
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+		       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       c.password_algorithm, c.password_salt, c.password_hash,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
@@ -507,12 +601,20 @@ func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.P
 		JOIN user_password_credentials c ON c.user_id = u.id
 		LEFT JOIN linux_do_bindings l ON l.user_id = u.id
 		WHERE u.username = $1
+		   OR EXISTS (
+		     SELECT 1
+		     FROM student_email_claims claim
+		     WHERE claim.user_id = u.id AND claim.normalized_email = $1
+		   )
 	`, username).Scan(
 		&credential.User.ID,
 		&credential.User.AnalyticsUserID,
 		&credential.User.Username,
 		&credential.User.DisplayName,
 		&credential.User.Status,
+		&credential.User.GovernanceVersion,
+		&credential.User.CurrentGovernanceActionID,
+		&credential.User.SecurityLockedAt,
 		&credential.User.IsAdmin,
 		&credential.Algorithm,
 		&credential.Salt,
@@ -531,6 +633,9 @@ func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.P
 		return auth.PasswordCredential{}, internalStoreError()
 	}
 	applyAuthLinuxDoBinding(&credential.User, binding)
+	if err := hydrateAuthStudentClaim(ctx, s.pool, &credential.User); err != nil {
+		return auth.PasswordCredential{}, internalStoreError()
+	}
 	return credential, nil
 }
 
@@ -547,6 +652,7 @@ func (s *Store) PasswordCredentialByUserID(ctx context.Context, userID string) (
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+		       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       c.password_algorithm, c.password_salt, c.password_hash,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
@@ -560,6 +666,9 @@ func (s *Store) PasswordCredentialByUserID(ctx context.Context, userID string) (
 		&credential.User.Username,
 		&credential.User.DisplayName,
 		&credential.User.Status,
+		&credential.User.GovernanceVersion,
+		&credential.User.CurrentGovernanceActionID,
+		&credential.User.SecurityLockedAt,
 		&credential.User.IsAdmin,
 		&credential.Algorithm,
 		&credential.Salt,
@@ -578,6 +687,9 @@ func (s *Store) PasswordCredentialByUserID(ctx context.Context, userID string) (
 		return auth.PasswordCredential{}, internalStoreError()
 	}
 	applyAuthLinuxDoBinding(&credential.User, binding)
+	if err := hydrateAuthStudentClaim(ctx, s.pool, &credential.User); err != nil {
+		return auth.PasswordCredential{}, internalStoreError()
+	}
 	return credential, nil
 }
 
@@ -600,141 +712,26 @@ func (s *Store) UpsertPasswordCredential(ctx context.Context, credential auth.Pa
 	return nil
 }
 
-func (s *Store) CreateEmailRegistrationCode(ctx context.Context, input auth.EmailRegistrationStartInput, codeHash string, expiresAt, now time.Time) *domain.AppError {
-	if s == nil || s.pool == nil {
-		return internalStoreError()
-	}
-	email := strings.TrimSpace(strings.ToLower(input.Email))
-	var exists bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1
-			FROM users
-			WHERE lower(email) = lower($1)
-			  AND email_verified_at IS NOT NULL
-		)
-	`, email).Scan(&exists)
-	if err != nil {
-		return internalStoreError()
-	}
-	if exists {
-		return domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Email unavailable", "该邮箱已注册。", "email", "unavailable", "该邮箱已注册。")
-	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO email_verification_codes (user_id, email, purpose, code_hash, expires_at, created_at)
-		VALUES (NULL, lower($1), 'email_registration', $2, $3, $4)
-	`, email, strings.TrimSpace(codeHash), expiresAt, now)
-	if err != nil {
-		return internalStoreError()
-	}
-	return nil
-}
-
-func (s *Store) ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput, codeHash, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, sessionAbsoluteExpiresAt, now time.Time) (auth.User, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return auth.User{}, internalStoreError()
-	}
-	email := strings.TrimSpace(strings.ToLower(input.Email))
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return auth.User{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
-
-	var codeID string
-	err = tx.QueryRow(ctx, `
-		SELECT id::text
-		FROM email_verification_codes
-		WHERE user_id IS NULL
-		  AND email = lower($1)
-		  AND purpose = 'email_registration'
-		  AND code_hash = $2
-		  AND consumed_at IS NULL
-		  AND expires_at > $3
-		ORDER BY created_at DESC
-		LIMIT 1
-		FOR UPDATE
-	`, email, strings.TrimSpace(codeHash), now).Scan(&codeID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return auth.User{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Code invalid", "验证码无效或已过期。")
-	}
-	if err != nil {
-		return auth.User{}, internalStoreError()
-	}
-
-	var exists bool
-	err = tx.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1
-			FROM users
-			WHERE lower(email) = lower($1)
-			  AND email_verified_at IS NOT NULL
-		)
-	`, email).Scan(&exists)
-	if err != nil {
-		return auth.User{}, internalStoreError()
-	}
-	if exists {
-		return auth.User{}, domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Email unavailable", "该邮箱已注册。", "email", "unavailable", "该邮箱已注册。")
-	}
-
-	username, appErr := firstAvailableUsername(ctx, tx, input.UsernameCandidates)
-	if appErr != nil {
-		return auth.User{}, appErr
-	}
-	user := auth.User{Status: "active"}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO users (username, display_name, email, email_verified_at, account_status, created_at, updated_at, last_active_at)
-		VALUES ($1, $1, lower($2), $3, 'active', $3, $3, $3)
-		RETURNING id::text, analytics_user_id::text, username, display_name, account_status
-	`, username, email, now).Scan(&user.ID, &user.AnalyticsUserID, &user.Username, &user.DisplayName, &user.Status)
-	if isUniqueViolation(err) {
-		return auth.User{}, domain.NewError(http.StatusConflict, domain.CodeValidationFailed, "Registration conflict", "注册信息已被占用，请重新获取验证码。")
-	}
-	if err != nil {
-		return auth.User{}, internalStoreError()
-	}
-	if err := insertRegistrationAttribution(ctx, tx, user.ID, "email", auth.NormalizeRegistrationAttribution(input.Attribution), now); err != nil {
-		return auth.User{}, internalStoreError()
-	}
-
-	_, err = tx.Exec(ctx, `
-		UPDATE email_verification_codes
-		SET consumed_at = $2
-		WHERE id = $1
-	`, codeID, now)
-	if err != nil {
-		return auth.User{}, internalStoreError()
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO auth_sessions (
-			user_id, session_token_hash, csrf_token_hash, expires_at,
-			renewed_at, absolute_expires_at, created_at, updated_at, last_seen_at
-		)
-		VALUES ($1, $2, $3, $4, $6, $5, $6, $6, $6)
-	`, user.ID, strings.TrimSpace(sessionTokenHash), strings.TrimSpace(csrfTokenHash), sessionExpiresAt, sessionAbsoluteExpiresAt, now)
-	if err != nil {
-		return auth.User{}, internalStoreError()
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return auth.User{}, internalStoreError()
-	}
-	return user, nil
-}
-
 func (s *Store) CreateSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, absoluteExpiresAt, now time.Time) *domain.AppError {
 	if s == nil || s.pool == nil {
 		return internalStoreError()
 	}
-	_, err := s.pool.Exec(ctx, `
+	result, err := s.pool.Exec(ctx, `
 		INSERT INTO auth_sessions (
 			user_id, session_token_hash, csrf_token_hash, expires_at,
 			renewed_at, absolute_expires_at, created_at, updated_at, last_seen_at
 		)
-		VALUES ($1, $2, $3, $4, $6, $5, $6, $6, $6)
+		SELECT u.id, $2, $3, $4, $6, $5, $6, $6, $6
+		FROM users u
+		WHERE u.id = $1
+		  AND u.account_status = 'active'
+		  AND u.security_locked_at IS NULL
 	`, userID, sessionTokenHash, csrfTokenHash, expiresAt, absoluteExpiresAt, now)
 	if err != nil {
 		return internalStoreError()
+	}
+	if result.RowsAffected() != 1 {
+		return domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
 	return nil
 }
@@ -809,14 +806,20 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		return auth.User{}, auth.Session{}, internalStoreError()
 	}
 	query := `
-		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
-		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
+			SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
+			       u.governance_version, COALESCE(u.current_governance_action_id::text, ''), u.security_locked_at,
+			       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       s.session_token_hash, s.user_id::text, s.expires_at, s.renewed_at, s.absolute_expires_at, s.revoked_at,
+		       s.password_reauthenticated_at, COALESCE(s.oauth_link_state_hash, ''),
+		       COALESCE(s.oauth_link_state_purpose, ''), s.oauth_link_state_expires_at,
+		       s.oauth_link_state_consumed_at,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
 		FROM auth_sessions s
 		JOIN users u ON u.id = s.user_id
 		LEFT JOIN linux_do_bindings l ON l.user_id = u.id
 		WHERE s.session_token_hash = $1
+		  AND u.account_status = 'active'
+		  AND u.security_locked_at IS NULL
 	`
 	args := []any{sessionTokenHash}
 	if requireCSRF {
@@ -833,6 +836,9 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
+		&user.GovernanceVersion,
+		&user.CurrentGovernanceActionID,
+		&user.SecurityLockedAt,
 		&user.IsAdmin,
 		&session.ID,
 		&session.UserID,
@@ -840,6 +846,11 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		&session.RenewedAt,
 		&session.AbsoluteExpiresAt,
 		&session.RevokedAt,
+		&session.PasswordReauthenticatedAt,
+		&session.OAuthLinkStateHash,
+		&session.OAuthLinkStatePurpose,
+		&session.OAuthLinkStateExpiresAt,
+		&session.OAuthLinkStateConsumedAt,
 		&binding.userID,
 		&binding.username,
 		&binding.trustLevel,
@@ -866,6 +877,9 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
 	applyAuthLinuxDoBinding(&user, binding)
+	if err := hydrateAuthStudentClaim(ctx, s.pool, &user); err != nil {
+		return auth.User{}, auth.Session{}, internalStoreError()
+	}
 	return user, session, nil
 }
 

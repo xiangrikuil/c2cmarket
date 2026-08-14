@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/accountgovernance"
 	"c2c-market/backend/internal/module/announcement"
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
@@ -23,6 +24,7 @@ import (
 	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
+	"c2c-market/backend/internal/module/operationaudit"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
@@ -77,6 +79,10 @@ type GrowthRepository = growth.Repository
 
 type PromotionRewardRepository = promotionreward.Repository
 
+type OperationAuditRepository = operationaudit.Repository
+
+type AccountGovernanceRepository = accountgovernance.Repository
+
 type Persistence interface {
 	AuthRepository
 	IdempotencyRepository
@@ -101,6 +107,8 @@ type Persistence interface {
 	ModelAuditRepository
 	GrowthRepository
 	PromotionRewardRepository
+	OperationAuditRepository
+	AccountGovernanceRepository
 }
 
 type Repositories struct {
@@ -127,6 +135,8 @@ type Repositories struct {
 	ModelAudit        ModelAuditRepository
 	Growth            GrowthRepository
 	PromotionReward   PromotionRewardRepository
+	OperationAudit    OperationAuditRepository
+	AccountGovernance AccountGovernanceRepository
 }
 
 func RepositoriesFromPersistence(persistence Persistence) Repositories {
@@ -157,6 +167,8 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		ModelAudit:        persistence,
 		Growth:            persistence,
 		PromotionReward:   persistence,
+		OperationAudit:    persistence,
+		AccountGovernance: persistence,
 	}
 }
 

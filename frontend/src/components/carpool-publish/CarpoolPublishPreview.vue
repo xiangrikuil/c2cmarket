@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { formatMonthlyQuota, quotaFieldLabel } from '@/lib/quota'
+import { formatQuotaAmount } from '@/lib/quota'
 import type {
   CarpoolProductCatalogItem,
   CarpoolPublishForm,
@@ -63,20 +63,17 @@ const arrangementLabel = computed(() => {
   if (props.form.accessArrangementMode === 'other_off_platform') return '站外安排'
   return '需调整'
 })
-const quotaText = computed(() => formatMonthlyQuota({
-  amount: props.form.monthlyQuotaAmount,
-  label: selectedProduct.value?.quotaLabel,
-  unit: selectedProduct.value?.quotaUnit,
-  period: selectedProduct.value?.quotaPeriod,
-}, '待确认'))
-const quotaLabel = computed(() => quotaFieldLabel(selectedProduct.value))
+function quotaText(amount: number | null, period: '每天' | '每周') {
+  if (!amount || amount <= 0) return '待确认'
+  return `${period} ${formatQuotaAmount(amount)} ${selectedProduct.value?.quotaUnit || 'USD'}`
+}
 const regionText = computed(() => regionDisplayName(props.form, props.regionsByCode) || '待选择')
 const distributionText = computed(() => distributionMethodLabel(props.form.distributionMethod))
 const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdminAccount))
-const weeklyQuotaText = computed(() => {
-  if (!props.form.weeklyQuotaAmount) return '待确认'
-  return `每周 ${props.form.weeklyQuotaAmount} ${selectedProduct.value?.quotaUnit || 'USD'}`
+const dailyQuotaText = computed(() => {
+  return quotaText(props.form.dailyQuotaAmount, '每天')
 })
+const weeklyQuotaText = computed(() => quotaText(props.form.weeklyQuotaAmount, '每周'))
 const resetText = computed(() => props.form.followsOfficialQuotaReset === null ? '待选择' : props.form.followsOfficialQuotaReset ? '跟随官方重置' : '不跟随官方重置')
 const directConnectionText = computed(() => props.form.supportsMainlandChinaDirectConnection === null ? '待选择' : props.form.supportsMainlandChinaDirectConnection ? '支持国内直连' : '不支持国内直连')
 </script>
@@ -97,8 +94,8 @@ const directConnectionText = computed(() => props.form.supportsMainlandChinaDire
         <Badge variant="capability">{{ openingText }}</Badge>
         <Badge variant="capability">{{ distributionText }}</Badge>
         <Badge variant="capability">{{ adminAccountText }}</Badge>
+        <Badge variant="capability">{{ dailyQuotaText }}</Badge>
         <Badge variant="capability">{{ weeklyQuotaText }}</Badge>
-        <Badge variant="capability">{{ quotaText }}</Badge>
         <Badge variant="capability">{{ resetText }}</Badge>
         <Badge :variant="form.accessArrangementMode === 'not_allowed' ? 'secondary' : 'verified'">
           {{ arrangementLabel }}
@@ -110,8 +107,8 @@ const directConnectionText = computed(() => props.form.supportsMainlandChinaDire
 
       <dl class="mt-4 divide-y divide-border text-sm">
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">开通区</dt><dd class="font-semibold">{{ regionText }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每天额度</dt><dd class="font-semibold">{{ dailyQuotaText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每周额度</dt><dd class="font-semibold">{{ weeklyQuotaText }}</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">{{ quotaLabel }}</dt><dd class="font-semibold">{{ quotaText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">额度重置</dt><dd class="font-semibold">{{ resetText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">VPS 区域</dt><dd class="font-semibold">{{ form.vpsRegion || '待填写' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">国内直连</dt><dd class="font-semibold">{{ directConnectionText }}</dd></div>

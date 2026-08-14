@@ -113,6 +113,10 @@ export type Announcement = {
     ctaUrl?: string;
     publishAt: string;
     expireAt?: string;
+    /**
+     * Last change to user-visible title, summary, Markdown content, category, level, or CTA fields. Management-only changes do not advance this value.
+     */
+    contentUpdatedAt: string;
     version: number;
     createdBy: string;
     updatedBy: string;
@@ -217,7 +221,44 @@ export type RegistrationAttribution = {
 export type EmailRegistrationConfirmRequest = {
     email: string;
     code: string;
-    attribution?: RegistrationAttribution;
+    /**
+     * Exact lowercase public username. The server never silently normalizes or replaces it.
+     */
+    username: string;
+    password: string;
+    attribution: RegistrationAttribution;
+};
+
+export type EmailRegistrationStartRequest = {
+    email: string;
+    turnstileToken: string;
+};
+
+export type EmailRegistrationStartResponse = {
+    email: string;
+    expiresAt: string;
+    /**
+     * Present only when the configured local/test mail sender explicitly exposes the code.
+     */
+    devCode?: string;
+};
+
+export type StudentRegistrationInstitution = {
+    /**
+     * Exact lowercase institution email domain; suffix and wildcard matching are never used.
+     */
+    domain: string;
+    institutionName: string;
+};
+
+export type StudentRegistrationPublicConfig = {
+    enabled: boolean;
+    institutions: Array<StudentRegistrationInstitution>;
+};
+
+export type UsernameAvailability = {
+    username: string;
+    available: boolean;
 };
 
 export type MyProfile = {
@@ -236,6 +277,7 @@ export type MyProfile = {
     avatarMode: 'linuxdo' | 'custom_url';
     accountStatus: string;
     permissions: Array<string>;
+    capabilities: Array<Capability>;
     linuxDoBinding: {
         [key: string]: unknown;
     };
@@ -292,6 +334,17 @@ export type MyReputationResponse = {
         ReputationSnapshot,
         ReputationSnapshot
     ];
+    activeRestrictions: Array<PublicActiveReputationRestriction>;
+};
+
+export type PublicActiveReputationRestriction = {
+    restrictionType: string;
+    roleScope: 'buyer' | 'seller' | 'all';
+    actionCode: 'carpool_publish' | 'carpool_apply' | 'carpool_accept' | 'api_service_publish' | 'api_order_create' | 'contact_view' | 'review_submit' | 'all';
+    reasonCode: string;
+    publicReason: string;
+    startsAt: string;
+    endsAt: string | null;
 };
 
 export type AdminReputationAudit = {
@@ -521,11 +574,40 @@ export type PublicUserProfileBundle = {
         ReputationSnapshot,
         ReputationSnapshot
     ] | null;
-    carpools: Array<unknown>;
-    services: Array<unknown>;
-    completions: Array<unknown>;
-    reviews: Array<unknown>;
+    carpools: Array<PublicProfileCarpool>;
+    services: Array<PublicProfileApiService>;
+    completions: Array<PublicProfileCompletion>;
+    reviews: Array<PublicReview>;
     disputes: Array<PublicDispute>;
+};
+
+export type PublicProfileCarpool = {
+    id: string;
+    title: string;
+    summary: string;
+    regionName: string;
+    priceMonthlyCny: DecimalString;
+    availableSeats: number;
+    updatedAt: string;
+};
+
+export type PublicProfileApiService = {
+    id: string;
+    title: string;
+    shortDescription: string;
+    billingMode: 'metered_usd_quota' | 'manual_usage_check' | 'fixed_package';
+    availableUsdAllowance: string;
+    usageVisibility: string;
+    refundCommitment: boolean;
+    updatedAt: string;
+};
+
+export type PublicProfileCompletion = {
+    id: string;
+    kind: 'carpool' | 'api_order';
+    title: string;
+    role: 'buyer' | 'seller';
+    completedAt: string;
 };
 
 /**
@@ -586,14 +668,6 @@ export type MerchantProfile = {
     version: number;
 };
 
-export type PublicMerchantProfileBundle = {
-    profile: PublicMerchantProfile;
-    services: Array<unknown>;
-    completions: Array<unknown>;
-    reviews: Array<unknown>;
-    disputes: Array<unknown>;
-};
-
 /**
  * Public merchant fields only; no owner user id or contact values. Unavailable reputation facts are null.
  */
@@ -640,6 +714,57 @@ export type ReadinessResponse = {
 
 export type SessionResponse = {
     user: User;
+    audience: 'normal' | 'restricted_business';
+    csrfToken: string;
+    expiresAt: string;
+};
+
+export type AccountGovernanceBusinessCenter = {
+    generatedAt: string;
+    accountStatus: 'active' | 'suspended' | 'banned' | 'archived';
+    processingStatus: 'not_started' | 'processing' | 'completed';
+    currentAction: AccountGovernanceCurrentAction | null;
+    items: Array<AccountGovernanceDisposition>;
+};
+
+export type AccountGovernanceCurrentAction = {
+    actionType: 'suspend' | 'ban' | 'restore' | 'archive' | 'extend_suspension';
+    reasonCode: string;
+    publicReason: string;
+    effectiveAt: string;
+    expiresAt: string | null;
+    indefinite: boolean;
+    governanceVersion: number;
+};
+
+export type AccountGovernanceDisposition = {
+    id: string;
+    resourceType: 'api_service' | 'api_quota_batch' | 'api_quota_offer' | 'api_service_promotion' | 'api_order' | 'api_purchase_intent' | 'carpool_listing' | 'carpool_application' | 'carpool_membership';
+    resourceId: string;
+    resourceLabel: string;
+    participantRole: 'buyer' | 'seller';
+    result: 'cancelled' | 'preserved' | 'already_terminal' | 'sales_stopped';
+    reasonCode: 'ACCOUNT_GOVERNANCE_CANCELLED';
+    triggerRoles: Array<'buyer' | 'seller'>;
+    beforeStatus: string;
+    afterStatus: string;
+    releasedResourceType?: 'package_stock' | 'usd_allowance' | 'quota_inventory_unit' | 'carpool_seat';
+    releasedQuantity?: string;
+    governanceEffectiveAt: string;
+    paymentClaimEligible: boolean;
+    paymentClaimDeadlineAt: string | null;
+    actionCodes: Array<'view_resource' | 'payment_claim'>;
+    targetUrl: string;
+    updatedAt: string;
+};
+
+export type DevPersonaSessionRequest = {
+    persona: 'buyer' | 'seller' | 'admin';
+};
+
+export type DevPersonaSessionResponse = {
+    persona: 'buyer' | 'seller' | 'admin';
+    user: User;
     csrfToken: string;
     expiresAt: string;
 };
@@ -647,6 +772,23 @@ export type SessionResponse = {
 export type PasswordLoginRequest = {
     username: string;
     password: string;
+    purpose?: 'grant_admin';
+    turnstileToken: string;
+};
+
+export type PasswordResetStartRequest = {
+    email: string;
+    turnstileToken: string;
+};
+
+export type PasswordResetStartResponse = {
+    accepted: true;
+};
+
+export type PasswordResetConfirmRequest = {
+    email: string;
+    code: string;
+    newPassword: string;
 };
 
 export type SetPasswordRequest = {
@@ -655,6 +797,10 @@ export type SetPasswordRequest = {
      */
     currentPassword?: string;
     newPassword: string;
+};
+
+export type PasswordReauthenticateRequest = {
+    password: string;
 };
 
 export type OAuthStartResponse = {
@@ -669,6 +815,17 @@ export type LinuxDoBinding = {
     avatarUrl?: string;
 };
 
+/**
+ * Safe session projection of the authenticated user's immutable institution-email claim. Internal IDs and the canonical email are never exposed here.
+ */
+export type StudentClaim = {
+    institutionDomain: string;
+    institutionName: string;
+    claimedAt: string;
+};
+
+export type Capability = 'admin.access' | 'api_order.create' | 'api_probe.manage' | 'api_quota.publish' | 'api_service.publish' | 'carpool.apply' | 'carpool.publish';
+
 export type User = {
     id: string;
     analyticsUserId: string;
@@ -676,6 +833,8 @@ export type User = {
     displayName: string;
     isAdmin: boolean;
     permissions: Array<string>;
+    capabilities: Array<Capability>;
+    studentClaim: StudentClaim | null;
     linuxDoBinding: LinuxDoBinding;
 };
 
@@ -748,6 +907,23 @@ export type GrowthOverview = {
     retentionCohorts: Array<GrowthRetentionCohort>;
 };
 
+export type CatalogCoreKey = 'gpt' | 'claude' | 'grok';
+
+export type CatalogStatus = 'active' | 'deprecated' | 'blocked';
+
+export type CatalogEffectiveStatusSource = 'self' | 'parent';
+
+export type CatalogLifecycleRequest = {
+    reason: string;
+};
+
+export type CatalogLifecycleUnblockRequest = {
+    reason: string;
+    targetStatus: 'active' | 'deprecated';
+};
+
+export type CatalogLifecycleResource = ProductCategory | ProductPlan | ApiModelProvider | ApiModel;
+
 export type ProductCategory = {
     id: string;
     code: string;
@@ -758,6 +934,16 @@ export type ProductCategory = {
     iconDataUrl: string;
     sortOrder: number;
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
 };
 
 export type ProductCategoryList = {
@@ -772,7 +958,6 @@ export type ProductCategoryRequest = {
      * Empty string removes the icon; otherwise PNG or WebP data URL.
      */
     iconDataUrl: string;
-    active: boolean;
     sortOrder: number;
 };
 
@@ -802,6 +987,16 @@ export type ProductPlan = {
     quotaUnit: string;
     quotaPeriod: 'monthly';
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
     allowCustomVariant: boolean;
     sortOrder: number;
     createdAt: string;
@@ -829,27 +1024,35 @@ export type ProductPlanRequest = {
     quotaLabel: string;
     quotaUnit: string;
     quotaPeriod: 'monthly';
-    active: boolean;
     allowCustomVariant: boolean;
     sortOrder: number;
 };
 
 export type ApiModelProvider = {
     id: string;
-    providerCategory: 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other';
+    providerCategory: string;
     code: string;
     displayName: string;
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
     sortOrder: number;
     createdAt: string;
     updatedAt: string;
 };
 
 export type ApiModelProviderRequest = {
-    providerCategory: 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other';
+    providerCategory: string;
     code: string;
     displayName: string;
-    active: boolean;
     sortOrder: number;
 };
 
@@ -861,14 +1064,23 @@ export type ApiModelProviderList = {
 export type ApiModel = {
     id: string;
     providerId: string;
-    providerCategory: 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other';
+    providerCategory: string;
     providerCode: string;
     provider: string;
     providerActive: boolean;
     modelKey: string;
-    displayName: string;
     capabilities: Array<'text' | 'chat' | 'vision' | 'image_generation' | 'image_edit' | 'reasoning'>;
     active: boolean;
+    coreKey?: CatalogCoreKey;
+    status: CatalogStatus;
+    effectiveStatus: CatalogStatus;
+    effectiveStatusSource: CatalogEffectiveStatusSource;
+    statusChangedAt: string;
+    statusChangedBy?: string;
+    statusReason?: string;
+    version: number;
+    identityLocked: boolean;
+    identityLockReason?: string;
     currentPriceVersionId?: string;
     currentPriceSourceUrl?: string;
     currentPriceSourceVersion?: string;
@@ -884,7 +1096,6 @@ export type ApiModel = {
 export type ApiModelRequest = {
     providerId: string;
     modelKey: string;
-    displayName: string;
     capabilities: Array<'text' | 'chat' | 'vision' | 'image_generation' | 'image_edit' | 'reasoning'>;
     /**
      * Decimal string per million tokens. Empty string means null.
@@ -900,13 +1111,101 @@ export type ApiModelRequest = {
     outputTokenPrice?: string;
     sourceUrl?: string;
     sourceVersion?: string;
-    active: boolean;
     sortOrder: number;
 };
 
 export type ApiModelList = {
     items: Array<ApiModel>;
     nextCursor?: string | null;
+};
+
+export type ApiModelSyncPreviewRequest = {
+    providerIds: Array<string>;
+};
+
+export type ApiModelSyncStatus = 'new' | 'price_changed' | 'unchanged' | 'source_missing' | 'unavailable';
+
+export type ApiModelSyncCounts = {
+    new: number;
+    priceChanged: number;
+    unchanged: number;
+    sourceMissing: number;
+    unavailable: number;
+};
+
+export type ApiModelSyncItem = {
+    candidateKey: string;
+    /**
+     * Stable 64-character fingerprint for new and price-changed candidates; empty for informational rows.
+     */
+    fingerprint: string;
+    status: ApiModelSyncStatus;
+    reasonCode?: string;
+    reason?: string;
+    providerId: string;
+    providerCode: string;
+    provider: string;
+    /**
+     * Exact models.dev model id, preserved without display-name rewriting.
+     */
+    modelKey: string;
+    capabilities: Array<'text' | 'chat' | 'vision' | 'image_generation' | 'image_edit' | 'reasoning'>;
+    sourceUrl?: string;
+    sourceVersion?: string;
+    inputPricePerMillion?: DecimalString;
+    cachedInputPricePerMillion?: DecimalString;
+    outputPricePerMillion?: DecimalString;
+    localModelId?: string;
+    localPriceVersionId?: string;
+    localInputPricePerMillion?: DecimalString;
+    localCachedInputPricePerMillion?: DecimalString;
+    localOutputPricePerMillion?: DecimalString;
+    localSourceUrl?: string;
+    localSourceVersion?: string;
+};
+
+export type ApiModelSyncPreview = {
+    fingerprint: string;
+    fetchedAt: string;
+    counts: ApiModelSyncCounts;
+    items: Array<ApiModelSyncItem>;
+};
+
+export type ApiModelSyncSelection = {
+    fingerprint: string;
+    status: 'new' | 'price_changed';
+    providerId: string;
+    providerCode: 'openai' | 'anthropic' | 'xai';
+    modelKey: string;
+    capabilities: Array<'text' | 'vision' | 'reasoning'>;
+    sourceUrl: 'https://models.dev/api.json';
+    sourceVersion: string;
+    inputPricePerMillion: string;
+    cachedInputPricePerMillion: string;
+    outputPricePerMillion: string;
+    /**
+     * Empty for new models; current local model UUID for price changes.
+     */
+    localModelId: string;
+    /**
+     * Empty for new models; current local price version UUID for price changes.
+     */
+    localPriceVersionId: string;
+    /**
+     * Applies only to newly imported models. New models remain inactive unless explicitly true.
+     */
+    active: boolean;
+};
+
+export type ApiModelSyncApplyRequest = {
+    items: Array<ApiModelSyncSelection>;
+};
+
+export type ApiModelBulkMutationResult = {
+    created: number;
+    updated: number;
+    changed: number;
+    ids: Array<string>;
 };
 
 export type ModelAuditRiskLevel = 'consistent' | 'suspicious' | 'high_risk' | 'insufficient_data';
@@ -1086,23 +1385,115 @@ export type ServiceHealthSample = {
     state: 'smooth' | 'fluctuating' | 'abnormal' | 'no_sample';
 };
 
+export type ServiceHealthHourlyBucket = {
+    hourStartedAt: string;
+    state: 'smooth' | 'fluctuating' | 'abnormal' | 'no_sample';
+    completedCycles: number;
+    firstAttemptSuccesses: number;
+    retryRecoveries: number;
+    finalFailures: number;
+    slowSuccesses: number;
+    finalSuccessPercent: DecimalString | null;
+    averageTtftMs: number | null;
+};
+
+export type ServiceHealthCost = {
+    knownBaseCostUsd: string;
+    knownRetryCostUsd: string;
+    projectedDailyCostUsd: string;
+    hasUnknownUsage: boolean;
+    knownUsageSamples: number;
+};
+
 /**
- * Platform-measured service health for one configured model from the current platform node. It is not an SLA or verification of every model offered by the service.
+ * End-to-end real-model health measured from the platform's US West probe environment for one reusable Base URL, dedicated Key, model, and fixed protocol. It is not an SLA for every buyer region or every service model.
  */
 export type ServiceHealthSummary = {
     state: 'normal' | 'fluctuating' | 'abnormal' | 'no_sample';
-    availabilityReason: 'unconfigured' | 'disabled' | 'unauthorized' | 'insufficient' | 'stale' | 'temporarily_unavailable' | null;
-    successRatePercent: DecimalString | null;
-    successfulSamples: number;
-    totalSamples: number;
-    medianTtftMs: number | null;
-    probeModel: string | null;
+    availabilityReason: 'unconfigured' | 'disabled' | 'unverified' | 'insufficient' | 'stale' | 'temporarily_unavailable' | 'runner_disabled' | null;
     /**
      * Public-safe transport disclosure derived from the configured target scheme. It does not expose the target URL.
      */
     transportSecurity: 'secure_https' | 'insecure_http' | null;
+    /**
+     * First-attempt successes divided by completed probe cycles.
+     */
+    stabilityPercent: DecimalString | null;
+    /**
+     * First-attempt successes plus retry recoveries divided by completed cycles.
+     */
+    finalSuccessPercent: DecimalString | null;
+    coveragePercent: DecimalString;
+    completedCycles: number;
+    theoreticalSlots: number;
+    firstAttemptSuccesses: number;
+    retryRecoveries: number;
+    finalFailures: number;
+    averageTtftMs: number | null;
+    p50TtftMs: number | null;
+    p95TtftMs: number | null;
     lastSampledAt: string | null;
+    probeModel: string | null;
+    probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null;
+    probeEnvironment: 'us-west-v1' | null;
+    probeEnvironmentLabel: string | null;
+    probeModelChangedAt: string | null;
+    accumulatingSamples: boolean;
+    hourlyBuckets: [
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket
+    ];
+    cost: ServiceHealthCost;
+    /**
+     * @deprecated
+     */
+    successRatePercent: DecimalString | null;
+    /**
+     * @deprecated
+     */
+    successfulSamples: number;
+    /**
+     * @deprecated
+     */
+    totalSamples: number;
+    /**
+     * @deprecated
+     */
     samples: [
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
         ServiceHealthSample,
         ServiceHealthSample,
         ServiceHealthSample,
@@ -1118,104 +1509,222 @@ export type ServiceHealthSummary = {
     ];
 };
 
-export type ApiHealthProbeProtocol = 'openai_chat_completions_v1';
-
-export type ApiHealthProbeAuthorizationStatus = 'pending' | 'verified' | 'approved' | 'rejected';
-
-export type ApiHealthProbeAuthorizationMethod = 'dns_txt' | 'http_challenge' | 'admin_approval' | null;
-
-export type ApiHealthProbeConfigRequest = {
+export type ApiProbeConnectionRequest = {
+    name: string;
     /**
-     * Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
+     * Complete public HTTP or HTTPS OpenAI-compatible Base URL. The platform never appends /v1. Query strings, fragments, userinfo, unsafe addresses, redirects, and DNS rebinding are rejected.
      */
     baseUrl: string;
-    model: string;
+    /**
+     * Exact model ID returned by the current Key's /models response. When omitted, gpt-5.6-luna is selected only if it is present.
+     */
+    probeModel?: string;
     enabled: boolean;
     /**
-     * Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
+     * Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
      */
     acknowledgeInsecureHttp?: boolean;
 };
 
-export type OwnerApiHealthProbeConfig = {
-    id: string;
-    apiServiceId: string;
-    protocol: ApiHealthProbeProtocol;
+export type ApiProbeConnectionPreflight = {
+    errorCode: string | null;
+    availableModels: Array<string>;
+    probeModel: string | null;
+    probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null;
+    probeEnvironment: 'us-west-v1';
+    dailyBaseCostUpperBoundUsd: string | null;
+    priceUnavailable: boolean;
     /**
-     * Normalized OpenAI-compatible base URL. Root-only input is returned with /v1 appended.
+     * Ten-minute one-time save token. Null when verification did not succeed.
+     */
+    preflightToken: string | null;
+};
+
+export type ApiProbeConnectionServiceReference = {
+    id: string;
+    title: string;
+};
+
+export type OwnerApiProbeConnection = {
+    id: string;
+    name: string;
+    /**
+     * The seller's trimmed input. It is not rewritten or completed with /v1.
      */
     baseUrl: string;
-    normalizedOrigin: string;
-    model: string;
     /**
-     * Reports only whether an encrypted credential exists. Credential plaintext, ciphertext, nonce, and fingerprint are never returned.
+     * Canonical comparison value. Domains are never resolved to IP literals for equality.
+     */
+    normalizedBaseUrl: string;
+    /**
+     * Indicates only that an encrypted dedicated Key exists. Key material and fingerprints are never returned.
      */
     credentialConfigured: boolean;
     enabled: boolean;
-    authorizationStatus: ApiHealthProbeAuthorizationStatus;
-    authorizationMethod: ApiHealthProbeAuthorizationMethod;
-    verifiedOrigin: string | null;
+    verificationStatus: 'unverified' | 'verified' | 'failed';
     verifiedAt: string | null;
-    approvedAt: string | null;
-    rejectionReason: string | null;
-    challengeExpiresAt: string | null;
-    measurementVersion: number;
     /**
-     * Low-cardinality sanitized operational code; never contains an upstream response or full URL.
+     * Sanitized low-cardinality error code without a URL, credential, or third-party response body.
      */
-    lastConfigErrorCode: string | null;
+    lastVerificationErrorCode: string | null;
+    /**
+     * Exact model ID used by scheduled real-model probes.
+     */
+    probeModel: string | null;
+    probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null;
+    /**
+     * Private model IDs from the most recent owner verification.
+     */
+    availableModels: Array<string>;
+    probeEnvironment: 'us-west-v1';
+    probeModelChangedAt: string | null;
+    /**
+     * Conservative 1.00x price estimate for 288 scheduled requests; retries are excluded.
+     */
+    dailyBaseCostUpperBoundUsd: string | null;
+    priceUnavailable: boolean;
+    measurementVersion: number;
     version: number;
+    referencedServices: Array<ApiProbeConnectionServiceReference>;
+    healthSummary: ServiceHealthSummary;
     createdAt: string;
     updatedAt: string;
 };
 
-export type ApiHealthProbeChallengeRequest = {
-    method: 'dns_txt' | 'http_challenge';
+export type OwnerApiProbeConnectionList = {
+    items: Array<OwnerApiProbeConnection>;
 };
 
-export type ApiHealthProbeChallenge = {
-    /**
-     * One-time secret returned only when the challenge is created.
-     */
-    token: string;
-    method: 'dns_txt' | 'http_challenge';
-    dnsRecordName: string | null;
-    httpUrl: string | null;
-    expiresAt: string;
-    configVersion: number;
-};
-
-export type AdminApiHealthProbeDecisionRequest = {
-    reason: string;
-};
-
-/**
- * Minimal administrator exact-origin review projection. It never contains credential state, credential material, fingerprints, or upstream error bodies.
- */
-export type AdminApiHealthProbe = {
-    id: string;
-    apiServiceId: string;
-    serviceTitle: string;
-    ownerUserId: string;
-    ownerUsername: string;
-    ownerDisplayName: string;
-    protocol: ApiHealthProbeProtocol;
-    normalizedOrigin: string;
+export type ApiProbeLatencyCalibration = {
     model: string;
-    enabled: boolean;
-    authorizationStatus: ApiHealthProbeAuthorizationStatus;
-    authorizationMethod: ApiHealthProbeAuthorizationMethod;
-    verifiedOrigin: string | null;
-    verifiedAt: string | null;
-    approvedAt: string | null;
-    rejectionReason: string | null;
-    version: number;
-    updatedAt: string;
+    protocol: 'openai_responses_v1' | 'openai_chat_completions_v1';
+    environment: 'us-west-v1';
+    environmentLabel: string;
+    observationStartedAt: string;
+    observationEndedAt: string;
+    completeCalendarDays: number;
+    connectionCount: number;
+    sampleCount: number;
+    p50TtftMs: number | null;
+    p90TtftMs: number | null;
+    p95TtftMs: number | null;
+    p99TtftMs: number | null;
+    ready: boolean;
 };
 
-export type AdminApiHealthProbeList = {
-    items: Array<AdminApiHealthProbe>;
-    nextCursor?: string | null;
+export type ApiProbeLatencyRuleRequest = {
+    model: string;
+    protocol: 'openai_responses_v1' | 'openai_chat_completions_v1';
+    environment: 'us-west-v1';
+    slowTtftMs: number;
+    hardTimeoutMs: number;
+};
+
+export type ApiProbeLatencyRulePreview = {
+    calibration: ApiProbeLatencyCalibration;
+    slowTtftMs: number;
+    hardTimeoutMs: number;
+    slowSampleCount: number;
+    slowPercent: DecimalString;
+    overTimeoutCount: number;
+    overTimeoutPercent: DecimalString;
+};
+
+export type ApiProbeLatencyRule = {
+    id: string;
+    model: string;
+    protocol: 'openai_responses_v1' | 'openai_chat_completions_v1';
+    environment: 'us-west-v1';
+    environmentLabel: string;
+    version: number;
+    slowTtftMs: number;
+    hardTimeoutMs: number;
+    observationStartedAt: string;
+    observationEndedAt: string;
+    completeCalendarDays: number;
+    connectionCount: number;
+    sampleCount: number;
+    p50TtftMs: number | null;
+    p90TtftMs: number | null;
+    p95TtftMs: number | null;
+    p99TtftMs: number | null;
+    status: 'active' | 'superseded';
+    publishedAt: string;
+    supersededAt: string | null;
+};
+
+export type ApiProbeLatencyRuleList = {
+    items: Array<ApiProbeLatencyRule>;
+};
+
+export type ApiModelTesterManualCredentialSource = {
+    kind: 'manual';
+    /**
+     * Complete Base URL. The platform never appends /v1.
+     */
+    baseUrl: string;
+    /**
+     * Must be true when baseUrl uses HTTP; confirms the current request may send the Bearer key over an unencrypted connection.
+     */
+    acknowledgeInsecureHttp: boolean;
+};
+
+export type ApiModelTesterOrderCredentialSource = {
+    kind: 'order';
+    orderId: string;
+    /**
+     * Must be true when the selected order Base URL uses HTTP; the confirmation applies only to this tester request.
+     */
+    acknowledgeInsecureHttp: boolean;
+};
+
+export type ApiModelTesterCredentialSource = ({
+    kind: 'manual';
+} & ApiModelTesterManualCredentialSource) | ({
+    kind: 'order';
+} & ApiModelTesterOrderCredentialSource);
+
+export type ApiModelTesterDiscoverRequest = {
+    credentialSource: ApiModelTesterCredentialSource;
+};
+
+export type ApiModelTesterTestRequest = {
+    credentialSource: ApiModelTesterCredentialSource;
+    model: string;
+};
+
+export type ApiModelTesterOrderSource = {
+    orderId: string;
+    orderNo: string;
+    serviceTitle: string;
+    baseUrl: string;
+    deliveredAt: string;
+};
+
+export type ApiModelTesterOrderSourceList = {
+    items: Array<ApiModelTesterOrderSource>;
+};
+
+export type ApiModelTesterDiscovery = {
+    baseUrl: string;
+    models: Array<string>;
+    discoveredAt: string;
+};
+
+export type ApiModelTesterErrorCode = '' | 'authentication_failed' | 'protocol_unsupported' | 'rate_limited' | 'request_rejected' | 'upstream_error' | 'timeout' | 'blocked_target' | 'dns_failed' | 'connect_failed' | 'tls_failed' | 'response_too_large' | 'invalid_response' | 'internal';
+
+export type ApiModelTesterProtocolResult = {
+    succeeded: boolean;
+    httpStatusClass: number;
+    durationMs: number;
+    errorCode: ApiModelTesterErrorCode;
+};
+
+export type ApiModelTesterTestResult = {
+    model: string;
+    responsesResult: ApiModelTesterProtocolResult;
+    chatCompletionsResult: ApiModelTesterProtocolResult;
+    testedAt: string;
 };
 
 export type QuotaLimitModeInput = 'limited' | 'unlimited';
@@ -1247,10 +1756,18 @@ export type QuotaUsagePolicy = {
     dailyReset: 'utc_plus_8_calendar_day';
 };
 
-export type ApiServiceRequest = {
+export type ApiServiceRequest = unknown & {
     merchantProfileId?: string;
     merchantIdentityMode?: 'public_profile' | 'store_alias';
-    ownerContactMethodId: string;
+    ownerContactMethodId?: string;
+    /**
+     * Ordered merchant contacts to freeze for each purchase intent. The first item is also returned through ownerContactMethodId for compatibility.
+     */
+    ownerContactMethodIds?: Array<string>;
+    /**
+     * Optional while saving a draft. Publication and order acceptance require an enabled, verified connection owned by the seller.
+     */
+    probeConnectionId?: string;
     title: string;
     shortDescription: string;
     /**
@@ -1381,6 +1898,13 @@ export type ApiServiceOrderSettingsRequest = {
     acceptingOrders?: boolean;
     paymentWindowMinutes?: number;
     paymentOptions?: Array<ApiServicePaymentOptionInput>;
+};
+
+export type ApiServiceProbeConnectionRequest = {
+    /**
+     * Reusable connection UUID, or an empty string to unbind the service.
+     */
+    probeConnectionId: string;
 };
 
 export type ApiServicePaymentOptionInput = {
@@ -1523,6 +2047,18 @@ export type ApiService = {
      * Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
      */
     ownerContactMethodId?: string;
+    /**
+     * Owner/admin view only. Ordered contact-method identifiers; public service projections omit this field.
+     */
+    ownerContactMethodIds?: Array<string>;
+    /**
+     * Owner/admin-only reusable probe connection binding. Public service DTOs never expose it.
+     */
+    probeConnectionId?: string;
+    /**
+     * True only while the bound connection is enabled and verified. Periodic sample failures do not change this readiness fact.
+     */
+    probeReady?: boolean;
     title: string;
     shortDescription: string;
     /**
@@ -1608,7 +2144,7 @@ export type ApiServiceModel = {
     id: string;
     modelCatalogId: string;
     modelPriceVersionId?: string;
-    modelNameSnapshot: string;
+    modelKeySnapshot: string;
     providerSnapshot: string;
     capabilitiesSnapshot: Array<string>;
     merchantMultiplier: DecimalString;
@@ -1637,7 +2173,7 @@ export type ApiServicePackageModel = {
     serviceModelId: string;
     modelCatalogId: string;
     modelPriceVersionId?: string;
-    modelNameSnapshot: string;
+    modelKeySnapshot: string;
     providerSnapshot: string;
     merchantMultiplier: DecimalString;
 };
@@ -1876,6 +2412,10 @@ export type ApiQuotaRound = {
     startsAt: string;
     endsAt: string;
     status: 'scheduled' | 'closed' | 'cancelled';
+    /**
+     * Present after the seller confirms readiness during the final 30 minutes before a platform fixed-slot round.
+     */
+    fulfillmentConfirmedAt?: string;
     allocations: Array<ApiQuotaAllocation>;
     version: number;
 };
@@ -1891,20 +2431,6 @@ export type ApiQuotaSystemSaleSlot = {
 export type ApiQuotaSystemSaleSlotList = {
     serverNow: string;
     items: [
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
-        ApiQuotaSystemSaleSlot,
         ApiQuotaSystemSaleSlot,
         ApiQuotaSystemSaleSlot,
         ApiQuotaSystemSaleSlot,
@@ -1953,6 +2479,10 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     serviceTitle: string;
     sellerDisplayName: string;
     sellerIdentityType: 'individual' | 'merchant';
+    /**
+     * Public merchant avatar selected from the linked store alias or public user identity.
+     */
+    merchantAvatarUrl?: string;
     sellerLinuxDoBound: boolean;
     declaredMaxConcurrency: number;
     /**
@@ -1967,7 +2497,7 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     availableCopies: number;
     credentialAvailableCopies: number;
     isOrderable: boolean;
-    orderabilityCode: 'orderable' | 'service_unavailable' | 'batch_paused' | 'offer_paused' | 'not_started' | 'round_ended' | 'sold_out' | 'credential_unavailable' | 'batch_expired';
+    orderabilityCode: 'orderable' | 'service_unavailable' | 'batch_paused' | 'offer_paused' | 'not_started' | 'round_ended' | 'sold_out' | 'credential_unavailable' | 'fulfillment_confirmation_required' | 'batch_expired';
     orderabilityReason: string;
 };
 
@@ -2071,6 +2601,10 @@ export type CreateApiPurchaseIntentResponse = ApiPurchaseIntentCore & {
      * Frozen merchant contact disclosed immediately after successful intent creation. Never includes subject/user identifiers.
      */
     merchantContact: ContactDisclosure;
+    /**
+     * Ordered frozen merchant contacts. The first item is also returned as merchantContact for compatibility.
+     */
+    merchantContacts: Array<ContactDisclosure>;
 };
 
 export type BuyerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
@@ -2078,6 +2612,10 @@ export type BuyerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
      * Frozen merchant contact for the buyer. Never includes owner user ID, owner contact method ID, subject ID, username, or public profile URL.
      */
     merchantContact: ContactDisclosure;
+    /**
+     * Ordered frozen merchant contacts for the buyer.
+     */
+    merchantContacts: Array<ContactDisclosure>;
 };
 
 export type OwnerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
@@ -2155,6 +2693,14 @@ export type ApiOrderPaymentIssueRequest = {
     note?: string;
 };
 
+export type ApiOrderLatePaymentRequest = {
+    /**
+     * Required only for the seller resolution action.
+     */
+    status?: 'not_received' | 'received_refund_pending';
+    note?: string;
+};
+
 export type ApiOrderDeliveryRequest = {
     deliveryKind: 'api_key_endpoint' | 'login_account';
     /**
@@ -2212,6 +2758,23 @@ export type ApiOrderReasonRequest = {
     reason: string;
 };
 
+export type ApiOrderDisputeRequest = {
+    issueCode: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution: 'full_refund' | 'partial_refund' | 'other';
+    /**
+     * Required only for partial_refund and must not exceed the API order amount.
+     */
+    requestedAmountCny?: string | null;
+    /**
+     * Required for completed orders. The issue must have occurred during the frozen purchased-service validity period.
+     */
+    issueOccurredAt?: string | null;
+    /**
+     * Immutable credential-free initial message.
+     */
+    reason: string;
+};
+
 /**
  * API service order for either a free-amount API service purchase or a limited fixed quota offer. C2CMarket does not process payments, provide escrow, or proxy API calls. After the seller explicitly confirms off-platform payment, the seller may submit one buyer-specific credential or a previously encrypted buyer-specific credential may be bound to the order. Buyer/seller detail and action responses may include it; lists, admin summaries, public responses, events, notifications, and logs must not.
  */
@@ -2235,8 +2798,20 @@ export type ApiOrder = {
     buyerReputation: ReputationSummary | null;
     sellerReputation: ReputationSummary | null;
     status: 'pending_payment' | 'payment_submitted' | 'payment_issue' | 'paid_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled';
-    disputeStatus: 'none' | 'open' | 'closed';
+    /**
+     * Order projection of the linked dispute phase. The order fulfillment status remains independent.
+     */
+    disputeStatus: 'none' | 'negotiating' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
     disputeCaseId?: string;
+    /**
+     * Frozen validity expiry plus the 24-hour reporting grace period. This does not extend service validity.
+     */
+    afterSalesExpiresAt?: string | null;
+    /**
+     * Server-authoritative eligibility for opening the first dispute at response time.
+     */
+    canOpenDispute: boolean;
+    disputeEligibilityReason: 'eligible' | 'order_cancelled' | 'dispute_exists' | 'after_sales_expired' | 'completed_validity_unknown';
     serviceTitleSnapshot: string;
     serviceVersionSnapshot: number;
     billingModeSnapshot: string;
@@ -2260,6 +2835,14 @@ export type ApiOrder = {
      * Frozen JSON pricing snapshot from the internal purchase-intent record.
      */
     pricingSnapshot?: string;
+    /**
+     * Reusable connection selected when the order was created. Historical orders may omit it.
+     */
+    probeConnectionIdSnapshot?: string;
+    /**
+     * Seller-entered Base URL frozen when the order was created. The normalized comparison value remains private to the backend.
+     */
+    apiBaseUrlSnapshot?: string;
     quotaUsagePolicySnapshot: QuotaUsagePolicy;
     /**
      * Seller prompt-audit declaration frozen from the purchase intent or limited-offer order context. Null means historical undeclared and is never filled from the current service.
@@ -2295,10 +2878,14 @@ export type ApiOrder = {
     paymentExpiresAt: string;
     paymentSummary?: string;
     paymentSubmittedAt?: string | null;
+    merchantConfirmDueAt?: string | null;
+    merchantConfirmOverdue: boolean;
     paymentIssueReason?: 'not_received' | 'amount_mismatch' | 'remark_mismatch';
     paymentIssueNote?: string;
     paymentIssueReportedAt?: string | null;
     paidConfirmedAt?: string | null;
+    deliveryDueAt?: string | null;
+    deliveryOverdue: boolean;
     /**
      * Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
      */
@@ -2319,9 +2906,32 @@ export type ApiOrder = {
     completedAt?: string | null;
     cancelledAt?: string | null;
     cancelReason?: string;
+    latePaymentStatus?: 'reported' | 'not_received' | 'received_refund_pending';
+    latePaymentReportedAt?: string | null;
+    latePaymentNote?: string;
+    latePaymentResolvedAt?: string | null;
+    canReportLatePayment: boolean;
     version: number;
     createdAt: string;
     updatedAt: string;
+    catalogRiskHold?: ApiOrderCatalogRiskHold;
+};
+
+export type ApiOrderCatalogRiskHold = {
+    id: string;
+    sourceType: 'api_model_provider' | 'api_model_catalog';
+    sourceId: string;
+    status: 'active' | 'restored' | 'refund_pending' | 'dispute_opened';
+    reason: string;
+    createdAt: string;
+    resolvedBy?: string;
+    resolvedAt?: string | null;
+    resolutionNote?: string;
+    version: number;
+};
+
+export type ApiOrderCatalogRiskHoldActionRequest = {
+    resolutionNote: string;
 };
 
 export type ApiOrderPaymentInstructions = {
@@ -2531,13 +3141,13 @@ export type CreateCarpoolListingRequest = {
      */
     serviceMultiplier: DecimalString;
     /**
-     * Owner-declared per-seat weekly quota amount. It uses the selected product plan quota label and unit.
+     * Owner-declared per-seat daily quota amount. It uses the selected product plan quota label and unit.
+     */
+    dailyQuotaAmount: DecimalString;
+    /**
+     * Owner-declared per-seat weekly quota amount. Label and unit come from the selected product plan and are not accepted from the client.
      */
     weeklyQuotaAmount: DecimalString;
-    /**
-     * Owner-declared per-seat monthly quota amount. Label, unit, and period come from the selected product plan and are not accepted from the client.
-     */
-    monthlyQuotaAmount: DecimalString;
     /**
      * Whether the declared quota follows the official provider reset schedule.
      */
@@ -2593,10 +3203,10 @@ export type CarpoolCycleTerm = CarpoolCycleTermInput & {
 };
 
 export type CarpoolApplicationEligibility = {
-    code: 'eligible' | 'sold_out' | 'paused' | 'credential_risk' | 'owner_action_required' | 'already_applied' | 'already_member' | 'self_owned';
+    code: 'eligible' | 'capability_required' | 'sold_out' | 'paused' | 'credential_risk' | 'owner_action_required' | 'already_applied' | 'already_member' | 'self_owned';
     canApply: boolean;
     reason: string;
-    resolutionAction: 'apply' | 'wait_for_owner_correction' | 'browse_other_listings' | 'manage_own_listing' | 'view_application' | 'view_membership';
+    resolutionAction: 'apply' | 'link_linuxdo' | 'wait_for_owner_correction' | 'browse_other_listings' | 'manage_own_listing' | 'view_application' | 'view_membership';
 };
 
 export type CarpoolListing = {
@@ -2616,8 +3226,8 @@ export type CarpoolListing = {
     sourceUrl?: string;
     priceMonthlyCny: DecimalString;
     serviceMultiplier: DecimalString;
-    weeklyQuotaAmount: string | null;
-    monthlyQuotaAmount: DecimalString;
+    dailyQuotaAmount: string | null;
+    weeklyQuotaAmount: DecimalString;
     followsOfficialQuotaReset: boolean | null;
     vpsRegion: string | null;
     supportsMainlandChinaDirectConnection: boolean | null;
@@ -2691,7 +3301,10 @@ export type ReviewCenterRow = {
     revieweeRole: 'buyer' | 'seller';
     status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed';
     visibility: 'none' | 'sealed' | 'published' | 'removed';
-    counterpartySubmitted: boolean;
+    /**
+     * Tags allowed for this transaction type and review direction.
+     */
+    allowedTags: Array<ReviewTag>;
     canCreate: boolean;
     canEdit: boolean;
     /**
@@ -2715,14 +3328,23 @@ export type ReviewCenterRow = {
 
 export type ReviewCenterRowList = {
     items: Array<ReviewCenterRow>;
-    presetTags: Array<string>;
+    presetTags: Array<ReviewTag>;
 };
 
+export type ReviewTag = {
+    code: string;
+    label: string;
+    polarity: 'positive' | 'negative' | 'neutral';
+};
+
+/**
+ * Rating is required. At least one tag or a non-empty note must be supplied.
+ */
 export type SubmitReviewRequest = {
     rating: number;
     tags: Array<string>;
     /**
-     * Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
+     * May be empty when at least one tag is supplied. Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
      */
     note: string;
 };
@@ -2863,6 +3485,10 @@ export type ReportActionRequest = {
      * Required only for request-info actions. Must identify an active participant in the report or dispute.
      */
     requestedFromUserId?: string;
+    /**
+     * Optional only for resolving an API-order dispute. Omit or send null when no fulfillment is required.
+     */
+    remedy?: DisputeRemedyRequest | null;
 };
 
 export type InfoSupplementRequest = {
@@ -2871,6 +3497,117 @@ export type InfoSupplementRequest = {
      * Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
      */
     body: string;
+};
+
+export type DisputeMessageRequest = {
+    /**
+     * Immutable credential-free plain text.
+     */
+    body: string;
+};
+
+export type DisputeSettlementProposalRequest = {
+    resolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    /**
+     * Required only for partial_refund and must not exceed the API order amount.
+     */
+    amountCny?: string | null;
+    /**
+     * Exact credential-free terms that the counterparty will confirm or reject.
+     */
+    terms: string;
+};
+
+export type DisputeParticipantReasonRequest = {
+    reason: string;
+};
+
+export type DisputeEscalationRequest = {
+    reason: string;
+};
+
+export type DisputeRemedyRequest = {
+    action: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    /**
+     * Required only for partial_refund and must not exceed the API order amount.
+     */
+    amountCny?: string;
+    responsibleUserId: string;
+    /**
+     * Public credential-free fulfillment instructions.
+     */
+    instructions: string;
+    /**
+     * Must be later than the administrator mutation time.
+     */
+    dueAt: string;
+};
+
+export type DisputeRemedyClaimRequest = {
+    /**
+     * Credential-free declaration from the responsible participant; it does not close the dispute.
+     */
+    note: string;
+};
+
+export type DisputeRemedyConfirmRequest = {
+    /**
+     * Optional credential-free confirmation note.
+     */
+    reason?: string;
+};
+
+export type DisputeRemedyContestRequest = {
+    /**
+     * Required credential-free explanation that returns the dispute to platform review.
+     */
+    reason: string;
+};
+
+export type DisputeMessage = {
+    id: string;
+    senderUserId: string;
+    body: string;
+    createdAt: string;
+};
+
+export type DisputeSettlementProposal = {
+    id: string;
+    proposedByUserId: string;
+    resolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    amountCny?: DecimalString;
+    terms: string;
+    status: 'pending' | 'accepted' | 'rejected' | 'superseded';
+    acceptedByUserId?: string;
+    acceptedAt?: string | null;
+    rejectedByUserId?: string;
+    rejectedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type DisputeRemedy = {
+    id: string;
+    action: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    amountCny?: DecimalString;
+    currency: 'CNY';
+    responsibleUserId: string;
+    beneficiaryUserId: string;
+    instructions: string;
+    status: 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'overdue' | 'cancelled';
+    dueAt: string;
+    claimedAt?: string;
+    confirmationDueAt?: string;
+    confirmedAt?: string;
+    contestedAt?: string;
+    confirmationExpiredAt?: string;
+    overdueAt?: string;
+    claimNote?: string;
+    responseNote?: string;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
 };
 
 export type DisputeCase = {
@@ -2903,7 +3640,11 @@ export type DisputeCase = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -2934,6 +3675,12 @@ export type DisputeCase = {
      * Admin detail response only. Immutable user supplements ordered by submission time.
      */
     readonly supplements?: Array<ModerationInfoSupplement>;
+    readonly messages?: Array<DisputeMessage>;
+    readonly settlementProposals?: Array<DisputeSettlementProposal>;
+    /**
+     * Newest-first auditable API-order remedy history.
+     */
+    readonly remedies?: Array<DisputeRemedy>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3011,6 +3758,7 @@ export type UserReputationRestriction = {
     startsAt: string;
     endsAt?: string | null;
     sourceDisputeOutcomeId?: string;
+    sourceDisputeRemedyId?: string;
     createdByAdminId: string;
     revokedAt?: string | null;
     revokedByAdminId?: string;
@@ -3024,6 +3772,23 @@ export type UserReputationRestriction = {
 export type ReputationGovernanceMutation = {
     outcome?: DisputeReputationOutcome;
     restriction?: UserReputationRestriction;
+};
+
+export type ApiOrderSanctionRecommendation = {
+    eligible: boolean;
+    reasonCode: string;
+    remedyId?: string;
+    outcomeId?: string;
+    subjectUserId?: string;
+    confirmedBreaches180Days: number;
+    recommendedDays: 0 | 7 | 30 | 90;
+    alreadyApplied: boolean;
+    existingRestriction?: UserReputationRestriction;
+    subjectUserVersion?: number;
+};
+
+export type ApplyApiOrderSanctionRequest = {
+    internalReason: string;
 };
 
 export type PublicDispute = {
@@ -3174,6 +3939,48 @@ export type AdminUserDirectorySummary = {
     archivedUsers: number;
 };
 
+export type AdminStudentRegistrationSetting = {
+    enabled: boolean;
+    version: number;
+};
+
+export type AdminStudentRegistrationUpdateRequest = {
+    enabled: boolean;
+    expectedVersion: number;
+    reason: string;
+};
+
+export type AdminStudentInstitutionDomain = {
+    id: string;
+    /**
+     * Immutable exact lowercase domain; URLs, wildcards, suffix rules and Unicode forms are rejected.
+     */
+    domain: string;
+    institutionName: string;
+    enabled: boolean;
+    version: number;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type AdminStudentInstitutionDomainList = {
+    items: Array<AdminStudentInstitutionDomain>;
+};
+
+export type AdminStudentInstitutionDomainCreateRequest = {
+    domain: string;
+    institutionName: string;
+    enabled: boolean;
+    reason: string;
+};
+
+export type AdminStudentInstitutionDomainUpdateRequest = {
+    institutionName: string;
+    enabled: boolean;
+    expectedVersion: number;
+    reason: string;
+};
+
 export type AdminLinuxDoBinding = {
     bound: boolean;
     username?: string;
@@ -3207,10 +4014,47 @@ export type AdminAccountAuditEntry = {
     createdAt: string;
 };
 
+export type OperationAuditSourceKind = 'admin' | 'moderation' | 'domain' | 'api_order' | 'contact_session_access' | 'api_intent_contact_access' | 'api_order_access' | 'probe';
+
+export type OperationAuditDomain = 'identity' | 'account' | 'institution' | 'contact' | 'carpool' | 'api_service' | 'api_quota' | 'api_order' | 'moderation' | 'probe';
+
+export type AdminOperationAuditEntry = {
+    /**
+     * Opaque source-kind and source-event identifier.
+     */
+    id: string;
+    sourceKind: OperationAuditSourceKind;
+    domain: OperationAuditDomain;
+    actorKind: 'user' | 'admin' | 'system';
+    actorUserId: string | null;
+    actorUsername: string | null;
+    action: string;
+    actionLabel: string;
+    targetType: string;
+    targetId: string;
+    targetLabel: string | null;
+    outcome: 'succeeded' | 'status_changed' | 'accessed';
+    /**
+     * Server-built allowlisted summary without raw reason, note, arbitrary JSON or sensitive values.
+     */
+    summary: string;
+    /**
+     * Server-owned relative administrator route, or null when no safe detail exists.
+     */
+    detailPath: string | null;
+    requestId: string;
+    createdAt: string;
+};
+
+export type AdminOperationAuditEntryList = {
+    items: Array<AdminOperationAuditEntry>;
+    nextCursor: string | null;
+};
+
 export type AdminUserGovernanceAction = {
-    action: 'suspend' | 'ban' | 'archive' | 'restore' | 'grant_admin' | 'revoke_admin';
+    action: 'suspend' | 'ban' | 'restore' | 'grant_admin' | 'revoke_admin';
     kind: 'status' | 'permission';
-    targetStatus?: 'active' | 'suspended' | 'banned' | 'archived';
+    targetStatus?: 'active' | 'suspended' | 'banned';
     targetIsAdmin?: boolean;
     allowed: boolean;
     severity: 'normal' | 'warning' | 'danger';
@@ -3253,8 +4097,14 @@ export type AdminUserDetail = {
 };
 
 export type AdminUserStatusRequest = {
-    status: 'active' | 'suspended' | 'banned' | 'archived';
+    status: 'active' | 'suspended' | 'banned';
     reason: string;
+    publicReason?: string;
+    internalNote?: string;
+    expiresAt?: string;
+    isIndefinite?: boolean;
+    linkedCaseType?: string;
+    linkedCaseId?: string;
 };
 
 export type AdminUserPermissionRequest = {
@@ -3300,9 +4150,21 @@ export type SelfDispute = {
     targetLabel: string;
     primaryUsername: string;
     primaryDisplayName: string;
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    primaryUserId?: string;
     counterpartyUsername: string;
     counterpartyName: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    counterpartyUserId?: string;
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -3318,6 +4180,18 @@ export type SelfDispute = {
      * Present only while canSupplement is true.
      */
     openInfoRequestId?: string;
+    /**
+     * Present on authorized detail and mutation responses.
+     */
+    readonly messages?: Array<DisputeMessage>;
+    /**
+     * Newest-first proposal history on authorized detail and mutation responses.
+     */
+    readonly settlementProposals?: Array<DisputeSettlementProposal>;
+    /**
+     * Newest-first API-order remedy history visible to both participants.
+     */
+    readonly remedies?: Array<DisputeRemedy>;
 };
 
 export type SelfDisputeList = {
@@ -3680,7 +4554,7 @@ export type CreateContactMethodRequest = {
     label: string;
     value?: string;
     displayValue?: string;
-    usageScopes?: Array<string>;
+    usageScopes: Array<ContactUsageScope>;
     isDefault?: boolean;
     enabled?: boolean;
 };
@@ -3695,7 +4569,7 @@ export type ContactMethod = {
      * Returned only in authorized self/contact-window contexts when implemented.
      */
     displayValue?: string;
-    usageScopes: Array<string>;
+    usageScopes: Array<ContactUsageScope>;
     isDefault: boolean;
     enabled: boolean;
     verified: boolean;
@@ -3703,6 +4577,8 @@ export type ContactMethod = {
     updatedAt: string;
     version: number;
 };
+
+export type ContactUsageScope = 'carpool_owner' | 'api_merchant' | 'buyer' | 'dispute';
 
 export type ContactMethodList = {
     items: Array<ContactMethod>;
@@ -3766,21 +4642,60 @@ export type ModelAuditTargetRequestWritable = {
     apiServiceModelId?: string;
 };
 
-export type ApiHealthProbeConfigRequestWritable = {
+export type ApiProbeConnectionRequestWritable = {
+    name: string;
     /**
-     * Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
+     * Complete public HTTP or HTTPS OpenAI-compatible Base URL. The platform never appends /v1. Query strings, fragments, userinfo, unsafe addresses, redirects, and DNS rebinding are rejected.
      */
     baseUrl: string;
-    model: string;
     /**
-     * Dedicated low-quota, low-privilege API key restricted to the probe model. Omit on update to retain the currently encrypted credential.
+     * Dedicated probe Key. Required when creating a connection; omit on update to retain the encrypted credential.
      */
     credential?: string;
+    /**
+     * Exact model ID returned by the current Key's /models response. When omitted, gpt-5.6-luna is selected only if it is present.
+     */
+    probeModel?: string;
+    /**
+     * Short-lived one-time token returned by a successful preflight. Required for create and updates that change or re-enable the measured configuration.
+     */
+    preflightToken?: string;
     enabled: boolean;
     /**
-     * Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
+     * Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
      */
     acknowledgeInsecureHttp?: boolean;
+};
+
+export type ApiModelTesterManualCredentialSourceWritable = {
+    kind: 'manual';
+    /**
+     * Complete Base URL. The platform never appends /v1.
+     */
+    baseUrl: string;
+    /**
+     * Used only by the current request and never persisted or returned.
+     */
+    apiKey: string;
+    /**
+     * Must be true when baseUrl uses HTTP; confirms the current request may send the Bearer key over an unencrypted connection.
+     */
+    acknowledgeInsecureHttp: boolean;
+};
+
+export type ApiModelTesterCredentialSourceWritable = ({
+    kind: 'manual';
+} & ApiModelTesterManualCredentialSourceWritable) | ({
+    kind: 'order';
+} & ApiModelTesterOrderCredentialSource);
+
+export type ApiModelTesterDiscoverRequestWritable = {
+    credentialSource: ApiModelTesterCredentialSourceWritable;
+};
+
+export type ApiModelTesterTestRequestWritable = {
+    credentialSource: ApiModelTesterCredentialSourceWritable;
+    model: string;
 };
 
 /**
@@ -3865,7 +4780,11 @@ export type DisputeCaseWritable = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -3890,6 +4809,59 @@ export type DisputeListWritable = {
     nextCursor?: string | null;
 };
 
+export type SelfDisputeWritable = {
+    id: string;
+    reportId?: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    targetId: string;
+    targetLabel: string;
+    primaryUsername: string;
+    primaryDisplayName: string;
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    primaryUserId?: string;
+    counterpartyUsername: string;
+    counterpartyName: string;
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    counterpartyUserId?: string;
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
+    publicSummary: string;
+    publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
+    publicResult: string;
+    openedAt: string;
+    resolvedAt?: string | null;
+    closedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+    canAppeal: boolean;
+    canSupplement: boolean;
+    /**
+     * Present only while canSupplement is true.
+     */
+    openInfoRequestId?: string;
+};
+
+export type SelfDisputeListWritable = {
+    items: Array<SelfDisputeWritable>;
+    nextCursor?: string | null;
+};
+
+/**
+ * Self-safe supplement result. Administrator reasons, identities, target snapshots, and stored supplements are never returned.
+ */
+export type SelfModerationSupplementMutationWritable = {
+    report?: SelfReport;
+    dispute?: SelfDisputeWritable;
+};
+
 export type AdminReportMutationWritable = {
     report?: ReportWritable;
     dispute?: DisputeCaseWritable;
@@ -3899,6 +4871,8 @@ export type AdminReportMutationWritable = {
 export type EmptyRequestWritable = {
     [key: string]: never;
 };
+
+export type SessionAudience = 'normal' | 'restricted_business';
 
 export type IdempotencyKey = string;
 
@@ -4058,6 +5032,35 @@ export type CreateDevSessionResponses = {
 
 export type CreateDevSessionResponse = CreateDevSessionResponses[keyof CreateDevSessionResponses];
 
+export type CreateDevPersonaSessionData = {
+    body: DevPersonaSessionRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/dev-persona-session';
+};
+
+export type CreateDevPersonaSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type CreateDevPersonaSessionError = CreateDevPersonaSessionErrors[keyof CreateDevPersonaSessionErrors];
+
+export type CreateDevPersonaSessionResponses = {
+    /**
+     * Prepared development persona and normal session.
+     */
+    200: DevPersonaSessionResponse;
+};
+
+export type CreateDevPersonaSessionResponse = CreateDevPersonaSessionResponses[keyof CreateDevPersonaSessionResponses];
+
 export type GetSessionData = {
     body?: never;
     path?: never;
@@ -4083,6 +5086,92 @@ export type GetSessionResponses = {
 
 export type GetSessionResponse = GetSessionResponses[keyof GetSessionResponses];
 
+export type GetRestrictedBusinessSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/restricted-business/session';
+};
+
+export type GetRestrictedBusinessSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type GetRestrictedBusinessSessionError = GetRestrictedBusinessSessionErrors[keyof GetRestrictedBusinessSessionErrors];
+
+export type GetRestrictedBusinessSessionResponses = {
+    /**
+     * Current restricted-business session.
+     */
+    200: SessionResponse;
+};
+
+export type GetRestrictedBusinessSessionResponse = GetRestrictedBusinessSessionResponses[keyof GetRestrictedBusinessSessionResponses];
+
+export type LogoutRestrictedBusinessSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/restricted-business/logout';
+};
+
+export type LogoutRestrictedBusinessSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type LogoutRestrictedBusinessSessionError = LogoutRestrictedBusinessSessionErrors[keyof LogoutRestrictedBusinessSessionErrors];
+
+export type LogoutRestrictedBusinessSessionResponses = {
+    /**
+     * Restricted-business session revoked.
+     */
+    204: void;
+};
+
+export type LogoutRestrictedBusinessSessionResponse = LogoutRestrictedBusinessSessionResponses[keyof LogoutRestrictedBusinessSessionResponses];
+
+export type GetAccountGovernanceBusinessCenterData = {
+    body?: never;
+    headers?: {
+        'X-Session-Audience'?: 'normal' | 'restricted_business';
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/account-governance/business-center';
+};
+
+export type GetAccountGovernanceBusinessCenterErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetAccountGovernanceBusinessCenterError = GetAccountGovernanceBusinessCenterErrors[keyof GetAccountGovernanceBusinessCenterErrors];
+
+export type GetAccountGovernanceBusinessCenterResponses = {
+    /**
+     * Account-governance disposition projection.
+     */
+    200: AccountGovernanceBusinessCenter;
+};
+
+export type GetAccountGovernanceBusinessCenterResponse = GetAccountGovernanceBusinessCenterResponses[keyof GetAccountGovernanceBusinessCenterResponses];
+
 export type LoginWithPasswordData = {
     body: PasswordLoginRequest;
     path?: never;
@@ -4095,6 +5184,10 @@ export type LoginWithPasswordErrors = {
      * Problem Details error.
      */
     401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
     /**
      * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
      */
@@ -4111,6 +5204,43 @@ export type LoginWithPasswordResponses = {
 };
 
 export type LoginWithPasswordResponse = LoginWithPasswordResponses[keyof LoginWithPasswordResponses];
+
+export type ReauthenticatePasswordData = {
+    body: PasswordReauthenticateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password/reauthenticate';
+};
+
+export type ReauthenticatePasswordErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ReauthenticatePasswordError = ReauthenticatePasswordErrors[keyof ReauthenticatePasswordErrors];
+
+export type ReauthenticatePasswordResponses = {
+    /**
+     * Current session recently reauthenticated.
+     */
+    204: void;
+};
+
+export type ReauthenticatePasswordResponse = ReauthenticatePasswordResponses[keyof ReauthenticatePasswordResponses];
 
 export type SetBackupPasswordData = {
     body: SetPasswordRequest;
@@ -4149,14 +5279,14 @@ export type SetBackupPasswordResponses = {
 
 export type SetBackupPasswordResponse = SetBackupPasswordResponses[keyof SetBackupPasswordResponses];
 
-export type StartEmailRegistrationData = {
-    body: StartEmailVerificationRequest;
+export type StartPasswordResetData = {
+    body: PasswordResetStartRequest;
     path?: never;
     query?: never;
-    url: '/api/v1/auth/email-registration/start';
+    url: '/api/v1/auth/password-reset/start';
 };
 
-export type StartEmailRegistrationErrors = {
+export type StartPasswordResetErrors = {
     /**
      * Problem Details error.
      */
@@ -4171,7 +5301,129 @@ export type StartEmailRegistrationErrors = {
     429: ProblemDetails;
 };
 
+export type StartPasswordResetError = StartPasswordResetErrors[keyof StartPasswordResetErrors];
+
+export type StartPasswordResetResponses = {
+    /**
+     * Request accepted regardless of account existence or eligibility.
+     */
+    202: PasswordResetStartResponse;
+};
+
+export type StartPasswordResetResponse = StartPasswordResetResponses[keyof StartPasswordResetResponses];
+
+export type ConfirmPasswordResetData = {
+    body: PasswordResetConfirmRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-reset/confirm';
+};
+
+export type ConfirmPasswordResetErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ConfirmPasswordResetError = ConfirmPasswordResetErrors[keyof ConfirmPasswordResetErrors];
+
+export type ConfirmPasswordResetResponses = {
+    /**
+     * Password replaced and eligible sessions revoked. No session is created.
+     */
+    204: void;
+};
+
+export type ConfirmPasswordResetResponse = ConfirmPasswordResetResponses[keyof ConfirmPasswordResetResponses];
+
+export type GetStudentEmailRegistrationConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/email-registration/config';
+};
+
+export type GetStudentEmailRegistrationConfigResponses = {
+    /**
+     * Public registration configuration. The backend still rechecks the switch and exact domain at both start and confirmation.
+     */
+    200: StudentRegistrationPublicConfig;
+};
+
+export type GetStudentEmailRegistrationConfigResponse = GetStudentEmailRegistrationConfigResponses[keyof GetStudentEmailRegistrationConfigResponses];
+
+export type GetUsernameAvailabilityData = {
+    body?: never;
+    path?: never;
+    query: {
+        username: string;
+    };
+    url: '/api/v1/auth/username-availability';
+};
+
+export type GetUsernameAvailabilityErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type GetUsernameAvailabilityError = GetUsernameAvailabilityErrors[keyof GetUsernameAvailabilityErrors];
+
+export type GetUsernameAvailabilityResponses = {
+    /**
+     * Current username availability. Reserved usernames return `available: false`.
+     */
+    200: UsernameAvailability;
+};
+
+export type GetUsernameAvailabilityResponse = GetUsernameAvailabilityResponses[keyof GetUsernameAvailabilityResponses];
+
+export type StartEmailRegistrationData = {
+    body: EmailRegistrationStartRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/email-registration/start';
+};
+
+export type StartEmailRegistrationErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
 export type StartEmailRegistrationError = StartEmailRegistrationErrors[keyof StartEmailRegistrationErrors];
+
+export type StartEmailRegistrationResponses = {
+    /**
+     * Verification challenge created and sent.
+     */
+    200: EmailRegistrationStartResponse;
+};
+
+export type StartEmailRegistrationResponse = StartEmailRegistrationResponses[keyof StartEmailRegistrationResponses];
 
 export type ConfirmEmailRegistrationData = {
     body: EmailRegistrationConfirmRequest;
@@ -4188,6 +5440,10 @@ export type ConfirmEmailRegistrationErrors = {
     /**
      * Problem Details error.
      */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
     422: ProblemDetails;
     /**
      * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
@@ -4197,10 +5453,23 @@ export type ConfirmEmailRegistrationErrors = {
 
 export type ConfirmEmailRegistrationError = ConfirmEmailRegistrationErrors[keyof ConfirmEmailRegistrationErrors];
 
+export type ConfirmEmailRegistrationResponses = {
+    /**
+     * Student buyer account and session created.
+     */
+    200: SessionResponse;
+};
+
+export type ConfirmEmailRegistrationResponse = ConfirmEmailRegistrationResponses[keyof ConfirmEmailRegistrationResponses];
+
 export type StartOAuthLoginData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * `link_linuxdo` starts identity linking; `restricted_business` uses a dedicated one-time state and resolves only an existing suspended or banned identity; `grant_admin_reauth` uses its own state bound to the current administrator session.
+         */
+        purpose?: 'link_linuxdo' | 'restricted_business' | 'grant_admin_reauth';
         returnTo?: string;
         utmSource?: string;
         utmMedium?: string;
@@ -4836,7 +6105,7 @@ export type GetPublicMerchantProfileResponses = {
     /**
      * Public merchant profile without owner user id or contact values.
      */
-    200: PublicMerchantProfileBundle;
+    200: PublicMerchantProfile;
 };
 
 export type GetPublicMerchantProfileResponse = GetPublicMerchantProfileResponses[keyof GetPublicMerchantProfileResponses];
@@ -4939,7 +6208,7 @@ export type ListProductPlansData = {
     path?: never;
     query?: {
         /**
-         * Optional product category code such as gpt, claude, cursor, gemini, perplexity, or other.
+         * Optional database-driven product category code, for example gpt, claude, grok, or an administrator-defined code.
          */
         category?: string;
     };
@@ -5037,6 +6306,33 @@ export type ListPublicApiServicesData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        paymentMethod?: 'wechat' | 'alipay';
+        billingMode?: 'metered_usd_quota' | 'fixed_package';
+        search?: string;
+        /**
+         * Exact enabled model supported by the service.
+         */
+        modelCatalogId?: string;
+        distributionSystem?: 'sub2api' | 'new_api_proxy' | 'other';
+        /**
+         * Maximum accepted CNY price per USD allowance for metered services.
+         */
+        maxCnyPerUsd?: string;
+        /**
+         * Maximum accepted minimum purchase amount in CNY.
+         */
+        minimumIntentCnyMax?: string;
+        packageModelCatalogId?: string;
+        packageDurationDays?: 1 | 3 | 7 | 30;
+        /**
+         * Maximum total price for an enabled package with stock.
+         */
+        packagePriceCnyMax?: string;
+        /**
+         * Maximum merchant multiplier for the selected package model.
+         */
+        packageMultiplierMax?: string;
+        sort?: 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
     };
     url: '/api/v1/api-services';
 };
@@ -5103,6 +6399,125 @@ export type GetPublicApiServiceResponses = {
 };
 
 export type GetPublicApiServiceResponse = GetPublicApiServiceResponses[keyof GetPublicApiServiceResponses];
+
+export type ListApiModelTesterOrderSourcesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tools/api-model-tester/order-sources';
+};
+
+export type ListApiModelTesterOrderSourcesErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type ListApiModelTesterOrderSourcesError = ListApiModelTesterOrderSourcesErrors[keyof ListApiModelTesterOrderSourcesErrors];
+
+export type ListApiModelTesterOrderSourcesResponses = {
+    /**
+     * Eligible order sources without API key material.
+     */
+    200: ApiModelTesterOrderSourceList;
+};
+
+export type ListApiModelTesterOrderSourcesResponse = ListApiModelTesterOrderSourcesResponses[keyof ListApiModelTesterOrderSourcesResponses];
+
+export type DiscoverApiModelsData = {
+    body: ApiModelTesterDiscoverRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tools/api-model-tester/discover';
+};
+
+export type DiscoverApiModelsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    429: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    502: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    504: ProblemDetails;
+};
+
+export type DiscoverApiModelsError = DiscoverApiModelsErrors[keyof DiscoverApiModelsErrors];
+
+export type DiscoverApiModelsResponses = {
+    /**
+     * Complete de-duplicated model IDs from this request. The result is not persisted.
+     */
+    200: ApiModelTesterDiscovery;
+};
+
+export type DiscoverApiModelsResponse = DiscoverApiModelsResponses[keyof DiscoverApiModelsResponses];
+
+export type TestApiModelData = {
+    body: ApiModelTesterTestRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tools/api-model-tester/test';
+};
+
+export type TestApiModelErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type TestApiModelError = TestApiModelErrors[keyof TestApiModelErrors];
+
+export type TestApiModelResponses = {
+    /**
+     * Per-protocol result for this request. Response bodies and credentials are not returned or persisted.
+     */
+    200: ApiModelTesterTestResult;
+};
+
+export type TestApiModelResponse = TestApiModelResponses[keyof TestApiModelResponses];
 
 export type CreateApiPurchaseIntentData = {
     body: CreateApiPurchaseIntentRequest;
@@ -5171,12 +6586,24 @@ export type ListPublicApiQuotaOffersData = {
          */
         cursor?: string;
         distributionSystem?: 'sub2api' | 'new_api_proxy' | 'other';
+        /**
+         * Exact enabled model supported by the offer's API service.
+         */
+        modelCatalogId?: string;
         oneMultiplier?: boolean;
+        /**
+         * Maximum model multiplier accepted by the buyer.
+         */
+        maxMultiplier?: string;
         onlyOrderable?: boolean;
+        saleMode?: 'continuous' | 'scheduled';
+        sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
         /**
          * Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
          */
         slotKey?: string;
+        search?: string;
+        excludeSystemSlots?: boolean;
     };
     url: '/api/v1/api-quota-offers';
 };
@@ -5328,9 +6755,50 @@ export type ListCarpoolsData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Case-insensitive search across listing ID, title, summary, region, owner ID, and review reason before pagination.
+         */
+        q?: string;
+        /**
+         * Comma-separated product-plan IDs applied before pagination.
+         */
+        productPlanIds?: string;
+        /**
+         * Exact region code or display name applied before pagination.
+         */
+        region?: string;
+        /**
+         * Comma-separated listing statuses applied before pagination.
+         */
+        statuses?: string;
+        /**
+         * Optional public or exception projection applied before pagination.
+         */
+        view?: 'public' | 'exceptions';
+        /**
+         * Restrict results to listings requiring or mentioning risk acknowledgement.
+         */
+        risk?: 'high';
+        /**
+         * Stable server-side ordering. Recommended currently uses the updated-descending order.
+         */
+        sort?: 'recommended' | 'updated_desc' | 'price_asc' | 'seats_desc';
+        /**
+         * Return an empty page when a selected client filter has no server-side representation.
+         */
+        none?: '1';
     };
     url: '/api/v1/carpools';
 };
+
+export type ListCarpoolsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListCarpoolsError = ListCarpoolsErrors[keyof ListCarpoolsErrors];
 
 export type ListCarpoolsResponses = {
     /**
@@ -5436,6 +6904,7 @@ export type UpdateCarpoolData = {
     body: CreateCarpoolListingRequest;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -6128,6 +7597,371 @@ export type ListMyDisputesResponses = {
 
 export type ListMyDisputesResponse = ListMyDisputesResponses[keyof ListMyDisputesResponses];
 
+export type GetMyDisputeData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}';
+};
+
+export type GetMyDisputeErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetMyDisputeError = GetMyDisputeErrors[keyof GetMyDisputeErrors];
+
+export type GetMyDisputeResponses = {
+    /**
+     * Participant-safe dispute detail.
+     */
+    200: SelfDispute;
+};
+
+export type GetMyDisputeResponse = GetMyDisputeResponses[keyof GetMyDisputeResponses];
+
+export type AppendMyDisputeMessageData = {
+    body: DisputeMessageRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/messages';
+};
+
+export type AppendMyDisputeMessageErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type AppendMyDisputeMessageError = AppendMyDisputeMessageErrors[keyof AppendMyDisputeMessageErrors];
+
+export type AppendMyDisputeMessageResponses = {
+    /**
+     * Updated dispute detail.
+     */
+    200: SelfDispute;
+};
+
+export type AppendMyDisputeMessageResponse = AppendMyDisputeMessageResponses[keyof AppendMyDisputeMessageResponses];
+
+export type CreateMyDisputeSettlementProposalData = {
+    body: DisputeSettlementProposalRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/settlement-proposals';
+};
+
+export type CreateMyDisputeSettlementProposalErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type CreateMyDisputeSettlementProposalError = CreateMyDisputeSettlementProposalErrors[keyof CreateMyDisputeSettlementProposalErrors];
+
+export type CreateMyDisputeSettlementProposalResponses = {
+    /**
+     * Updated dispute detail.
+     */
+    200: SelfDispute;
+};
+
+export type CreateMyDisputeSettlementProposalResponse = CreateMyDisputeSettlementProposalResponses[keyof CreateMyDisputeSettlementProposalResponses];
+
+export type ConfirmMyDisputeSettlementProposalData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+        proposalId: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/confirm';
+};
+
+export type ConfirmMyDisputeSettlementProposalErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+};
+
+export type ConfirmMyDisputeSettlementProposalError = ConfirmMyDisputeSettlementProposalErrors[keyof ConfirmMyDisputeSettlementProposalErrors];
+
+export type ConfirmMyDisputeSettlementProposalResponses = {
+    /**
+     * Dispute closed after bilateral confirmation.
+     */
+    200: SelfDispute;
+};
+
+export type ConfirmMyDisputeSettlementProposalResponse = ConfirmMyDisputeSettlementProposalResponses[keyof ConfirmMyDisputeSettlementProposalResponses];
+
+export type RejectMyDisputeSettlementProposalData = {
+    body: DisputeParticipantReasonRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+        proposalId: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/reject';
+};
+
+export type RejectMyDisputeSettlementProposalErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type RejectMyDisputeSettlementProposalError = RejectMyDisputeSettlementProposalErrors[keyof RejectMyDisputeSettlementProposalErrors];
+
+export type RejectMyDisputeSettlementProposalResponses = {
+    /**
+     * Proposal rejected; dispute remains negotiating.
+     */
+    200: SelfDispute;
+};
+
+export type RejectMyDisputeSettlementProposalResponse = RejectMyDisputeSettlementProposalResponses[keyof RejectMyDisputeSettlementProposalResponses];
+
+export type EscalateMyDisputeData = {
+    body: DisputeEscalationRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/escalate';
+};
+
+export type EscalateMyDisputeErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type EscalateMyDisputeError = EscalateMyDisputeErrors[keyof EscalateMyDisputeErrors];
+
+export type EscalateMyDisputeResponses = {
+    /**
+     * Dispute moved to platform review.
+     */
+    200: SelfDispute;
+};
+
+export type EscalateMyDisputeResponse = EscalateMyDisputeResponses[keyof EscalateMyDisputeResponses];
+
+export type ClaimMyDisputeRemedyFulfilledData = {
+    body: DisputeRemedyClaimRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/remedy/claim';
+};
+
+export type ClaimMyDisputeRemedyFulfilledErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ClaimMyDisputeRemedyFulfilledError = ClaimMyDisputeRemedyFulfilledErrors[keyof ClaimMyDisputeRemedyFulfilledErrors];
+
+export type ClaimMyDisputeRemedyFulfilledResponses = {
+    /**
+     * Remedy moved to beneficiary confirmation without closing the dispute.
+     */
+    200: SelfDispute;
+};
+
+export type ClaimMyDisputeRemedyFulfilledResponse = ClaimMyDisputeRemedyFulfilledResponses[keyof ClaimMyDisputeRemedyFulfilledResponses];
+
+export type ConfirmMyDisputeRemedyFulfilledData = {
+    body: DisputeRemedyConfirmRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/remedy/confirm';
+};
+
+export type ConfirmMyDisputeRemedyFulfilledErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ConfirmMyDisputeRemedyFulfilledError = ConfirmMyDisputeRemedyFulfilledErrors[keyof ConfirmMyDisputeRemedyFulfilledErrors];
+
+export type ConfirmMyDisputeRemedyFulfilledResponses = {
+    /**
+     * Latest dispute detail, closed by confirmation or neutral timeout normalization.
+     */
+    200: SelfDispute;
+};
+
+export type ConfirmMyDisputeRemedyFulfilledResponse = ConfirmMyDisputeRemedyFulfilledResponses[keyof ConfirmMyDisputeRemedyFulfilledResponses];
+
+export type ContestMyDisputeRemedyFulfilledData = {
+    body: DisputeRemedyContestRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/remedy/contest';
+};
+
+export type ContestMyDisputeRemedyFulfilledErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ContestMyDisputeRemedyFulfilledError = ContestMyDisputeRemedyFulfilledErrors[keyof ContestMyDisputeRemedyFulfilledErrors];
+
+export type ContestMyDisputeRemedyFulfilledResponses = {
+    /**
+     * Latest dispute detail in platform review, or closed by neutral timeout normalization.
+     */
+    200: SelfDispute;
+};
+
+export type ContestMyDisputeRemedyFulfilledResponse = ContestMyDisputeRemedyFulfilledResponses[keyof ContestMyDisputeRemedyFulfilledResponses];
+
 export type SubmitDisputeInfoSupplementData = {
     body: InfoSupplementRequest;
     headers: {
@@ -6261,6 +8095,10 @@ export type ListMyCarpoolsData = {
     path?: never;
     query?: {
         /**
+         * Owner listing view. Filtering is applied before cursor pagination.
+         */
+        view?: 'recruiting' | 'serving' | 'history' | 'needs_edit';
+        /**
          * Page size. Defaults to 20 and must be between 1 and 100.
          */
         limit?: number;
@@ -6272,6 +8110,19 @@ export type ListMyCarpoolsData = {
     url: '/api/v1/me/carpools';
 };
 
+export type ListMyCarpoolsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListMyCarpoolsError = ListMyCarpoolsErrors[keyof ListMyCarpoolsErrors];
+
 export type ListMyCarpoolsResponses = {
     /**
      * Current user's carpool listings.
@@ -6280,6 +8131,37 @@ export type ListMyCarpoolsResponses = {
 };
 
 export type ListMyCarpoolsResponse = ListMyCarpoolsResponses[keyof ListMyCarpoolsResponses];
+
+export type GetMyCarpoolData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/carpools/{id}';
+};
+
+export type GetMyCarpoolErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetMyCarpoolError = GetMyCarpoolErrors[keyof GetMyCarpoolErrors];
+
+export type GetMyCarpoolResponses = {
+    /**
+     * Current owner's carpool listing, including non-public editable states.
+     */
+    200: CarpoolListing;
+};
+
+export type GetMyCarpoolResponse = GetMyCarpoolResponses[keyof GetMyCarpoolResponses];
 
 export type ListMyCarpoolApplicationsData = {
     body?: never;
@@ -6859,7 +8741,7 @@ export type ConfirmMyApiOrderCompleteResponses = {
 export type ConfirmMyApiOrderCompleteResponse = ConfirmMyApiOrderCompleteResponses[keyof ConfirmMyApiOrderCompleteResponses];
 
 export type OpenMyApiOrderDisputeData = {
-    body: ApiOrderReasonRequest;
+    body: ApiOrderDisputeRequest;
     headers: {
         'If-Match': string;
         'Idempotency-Key': string;
@@ -6900,6 +8782,49 @@ export type OpenMyApiOrderDisputeResponses = {
 };
 
 export type OpenMyApiOrderDisputeResponse = OpenMyApiOrderDisputeResponses[keyof OpenMyApiOrderDisputeResponses];
+
+export type ReportMyApiOrderLatePaymentData = {
+    body: ApiOrderLatePaymentRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/api-orders/{id}/report-late-payment';
+};
+
+export type ReportMyApiOrderLatePaymentErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReportMyApiOrderLatePaymentError = ReportMyApiOrderLatePaymentErrors[keyof ReportMyApiOrderLatePaymentErrors];
+
+export type ReportMyApiOrderLatePaymentResponses = {
+    /**
+     * Late-payment report recorded without reviving the order.
+     */
+    200: ApiOrder;
+};
+
+export type ReportMyApiOrderLatePaymentResponse = ReportMyApiOrderLatePaymentResponses[keyof ReportMyApiOrderLatePaymentResponses];
 
 export type ListMyNotificationsData = {
     body?: never;
@@ -7766,6 +9691,7 @@ export type UpdateOwnerApiServiceData = {
     body: ApiServiceRequest;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -7800,23 +9726,118 @@ export type UpdateOwnerApiServiceResponses = {
 
 export type UpdateOwnerApiServiceResponse = UpdateOwnerApiServiceResponses[keyof UpdateOwnerApiServiceResponses];
 
-export type DeleteOwnerApiHealthProbeData = {
+export type PreflightOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections/preflight';
+};
+
+export type PreflightOwnerApiProbeConnectionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type PreflightOwnerApiProbeConnectionError = PreflightOwnerApiProbeConnectionErrors[keyof PreflightOwnerApiProbeConnectionErrors];
+
+export type PreflightOwnerApiProbeConnectionResponses = {
+    /**
+     * Available model IDs, selected probe model, fixed protocol, and current price estimate.
+     */
+    200: ApiProbeConnectionPreflight;
+};
+
+export type PreflightOwnerApiProbeConnectionResponse = PreflightOwnerApiProbeConnectionResponses[keyof PreflightOwnerApiProbeConnectionResponses];
+
+export type ListOwnerApiProbeConnectionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections';
+};
+
+export type ListOwnerApiProbeConnectionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type ListOwnerApiProbeConnectionsError = ListOwnerApiProbeConnectionsErrors[keyof ListOwnerApiProbeConnectionsErrors];
+
+export type ListOwnerApiProbeConnectionsResponses = {
+    /**
+     * Private reusable connections. Credentials are never returned.
+     */
+    200: OwnerApiProbeConnectionList;
+};
+
+export type ListOwnerApiProbeConnectionsResponse = ListOwnerApiProbeConnectionsResponses[keyof ListOwnerApiProbeConnectionsResponses];
+
+export type CreateOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections';
+};
+
+export type CreateOwnerApiProbeConnectionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type CreateOwnerApiProbeConnectionError = CreateOwnerApiProbeConnectionErrors[keyof CreateOwnerApiProbeConnectionErrors];
+
+export type CreateOwnerApiProbeConnectionResponses = {
+    /**
+     * Connection created after the initial authenticated /models check.
+     */
+    201: OwnerApiProbeConnection;
+};
+
+export type CreateOwnerApiProbeConnectionResponse = CreateOwnerApiProbeConnectionResponses[keyof CreateOwnerApiProbeConnectionResponses];
+
+export type DeleteOwnerApiProbeConnectionData = {
     body?: never;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe';
+    url: '/api/v1/owner/api-probe-connections/{id}';
 };
 
-export type DeleteOwnerApiHealthProbeErrors = {
+export type DeleteOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
     404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
     /**
      * Problem Details error.
      */
@@ -7827,60 +9848,58 @@ export type DeleteOwnerApiHealthProbeErrors = {
     428: ProblemDetails;
 };
 
-export type DeleteOwnerApiHealthProbeError = DeleteOwnerApiHealthProbeErrors[keyof DeleteOwnerApiHealthProbeErrors];
+export type DeleteOwnerApiProbeConnectionError = DeleteOwnerApiProbeConnectionErrors[keyof DeleteOwnerApiProbeConnectionErrors];
 
-export type DeleteOwnerApiHealthProbeResponses = {
+export type DeleteOwnerApiProbeConnectionResponses = {
     /**
-     * Probe configuration and its dependent samples deleted.
+     * Probe connection and its dependent samples deleted.
      */
     204: void;
 };
 
-export type DeleteOwnerApiHealthProbeResponse = DeleteOwnerApiHealthProbeResponses[keyof DeleteOwnerApiHealthProbeResponses];
+export type DeleteOwnerApiProbeConnectionResponse = DeleteOwnerApiProbeConnectionResponses[keyof DeleteOwnerApiProbeConnectionResponses];
 
-export type GetOwnerApiHealthProbeData = {
+export type GetOwnerApiProbeConnectionData = {
     body?: never;
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe';
+    url: '/api/v1/owner/api-probe-connections/{id}';
 };
 
-export type GetOwnerApiHealthProbeErrors = {
+export type GetOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
     404: ProblemDetails;
 };
 
-export type GetOwnerApiHealthProbeError = GetOwnerApiHealthProbeErrors[keyof GetOwnerApiHealthProbeErrors];
+export type GetOwnerApiProbeConnectionError = GetOwnerApiProbeConnectionErrors[keyof GetOwnerApiProbeConnectionErrors];
 
-export type GetOwnerApiHealthProbeResponses = {
+export type GetOwnerApiProbeConnectionResponses = {
     /**
-     * Private probe configuration. Credentials are never returned.
+     * Private probe connection without credential material.
      */
-    200: OwnerApiHealthProbeConfig;
+    200: OwnerApiProbeConnection;
 };
 
-export type GetOwnerApiHealthProbeResponse = GetOwnerApiHealthProbeResponses[keyof GetOwnerApiHealthProbeResponses];
+export type GetOwnerApiProbeConnectionResponse = GetOwnerApiProbeConnectionResponses[keyof GetOwnerApiProbeConnectionResponses];
 
-export type PutOwnerApiHealthProbeData = {
-    body: ApiHealthProbeConfigRequestWritable;
+export type UpdateOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
     headers: {
-        /**
-         * Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
-         */
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe';
+    url: '/api/v1/owner/api-probe-connections/{id}';
 };
 
-export type PutOwnerApiHealthProbeErrors = {
+export type UpdateOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
@@ -7899,19 +9918,19 @@ export type PutOwnerApiHealthProbeErrors = {
     428: ProblemDetails;
 };
 
-export type PutOwnerApiHealthProbeError = PutOwnerApiHealthProbeErrors[keyof PutOwnerApiHealthProbeErrors];
+export type UpdateOwnerApiProbeConnectionError = UpdateOwnerApiProbeConnectionErrors[keyof UpdateOwnerApiProbeConnectionErrors];
 
-export type PutOwnerApiHealthProbeResponses = {
+export type UpdateOwnerApiProbeConnectionResponses = {
     /**
-     * Probe configuration created or updated without echoing credential material.
+     * Updated connection without echoing credential material.
      */
-    200: OwnerApiHealthProbeConfig;
+    200: OwnerApiProbeConnection;
 };
 
-export type PutOwnerApiHealthProbeResponse = PutOwnerApiHealthProbeResponses[keyof PutOwnerApiHealthProbeResponses];
+export type UpdateOwnerApiProbeConnectionResponse = UpdateOwnerApiProbeConnectionResponses[keyof UpdateOwnerApiProbeConnectionResponses];
 
-export type CreateOwnerApiHealthProbeChallengeData = {
-    body: ApiHealthProbeChallengeRequest;
+export type VerifyOwnerApiProbeConnectionData = {
+    body?: never;
     headers: {
         'If-Match': string;
         'Idempotency-Key': string;
@@ -7920,10 +9939,10 @@ export type CreateOwnerApiHealthProbeChallengeData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe/challenges';
+    url: '/api/v1/owner/api-probe-connections/{id}/verify';
 };
 
-export type CreateOwnerApiHealthProbeChallengeErrors = {
+export type VerifyOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
@@ -7942,19 +9961,61 @@ export type CreateOwnerApiHealthProbeChallengeErrors = {
     428: ProblemDetails;
 };
 
-export type CreateOwnerApiHealthProbeChallengeError = CreateOwnerApiHealthProbeChallengeErrors[keyof CreateOwnerApiHealthProbeChallengeErrors];
+export type VerifyOwnerApiProbeConnectionError = VerifyOwnerApiProbeConnectionErrors[keyof VerifyOwnerApiProbeConnectionErrors];
 
-export type CreateOwnerApiHealthProbeChallengeResponses = {
+export type VerifyOwnerApiProbeConnectionResponses = {
     /**
-     * One-time ownership challenge created.
+     * Connection state after the verification attempt.
      */
-    201: ApiHealthProbeChallenge;
+    200: OwnerApiProbeConnection;
 };
 
-export type CreateOwnerApiHealthProbeChallengeResponse = CreateOwnerApiHealthProbeChallengeResponses[keyof CreateOwnerApiHealthProbeChallengeResponses];
+export type VerifyOwnerApiProbeConnectionResponse = VerifyOwnerApiProbeConnectionResponses[keyof VerifyOwnerApiProbeConnectionResponses];
 
-export type VerifyOwnerApiHealthProbeData = {
-    body?: never;
+export type PreflightExistingOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
+    headers: {
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections/{id}/preflight';
+};
+
+export type PreflightExistingOwnerApiProbeConnectionErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type PreflightExistingOwnerApiProbeConnectionError = PreflightExistingOwnerApiProbeConnectionErrors[keyof PreflightExistingOwnerApiProbeConnectionErrors];
+
+export type PreflightExistingOwnerApiProbeConnectionResponses = {
+    /**
+     * Available model IDs, selected probe model, fixed protocol, and current price estimate.
+     */
+    200: ApiProbeConnectionPreflight;
+};
+
+export type PreflightExistingOwnerApiProbeConnectionResponse = PreflightExistingOwnerApiProbeConnectionResponses[keyof PreflightExistingOwnerApiProbeConnectionResponses];
+
+export type UpdateOwnerApiServiceProbeConnectionData = {
+    body: ApiServiceProbeConnectionRequest;
     headers: {
         'If-Match': string;
         'Idempotency-Key': string;
@@ -7963,10 +10024,10 @@ export type VerifyOwnerApiHealthProbeData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe/verify';
+    url: '/api/v1/owner/api-services/{id}/probe-connection';
 };
 
-export type VerifyOwnerApiHealthProbeErrors = {
+export type UpdateOwnerApiServiceProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
@@ -7981,16 +10042,16 @@ export type VerifyOwnerApiHealthProbeErrors = {
     428: ProblemDetails;
 };
 
-export type VerifyOwnerApiHealthProbeError = VerifyOwnerApiHealthProbeErrors[keyof VerifyOwnerApiHealthProbeErrors];
+export type UpdateOwnerApiServiceProbeConnectionError = UpdateOwnerApiServiceProbeConnectionErrors[keyof UpdateOwnerApiServiceProbeConnectionErrors];
 
-export type VerifyOwnerApiHealthProbeResponses = {
+export type UpdateOwnerApiServiceProbeConnectionResponses = {
     /**
-     * Probe configuration after the verification attempt.
+     * Owner API service with its current probe readiness.
      */
-    200: OwnerApiHealthProbeConfig;
+    200: ApiService;
 };
 
-export type VerifyOwnerApiHealthProbeResponse = VerifyOwnerApiHealthProbeResponses[keyof VerifyOwnerApiHealthProbeResponses];
+export type UpdateOwnerApiServiceProbeConnectionResponse = UpdateOwnerApiServiceProbeConnectionResponses[keyof UpdateOwnerApiServiceProbeConnectionResponses];
 
 export type SubmitOwnerApiServiceReviewData = {
     body: EmptyRequestWritable;
@@ -8155,6 +10216,7 @@ export type UpdateOwnerApiServiceOrderSettingsData = {
     body: ApiServiceOrderSettingsRequest;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -8463,6 +10525,45 @@ export type PublishOwnerApiQuotaBatchResponses = {
 };
 
 export type PublishOwnerApiQuotaBatchResponse = PublishOwnerApiQuotaBatchResponses[keyof PublishOwnerApiQuotaBatchResponses];
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-quota-rounds/{id}/confirm-fulfillment';
+};
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentError = ConfirmOwnerApiQuotaRoundFulfillmentErrors[keyof ConfirmOwnerApiQuotaRoundFulfillmentErrors];
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentResponses = {
+    /**
+     * Round fulfillment readiness confirmed.
+     */
+    200: ApiQuotaRound;
+};
+
+export type ConfirmOwnerApiQuotaRoundFulfillmentResponse = ConfirmOwnerApiQuotaRoundFulfillmentResponses[keyof ConfirmOwnerApiQuotaRoundFulfillmentResponses];
 
 export type PauseOwnerApiQuotaBatchData = {
     body: EmptyRequestWritable;
@@ -8964,7 +11065,7 @@ export type SubmitOwnerApiOrderDeliveryResponses = {
 export type SubmitOwnerApiOrderDeliveryResponse = SubmitOwnerApiOrderDeliveryResponses[keyof SubmitOwnerApiOrderDeliveryResponses];
 
 export type OpenOwnerApiOrderDisputeData = {
-    body: ApiOrderReasonRequest;
+    body: ApiOrderDisputeRequest;
     headers: {
         'If-Match': string;
         'Idempotency-Key': string;
@@ -9005,6 +11106,49 @@ export type OpenOwnerApiOrderDisputeResponses = {
 };
 
 export type OpenOwnerApiOrderDisputeResponse = OpenOwnerApiOrderDisputeResponses[keyof OpenOwnerApiOrderDisputeResponses];
+
+export type ResolveOwnerApiOrderLatePaymentData = {
+    body: ApiOrderLatePaymentRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-orders/{id}/resolve-late-payment';
+};
+
+export type ResolveOwnerApiOrderLatePaymentErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ResolveOwnerApiOrderLatePaymentError = ResolveOwnerApiOrderLatePaymentErrors[keyof ResolveOwnerApiOrderLatePaymentErrors];
+
+export type ResolveOwnerApiOrderLatePaymentResponses = {
+    /**
+     * Late-payment report resolved.
+     */
+    200: ApiOrder;
+};
+
+export type ResolveOwnerApiOrderLatePaymentResponse = ResolveOwnerApiOrderLatePaymentResponses[keyof ResolveOwnerApiOrderLatePaymentResponses];
 
 export type ListAdminOfficialPriceLeadsData = {
     body?: never;
@@ -9374,6 +11518,38 @@ export type ListAdminCarpoolsData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Case-insensitive search across listing ID, title, summary, region, owner ID, and review reason before pagination.
+         */
+        q?: string;
+        /**
+         * Comma-separated product-plan IDs applied before pagination.
+         */
+        productPlanIds?: string;
+        /**
+         * Exact region code or display name applied before pagination.
+         */
+        region?: string;
+        /**
+         * Comma-separated listing statuses applied before pagination.
+         */
+        statuses?: string;
+        /**
+         * Restrict the management list to public or exceptional rows before pagination.
+         */
+        view?: 'public' | 'exceptions';
+        /**
+         * Restrict results to listings requiring or mentioning risk acknowledgement.
+         */
+        risk?: 'high';
+        /**
+         * Stable server-side ordering. Recommended currently uses the updated-descending order.
+         */
+        sort?: 'recommended' | 'updated_desc' | 'price_asc' | 'seats_desc';
+        /**
+         * Return an empty page for a known-empty filter combination.
+         */
+        none?: '1';
     };
     url: '/api/v1/admin/carpools';
 };
@@ -9383,6 +11559,10 @@ export type ListAdminCarpoolsErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminCarpoolsError = ListAdminCarpoolsErrors[keyof ListAdminCarpoolsErrors];
@@ -9614,6 +11794,22 @@ export type ListAdminApiServicesData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Case-insensitive search across service ID, title, description, merchant, owner ID, and moderation reason before pagination.
+         */
+        q?: string;
+        /**
+         * Restrict the management list to public or exceptional rows before pagination.
+         */
+        view?: 'public' | 'exceptions';
+        /**
+         * Comma-separated projected administrator statuses applied before pagination.
+         */
+        statuses?: string;
+        /**
+         * Restrict results to moderation exceptions or services with an active dispute.
+         */
+        risk?: 'high';
     };
     url: '/api/v1/admin/api-services';
 };
@@ -9623,6 +11819,10 @@ export type ListAdminApiServicesErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminApiServicesError = ListAdminApiServicesErrors[keyof ListAdminApiServicesErrors];
@@ -9635,139 +11835,6 @@ export type ListAdminApiServicesResponses = {
 };
 
 export type ListAdminApiServicesResponse = ListAdminApiServicesResponses[keyof ListAdminApiServicesResponses];
-
-export type ListAdminApiHealthProbesData = {
-    body?: never;
-    path?: never;
-    query?: {
-        status?: 'pending' | 'verified' | 'approved' | 'rejected';
-        /**
-         * Page size. Defaults to 20 and must be between 1 and 100.
-         */
-        limit?: number;
-        /**
-         * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
-         */
-        cursor?: string;
-    };
-    url: '/api/v1/admin/api-service-health-probes';
-};
-
-export type ListAdminApiHealthProbesErrors = {
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-};
-
-export type ListAdminApiHealthProbesError = ListAdminApiHealthProbesErrors[keyof ListAdminApiHealthProbesErrors];
-
-export type ListAdminApiHealthProbesResponses = {
-    /**
-     * Minimal administrator review projection without credential material or fingerprints.
-     */
-    200: AdminApiHealthProbeList;
-};
-
-export type ListAdminApiHealthProbesResponse = ListAdminApiHealthProbesResponses[keyof ListAdminApiHealthProbesResponses];
-
-export type ApproveAdminApiHealthProbeData = {
-    body: AdminApiHealthProbeDecisionRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/admin/api-service-health-probes/{id}/approve';
-};
-
-export type ApproveAdminApiHealthProbeErrors = {
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ApproveAdminApiHealthProbeError = ApproveAdminApiHealthProbeErrors[keyof ApproveAdminApiHealthProbeErrors];
-
-export type ApproveAdminApiHealthProbeResponses = {
-    /**
-     * Exact origin approved for the current probe configuration version.
-     */
-    200: AdminApiHealthProbe;
-};
-
-export type ApproveAdminApiHealthProbeResponse = ApproveAdminApiHealthProbeResponses[keyof ApproveAdminApiHealthProbeResponses];
-
-export type RejectAdminApiHealthProbeData = {
-    body: AdminApiHealthProbeDecisionRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/admin/api-service-health-probes/{id}/reject';
-};
-
-export type RejectAdminApiHealthProbeErrors = {
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type RejectAdminApiHealthProbeError = RejectAdminApiHealthProbeErrors[keyof RejectAdminApiHealthProbeErrors];
-
-export type RejectAdminApiHealthProbeResponses = {
-    /**
-     * Exact origin rejected with an administrator reason.
-     */
-    200: AdminApiHealthProbe;
-};
-
-export type RejectAdminApiHealthProbeResponse = RejectAdminApiHealthProbeResponses[keyof RejectAdminApiHealthProbeResponses];
 
 export type ListAdminApiServicePromotionsData = {
     body?: never;
@@ -10262,6 +12329,28 @@ export type ListAdminApiOrdersData = {
     path?: never;
     query?: {
         /**
+         * Match an order number, order ID, API service ID or title, buyer ID, or seller ID.
+         */
+        q?: string;
+        /**
+         * API order statuses encoded as a comma-separated query value.
+         */
+        statuses?: Array<'pending_payment' | 'payment_submitted' | 'payment_issue' | 'paid_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled'>;
+        dateRange?: 'all' | 'today' | '7d' | '30d';
+        buyerId?: string;
+        sellerId?: string;
+        serviceId?: string;
+        dispute?: 'all' | 'active' | 'none';
+        /**
+         * Inclusive non-negative CNY amount lower bound.
+         */
+        minAmount?: string;
+        /**
+         * Inclusive non-negative CNY amount upper bound.
+         */
+        maxAmount?: string;
+        sort?: 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc';
+        /**
          * Page size. Defaults to 20 and must be between 1 and 100.
          */
         limit?: number;
@@ -10278,13 +12367,17 @@ export type ListAdminApiOrdersErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminApiOrdersError = ListAdminApiOrdersErrors[keyof ListAdminApiOrdersErrors];
 
 export type ListAdminApiOrdersResponses = {
     /**
-     * Administrator API order tracking list with decimal pricing snapshots and without contacts or raw delivery credentials.
+     * Administrator API order supervision list with decimal pricing snapshots and without contacts or raw delivery credentials.
      */
     200: ApiOrderList;
 };
@@ -10321,6 +12414,329 @@ export type GetAdminApiOrderResponses = {
 };
 
 export type GetAdminApiOrderResponse = GetAdminApiOrderResponses[keyof GetAdminApiOrderResponses];
+
+export type RestoreAdminApiOrderCatalogRiskHoldData = {
+    body: ApiOrderCatalogRiskHoldActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-orders/{id}/catalog-risk-hold/restore';
+};
+
+export type RestoreAdminApiOrderCatalogRiskHoldErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RestoreAdminApiOrderCatalogRiskHoldError = RestoreAdminApiOrderCatalogRiskHoldErrors[keyof RestoreAdminApiOrderCatalogRiskHoldErrors];
+
+export type RestoreAdminApiOrderCatalogRiskHoldResponses = {
+    /**
+     * Hold marked restored; the order main status is unchanged.
+     */
+    200: ApiOrder;
+};
+
+export type RestoreAdminApiOrderCatalogRiskHoldResponse = RestoreAdminApiOrderCatalogRiskHoldResponses[keyof RestoreAdminApiOrderCatalogRiskHoldResponses];
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingData = {
+    body: ApiOrderCatalogRiskHoldActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-orders/{id}/catalog-risk-hold/refund-pending';
+};
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingError = MarkAdminApiOrderCatalogRiskRefundPendingErrors[keyof MarkAdminApiOrderCatalogRiskRefundPendingErrors];
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingResponses = {
+    /**
+     * Hold marked refund_pending; no refund or order cancellation is performed.
+     */
+    200: ApiOrder;
+};
+
+export type MarkAdminApiOrderCatalogRiskRefundPendingResponse = MarkAdminApiOrderCatalogRiskRefundPendingResponses[keyof MarkAdminApiOrderCatalogRiskRefundPendingResponses];
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedData = {
+    body: ApiOrderCatalogRiskHoldActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-orders/{id}/catalog-risk-hold/open-dispute';
+};
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedError = MarkAdminApiOrderCatalogRiskDisputeOpenedErrors[keyof MarkAdminApiOrderCatalogRiskDisputeOpenedErrors];
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedResponses = {
+    /**
+     * Hold marked dispute_opened; participants continue dispute handling through the existing order dispute actions.
+     */
+    200: ApiOrder;
+};
+
+export type MarkAdminApiOrderCatalogRiskDisputeOpenedResponse = MarkAdminApiOrderCatalogRiskDisputeOpenedResponses[keyof MarkAdminApiOrderCatalogRiskDisputeOpenedResponses];
+
+export type GetAdminStudentRegistrationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-registration';
+};
+
+export type GetAdminStudentRegistrationErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type GetAdminStudentRegistrationError = GetAdminStudentRegistrationErrors[keyof GetAdminStudentRegistrationErrors];
+
+export type GetAdminStudentRegistrationResponses = {
+    /**
+     * Current audited registration setting.
+     */
+    200: AdminStudentRegistrationSetting;
+};
+
+export type GetAdminStudentRegistrationResponse = GetAdminStudentRegistrationResponses[keyof GetAdminStudentRegistrationResponses];
+
+export type UpdateAdminStudentRegistrationData = {
+    body: AdminStudentRegistrationUpdateRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-registration';
+};
+
+export type UpdateAdminStudentRegistrationErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateAdminStudentRegistrationError = UpdateAdminStudentRegistrationErrors[keyof UpdateAdminStudentRegistrationErrors];
+
+export type UpdateAdminStudentRegistrationResponses = {
+    /**
+     * Registration setting updated and audited in the mutation transaction.
+     */
+    200: AdminStudentRegistrationSetting;
+};
+
+export type UpdateAdminStudentRegistrationResponse = UpdateAdminStudentRegistrationResponses[keyof UpdateAdminStudentRegistrationResponses];
+
+export type ListAdminStudentInstitutionDomainsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-institution-domains';
+};
+
+export type ListAdminStudentInstitutionDomainsErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type ListAdminStudentInstitutionDomainsError = ListAdminStudentInstitutionDomainsErrors[keyof ListAdminStudentInstitutionDomainsErrors];
+
+export type ListAdminStudentInstitutionDomainsResponses = {
+    /**
+     * Complete bounded institution-domain configuration list.
+     */
+    200: AdminStudentInstitutionDomainList;
+};
+
+export type ListAdminStudentInstitutionDomainsResponse = ListAdminStudentInstitutionDomainsResponses[keyof ListAdminStudentInstitutionDomainsResponses];
+
+export type CreateAdminStudentInstitutionDomainData = {
+    body: AdminStudentInstitutionDomainCreateRequest;
+    headers: {
+        'Idempotency-Key': string;
+        /**
+         * Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
+         */
+        'If-Match': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-institution-domains';
+};
+
+export type CreateAdminStudentInstitutionDomainErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type CreateAdminStudentInstitutionDomainError = CreateAdminStudentInstitutionDomainErrors[keyof CreateAdminStudentInstitutionDomainErrors];
+
+export type CreateAdminStudentInstitutionDomainResponses = {
+    /**
+     * Exact institution domain created and audited.
+     */
+    201: AdminStudentInstitutionDomain;
+};
+
+export type CreateAdminStudentInstitutionDomainResponse = CreateAdminStudentInstitutionDomainResponses[keyof CreateAdminStudentInstitutionDomainResponses];
+
+export type UpdateAdminStudentInstitutionDomainData = {
+    body: AdminStudentInstitutionDomainUpdateRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/student-institution-domains/{id}';
+};
+
+export type UpdateAdminStudentInstitutionDomainErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateAdminStudentInstitutionDomainError = UpdateAdminStudentInstitutionDomainErrors[keyof UpdateAdminStudentInstitutionDomainErrors];
+
+export type UpdateAdminStudentInstitutionDomainResponses = {
+    /**
+     * Institution-domain display name or state updated and audited.
+     */
+    200: AdminStudentInstitutionDomain;
+};
+
+export type UpdateAdminStudentInstitutionDomainResponse = UpdateAdminStudentInstitutionDomainResponses[keyof UpdateAdminStudentInstitutionDomainResponses];
 
 export type ListAdminUsersData = {
     body?: never;
@@ -10364,6 +12780,61 @@ export type ListAdminUsersResponses = {
 };
 
 export type ListAdminUsersResponse = ListAdminUsersResponses[keyof ListAdminUsersResponses];
+
+export type ListAdminAuditLogsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page size. Defaults to 20 and must be between 1 and 100.
+         */
+        limit?: number;
+        /**
+         * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
+         */
+        cursor?: string;
+        sourceKind?: OperationAuditSourceKind;
+        domain?: OperationAuditDomain;
+        search?: string;
+        action?: string;
+        targetType?: string;
+        actorUserId?: string;
+        targetId?: string;
+        actorKind?: 'user' | 'admin' | 'system';
+        outcome?: 'succeeded' | 'status_changed' | 'accessed';
+        /**
+         * Inclusive RFC3339 lower bound. The maximum query window is 90 days.
+         */
+        from?: string;
+        /**
+         * Inclusive RFC3339 upper bound.
+         */
+        to?: string;
+    };
+    url: '/api/v1/admin/audit-logs';
+};
+
+export type ListAdminAuditLogsErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListAdminAuditLogsError = ListAdminAuditLogsErrors[keyof ListAdminAuditLogsErrors];
+
+export type ListAdminAuditLogsResponses = {
+    /**
+     * Stable composite-cursor page of allowlisted operation-audit entries.
+     */
+    200: AdminOperationAuditEntryList;
+};
+
+export type ListAdminAuditLogsResponse = ListAdminAuditLogsResponses[keyof ListAdminAuditLogsResponses];
 
 export type GetAdminGrowthOverviewData = {
     body?: never;
@@ -11045,7 +13516,7 @@ export type ResolveDisputeError = ResolveDisputeErrors[keyof ResolveDisputeError
 
 export type ResolveDisputeResponses = {
     /**
-     * Dispute resolved with a public-safe result.
+     * API-order disputes close immediately when no remedy is required, or enter remedy fulfillment when a remedy is supplied.
      */
     200: AdminReportMutation;
 };
@@ -11090,6 +13561,45 @@ export type CloseDisputeResponses = {
 };
 
 export type CloseDisputeResponse = CloseDisputeResponses[keyof CloseDisputeResponses];
+
+export type MarkDisputeRemedyOverdueData = {
+    body: ReportActionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/remedy/mark-overdue';
+};
+
+export type MarkDisputeRemedyOverdueErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type MarkDisputeRemedyOverdueError = MarkDisputeRemedyOverdueErrors[keyof MarkDisputeRemedyOverdueErrors];
+
+export type MarkDisputeRemedyOverdueResponses = {
+    /**
+     * Remedy marked overdue and dispute closed by an administrator.
+     */
+    200: AdminReportMutation;
+};
+
+export type MarkDisputeRemedyOverdueResponse = MarkDisputeRemedyOverdueResponses[keyof MarkDisputeRemedyOverdueResponses];
 
 export type CreateDisputeReputationOutcomeData = {
     body: CreateDisputeReputationOutcomeRequest;
@@ -11141,6 +13651,100 @@ export type CreateDisputeReputationOutcomeResponses = {
 };
 
 export type CreateDisputeReputationOutcomeResponse = CreateDisputeReputationOutcomeResponses[keyof CreateDisputeReputationOutcomeResponses];
+
+export type GetApiOrderSanctionRecommendationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/sanction-recommendation';
+};
+
+export type GetApiOrderSanctionRecommendationErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetApiOrderSanctionRecommendationError = GetApiOrderSanctionRecommendationErrors[keyof GetApiOrderSanctionRecommendationErrors];
+
+export type GetApiOrderSanctionRecommendationResponses = {
+    /**
+     * Current eligibility, tier, application state, and subject-user version.
+     */
+    200: ApiOrderSanctionRecommendation;
+};
+
+export type GetApiOrderSanctionRecommendationResponse = GetApiOrderSanctionRecommendationResponses[keyof GetApiOrderSanctionRecommendationResponses];
+
+export type ApplyApiOrderSanctionData = {
+    body: ApplyApiOrderSanctionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/sanction';
+};
+
+export type ApplyApiOrderSanctionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ApplyApiOrderSanctionError = ApplyApiOrderSanctionErrors[keyof ApplyApiOrderSanctionErrors];
+
+export type ApplyApiOrderSanctionResponses = {
+    /**
+     * The dedicated seller API-service restriction was created.
+     */
+    201: ReputationGovernanceMutation;
+};
+
+export type ApplyApiOrderSanctionResponse = ApplyApiOrderSanctionResponses[keyof ApplyApiOrderSanctionResponses];
 
 export type CreateUserReputationRestrictionData = {
     body: CreateUserReputationRestrictionRequest;
@@ -11574,7 +14178,7 @@ export type ListAdminProductPlansData = {
     path?: never;
     query?: {
         /**
-         * Optional product category code such as gpt, claude, cursor, gemini, perplexity, or other.
+         * Optional database-driven product category code, for example gpt, claude, grok, or an administrator-defined code.
          */
         category?: string;
     };
@@ -11760,16 +14364,20 @@ export type UpdateAdminProductCategoryResponses = {
 
 export type UpdateAdminProductCategoryResponse = UpdateAdminProductCategoryResponses[keyof UpdateAdminProductCategoryResponses];
 
-export type ActivateAdminProductCategoryData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductCategoryData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-categories/{id}/activate';
+    url: '/api/v1/admin/product-categories/{id}/deprecate';
 };
 
-export type ActivateAdminProductCategoryErrors = {
+export type DeprecateAdminProductCategoryErrors = {
     /**
      * Problem Details error.
      */
@@ -11778,29 +14386,49 @@ export type ActivateAdminProductCategoryErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminProductCategoryError = ActivateAdminProductCategoryErrors[keyof ActivateAdminProductCategoryErrors];
-
-export type ActivateAdminProductCategoryResponses = {
     /**
-     * Product category activated.
+     * Problem Details error.
      */
-    200: ProductCategory;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminProductCategoryResponse = ActivateAdminProductCategoryResponses[keyof ActivateAdminProductCategoryResponses];
+export type DeprecateAdminProductCategoryError = DeprecateAdminProductCategoryErrors[keyof DeprecateAdminProductCategoryErrors];
 
-export type DeactivateAdminProductCategoryData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminProductCategoryResponse = DeprecateAdminProductCategoryResponses[keyof DeprecateAdminProductCategoryResponses];
+
+export type BlockAdminProductCategoryData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-categories/{id}/deactivate';
+    url: '/api/v1/admin/product-categories/{id}/block';
 };
 
-export type DeactivateAdminProductCategoryErrors = {
+export type BlockAdminProductCategoryErrors = {
     /**
      * Problem Details error.
      */
@@ -11809,18 +14437,136 @@ export type DeactivateAdminProductCategoryErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminProductCategoryError = DeactivateAdminProductCategoryErrors[keyof DeactivateAdminProductCategoryErrors];
-
-export type DeactivateAdminProductCategoryResponses = {
     /**
-     * Product category deactivated. The row is retained for historical references.
+     * Problem Details error.
      */
-    200: ProductCategory;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminProductCategoryResponse = DeactivateAdminProductCategoryResponses[keyof DeactivateAdminProductCategoryResponses];
+export type BlockAdminProductCategoryError = BlockAdminProductCategoryErrors[keyof BlockAdminProductCategoryErrors];
+
+export type BlockAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminProductCategoryResponse = BlockAdminProductCategoryResponses[keyof BlockAdminProductCategoryResponses];
+
+export type ReactivateAdminProductCategoryData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-categories/{id}/reactivate';
+};
+
+export type ReactivateAdminProductCategoryErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminProductCategoryError = ReactivateAdminProductCategoryErrors[keyof ReactivateAdminProductCategoryErrors];
+
+export type ReactivateAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminProductCategoryResponse = ReactivateAdminProductCategoryResponses[keyof ReactivateAdminProductCategoryResponses];
+
+export type UnblockAdminProductCategoryData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-categories/{id}/unblock';
+};
+
+export type UnblockAdminProductCategoryErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminProductCategoryError = UnblockAdminProductCategoryErrors[keyof UnblockAdminProductCategoryErrors];
+
+export type UnblockAdminProductCategoryResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminProductCategoryResponse = UnblockAdminProductCategoryResponses[keyof UnblockAdminProductCategoryResponses];
 
 export type GetAdminProductPlanData = {
     body?: never;
@@ -11892,16 +14638,20 @@ export type UpdateAdminProductPlanResponses = {
 
 export type UpdateAdminProductPlanResponse = UpdateAdminProductPlanResponses[keyof UpdateAdminProductPlanResponses];
 
-export type ActivateAdminProductPlanData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductPlanData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-plans/{id}/activate';
+    url: '/api/v1/admin/product-plans/{id}/deprecate';
 };
 
-export type ActivateAdminProductPlanErrors = {
+export type DeprecateAdminProductPlanErrors = {
     /**
      * Problem Details error.
      */
@@ -11910,29 +14660,49 @@ export type ActivateAdminProductPlanErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminProductPlanError = ActivateAdminProductPlanErrors[keyof ActivateAdminProductPlanErrors];
-
-export type ActivateAdminProductPlanResponses = {
     /**
-     * Product plan activated.
+     * Problem Details error.
      */
-    200: ProductPlan;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminProductPlanResponse = ActivateAdminProductPlanResponses[keyof ActivateAdminProductPlanResponses];
+export type DeprecateAdminProductPlanError = DeprecateAdminProductPlanErrors[keyof DeprecateAdminProductPlanErrors];
 
-export type DeactivateAdminProductPlanData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminProductPlanResponse = DeprecateAdminProductPlanResponses[keyof DeprecateAdminProductPlanResponses];
+
+export type BlockAdminProductPlanData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/product-plans/{id}/deactivate';
+    url: '/api/v1/admin/product-plans/{id}/block';
 };
 
-export type DeactivateAdminProductPlanErrors = {
+export type BlockAdminProductPlanErrors = {
     /**
      * Problem Details error.
      */
@@ -11941,18 +14711,136 @@ export type DeactivateAdminProductPlanErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminProductPlanError = DeactivateAdminProductPlanErrors[keyof DeactivateAdminProductPlanErrors];
-
-export type DeactivateAdminProductPlanResponses = {
     /**
-     * Product plan deactivated. The row is retained for historical references.
+     * Problem Details error.
      */
-    200: ProductPlan;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminProductPlanResponse = DeactivateAdminProductPlanResponses[keyof DeactivateAdminProductPlanResponses];
+export type BlockAdminProductPlanError = BlockAdminProductPlanErrors[keyof BlockAdminProductPlanErrors];
+
+export type BlockAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminProductPlanResponse = BlockAdminProductPlanResponses[keyof BlockAdminProductPlanResponses];
+
+export type ReactivateAdminProductPlanData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-plans/{id}/reactivate';
+};
+
+export type ReactivateAdminProductPlanErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminProductPlanError = ReactivateAdminProductPlanErrors[keyof ReactivateAdminProductPlanErrors];
+
+export type ReactivateAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminProductPlanResponse = ReactivateAdminProductPlanResponses[keyof ReactivateAdminProductPlanResponses];
+
+export type UnblockAdminProductPlanData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-plans/{id}/unblock';
+};
+
+export type UnblockAdminProductPlanErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminProductPlanError = UnblockAdminProductPlanErrors[keyof UnblockAdminProductPlanErrors];
+
+export type UnblockAdminProductPlanResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminProductPlanResponse = UnblockAdminProductPlanResponses[keyof UnblockAdminProductPlanResponses];
 
 export type ListAdminApiModelProvidersData = {
     body?: never;
@@ -12082,16 +14970,20 @@ export type UpdateAdminApiModelProviderResponses = {
 
 export type UpdateAdminApiModelProviderResponse = UpdateAdminApiModelProviderResponses[keyof UpdateAdminApiModelProviderResponses];
 
-export type ActivateAdminApiModelProviderData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelProviderData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-model-providers/{id}/activate';
+    url: '/api/v1/admin/api-model-providers/{id}/deprecate';
 };
 
-export type ActivateAdminApiModelProviderErrors = {
+export type DeprecateAdminApiModelProviderErrors = {
     /**
      * Problem Details error.
      */
@@ -12100,29 +14992,49 @@ export type ActivateAdminApiModelProviderErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminApiModelProviderError = ActivateAdminApiModelProviderErrors[keyof ActivateAdminApiModelProviderErrors];
-
-export type ActivateAdminApiModelProviderResponses = {
     /**
-     * API model provider activated.
+     * Problem Details error.
      */
-    200: ApiModelProvider;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminApiModelProviderResponse = ActivateAdminApiModelProviderResponses[keyof ActivateAdminApiModelProviderResponses];
+export type DeprecateAdminApiModelProviderError = DeprecateAdminApiModelProviderErrors[keyof DeprecateAdminApiModelProviderErrors];
 
-export type DeactivateAdminApiModelProviderData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminApiModelProviderResponse = DeprecateAdminApiModelProviderResponses[keyof DeprecateAdminApiModelProviderResponses];
+
+export type BlockAdminApiModelProviderData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-model-providers/{id}/deactivate';
+    url: '/api/v1/admin/api-model-providers/{id}/block';
 };
 
-export type DeactivateAdminApiModelProviderErrors = {
+export type BlockAdminApiModelProviderErrors = {
     /**
      * Problem Details error.
      */
@@ -12131,18 +15043,255 @@ export type DeactivateAdminApiModelProviderErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminApiModelProviderError = DeactivateAdminApiModelProviderErrors[keyof DeactivateAdminApiModelProviderErrors];
-
-export type DeactivateAdminApiModelProviderResponses = {
     /**
-     * API model provider deactivated. The row is retained for model catalog references.
+     * Problem Details error.
      */
-    200: ApiModelProvider;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminApiModelProviderResponse = DeactivateAdminApiModelProviderResponses[keyof DeactivateAdminApiModelProviderResponses];
+export type BlockAdminApiModelProviderError = BlockAdminApiModelProviderErrors[keyof BlockAdminApiModelProviderErrors];
+
+export type BlockAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminApiModelProviderResponse = BlockAdminApiModelProviderResponses[keyof BlockAdminApiModelProviderResponses];
+
+export type ReactivateAdminApiModelProviderData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-model-providers/{id}/reactivate';
+};
+
+export type ReactivateAdminApiModelProviderErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminApiModelProviderError = ReactivateAdminApiModelProviderErrors[keyof ReactivateAdminApiModelProviderErrors];
+
+export type ReactivateAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminApiModelProviderResponse = ReactivateAdminApiModelProviderResponses[keyof ReactivateAdminApiModelProviderResponses];
+
+export type UnblockAdminApiModelProviderData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-model-providers/{id}/unblock';
+};
+
+export type UnblockAdminApiModelProviderErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminApiModelProviderError = UnblockAdminApiModelProviderErrors[keyof UnblockAdminApiModelProviderErrors];
+
+export type UnblockAdminApiModelProviderResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminApiModelProviderResponse = UnblockAdminApiModelProviderResponses[keyof UnblockAdminApiModelProviderResponses];
+
+export type GetAdminApiProbeLatencyCalibrationData = {
+    body?: never;
+    path?: never;
+    query?: {
+        model?: string;
+        protocol?: 'openai_responses_v1' | 'openai_chat_completions_v1';
+        environment?: 'us-west-v1';
+    };
+    url: '/api/v1/admin/api-health/latency-calibration';
+};
+
+export type GetAdminApiProbeLatencyCalibrationErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type GetAdminApiProbeLatencyCalibrationError = GetAdminApiProbeLatencyCalibrationErrors[keyof GetAdminApiProbeLatencyCalibrationErrors];
+
+export type GetAdminApiProbeLatencyCalibrationResponses = {
+    /**
+     * Current read-only calibration facts.
+     */
+    200: ApiProbeLatencyCalibration;
+};
+
+export type GetAdminApiProbeLatencyCalibrationResponse = GetAdminApiProbeLatencyCalibrationResponses[keyof GetAdminApiProbeLatencyCalibrationResponses];
+
+export type PreviewAdminApiProbeLatencyRuleData = {
+    body: ApiProbeLatencyRuleRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-health/latency-rules/preview';
+};
+
+export type PreviewAdminApiProbeLatencyRuleErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type PreviewAdminApiProbeLatencyRuleError = PreviewAdminApiProbeLatencyRuleErrors[keyof PreviewAdminApiProbeLatencyRuleErrors];
+
+export type PreviewAdminApiProbeLatencyRuleResponses = {
+    /**
+     * Read-only impact preview; no rule is published.
+     */
+    200: ApiProbeLatencyRulePreview;
+};
+
+export type PreviewAdminApiProbeLatencyRuleResponse = PreviewAdminApiProbeLatencyRuleResponses[keyof PreviewAdminApiProbeLatencyRuleResponses];
+
+export type ListAdminApiProbeLatencyRulesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-health/latency-rules';
+};
+
+export type ListAdminApiProbeLatencyRulesErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type ListAdminApiProbeLatencyRulesError = ListAdminApiProbeLatencyRulesErrors[keyof ListAdminApiProbeLatencyRulesErrors];
+
+export type ListAdminApiProbeLatencyRulesResponses = {
+    /**
+     * Published latency rule history.
+     */
+    200: ApiProbeLatencyRuleList;
+};
+
+export type ListAdminApiProbeLatencyRulesResponse = ListAdminApiProbeLatencyRulesResponses[keyof ListAdminApiProbeLatencyRulesResponses];
+
+export type PublishAdminApiProbeLatencyRuleData = {
+    body: ApiProbeLatencyRuleRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-health/latency-rules';
+};
+
+export type PublishAdminApiProbeLatencyRuleErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type PublishAdminApiProbeLatencyRuleError = PublishAdminApiProbeLatencyRuleErrors[keyof PublishAdminApiProbeLatencyRuleErrors];
+
+export type PublishAdminApiProbeLatencyRuleResponses = {
+    /**
+     * New active rule version.
+     */
+    201: ApiProbeLatencyRule;
+};
+
+export type PublishAdminApiProbeLatencyRuleResponse = PublishAdminApiProbeLatencyRuleResponses[keyof PublishAdminApiProbeLatencyRuleResponses];
 
 export type ListAdminApiModelsData = {
     body?: never;
@@ -12201,6 +15350,87 @@ export type CreateAdminApiModelResponses = {
 };
 
 export type CreateAdminApiModelResponse = CreateAdminApiModelResponses[keyof CreateAdminApiModelResponses];
+
+export type PreviewAdminApiModelModelsDevSyncData = {
+    body: ApiModelSyncPreviewRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-models/models-dev/preview';
+};
+
+export type PreviewAdminApiModelModelsDevSyncErrors = {
+    /**
+     * Problem Details error.
+     */
+    400: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    502: ProblemDetails;
+};
+
+export type PreviewAdminApiModelModelsDevSyncError = PreviewAdminApiModelModelsDevSyncErrors[keyof PreviewAdminApiModelModelsDevSyncErrors];
+
+export type PreviewAdminApiModelModelsDevSyncResponses = {
+    /**
+     * Structured models.dev difference preview.
+     */
+    200: ApiModelSyncPreview;
+};
+
+export type PreviewAdminApiModelModelsDevSyncResponse = PreviewAdminApiModelModelsDevSyncResponses[keyof PreviewAdminApiModelModelsDevSyncResponses];
+
+export type ApplyAdminApiModelModelsDevSyncData = {
+    body: ApiModelSyncApplyRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-models/models-dev/apply';
+};
+
+export type ApplyAdminApiModelModelsDevSyncErrors = {
+    /**
+     * Problem Details error.
+     */
+    400: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ApplyAdminApiModelModelsDevSyncError = ApplyAdminApiModelModelsDevSyncErrors[keyof ApplyAdminApiModelModelsDevSyncErrors];
+
+export type ApplyAdminApiModelModelsDevSyncResponses = {
+    /**
+     * Selected new models and price changes applied atomically.
+     */
+    200: ApiModelBulkMutationResult;
+};
+
+export type ApplyAdminApiModelModelsDevSyncResponse = ApplyAdminApiModelModelsDevSyncResponses[keyof ApplyAdminApiModelModelsDevSyncResponses];
 
 export type GetAdminApiModelData = {
     body?: never;
@@ -12272,16 +15502,20 @@ export type UpdateAdminApiModelResponses = {
 
 export type UpdateAdminApiModelResponse = UpdateAdminApiModelResponses[keyof UpdateAdminApiModelResponses];
 
-export type ActivateAdminApiModelData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-models/{id}/activate';
+    url: '/api/v1/admin/api-models/{id}/deprecate';
 };
 
-export type ActivateAdminApiModelErrors = {
+export type DeprecateAdminApiModelErrors = {
     /**
      * Problem Details error.
      */
@@ -12290,29 +15524,49 @@ export type ActivateAdminApiModelErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type ActivateAdminApiModelError = ActivateAdminApiModelErrors[keyof ActivateAdminApiModelErrors];
-
-export type ActivateAdminApiModelResponses = {
     /**
-     * API model activated.
+     * Problem Details error.
      */
-    200: ApiModel;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type ActivateAdminApiModelResponse = ActivateAdminApiModelResponses[keyof ActivateAdminApiModelResponses];
+export type DeprecateAdminApiModelError = DeprecateAdminApiModelErrors[keyof DeprecateAdminApiModelErrors];
 
-export type DeactivateAdminApiModelData = {
-    body: EmptyRequestWritable;
+export type DeprecateAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type DeprecateAdminApiModelResponse = DeprecateAdminApiModelResponses[keyof DeprecateAdminApiModelResponses];
+
+export type BlockAdminApiModelData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/api-models/{id}/deactivate';
+    url: '/api/v1/admin/api-models/{id}/block';
 };
 
-export type DeactivateAdminApiModelErrors = {
+export type BlockAdminApiModelErrors = {
     /**
      * Problem Details error.
      */
@@ -12321,18 +15575,136 @@ export type DeactivateAdminApiModelErrors = {
      * Problem Details error.
      */
     404: ProblemDetails;
-};
-
-export type DeactivateAdminApiModelError = DeactivateAdminApiModelErrors[keyof DeactivateAdminApiModelErrors];
-
-export type DeactivateAdminApiModelResponses = {
     /**
-     * API model deactivated. The row is retained for historical API service model snapshots.
+     * Problem Details error.
      */
-    200: ApiModel;
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
 };
 
-export type DeactivateAdminApiModelResponse = DeactivateAdminApiModelResponses[keyof DeactivateAdminApiModelResponses];
+export type BlockAdminApiModelError = BlockAdminApiModelErrors[keyof BlockAdminApiModelErrors];
+
+export type BlockAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type BlockAdminApiModelResponse = BlockAdminApiModelResponses[keyof BlockAdminApiModelResponses];
+
+export type ReactivateAdminApiModelData = {
+    body: CatalogLifecycleRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-models/{id}/reactivate';
+};
+
+export type ReactivateAdminApiModelErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ReactivateAdminApiModelError = ReactivateAdminApiModelErrors[keyof ReactivateAdminApiModelErrors];
+
+export type ReactivateAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type ReactivateAdminApiModelResponse = ReactivateAdminApiModelResponses[keyof ReactivateAdminApiModelResponses];
+
+export type UnblockAdminApiModelData = {
+    body: CatalogLifecycleUnblockRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-models/{id}/unblock';
+};
+
+export type UnblockAdminApiModelErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UnblockAdminApiModelError = UnblockAdminApiModelErrors[keyof UnblockAdminApiModelErrors];
+
+export type UnblockAdminApiModelResponses = {
+    /**
+     * Catalog lifecycle changed atomically.
+     */
+    200: CatalogLifecycleResource;
+};
+
+export type UnblockAdminApiModelResponse = UnblockAdminApiModelResponses[keyof UnblockAdminApiModelResponses];
 
 export type ListAdminModelAuditTargetsData = {
     body?: never;
@@ -13030,6 +16402,9 @@ export type CreateContactMethodResponse = CreateContactMethodResponses[keyof Cre
 
 export type DeleteContactMethodData = {
     body?: never;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
@@ -13048,6 +16423,9 @@ export type DeleteContactMethodResponse = DeleteContactMethodResponses[keyof Del
 
 export type UpdateContactMethodData = {
     body: CreateContactMethodRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
@@ -13066,6 +16444,9 @@ export type UpdateContactMethodResponse = UpdateContactMethodResponses[keyof Upd
 
 export type SetDefaultContactMethodData = {
     body?: never;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
@@ -13084,6 +16465,9 @@ export type SetDefaultContactMethodResponse = SetDefaultContactMethodResponses[k
 
 export type VerifyContactMethodData = {
     body?: never;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };

@@ -13,11 +13,12 @@ import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
+import StarRatingDisplay from '@/components/review/StarRatingDisplay.vue'
 import { trackAnalytics } from '@/lib/analytics'
-import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
 import { useEntitySeo } from '@/composables/useEntitySeo'
 import { snapshotToSummary } from '@/lib/reputationPresentation'
+import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +29,7 @@ const { data, isLoading, error, refetch } = publicUserQuery
 const reportMutation = useCreatePublicUserReportMutation()
 const activeTab = ref('概览')
 const profile = computed(() => data.value?.profile)
+const linuxDoURL = computed(() => profile.value?.linuxDoUsername ? linuxDoProfileSummaryUrl(profile.value.linuxDoUsername) : null)
 const buyerReputation = computed(() => {
   const snapshot = data.value?.reputations.find(item => item.role === 'buyer' && item.scope === 'overall')
   return snapshot ? snapshotToSummary(snapshot) : null
@@ -43,6 +45,12 @@ const hasPublicActivity = computed(() => Boolean(data.value && (
   || data.value.reviews.length
   || data.value.disputes.length
 )))
+const reviewSummary = computed(() => {
+  const reviews = (data.value?.reviews ?? []).filter((item): item is typeof item & { rating: number } => typeof item.rating === 'number')
+  const distribution = [5, 4, 3, 2, 1].map(rating => ({ rating, count: reviews.filter(item => item.rating === rating).length }))
+  const average = reviews.length ? reviews.reduce((total, item) => total + item.rating, 0) / reviews.length : null
+  return { count: reviews.length, average, distribution }
+})
 
 const completedTotal = computed(() => {
   if (!profile.value?.privacy.showCompletionStats) return null
@@ -91,11 +99,16 @@ const publicStats = computed(() => profile.value ? [
   { label: '未解决纠纷', value: profile.value.stats.unresolvedDisputeCount ?? '暂无数据' },
 ] : [])
 
-function serviceSummary(service: { deliveryModes: Array<'api_key_endpoint' | 'sub2api_panel_account'>, usageVisibility: string, warranty: string }) {
-  const access = '接入细节站外确认'
-  const visibility = service.usageVisibility === 'none' ? '未展示用量核对' : '用量由商户说明，买家自行核对'
-  const warranty = service.warranty.includes('24') || service.warranty.includes('补') || service.warranty.includes('承诺') ? '商户承诺' : '售后协商'
-  return `${access} · ${visibility} · ${warranty}`
+function serviceSummary(service: { shortDescription: string, usageVisibility: string, refundCommitment: boolean }) {
+  if (service.shortDescription) return service.shortDescription
+  const visibility = service.usageVisibility === 'none' ? '未展示用量核对' : '用量由商户说明'
+  return `${visibility} · ${service.refundCommitment ? '有退款承诺' : '售后协商'}`
+}
+
+function billingModeLabel(mode: string) {
+  if (mode === 'fixed_package') return '固定套餐'
+  if (mode === 'metered_usd_quota') return '按额度'
+  return '用量核对'
 }
 
 function reportPublicProfile() {
@@ -151,7 +164,7 @@ function reportPublicProfile() {
             </div>
             <p v-if="profile.bio" class="mt-2 max-w-3xl text-sm text-muted-foreground">{{ profile.bio }}</p>
             <div class="mt-2 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" @click="toast('该用户的 linux.do 主页链接暂不可用。')"><ExternalLink class="h-4 w-4" />查看 linux.do 主页</Button>
+              <Button v-if="linuxDoURL" size="sm" variant="outline" as-child><a :href="linuxDoURL" target="_blank" rel="noopener noreferrer"><ExternalLink class="h-4 w-4" />查看 linux.do 主页</a></Button>
               <Button v-if="profile.privacy.allowPublicProfileReport" size="sm" variant="outline" :disabled="reportMutation.isPending.value" @click="reportPublicProfile"><Flag class="h-4 w-4" />举报</Button>
             </div>
           </div>
@@ -175,7 +188,7 @@ function reportPublicProfile() {
         <h2 class="font-semibold">在售拼车车源</h2>
         <div class="mt-4 space-y-3">
           <div v-for="carpool in data.carpools" :key="carpool.id" class="flex items-center justify-between gap-3 border-b border-border pb-3 text-sm">
-            <div><div class="font-medium">{{ carpool.product }}</div><div class="text-xs text-muted-foreground">{{ carpool.region }} · 剩余 {{ getRemainingSeats(carpool) }} 位</div></div>
+            <div><div class="font-medium">{{ carpool.title }}</div><div class="text-xs text-muted-foreground">{{ carpool.regionName }} · 剩余 {{ carpool.availableSeats }} 位</div></div>
             <RouterLink :to="`/carpools/${carpool.id}`"><Button size="sm" variant="outline"><UsersRound class="h-4 w-4" />查看</Button></RouterLink>
           </div>
           <p v-if="data.carpools.length === 0" class="text-sm text-muted-foreground">暂无公开在售拼车车源。</p>
@@ -196,40 +209,59 @@ function reportPublicProfile() {
     <SoftTable v-else-if="activeTab === '在售服务'" :columns="['类型', '服务', '价格 / 余额', '状态', '操作']">
       <tr v-for="carpool in data.carpools" :key="`carpool-${carpool.id}`">
         <td>拼车</td>
-        <td><div class="font-medium">{{ carpool.product }}</div><div class="text-xs text-muted-foreground">{{ carpool.region }} · {{ carpool.ownerType }}</div></td>
-        <td>{{ getPricingDisplay(carpool).primaryLabel }} ¥{{ getPricingDisplay(carpool).primaryPrice }}</td>
-        <td><Badge>{{ carpool.status }}</Badge></td>
+        <td><div class="font-medium">{{ carpool.title }}</div><div class="text-xs text-muted-foreground">{{ carpool.regionName }}</div></td>
+        <td>月费 ¥{{ carpool.priceMonthlyCny }}</td>
+        <td><Badge>在售</Badge></td>
         <td><RouterLink :to="`/carpools/${carpool.id}`"><Button size="sm" variant="outline">查看</Button></RouterLink></td>
       </tr>
       <tr v-for="service in data.services" :key="`api-${service.id}`">
         <td>API</td>
         <td><div class="font-medium">{{ service.title }}</div><div class="text-xs text-muted-foreground">{{ serviceSummary(service) }}</div></td>
-        <td>余额 ${{ service.balance }}</td>
-        <td><Badge :variant="service.online ? 'verified' : 'secondary'">{{ service.online ? '在线' : '离线' }}</Badge></td>
+        <td>{{ billingModeLabel(service.billingMode) }}<span v-if="service.availableUsdAllowance"> · ${{ service.availableUsdAllowance }}</span></td>
+        <td><Badge variant="verified">在线</Badge></td>
         <td><RouterLink :to="`/api-market/${service.id}`"><Button size="sm">查看</Button></RouterLink></td>
       </tr>
     </SoftTable>
 
     <SoftTable v-else-if="activeTab === '完成记录'" :columns="['日期', '服务类型', '接入细节', '金额范围', '完成状态']">
       <tr v-for="record in data.completions" :key="record.id">
-        <td>{{ record.date }}</td>
-        <td>{{ record.serviceType }}</td>
-        <td>站外确认</td>
-        <td>{{ record.amountRange }}</td>
-        <td><Badge variant="verified">{{ record.status }}</Badge></td>
+        <td>{{ record.completedAt }}</td>
+        <td>{{ record.title }}</td>
+        <td>{{ record.kind === 'carpool' ? '拼车' : 'API 服务' }}</td>
+        <td>{{ record.role === 'buyer' ? '买家' : '卖家' }}</td>
+        <td><Badge variant="verified">平台确认完成</Badge></td>
       </tr>
       <tr v-if="data.completions.length === 0"><td colspan="5" class="py-8 text-center text-sm text-muted-foreground">暂无平台确认完成记录。</td></tr>
     </SoftTable>
 
-    <SoftTable v-else-if="activeTab === '交易评价'" :columns="['日期', '服务类型', '标签', '评价']">
+    <div v-else-if="activeTab === '交易评价'" class="space-y-4">
+      <section class="border-y border-border py-4" aria-label="交易评价摘要">
+        <div class="grid gap-5 sm:grid-cols-[180px_1fr]">
+          <div>
+            <div class="text-3xl font-semibold">{{ reviewSummary.average === null ? '暂无' : reviewSummary.average.toFixed(1) }}</div>
+            <StarRatingDisplay v-if="reviewSummary.average !== null" :rating="reviewSummary.average" compact :show-value="false" class="mt-1" />
+            <p class="mt-1 text-sm text-muted-foreground">{{ reviewSummary.count }} 条公开评价</p>
+          </div>
+          <div class="space-y-1.5">
+            <div v-for="item in reviewSummary.distribution" :key="item.rating" class="grid grid-cols-[36px_1fr_28px] items-center gap-2 text-xs">
+              <span>{{ item.rating }} 星</span>
+              <div class="h-2 overflow-hidden rounded-full bg-muted"><div class="h-full bg-amber-400" :style="{ width: reviewSummary.count ? `${item.count / reviewSummary.count * 100}%` : '0%' }" /></div>
+              <span class="text-right text-muted-foreground">{{ item.count }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <SoftTable :columns="['日期', '服务类型', '评分', '标签', '评价']">
       <tr v-for="review in data.reviews" :key="review.id">
-        <td><div>{{ review.date }}</div><Badge v-if="review.verified" class="mt-1" variant="verified">已验证交易</Badge></td>
+        <td><div>{{ review.date }}</div><span v-if="review.verified" class="mt-1 block text-xs text-muted-foreground">来自平台内已完成交易</span></td>
         <td>{{ review.serviceType }}</td>
+        <td><StarRatingDisplay v-if="typeof review.rating === 'number'" :rating="review.rating" compact /><span v-else>暂无评分</span></td>
         <td><div class="flex flex-wrap gap-1"><Badge v-for="tag in review.tags.slice(0, 3)" :key="tag" variant="capability">{{ tag }}</Badge></div></td>
-        <td class="text-muted-foreground">{{ review.note }}</td>
+        <td class="text-muted-foreground">{{ review.note || '未填写文字说明' }}</td>
       </tr>
-      <tr v-if="data.reviews.length === 0"><td colspan="4" class="py-8 text-center text-sm text-muted-foreground">暂无交易评价。</td></tr>
-    </SoftTable>
+      <tr v-if="data.reviews.length === 0"><td colspan="5" class="py-8 text-center text-sm text-muted-foreground">暂无交易评价。</td></tr>
+      </SoftTable>
+    </div>
 
         <SoftTable v-else :columns="['纠纷类型', '处理结果', '处理时间', '状态']">
       <tr>

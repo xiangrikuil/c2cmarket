@@ -6,18 +6,38 @@ import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
 import ChevronRight from 'lucide-vue-next/dist/esm/icons/chevron-right.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import FileChartColumnIncreasing from 'lucide-vue-next/dist/esm/icons/file-chart-column-increasing.js'
+import RefreshCw from 'lucide-vue-next/dist/esm/icons/refresh-cw.js'
+import TriangleAlert from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
+import { toast } from 'vue-sonner'
+import AnnouncementBanner from '@/components/announcements/AnnouncementBanner.vue'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import HomeMarketSnapshot from '@/components/market/HomeMarketSnapshot.vue'
+import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import { isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { isCurrentTradable } from '@/lib/pricing'
+import { useActiveHomeAnnouncement, useDismissAnnouncement } from '@/queries/useAnnouncementQueries'
+import { useMyProfileQuery } from '@/queries/useAppShellQueries'
 import { useHomeMarket } from '@/queries/useHomeMarketQuery'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
 const homeMarketQuery = useHomeMarket()
 const productCategoriesQuery = useProductCategories()
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
+const homeAnnouncementEnabled = computed(() => Boolean(myProfile.value))
+const homeAnnouncementQuery = useActiveHomeAnnouncement(homeAnnouncementEnabled)
+const dismissHomeAnnouncementMutation = useDismissAnnouncement()
 const { data, isLoading, isError, refetch } = homeMarketQuery
 const { data: catalogCategories } = productCategoriesQuery
+const {
+  data: homeAnnouncement,
+  isPending: homeAnnouncementPending,
+  isError: homeAnnouncementFailed,
+  isFetching: homeAnnouncementFetching,
+  refetch: refetchHomeAnnouncement,
+} = homeAnnouncementQuery
 prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)
 
 const tradableCarpools = computed(() => (data.value?.carpools ?? [])
@@ -32,10 +52,41 @@ const homeMarketPreviewLimit = 5
 const carpoolPreview = computed(() => tradableCarpools.value.slice(0, homeMarketPreviewLimit))
 const apiServicePreview = computed(() => orderableApiServices.value.slice(0, homeMarketPreviewLimit))
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+
+function dismissHomeAnnouncement(announcementId: string) {
+  dismissHomeAnnouncementMutation.mutate(announcementId, {
+    onError: error => toast.error(error instanceof Error ? error.message : '关闭首页公告失败。'),
+  })
+}
 </script>
 
 <template>
   <div class="home-market-page space-y-5">
+    <SkeletonBlock
+      v-if="homeAnnouncementEnabled && homeAnnouncementPending"
+      class="min-h-12 rounded-lg p-3 [&>div]:mt-2"
+      :lines="1"
+    />
+
+    <Alert v-else-if="homeAnnouncementEnabled && homeAnnouncementFailed" variant="destructive">
+      <TriangleAlert />
+      <AlertTitle>首页公告暂时无法加载</AlertTitle>
+      <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <span>其他首页内容不受影响，可以单独重试公告。</span>
+        <Button size="sm" variant="outline" :disabled="homeAnnouncementFetching" @click="refetchHomeAnnouncement()">
+          <RefreshCw class="h-4 w-4" :class="homeAnnouncementFetching ? 'animate-spin' : ''" />
+          {{ homeAnnouncementFetching ? '正在重试' : '重新加载' }}
+        </Button>
+      </AlertDescription>
+    </Alert>
+
+    <AnnouncementBanner
+      v-else-if="homeAnnouncementEnabled && homeAnnouncement"
+      :announcement="homeAnnouncement"
+      :dismissing="dismissHomeAnnouncementMutation.isPending.value"
+      @dismiss="dismissHomeAnnouncement"
+    />
+
     <section class="home-market-overview" aria-labelledby="home-market-title">
       <div class="home-market-overview-copy">
         <Badge class="home-market-kicker" variant="secondary">市场概览</Badge>

@@ -87,6 +87,24 @@ versions:
 | `000078_account_appeal_sessions` | dedicated account-governance appeal sessions for suspended or banned users |
 | `000079_api_market_probe_and_quota_limits` | API SKU quota usage policies, immutable purchase snapshots, authorized platform probes, and probe samples |
 | `000080_api_prompt_audit_and_publish_contract` | nullable seller prompt-audit declarations and immutable purchase/order snapshots, plus independent historical performance fields |
+| `000081_api_probe_connections_and_model_keys` | reusable seller probe connections, frozen order delivery targets, and canonical API model keys |
+| `000082_api_probe_real_model_health` | real streaming model probes, attempt and usage facts, model-change history, and immutable latency rules |
+| `000083_carpool_daily_weekly_quota` | renames carpool weekly/monthly quota fields to daily/weekly while preserving existing values |
+| `000084_api_order_dispute_status_projection` | adds negotiation and remediation phases while keeping API-order dispute state as a synchronized projection |
+| `000085_api_order_dispute_negotiation` | adds structured API-order requests, immutable participant messages, and bilateral settlement proposals |
+| `000086_announcement_content_updated_at` | separates user-visible announcement content updates from general record mutation time |
+| `000087_api_order_dispute_remedies` | adds auditable post-ruling remedy requirements, claims, beneficiary responses, neutral timeouts, and administrator-confirmed overdue facts |
+| `000088_api_order_dispute_sanctions` | links seller restrictions to overdue remedies and indexes the 180-day confirmed-breach window |
+| `000089_api_order_after_sales_contacts` | freezes ordered API-service contact selections and records after-sales issue occurrence time |
+| `000090_linuxdo_contact_single_mapping` | consolidates enabled linux.do contacts to the identity-bound account mapping while preserving historical transaction snapshots |
+| `000091_student_identity_and_auth_link` | durable student identities, purpose-isolated registration challenges, and recent-password linux.do linking |
+| `000092_operation_audit_projection` | unified operation-audit projection indexes and source event references |
+| `000093_contact_usage_scopes` | canonical contact usage scopes for buyer, dispute, carpool owner, and API merchant contexts |
+| `000094_account_governance_session_foundation` | immutable governance actions, restricted-business sessions, dedicated restricted/appeal OAuth state tables, exact suspension expiry jobs, and purpose-bound administrator reauthentication |
+| `000095_account_governance_business_disposition` | durable governance disposition jobs, unique cross-action resource outcomes, structured governance cancellation facts, and non-restoring sales-stop links |
+| `000096_api_order_launch_hardening` | immutable merchant-confirm and delivery deadlines, constrained late-payment recovery, buyer pending-order capacity, and rush-round fulfillment confirmation |
+| `000097_dynamic_catalog_lifecycle` | three-state catalog lifecycle, Grok/xAI seed data, immutable core identity, and API-order catalog risk holds |
+| `000098_password_reset` | purpose-isolated active password-reset challenge uniqueness for immutable student-email recovery |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -387,6 +405,83 @@ performance-declaration constraint so new writes can keep maximum concurrency
 without inventing seller TTFT or confirmation timestamps; the historical
 columns and their existing values remain intact.
 
+Version 81 (`000081_api_probe_connections_and_model_keys`) replaces
+service-scoped probe configuration with reusable seller-owned connections.
+Services and orders retain exact Base URL snapshots, while API model catalog,
+service, package, and order projections use canonical model keys without
+decorative display-name variants.
+
+Version 82 (`000082_api_probe_real_model_health`) upgrades connection checks
+from `/models`-only samples to real streaming model probes. It records
+per-attempt TTFT, retry, usage, and cost facts, preserves model-change history,
+and adds immutable model/protocol/environment latency-rule versions. Existing
+local probe connections are disabled for explicit revalidation and incompatible
+legacy samples are cleared before the new schema constraints apply.
+
+Version 83 (`000083_carpool_daily_weekly_quota`) corrects the carpool quota
+period contract. The former weekly value becomes the daily value, and the
+former monthly value becomes the weekly value without rewriting amounts.
+
+Version 84 (`000084_api_order_dispute_status_projection`) extends dispute-case
+and API-order dispute status constraints for the V1 negotiation and remediation
+workflow. Existing rows are not rewritten; the API-order status remains a
+projection of the linked dispute lifecycle.
+
+Version 85 (`000085_api_order_dispute_negotiation`) adds structured API-order
+requests, immutable participant messages, and bilateral settlement proposals.
+Existing dispute rows are not rewritten, and a proposal can close a dispute
+only after the counterparty confirms the same pending proposal.
+
+Version 87 (`000087_api_order_dispute_remedies`) adds auditable post-ruling
+remedy records for API-order disputes. Responsibility, action, amount, due
+dates, fulfillment claims, counterparty responses, neutral confirmation
+timeouts, and administrator-confirmed overdue facts remain separate from the
+dispute case status and API-order lifecycle.
+
+Version 88 (`000088_api_order_dispute_sanctions`) links an administrator-applied
+API-order seller restriction directly to its overdue remedy, prevents a second
+restriction from consuming the same overdue fact, and indexes confirmed seller
+breaches for the rolling 180-day recommendation window.
+
+Version 89 (`000089_api_order_after_sales_contacts`) adds ordered API-service
+contact associations, immutable purchase-intent contact-version snapshots, and
+an optional API-order dispute issue occurrence time. Existing services and
+intents are backfilled from their legacy single-contact fields without exposing
+plaintext contact values.
+
+Version 90 (`000090_linuxdo_contact_single_mapping`) makes the account's
+linux.do binding the single enabled linux.do transaction-contact mapping. It
+repoints mutable API-service and carpool references, disables deterministic
+duplicates, and adds a per-user partial unique index while preserving frozen
+purchase-intent contact versions and historical snapshots.
+
+Version 91 (`000091_student_identity_and_auth_link`) adds the default-off
+student-registration singleton, immutable exact institution domains,
+append-only lifetime student-email claims, purpose-isolated registration
+challenge constraints, recent password reauthentication, and one-time
+session-bound linux.do link state. Its down migration refuses to remove a
+durable student identity after any claim exists.
+
+Version 92 (`000092_operation_audit_projection`) evolves the existing probe
+model-change history into one append-only probe operation ledger while
+preserving legacy model facts and compatibility writes. It also adds cursor
+indexes for the eight allowlisted authorities consumed by the administrator-only
+unified operation-history projection. The projection never copies source rows
+into a second universal audit table and does not expose raw metadata, reasons,
+credentials, contact values, or request bodies.
+
+Version 93 (`000093_contact_usage_scopes`) persists canonical contact-method
+usage scopes. Existing methods retain all four historical scopes
+(`carpool_owner`, `api_merchant`, `buyer`, and `dispute`), while newly inserted
+rows default to the buyer/dispute pair. A database check enforces a non-empty,
+deduplicated, allowlisted, canonically ordered scope array. The guarded down
+migration refuses to erase policy once a row carries a post-migration scope set.
+
+Version 96 (`000096_api_order_launch_hardening`) adds immutable merchant-confirm
+and delivery deadlines, a constrained late-payment recovery fact, buyer pending
+order capacity indexes, and seller fulfillment confirmation for fixed rush
+rounds. Historical orders and non-system rounds remain readable with null fields.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical
@@ -407,6 +502,12 @@ preserving non-sensitive audit facts.
 `000007_seed_catalog_risk_and_policy.down.sql` removes only fixed seed UUIDs. If
 business rows already reference those seed plans, PostgreSQL foreign keys are
 expected to block rollback instead of deleting referenced catalog data.
+
+Version 97 (`000097_dynamic_catalog_lifecycle`) replaces catalog `active`
+booleans with `active | deprecated | blocked` lifecycle state, adds immutable
+core identity markers, seeds Grok/xAI, and persists independent API-order
+catalog risk holds. Its down migration refuses rollback after blocked state or
+risk-hold data has been used.
 
 ## Docker Compose
 

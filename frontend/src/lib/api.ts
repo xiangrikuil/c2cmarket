@@ -97,11 +97,13 @@ import {
   type UserProfile,
 } from '@/data/mock'
 import type { ReputationSummary } from '@/types/reputation'
-import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import type { ApiServiceHealthHourlyBucket, ApiServiceHealthSample, ApiServiceHealthSummary } from '@/types/apiHealth'
+import { getOwnerAPIProbeConnections, updateMockAPIProbeConnectionReference } from '@/lib/apiHealthFacade'
+import { backendAdminAuditLogRows, backendAdminAuditLogRowsPage } from '@/lib/adminAuditBackend'
 import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
-import { getPricingDisplay } from '@/lib/pricing'
+import { compareByTradablePrice, getPricingDisplay } from '@/lib/pricing'
 import {
   getApiMerchantDisplayName,
   isApiServicePubliclyOrderable,
@@ -111,6 +113,9 @@ import {
 export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
+import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
+export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
@@ -132,6 +137,7 @@ import {
 import {
   backendAcceptCarpoolApplication,
   backendAdminCarpoolRows,
+  backendAdminCarpoolRowsPage,
   backendBuyerLeaveCarpool,
   backendCancelCarpoolApplication,
   backendBuyerConfirmCarpoolCompleted,
@@ -147,31 +153,43 @@ import {
   backendCreateCarpoolApplication,
   backendGetCarpoolById,
   backendGetCarpools,
+  backendGetCarpoolsPage,
+	backendOwnerCarpoolForEdit,
   backendOwnerCarpools,
+  backendOwnerCarpoolsPage,
   backendMerchantCarpoolApplications,
+  backendMerchantCarpoolApplicationsPage,
   backendMyCarpoolApplications,
+  backendMyCarpoolApplicationsPage,
   backendOwnerRemoveCarpool,
   backendOwnerConfirmCarpoolCompleted,
   backendOwnerConfirmCarpoolJoined,
   backendRejectCarpoolApplication,
   backendRunAdminCarpoolAction,
   backendSubmitCarpool,
+	backendUpdateOwnerCarpool,
   backendUpdateAdminCarpoolStatus,
   backendWithdrawCarpoolAcceptance,
 } from '@/lib/carpoolBackend'
+import type { CarpoolPageFilters } from '@/lib/carpoolBackend'
 import {
   backendAPIIntentById,
   backendAPIIntentEvents,
   backendAPIQuotaBatchAction,
   backendAPIQuotaCredentialSummary,
   backendAdminAPIOrder,
+  backendResolveAdminAPIOrderCatalogRiskHold,
   backendAdminAPIOrderRows,
+  backendAdminAPIOrderRowsPage,
   backendAPIServiceById,
   backendAPIServices,
+  backendAPIServicesPage,
   backendAdminAPIServiceRows,
+  backendAdminAPIServiceRowsPage,
   backendCancelAPIOrder,
   backendConfirmAPIOrderComplete,
   backendConfirmAPIOrderPayment,
+  backendConfirmAPIQuotaRoundFulfillment,
   backendCreateAPIOrderFromIntent,
   backendCreateAPIQuotaBatch,
   backendCreateAPIQuotaOffer,
@@ -186,6 +204,7 @@ import {
   backendImportAPIQuotaCredentials,
   backendMyAPIOrder,
   backendMyAPIOrders,
+  backendMyAPIOrdersPage,
   backendMyAPIIntents,
   backendOtherAPIServices,
   backendOwnerAPIQuotaBatches,
@@ -193,17 +212,22 @@ import {
   backendOwnerAPIQuotaRounds,
   backendOwnerAPIOrder,
   backendOwnerAPIOrders,
+  backendOwnerAPIOrdersPage,
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
+  backendOwnerAPIServicesPage,
   backendOpenAPIOrderDispute,
   backendPauseAPIService,
   backendPublishAPIService,
   backendPublicAPIQuotaOffer,
   backendPublicAPIQuotaOffers,
+  backendPublicAPIQuotaOffersPage,
   backendAPIQuotaSaleSlots,
   backendReadAPIOrderPaymentInstructions,
+  backendReportLateAPIOrderPayment,
   backendReportAPIOrderPaymentIssue,
+  backendResolveLateAPIOrderPayment,
   backendRunAdminAPIServiceAction,
   backendResumeAPIService,
   backendSubmitAPIOrderDeliveryCredential,
@@ -211,7 +235,13 @@ import {
   backendSub2APIServices,
   backendSubmitAPIService,
   backendUpdateAdminAPIServiceStatus,
+  backendUpdateAPIServiceProbeConnection,
 } from '@/lib/apiMarketBackend'
+import type { AdminAPIServicePageFilters } from '@/lib/apiMarketBackend'
+import { paginateCursorItems, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
+import { productMatchesCategory, productMatchesPlan, type ProductCategoryKey } from '@/lib/productCategories'
+import { isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
+import { isApiServiceAdminActionStatus, isApiServiceExceptionStatus, isApiServicePublicStatus } from '@/lib/apiServiceModeration'
 import {
   backendCreateContact,
   backendDeleteContact,
@@ -227,20 +257,24 @@ import {
   backendUpdateContact,
   backendUpdateMyProfile,
   backendUpsertMerchantProfile,
+  backendUseLinuxDoAvatar,
   backendVerifyContact,
   type BackendMerchantProfile,
 } from '@/lib/profileBackend'
-import { backendReviewCenterRows, backendSubmitReview } from '@/lib/reviewBackend'
+import { backendReviewCenterPage, backendReviewCenterRows, backendSubmitReview } from '@/lib/reviewBackend'
 import { backendSearchMarket } from '@/lib/searchBackend'
 import {
   backendAdminOfficialPriceRows,
+  backendAdminOfficialPriceRowsPage,
   backendMyOfficialPriceLeads,
   backendOfficialPriceById,
   backendOfficialPrices,
+  backendOfficialPricesPage,
   backendRunOfficialPriceAdminAction,
   backendSubmitOfficialPriceLead,
   backendUpdateOfficialPriceAdminStatus,
 } from '@/lib/officialPriceBackend'
+import type { OfficialPricePageFilters } from '@/lib/officialPriceBackend'
 import {
   backendFavoriteStatus,
   backendFavorites,
@@ -294,11 +328,14 @@ import {
   type AdminUserStatus,
 } from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
 import {
   backendGetApiPaymentAccountSettings,
   backendUpdateApiPaymentAccountSettings,
 } from '@/lib/apiPaymentSettingsBackend'
 import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
+import { requireMockIdentity } from '@/lib/mockAuth'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 export type AdminSection =
   | 'official-prices'
@@ -399,7 +436,7 @@ export type ReviewCenterRow = {
   revieweeRole: 'buyer' | 'seller'
   status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
-  counterpartySubmitted: boolean
+  allowedTags: ReviewTag[]
   canCreate: boolean
   canEdit: boolean
   rating: number | null
@@ -417,8 +454,31 @@ export type ReviewCenterRow = {
 
 export type ReviewCenterData = {
   items: ReviewCenterRow[]
-  presetTags: string[]
+  presetTags: ReviewTag[]
 }
+
+export type ReviewTag = {
+  code: string
+  label: string
+  polarity: 'positive' | 'negative' | 'neutral'
+}
+
+const mockReviewTags: ReviewTag[] = [
+  { code: 'smooth_comm', label: '沟通顺畅', polarity: 'positive' },
+  { code: 'quick_response', label: '响应及时', polarity: 'positive' },
+  { code: 'clear_rules', label: '规则清晰', polarity: 'positive' },
+  { code: 'good_coop', label: '合作愉快', polarity: 'positive' },
+  { code: 'slow_response', label: '响应较慢', polarity: 'negative' },
+  { code: 'hard_to_comm', label: '沟通困难', polarity: 'negative' },
+  { code: 'late_change', label: '临时变更', polarity: 'negative' },
+  { code: 'true_desc', label: '描述真实', polarity: 'positive' },
+  { code: 'good_aftercare', label: '售后响应及时', polarity: 'positive' },
+  { code: 'desc_diff', label: '实际体验与描述有差异', polarity: 'negative' },
+  { code: 'quick_payment', label: '付款及时', polarity: 'positive' },
+  { code: 'quick_confirm', label: '确认及时', polarity: 'positive' },
+  { code: 'clear_needs', label: '需求清晰', polarity: 'positive' },
+  { code: 'kept_agreement', label: '遵守约定', polarity: 'positive' },
+]
 
 export type FeedbackTicketType = 'function_issue' | 'data_correction' | 'experience_suggestion' | 'publish_contact_block'
 export type FeedbackImpact = 'general' | 'blocks_operation' | 'cannot_continue'
@@ -512,6 +572,7 @@ export type ApiOrderStatus =
 
 export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
 export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
+export type ApiOrderLatePaymentStatus = 'reported' | 'not_received' | 'received_refund_pending'
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
 export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
 export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
@@ -583,8 +644,9 @@ export type ApiOrder = {
   buyerReputation?: ReputationSummary | null
   sellerReputation?: ReputationSummary | null
   status: ApiOrderStatus
-  disputeStatus?: string
+  disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitle: string
   amount: number
   amountDecimal?: string
@@ -592,12 +654,17 @@ export type ApiOrder = {
   selectedPaymentMethod: ApiPaymentOption['paymentMethod']
   paymentWindowMinutes: number
   paymentExpiresAt: string
+  buyerNote?: string
   paymentSummary?: string
   paymentSubmittedAt?: string
+  merchantConfirmDueAt?: string
+  merchantConfirmOverdue?: boolean
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
+  deliveryDueAt?: string
+  deliveryOverdue?: boolean
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
@@ -606,6 +673,14 @@ export type ApiOrder = {
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
+	latePaymentStatus?: ApiOrderLatePaymentStatus
+	latePaymentReportedAt?: string
+	latePaymentNote?: string
+	latePaymentResolvedAt?: string
+	canReportLatePayment?: boolean
+	afterSalesExpiresAt?: string
+	canOpenDispute?: boolean
+	disputeEligibilityReason?: string
   version: number
   intentSnapshot: ApiPurchaseIntent['snapshot']
   selectedDeliveryMode: ApiDeliveryMode
@@ -624,6 +699,19 @@ export type ApiOrder = {
   updatedAt: string
 }
 
+export type ApiOrderCatalogRiskHold = {
+  id: string
+  sourceType: 'api_model_provider' | 'api_model_catalog'
+  sourceId: string
+  status: 'active' | 'restored' | 'refund_pending' | 'dispute_opened'
+  reason: string
+  createdAt: string
+  resolvedBy?: string
+  resolvedAt?: string | null
+  resolutionNote?: string
+  version: number
+}
+
 export type AdminApiOrderDetail = {
   id: string
   purchaseKind: ApiOrderPurchaseKind
@@ -632,8 +720,9 @@ export type AdminApiOrderDetail = {
   buyerUserId: string
   sellerUserId: string
   status: ApiOrderStatus
-  disputeStatus?: string
+  disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
   selectedPackageId?: string
@@ -645,10 +734,14 @@ export type AdminApiOrderDetail = {
   selectedPaymentMethod: ApiPaymentOption['paymentMethod']
   paymentExpiresAt: string
   paymentSubmittedAt?: string
+  merchantConfirmDueAt?: string
+  merchantConfirmOverdue?: boolean
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
+  deliveryDueAt?: string
+  deliveryOverdue?: boolean
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
@@ -656,6 +749,14 @@ export type AdminApiOrderDetail = {
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
+	latePaymentStatus?: ApiOrderLatePaymentStatus
+	latePaymentReportedAt?: string
+	latePaymentNote?: string
+	latePaymentResolvedAt?: string
+	canReportLatePayment?: boolean
+	afterSalesExpiresAt?: string
+	canOpenDispute?: boolean
+	disputeEligibilityReason?: string
   version: number
   createdAt: string
   updatedAt: string
@@ -663,9 +764,15 @@ export type AdminApiOrderDetail = {
 
 export type ApiQuotaOfferFilters = {
   distributionSystem?: ApiQuotaDistributionSystem | 'all'
+  modelCatalogId?: string
   oneMultiplier?: boolean
+  maxMultiplier?: number
   onlyOrderable?: boolean
+  saleMode?: ApiQuotaSaleMode | 'all'
   slotKey?: string
+  search?: string
+  excludeSystemSlots?: boolean
+  sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
 }
 
 export type CreateApiQuotaOrderPayload = {
@@ -781,6 +888,7 @@ export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMet
 export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
+export type OwnerCarpoolView = 'recruiting' | 'serving' | 'history' | 'needs_edit'
 
 export type SaveCarpoolDraftPayload = {
   productId: string
@@ -789,8 +897,8 @@ export type SaveCarpoolDraftPayload = {
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  dailyQuotaAmount: number | null
   weeklyQuotaAmount: number | null
-  monthlyQuotaAmount: number | null
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string
   supportsMainlandChinaDirectConnection: boolean | null
@@ -816,6 +924,14 @@ export type SaveCarpoolDraftPayload = {
   }
   rulesNote: string
   status: CarpoolDraftStatus
+}
+
+export type OwnerCarpoolEditData = {
+	id: string
+	version: number
+	backendStatus: string
+	ownerContactMethodId: string
+	payload: SaveCarpoolDraftPayload
 }
 
 const wait = () => new Promise(resolve => setTimeout(resolve, 80))
@@ -871,6 +987,34 @@ let notificationReadStore = readSessionStore<string[]>(notificationReadStorageKe
 let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
 let myUserProfileStore = clone(myUserProfile)
 let myContactMethodStore = clone(myContactMethods)
+
+function syncMockProfileIdentity() {
+  const identity = requireMockIdentity()
+  const linuxDo = identity.linuxDoBinding
+  myUserProfileStore = {
+    ...myUserProfileStore,
+    id: identity.id,
+    username: identity.username,
+    displayName: identity.displayName,
+    email: identity.email,
+    emailVerified: Boolean(identity.email),
+    emailVerifiedAt: identity.email ? (myUserProfileStore.emailVerifiedAt ?? nowText()) : null,
+    passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    avatarMode: linuxDo.bound ? 'linuxdo' : 'custom_url',
+    avatarUrl: linuxDo.avatarUrl ?? null,
+    linuxDoBinding: {
+      bound: linuxDo.bound,
+      linuxDoUserId: linuxDo.linuxDoUserId ?? null,
+      linuxDoUsername: linuxDo.linuxDoUsername ?? null,
+      linuxDoAvatarUrl: linuxDo.avatarUrl ?? null,
+      trustLevel: linuxDo.trustLevel ?? null,
+      lastSyncedAt: linuxDo.bound ? nowText() : null,
+    },
+    permissions: identity.permissions.filter((permission): permission is 'admin' => permission === 'admin'),
+    capabilities: [...identity.capabilities],
+  }
+  return myUserProfileStore
+}
 
 function clone<T>(value: T): T {
   return structuredClone(value)
@@ -931,15 +1075,44 @@ function mockDeliveryReviewDeadline(submittedAt?: string) {
 }
 
 function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
-  return orders.map(order => ({
+	return orders.map(order => applyMockApiOrderAfterSales({
     ...order,
     orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
-    purchaseKind: order.purchaseKind ?? 'api_service',
+		purchaseKind: order.purchaseKind ?? 'api_service',
+		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
       ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
     quotaUsagePolicySnapshot: normalizeHistoricalApiQuotaUsagePolicy(order.quotaUsagePolicySnapshot),
   }))
+}
+
+function mockApiOrderValidityExpiresAt(order: ApiOrder) {
+	return order.packageExpiresAt ?? order.quotaSnapshot?.expiresAt ?? order.intentSnapshot.serviceValidityExpiresAt ?? undefined
+}
+
+function applyMockApiOrderAfterSales(order: ApiOrder, currentTime = Date.now()) {
+	const validityExpiresAt = mockApiOrderValidityExpiresAt(order)
+	const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
+	const afterSalesTimestamp = Number.isFinite(validityTimestamp) ? validityTimestamp + 24 * 60 * 60 * 1000 : Number.NaN
+	order.afterSalesExpiresAt = Number.isFinite(afterSalesTimestamp) ? new Date(afterSalesTimestamp).toISOString() : undefined
+	if (order.status === 'cancelled') {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'order_cancelled'
+	} else if (normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none') {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'dispute_exists'
+	} else if (Number.isFinite(afterSalesTimestamp) && currentTime >= afterSalesTimestamp) {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'after_sales_expired'
+	} else if (order.status === 'completed' && !Number.isFinite(validityTimestamp)) {
+		order.canOpenDispute = false
+		order.disputeEligibilityReason = 'completed_validity_unknown'
+	} else {
+		order.canOpenDispute = true
+		order.disputeEligibilityReason = 'eligible'
+	}
+	return order
 }
 
 function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQuotaOffer[] {
@@ -952,9 +1125,15 @@ function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQu
 function materializeMockApiOrderReviews(currentTime = Date.now()) {
   let changed = false
   for (const order of apiOrderStore) {
-    if (order.status !== 'delivery_submitted' || order.disputeStatus === 'open' || !order.deliveryReviewExpiresAt) continue
+		if (order.status !== 'delivery_submitted' || isApiOrderDisputeActive(order.disputeStatus) || !order.deliveryReviewExpiresAt) {
+			applyMockApiOrderAfterSales(order, currentTime)
+			continue
+    }
     const deadline = Date.parse(order.deliveryReviewExpiresAt)
-    if (!Number.isFinite(deadline) || deadline > currentTime) continue
+		if (!Number.isFinite(deadline) || deadline > currentTime) {
+			applyMockApiOrderAfterSales(order, currentTime)
+			continue
+		}
     const completedAt = new Date(deadline).toISOString()
     order.status = 'completed'
     order.completionSource = 'auto_completed'
@@ -962,6 +1141,7 @@ function materializeMockApiOrderReviews(currentTime = Date.now()) {
     order.updatedAt = completedAt
     order.version += 1
     changed = true
+		applyMockApiOrderAfterSales(order, currentTime)
   }
   if (changed) persistApiOrderStore()
 }
@@ -1304,7 +1484,7 @@ export function apiIntentMerchantContactSnapshot(intent: ApiPurchaseIntent): Ord
       displayValue: channel.value,
       verified: channel.type === 'linuxdo',
       usageScope: 'api_merchant',
-      actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+      actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
     })) : [],
     buyerContacts: [],
     contactWindowEndsAt: null,
@@ -1328,7 +1508,7 @@ export function apiIntentBuyerContactSnapshot(intent: ApiPurchaseIntent): OrderC
       displayValue: channel.value,
       verified: channel.type === 'linuxdo',
       usageScope: 'buyer',
-      actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+      actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
     })) : [],
     contactWindowEndsAt: null,
     canView,
@@ -1345,7 +1525,7 @@ function contactChannelsToSnapshotItems(channels: ApiContactChannel[], usageScop
     displayValue: channel.value,
     verified: channel.type === 'linuxdo',
     usageScope,
-    actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+    actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
   }))
 }
 
@@ -1577,7 +1757,15 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'payment_submitted') return '等待商户确认收款'
     if (order.status === 'payment_issue') return '补充付款信息并重新提交'
     if (order.status === 'paid_confirmed') return '等待商户交付'
-    if (order.status === 'delivery_submitted') return order.disputeStatus === 'open' ? '等待平台处理凭证问题' : '核验凭证，或报告问题'
+    if (order.status === 'delivery_submitted') {
+      switch (normalizeApiOrderDisputeStatus(order.disputeStatus)) {
+        case 'negotiating': return '继续协商订单问题'
+        case 'open': return '等待平台处理凭证问题'
+        case 'awaiting_fulfillment': return '等待裁决要求履行'
+        case 'fulfillment_confirmation': return '确认履行结果'
+        default: return '核验凭证，或报告问题'
+      }
+    }
     if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '凭证已确认可用'
     if (order.status === 'cancelled') return '查看取消原因'
   }
@@ -1680,7 +1868,7 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
     regionName: carpool.region,
     monthlyPriceCny: pricing.primaryPrice,
     serviceMultiplier: carpool.serviceMultiplier,
-    monthlyQuotaAmount: carpool.monthlyQuotaAmount,
+    weeklyQuotaAmount: carpool.weeklyQuotaAmount,
     quotaLabel: carpool.quotaLabel,
     quotaUnit: carpool.quotaUnit,
     quotaPeriod: carpool.quotaPeriod,
@@ -1940,6 +2128,7 @@ function buildPublicReviewFromCarpoolApplication(application: CarpoolApplication
     username: application.ownerUsername,
     date: dateFromDateTime(application.buyerReview.createdAt ?? application.completedAt ?? application.updatedAt),
     serviceType: application.snapshot.productName,
+    rating: application.buyerReview.rating,
     tags: application.buyerReview.tags,
     note: application.buyerReview.note,
     verified: true,
@@ -1998,10 +2187,15 @@ export type ApiOrderFilters = {
   search?: string
   dateRange?: 'all' | 'today' | '7d' | '30d'
   sort?: 'default_buyer' | 'default_merchant' | 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
+  dispute?: 'all' | 'active' | 'none'
+  minAmount?: string
+  maxAmount?: string
+  risk?: 'all' | 'high' | 'has_note'
 }
 
 export type ApiServiceFilters = {
   model?: string
+  modelCatalogId?: string
   maxMultiplier?: number
   deliveryMode?: ApiDeliveryMode
   usageVisibility?: ApiUsageVisibility
@@ -2014,8 +2208,15 @@ export type ApiServiceFilters = {
   trustLevel?: number
   minimumPurchaseCnyMax?: number
   minBalance?: number
-  sort?: 'recommended' | 'multiplier_asc' | 'response_fast' | 'recent'
+  sort?: 'recommended' | 'multiplier_asc' | 'response_fast' | 'recent' | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc'
   search?: string
+  distributionSystem?: ApiQuotaDistributionSystem | 'all'
+  maxCnyPerUsd?: number
+  packagePriceCnyMax?: number
+  packageMultiplierMax?: number
+  billingMode?: ApiBillingMode
+  packageModelCatalogId?: string
+  packageDurationDays?: number
 }
 
 export type MinimumPurchaseFilter = 'all' | 'lte_20' | 'between_21_50' | 'gt_50'
@@ -2096,7 +2297,18 @@ function filterApiPurchaseIntents(filters: ApiPurchaseIntentFilters = {}) {
 }
 
 function apiOrderSearchTerms(order: ApiOrder) {
-  return [order.orderNo, order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
+  return [
+    order.orderNo,
+    order.id,
+    order.apiPurchaseIntentId,
+    order.apiServiceId,
+    order.serviceTitle,
+    order.buyerId,
+    order.buyer,
+    order.sellerId,
+    order.seller,
+    getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot }),
+  ]
 }
 
 function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
@@ -2108,31 +2320,49 @@ function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
   }
 }
 
-function filterApiOrders(filters: ApiOrderFilters = {}) {
-  materializeMockApiOrderReviews()
+export function filterApiOrderRows(source: readonly ApiOrder[], filters: ApiOrderFilters = {}, now = new Date()) {
   const keyword = filters.search?.trim().toLowerCase()
   const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : null
-  const now = Date.now()
-  const rangeMs = filters.dateRange === 'today' ? 24 * 60 * 60 * 1000 : filters.dateRange === '7d' ? 7 * 24 * 60 * 60 * 1000 : filters.dateRange === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
-  const rows = apiOrderStore.filter(item => {
+  const createdAfter = filters.dateRange === 'today'
+    ? new Date(beijingDateTimeInputToISOString(`${formatBeijingDateTimeInput(now).slice(0, 10)}T00:00`)).getTime()
+    : filters.dateRange === '7d'
+      ? now.getTime() - 7 * 24 * 60 * 60 * 1000
+      : filters.dateRange === '30d'
+        ? now.getTime() - 30 * 24 * 60 * 60 * 1000
+        : null
+  const minAmount = filters.minAmount || null
+  const maxAmount = filters.maxAmount || null
+  const rows = source.filter(item => {
     const createdAt = new Date(item.createdAt).getTime()
+    const amount = item.amountDecimal ?? String(item.amount)
+    const activeDispute = isApiOrderDisputeActive(item.disputeStatus)
     return (!filters.buyerId || item.buyerId === filters.buyerId)
       && (!filters.sellerId || item.sellerId === filters.sellerId)
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
-      && (!rangeMs || now - createdAt <= rangeMs)
+      && (createdAfter === null || createdAt >= createdAfter)
+      && (!filters.dispute || filters.dispute === 'all' || filters.dispute === 'active' && activeDispute || filters.dispute === 'none' && !activeDispute)
+      && (minAmount === null || compareDecimal(amount, minAmount) >= 0)
+      && (maxAmount === null || compareDecimal(amount, maxAmount) <= 0)
       && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
   })
 
   const sort = filters.sort ?? 'updated_desc'
   return rows.sort((a, b) => {
-    if (sort === 'default_buyer') return defaultApiOrderSortForRole('buyer')(a, b)
-    if (sort === 'default_merchant') return defaultApiOrderSortForRole('merchant')(a, b)
-    if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt)
-    if (sort === 'amount_desc') return b.amount - a.amount
-    if (sort === 'amount_asc') return a.amount - b.amount
-    return compareTimeDesc(a.updatedAt, b.updatedAt)
+    if (sort === 'default_buyer') return defaultApiOrderSortForRole('buyer')(a, b) || b.id.localeCompare(a.id)
+    if (sort === 'default_merchant') return defaultApiOrderSortForRole('merchant')(a, b) || b.id.localeCompare(a.id)
+    if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt) || b.id.localeCompare(a.id)
+    const leftAmount = a.amountDecimal ?? String(a.amount)
+    const rightAmount = b.amountDecimal ?? String(b.amount)
+    if (sort === 'amount_desc') return compareDecimal(rightAmount, leftAmount) || b.id.localeCompare(a.id)
+    if (sort === 'amount_asc') return compareDecimal(leftAmount, rightAmount) || a.id.localeCompare(b.id)
+    return compareTimeDesc(a.updatedAt, b.updatedAt) || b.id.localeCompare(a.id)
   })
+}
+
+function filterApiOrders(filters: ApiOrderFilters = {}) {
+  materializeMockApiOrderReviews()
+  return filterApiOrderRows(apiOrderStore, filters)
 }
 
 function defaultCarpoolSortForRole(role: 'buyer' | 'owner') {
@@ -2216,6 +2446,40 @@ export async function getOfficialPrices() {
   return clone(officialPriceStore)
 }
 
+export type OfficialPriceListPageFilters = OfficialPricePageFilters & {
+  product?: string
+  plan?: string
+  regionLabel?: string
+  channelLabel?: string
+  openingMethodLabel?: string
+  sourceLabel?: string
+  trustFloor?: number
+}
+
+export async function getOfficialPricesPage(filters: OfficialPriceListPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<OfficialPrice>> {
+  if (shouldUseRealBackend()) return backendOfficialPricesPage(filters, page)
+  await wait()
+  const query = filters.q?.trim().toLowerCase()
+  const rows = officialPriceStore.filter(item => {
+    return (!query || [item.product, item.plan, item.region, item.channel, item.submitter, item.source].some(value => value.toLowerCase().includes(query)))
+      && (!filters.product || item.product.includes(filters.product))
+      && (!filters.plan || item.plan.includes(filters.plan))
+      && (!filters.regionLabel || item.region.includes(filters.regionLabel))
+      && (!filters.channelLabel || item.channel.includes(filters.channelLabel))
+      && (!filters.status || item.status === filters.status)
+      && (!filters.openingMethodLabel || item.openingMethod.includes(filters.openingMethodLabel))
+      && (!filters.sourceLabel || item.source.includes(filters.sourceLabel))
+      && (filters.trustFloor === undefined || item.submitterTrust >= filters.trustFloor)
+  })
+  rows.sort((a, b) => {
+    if (filters.sort === 'cny_asc') return (a.cny ?? Number.POSITIVE_INFINITY) - (b.cny ?? Number.POSITIVE_INFINITY)
+    if (filters.sort === 'trust_desc') return b.submitterTrust - a.submitterTrust
+    if (filters.sort === 'verified_recent' || filters.sort === 'submitted_desc' || filters.sort === 'updated_desc') return b.updatedAt.localeCompare(a.updatedAt)
+    return Number(b.isLowest) - Number(a.isLowest) || b.updatedAt.localeCompare(a.updatedAt)
+  })
+  return paginateCursorItems(clone(rows), page)
+}
+
 export async function getOfficialPriceById(id: string) {
   if (shouldUseRealBackend()) return backendOfficialPriceById(id)
   await wait()
@@ -2232,6 +2496,35 @@ export async function getCarpools() {
   if (shouldUseRealBackend()) return backendGetCarpools()
   await wait()
   return clone(carpoolStore.map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) })))
+}
+
+export type CarpoolListPageFilters = CarpoolPageFilters & {
+  category?: string
+  plan?: string
+  openingMethod?: string
+}
+
+export async function getCarpoolsPage(filters: CarpoolListPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
+  if (shouldUseRealBackend()) return backendGetCarpoolsPage(filters, page)
+  await wait()
+  if (filters.none) return { items: [] }
+  const rows = carpoolStore
+    .filter(item => (!filters.category || productMatchesCategory(item.product, filters.category)))
+    .filter(item => (!filters.plan || productMatchesPlan(item.product, filters.plan)))
+    .filter(item => (!filters.region || item.region === filters.region))
+    .filter(item => (!filters.ownerType || item.ownerType === filters.ownerType))
+    .filter(item => (!filters.warranty || item.warranty === filters.warranty))
+    .filter(item => (!filters.openingMethod || item.openingMethod === filters.openingMethod))
+    .map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) }))
+  rows.sort((a, b) => {
+    if (filters.sort === 'price_asc') return compareByTradablePrice(a, b)
+    if (filters.sort === 'updated_desc') return b.confirmedAt.localeCompare(a.confirmedAt)
+    if (filters.sort === 'seats_desc') return getCarpoolSeatSummary(b).availableSeats - getCarpoolSeatSummary(a).availableSeats
+    return Number(b.confirmedWithin48h) - Number(a.confirmedWithin48h)
+      || Number(a.ownerType !== '商户车源') - Number(b.ownerType !== '商户车源')
+      || compareByTradablePrice(a, b)
+  })
+  return paginateCursorItems(clone(rows), page)
 }
 
 export async function getCarpoolById(id: string) {
@@ -2252,12 +2545,111 @@ export async function getCarpoolApplicationEligibility(id: string): Promise<Carp
   return clone(evaluateCarpoolApplicationEligibility(carpool, getCarpoolSeatSummary(carpool), hasOngoingApplication, currentBuyerId, hasActiveMembership))
 }
 
-export async function getMyCarpools() {
-  if (shouldUseRealBackend()) return backendOwnerCarpools()
-  await wait()
-  return clone(carpoolStore
-    .filter(item => item.owner === currentOwnerName)
-    .map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) })))
+export async function getMyCarpools(view?: OwnerCarpoolView) {
+	if (shouldUseRealBackend()) return backendOwnerCarpools(view)
+	await wait()
+	return clone(carpoolStore
+		.filter(item => item.owner === currentOwnerName)
+		.filter(item => {
+			if (!view) return true
+			if (view === 'recruiting') return item.status === '可上车' && item.currentConfirmedMembers === 0
+			if (view === 'serving') return item.status === '可上车' && item.currentConfirmedMembers > 0
+			if (view === 'history') return false
+			return item.status === '暂停' || item.status === '审核中'
+		})
+		.map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) })))
+}
+
+export async function getMyCarpoolsPage(view: OwnerCarpoolView, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
+	if (shouldUseRealBackend()) return backendOwnerCarpoolsPage(view, page)
+	return paginateCursorItems(await getMyCarpools(view), page)
+}
+
+export async function getMyCarpoolForEdit(id: string): Promise<OwnerCarpoolEditData> {
+	if (shouldUseRealBackend()) return backendOwnerCarpoolForEdit(id)
+	await wait()
+	const carpool = carpoolStore.find(item => item.id === id && item.owner === currentOwnerName)
+	if (!carpool) throw new Error('车源不存在。')
+	const product = carpoolProductCatalog.find(item => item.displayName === carpool.product)
+	const region = carpoolRegions.find(item => item.displayName === carpool.region)
+	return clone({
+		id: carpool.id,
+		version: 1,
+		backendStatus: carpool.status === '审核中' ? 'pending_review' : 'draft',
+		ownerContactMethodId: 'mock-owner-contact',
+		payload: {
+			productId: product?.id ?? '',
+			customProductName: product ? null : carpool.product,
+			regionCode: region?.code ?? 'other',
+			customRegionName: region ? null : carpool.region,
+			monthlyPriceCny: carpool.monthly,
+			serviceMultiplier: carpool.serviceMultiplier ?? 1,
+			dailyQuotaAmount: carpool.dailyQuotaAmount ?? null,
+			weeklyQuotaAmount: carpool.weeklyQuotaAmount ?? null,
+			followsOfficialQuotaReset: carpool.followsOfficialQuotaReset ?? null,
+			vpsRegion: carpool.vpsRegion ?? '',
+			supportsMainlandChinaDirectConnection: carpool.supportsMainlandChinaDirectConnection ?? null,
+			totalSeats: carpool.maxMembers,
+			occupiedSeats: carpool.currentConfirmedMembers,
+			openingChannelCode: carpool.openingChannelCode ?? '',
+			customOpeningChannel: carpool.customOpeningChannel ?? '',
+			paymentMethodCode: carpool.paymentMethodCode ?? '',
+			customPaymentMethod: carpool.customPaymentMethod ?? '',
+			distributionMethod: carpool.distributionMethod,
+			distributionMethodNote: carpool.distributionMethodNote,
+			providesAdminAccount: carpool.providesAdminAccount,
+			accessArrangementMode: carpool.accessArrangementMode,
+			accessArrangementNote: carpool.accessArrangementNote,
+			riskAcknowledged: carpool.riskAcknowledged,
+			policyVersion: product?.policyVersion ?? null,
+			riskNoticeCode: carpool.riskNoticeCode ?? null,
+			warranty: {
+				mode: 'remaining_days_compensation',
+				fixedWarrantyDays: null,
+				compensationMethod: '按未使用天数补时或退还对应周期费用',
+				exclusions: '',
+			},
+			rulesNote: carpool.accessArrangementNote ?? carpool.distributionMethodNote,
+			status: 'draft',
+		},
+	})
+}
+
+export async function updateMyCarpool(id: string, payload: SaveCarpoolDraftPayload, version: number, ownerContactMethodId: string, submitForReview: boolean) {
+	if (shouldUseRealBackend()) return backendUpdateOwnerCarpool(id, payload, version, ownerContactMethodId, submitForReview)
+	await wait()
+	const index = carpoolStore.findIndex(item => item.id === id && item.owner === currentOwnerName)
+	if (index < 0) throw new Error('车源不存在。')
+	const current = carpoolStore[index]!
+	const product = carpoolProductCatalog.find(item => item.id === payload.productId)
+	const region = carpoolRegions.find(item => item.code === payload.regionCode)
+	const updated: Carpool = {
+		...current,
+		product: payload.customProductName?.trim() || product?.displayName || current.product,
+		region: payload.customRegionName?.trim() || region?.displayName || current.region,
+		monthly: payload.monthlyPriceCny ?? 0,
+		dailyQuotaAmount: payload.dailyQuotaAmount ?? undefined,
+		weeklyQuotaAmount: payload.weeklyQuotaAmount ?? undefined,
+		followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
+		vpsRegion: payload.vpsRegion,
+		supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
+		currentConfirmedMembers: payload.occupiedSeats,
+		maxMembers: payload.totalSeats,
+		openingChannelCode: payload.openingChannelCode as Carpool['openingChannelCode'],
+		customOpeningChannel: payload.customOpeningChannel || null,
+		paymentMethodCode: payload.paymentMethodCode as Carpool['paymentMethodCode'],
+		customPaymentMethod: payload.customPaymentMethod || null,
+		distributionMethod: payload.distributionMethod || 'other',
+		distributionMethodNote: payload.distributionMethodNote ?? '',
+		providesAdminAccount: Boolean(payload.providesAdminAccount),
+		accessArrangementMode: payload.accessArrangementMode,
+		accessArrangementNote: payload.accessArrangementNote,
+		status: submitForReview ? '审核中' : '暂停',
+		confirmedAt: nowText(),
+	}
+	carpoolStore[index] = updated
+	persistMarketStores()
+	return clone({ ...updated, backendVersion: version + (submitForReview ? 2 : 1), backendStatus: submitForReview ? 'pending_review' : 'draft' })
 }
 
 export async function getCarpoolProductCatalog() {
@@ -2292,9 +2684,15 @@ export async function getModelCatalog() {
 
 function filterApiServices(filters: ApiServiceFilters = {}) {
   const keyword = filters.search?.trim().toLowerCase()
+  const packagePrice = (item: ApiService) => Math.min(...(item.packages ?? [])
+    .filter(packageItem => packageItem.enabled && packageItem.stockAvailable > 0)
+    .filter(packageItem => !filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
+    .filter(packageItem => !filters.packageModelCatalogId || packageItem.models.some(model => model.modelCatalogId === filters.packageModelCatalogId))
+    .map(packageItem => packageItem.priceCny))
   return apiServiceStore
     .filter(item => {
       return (!filters.model || item.models.some(model => model.toLowerCase().includes(filters.model!.toLowerCase())))
+        && (!filters.modelCatalogId || item.modelPriceRows.some(model => model.modelId === filters.modelCatalogId))
         && (!filters.maxMultiplier || item.defaultMultiplier <= filters.maxMultiplier)
         && (!filters.deliveryMode || item.deliveryModes.includes(filters.deliveryMode))
         && (!filters.usageVisibility || item.usageVisibility === filters.usageVisibility)
@@ -2308,8 +2706,25 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         && (!filters.minimumPurchaseCnyMax || item.minimumPurchaseCny <= filters.minimumPurchaseCnyMax)
         && (!filters.minBalance || item.balance >= filters.minBalance)
         && (!keyword || apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
+        && (!filters.distributionSystem || filters.distributionSystem === 'all' || (
+          filters.distributionSystem === 'sub2api' ? item.delivery === 'Sub2API' : item.delivery !== 'Sub2API'
+        ))
+        && (filters.maxCnyPerUsd === undefined || Number(item.cnyPerUsdAllowance) <= filters.maxCnyPerUsd)
+        && (!filters.billingMode || item.billingMode === filters.billingMode)
+        && ((!filters.packageModelCatalogId && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
+          return packageItem.enabled
+            && packageItem.stockAvailable > 0
+            && (!filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
+            && (filters.packagePriceCnyMax === undefined || packageItem.priceCny <= filters.packagePriceCnyMax)
+            && packageItem.models.some(model => (!filters.packageModelCatalogId || model.modelCatalogId === filters.packageModelCatalogId)
+              && (filters.packageMultiplierMax === undefined || model.merchantMultiplier <= filters.packageMultiplierMax))
+        }))
     })
     .sort((a, b) => {
+      if (filters.sort === 'updated_desc') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt) || b.id.localeCompare(a.id)
+      if (filters.sort === 'price_asc') return Number(a.cnyPerUsdAllowance) - Number(b.cnyPerUsdAllowance) || a.id.localeCompare(b.id)
+      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.id.localeCompare(b.id)
+      if (filters.sort === 'package_price_asc') return packagePrice(a) - packagePrice(b) || a.id.localeCompare(b.id)
       if (filters.sort === 'multiplier_asc') return a.defaultMultiplier - b.defaultMultiplier || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
       if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.defaultMultiplier - b.defaultMultiplier
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
@@ -2391,6 +2806,12 @@ export async function getApiServices(filters: ApiServiceFilters = {}) {
   return clone(filterApiServices(filters))
 }
 
+export async function getApiServicesPage(filters: ApiServiceFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<ApiService>> {
+  if (shouldUseRealBackend()) return backendAPIServicesPage(filters, page)
+  await wait()
+  return clone(paginateCursorItems(filterApiServices(filters), page))
+}
+
 export async function getSub2ApiMarketServices(filters: Sub2ApiMarketFilters = {}) {
   if (shouldUseRealBackend()) return backendSub2APIServices(filters)
   await wait()
@@ -2404,10 +2825,25 @@ export async function getOtherApiMarketServices(filters: OtherApiMarketFilters =
 }
 
 function matchesApiQuotaOfferFilters(item: PublicApiQuotaOffer, filters: ApiQuotaOfferFilters) {
+  const keyword = filters.search?.trim().toLowerCase()
   return item.status === 'published'
     && (filters.distributionSystem === undefined || filters.distributionSystem === 'all' || item.distributionSystem === filters.distributionSystem)
+    && (!filters.modelCatalogId || (apiServiceStore.find(service => service.id === item.apiServiceId)?.modelPriceRows ?? []).some(model => model.modelId === filters.modelCatalogId))
     && (!filters.oneMultiplier || item.modelMultiplier === '1.0000')
+    && (filters.maxMultiplier === undefined || Number(item.modelMultiplier) <= filters.maxMultiplier)
     && (!filters.onlyOrderable || item.isOrderable)
+    && (!filters.saleMode || filters.saleMode === 'all' || item.saleMode === filters.saleMode)
+    && (!filters.excludeSystemSlots || !item.currentRound?.systemSlotKey && !item.nextRound?.systemSlotKey)
+    && (!keyword || [item.name, item.serviceTitle, item.sellerDisplayName, item.distributionSystem]
+      .some(value => value.toLowerCase().includes(keyword)))
+}
+
+function sortApiQuotaOffers(items: PublicApiQuotaOffer[], filters: ApiQuotaOfferFilters) {
+  const rows = [...items]
+  if (filters.sort === 'unit_price_asc') return rows.sort((left, right) => Number(left.cnyPerUsd) - Number(right.cnyPerUsd) || left.id.localeCompare(right.id))
+  if (filters.sort === 'allowance_desc') return rows.sort((left, right) => Number(right.usdAllowance) - Number(left.usdAllowance) || right.id.localeCompare(left.id))
+  if (filters.sort === 'delivery_asc') return rows.sort((left, right) => left.deliveryEtaMinutes - right.deliveryEtaMinutes || left.id.localeCompare(right.id))
+  return rows
 }
 
 function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
@@ -2423,7 +2859,7 @@ function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
       String(date.getUTCMonth() + 1).padStart(2, '0'),
       String(date.getUTCDate()).padStart(2, '0'),
     ].join('-')
-    for (const hour of [9, 13, 20]) {
+    for (const hour of [20]) {
       const time = `${String(hour).padStart(2, '0')}:00`
       const startsAt = beijingDateTimeInputToISOString(`${dateKey}T${time}`)
       const startsAtMs = Date.parse(startsAt)
@@ -2460,12 +2896,15 @@ function projectMockSystemRushOffer(item: PublicApiQuotaOffer, now = Date.now())
     projected.orderabilityReason = '本场尚未开抢。'
   } else if (now < Date.parse(round.endsAt)) {
     projected.currentRound = clone(round)
-    projected.isOrderable = projected.batchStatus === 'published'
+    projected.isOrderable = Boolean(round.fulfillmentConfirmedAt)
+      && projected.batchStatus === 'published'
       && projected.status === 'published'
       && projected.availableCopies > 0
       && (projected.deliveryMode !== 'preimported' || projected.credentialAvailableCopies >= projected.availableCopies)
     projected.orderabilityCode = projected.isOrderable
       ? 'orderable'
+      : !round.fulfillmentConfirmedAt
+        ? 'fulfillment_confirmation_required'
       : projected.availableCopies <= 0
         ? 'sold_out'
         : projected.deliveryMode === 'preimported'
@@ -2473,6 +2912,8 @@ function projectMockSystemRushOffer(item: PublicApiQuotaOffer, now = Date.now())
           : 'service_unavailable'
     projected.orderabilityReason = projected.isOrderable
       ? '正在抢购。'
+      : !round.fulfillmentConfirmedAt
+        ? '卖家尚未确认本场履约准备。'
       : projected.availableCopies <= 0
         ? '本场已售罄。'
         : projected.deliveryMode === 'preimported'
@@ -2497,7 +2938,7 @@ export async function getApiQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
   if (shouldUseRealBackend()) return backendPublicAPIQuotaOffers(filters)
   await wait()
   const rows = apiQuotaOfferStore.map(item => projectMockSystemRushOffer(item))
-  return clone(rows.filter(item => {
+  return clone(sortApiQuotaOffers(rows.filter(item => {
     if (filters.slotKey) {
       const round = apiQuotaRoundStore.find(candidate => candidate.systemSlotKey === filters.slotKey && candidate.allocations.some(allocation => allocation.offerId === item.id))
       if (!round) return false
@@ -2505,7 +2946,23 @@ export async function getApiQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
       item.nextRound = Date.now() < Date.parse(round.startsAt) ? clone(round) : item.nextRound
     }
     return matchesApiQuotaOfferFilters(item, filters)
-  }))
+  }), filters))
+}
+
+export async function getApiQuotaOffersPage(filters: ApiQuotaOfferFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<PublicApiQuotaOffer>> {
+  if (shouldUseRealBackend()) return backendPublicAPIQuotaOffersPage(filters, page)
+  await wait()
+  const rows = apiQuotaOfferStore.map(item => projectMockSystemRushOffer(item))
+  const filtered = sortApiQuotaOffers(rows.filter(item => {
+    if (filters.slotKey) {
+      const round = apiQuotaRoundStore.find(candidate => candidate.systemSlotKey === filters.slotKey && candidate.allocations.some(allocation => allocation.offerId === item.id))
+      if (!round) return false
+      item.currentRound = Date.now() >= Date.parse(round.startsAt) && Date.now() < Date.parse(round.endsAt) ? clone(round) : item.currentRound
+      item.nextRound = Date.now() < Date.parse(round.startsAt) ? clone(round) : item.nextRound
+    }
+    return matchesApiQuotaOfferFilters(item, filters)
+  }), filters)
+  return clone(paginateCursorItems(filtered, page))
 }
 
 export async function getApiQuotaOfferById(id: string) {
@@ -2639,7 +3096,7 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
     throw new Error('额度失效时间必须至少晚于场次结束 1 小时。')
   }
   const copies = Math.trunc(payload.copies)
-  if (copies < 1 || copies > 5000) throw new Error('计划份数必须在 1-5000 之间。')
+  if (copies < 1 || copies > 10) throw new Error('计划份数必须在 1-10 之间。')
   const usdAllowance = normalizeDecimalTrimmed(payload.usdAllowance, 6)
   const priceCny = normalizeDecimal(payload.priceCny, 2)
   const modelMultiplier = normalizeDecimal(payload.modelMultiplier, 4)
@@ -2786,6 +3243,23 @@ export async function createApiQuotaRound(payload: CreateApiQuotaRoundPayload) {
     const offer = apiQuotaOfferStore.find(item => item.id === allocation.offerId)
     if (offer && (!offer.nextRound || Date.parse(startsAt) < Date.parse(offer.nextRound.startsAt))) offer.nextRound = clone(round)
   }
+  persistApiQuotaStores()
+  return clone(round)
+}
+
+export async function confirmApiQuotaRoundFulfillment(roundId: string, version: number) {
+  if (shouldUseRealBackend()) return backendConfirmAPIQuotaRoundFulfillment(roundId, version)
+  await wait()
+  const round = apiQuotaRoundStore.find(item => item.id === roundId)
+  if (!round) throw new Error('未找到放量场次。')
+  if (round.version !== version) throw new Error('场次已更新，请刷新后重试。')
+  if (!round.systemSlotKey) throw new Error('自定义轮次不需要履约确认。')
+  const now = Date.now()
+  if (now < Date.parse(round.startsAt) - 30 * 60 * 1000 || now >= Date.parse(round.startsAt)) {
+    throw new Error('请在开抢前 30 分钟内确认履约准备。')
+  }
+  round.fulfillmentConfirmedAt = nowText()
+  round.version += 1
   persistApiQuotaStores()
   return clone(round)
 }
@@ -2946,35 +3420,57 @@ function mockOwnerApiService(service: ApiService): OwnerApiService {
 }
 
 function mockUnconfiguredAPIHealthSummary(): ApiServiceHealthSummary {
-  const slot = (minute: number): ApiServiceHealthSummary['samples'][number] => ({
-    slotStartedAt: new Date(Date.UTC(2026, 7, 4, 0, minute)).toISOString(),
-    state: 'no_sample',
-  })
-  return {
-    state: 'no_sample',
-    availabilityReason: 'unconfigured',
-    successRatePercent: null,
-    successfulSamples: 0,
-    totalSamples: 0,
-    medianTtftMs: null,
-    probeModel: null,
-    transportSecurity: null,
-    lastSampledAt: null,
-    samples: [
-      slot(0),
-      slot(5),
-      slot(10),
-      slot(15),
-      slot(20),
-      slot(25),
-      slot(30),
-      slot(35),
-      slot(40),
-      slot(45),
-      slot(50),
-      slot(55),
-    ],
-  }
+	const slot = (hour: number): ApiServiceHealthSample => ({
+		slotStartedAt: new Date(Date.UTC(2026, 7, 4, hour)).toISOString(),
+		state: 'no_sample',
+	})
+	const bucket = (hour: number): ApiServiceHealthHourlyBucket => ({
+		hourStartedAt: new Date(Date.UTC(2026, 7, 4, hour)).toISOString(),
+		state: 'no_sample',
+		completedCycles: 0,
+		firstAttemptSuccesses: 0,
+		retryRecoveries: 0,
+		finalFailures: 0,
+		slowSuccesses: 0,
+		finalSuccessPercent: null,
+		averageTtftMs: null,
+	})
+	const hours = Array.from({ length: 24 }, (_, index) => index)
+	return {
+		state: 'no_sample',
+		availabilityReason: 'unconfigured',
+		transportSecurity: null,
+		stabilityPercent: null,
+		finalSuccessPercent: null,
+		coveragePercent: '0.0',
+		completedCycles: 0,
+		theoreticalSlots: 288,
+		firstAttemptSuccesses: 0,
+		retryRecoveries: 0,
+		finalFailures: 0,
+		averageTtftMs: null,
+		p50TtftMs: null,
+		p95TtftMs: null,
+		lastSampledAt: null,
+		probeModel: null,
+		probeProtocol: null,
+		probeEnvironment: null,
+		probeEnvironmentLabel: null,
+		probeModelChangedAt: null,
+		accumulatingSamples: false,
+		hourlyBuckets: hours.map(bucket),
+		cost: {
+			knownBaseCostUsd: '0',
+			knownRetryCostUsd: '0',
+			projectedDailyCostUsd: '',
+			hasUnknownUsage: false,
+			knownUsageSamples: 0,
+		},
+		successRatePercent: null,
+		successfulSamples: 0,
+		totalSamples: 0,
+		samples: hours.map(slot),
+	}
 }
 
 export async function getMyApiServices(salesView: ApiServiceSalesView = 'active') {
@@ -2988,6 +3484,11 @@ export async function getMyApiServices(salesView: ApiServiceSalesView = 'active'
   )
 }
 
+export async function getMyApiServicesPage(salesView: ApiServiceSalesView = 'active', page: CursorPageRequest = {}): Promise<CursorPage<OwnerApiService>> {
+  if (shouldUseRealBackend()) return backendOwnerAPIServicesPage(salesView, page)
+  return paginateCursorItems(await getMyApiServices(salesView), page)
+}
+
 export async function getMyApiServiceById(id: string) {
   if (shouldUseRealBackend()) return backendOwnerAPIServiceById(id)
   await wait()
@@ -2997,7 +3498,7 @@ export async function getMyApiServiceById(id: string) {
 export async function getMyProfile() {
   if (shouldUseRealBackend()) return backendMyProfile()
   await wait()
-  return clone(myUserProfileStore)
+  return clone(syncMockProfileIdentity())
 }
 
 export async function updateMyProfile(payload: UpdateMyProfileRequest) {
@@ -3068,6 +3569,7 @@ export async function uploadMyAvatarMock(file: File) {
 }
 
 export async function deleteCustomAvatar() {
+  if (shouldUseRealBackend()) return backendUseLinuxDoAvatar()
   await wait()
   myUserProfileStore = {
     ...myUserProfileStore,
@@ -3080,6 +3582,7 @@ export async function deleteCustomAvatar() {
 }
 
 export async function useLinuxDoAvatar() {
+  if (shouldUseRealBackend()) return backendUseLinuxDoAvatar()
   await wait()
   myUserProfileStore = {
     ...myUserProfileStore,
@@ -3212,13 +3715,7 @@ export async function getPublicMerchantProfile(username: string) {
   await wait()
   const profile = publicMerchantProfiles.find(item => item.username === username)
   if (!profile) return null
-  return clone({
-    profile,
-    services: apiServiceStore.filter(item => item.merchantUsername === username && isApiServicePubliclyOrderable(item) && canOpenApiMerchantProfile(item)),
-    completions: publicCompletionRecords.filter(item => item.username === username),
-    reviews: publicReviewsForProfile(username),
-    disputes: publicDisputeRecords.filter(item => item.username === username),
-  })
+	  return clone(profile)
 }
 
 export async function getPublicUserProfile(username: string) {
@@ -3231,9 +3728,41 @@ export async function getPublicUserProfile(username: string) {
   return clone({
     profile: sanitizePublicUserProfile(profile),
     reputations: reputation.reputations,
-    carpools: carpoolStore.filter(item => item.owner === username && item.status === '可上车'),
-    services: apiServiceStore.filter(item => item.merchantUsername === username && isApiServicePubliclyOrderable(item) && canOpenApiMerchantProfile(item)),
-    completions: publicCompletionRecords.filter(item => item.username === username),
+	    carpools: carpoolStore
+	      .filter(item => item.owner === username && item.status === '可上车')
+	      .slice(0, 6)
+	      .map(item => ({
+	        id: item.id,
+	        title: item.product,
+	        summary: item.accessArrangementNote ?? item.warranty,
+	        regionName: item.region,
+	        priceMonthlyCny: String(item.monthly),
+	        availableSeats: Math.max(0, item.maxMembers - item.currentConfirmedMembers),
+	        updatedAt: item.confirmedAt,
+	      })),
+	    services: apiServiceStore
+	      .filter(item => item.merchantUsername === username && item.merchantIdentityMode === 'public_profile' && isApiServicePubliclyOrderable(item))
+	      .slice(0, 6)
+	      .map(item => ({
+	        id: item.id,
+	        title: item.title,
+	        shortDescription: item.merchantNote,
+	        billingMode: item.billingMode,
+	        availableUsdAllowance: item.availableUsdAllowance ?? '',
+	        usageVisibility: item.usageVisibility,
+	        refundCommitment: Boolean(item.merchantRefundCommitment),
+	        updatedAt: item.serviceUpdatedAt ?? item.lastOnlineConfirmedAt,
+	      })),
+	    completions: publicCompletionRecords
+	      .filter(item => item.username === username)
+	      .slice(0, 10)
+	      .map(item => ({
+	        id: item.id,
+	        kind: item.serviceType.includes('API') ? 'api_order' as const : 'carpool' as const,
+	        title: item.serviceType,
+	        role: 'buyer' as const,
+	        completedAt: item.date,
+	      })),
     reviews: publicReviewsForProfile(username),
     disputes: publicDisputeRecords.filter(item => item.username === username),
   })
@@ -3273,7 +3802,7 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
     orderType: 'carpool_application',
     orderId: applicationId,
     sellerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: `https://linux.do/u/${application.ownerUsername}/messages/new` },
+      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: linuxDoProfileSummaryUrl(application.ownerUsername) },
     ],
     buyerContacts: [],
     contactWindowEndsAt: application.reservedUntil,
@@ -3385,6 +3914,7 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     status: order.status,
     disputeStatus: order.disputeStatus,
     disputeCaseId: order.disputeCaseId,
+    catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitle,
     selectedPackageId: order.selectedPackageId,
     selectedPackageSnapshot: order.packageSnapshot ? JSON.stringify(order.packageSnapshot) : undefined,
@@ -3416,6 +3946,29 @@ export async function getAdminApiOrderById(id: string): Promise<AdminApiOrderDet
   await wait()
   materializeMockApiOrderReviews()
   return clone(projectMockAdminApiOrder(findApiOrder(id)))
+}
+
+export async function resolveAdminApiOrderCatalogRiskHold(
+  id: string,
+  action: 'restore' | 'refund-pending' | 'open-dispute',
+  resolutionNote: string,
+  version: number,
+): Promise<AdminApiOrderDetail> {
+  if (shouldUseRealBackend()) return backendResolveAdminAPIOrderCatalogRiskHold(id, action, resolutionNote, version)
+  await wait()
+  const order = findApiOrder(id)
+  if (!order.catalogRiskHold || order.catalogRiskHold.status !== 'active' || order.catalogRiskHold.version !== version) {
+    throw new Error('该订单没有可处置的目录风险暂停，或版本已变化。')
+  }
+  order.catalogRiskHold = {
+    ...order.catalogRiskHold,
+    status: action === 'restore' ? 'restored' : action === 'refund-pending' ? 'refund_pending' : 'dispute_opened',
+    resolutionNote: resolutionNote.trim(),
+    resolvedAt: new Date().toISOString(),
+    version: version + 1,
+  }
+  persistApiOrderStore()
+  return clone(projectMockAdminApiOrder(order))
 }
 
 function withAdminRowLinks(rows: AdminRow[]) {
@@ -3508,15 +4061,16 @@ function mockAdminUserSummary() {
 }
 
 function mockAdminUserActions(item: AdminUser): AdminUserDetail['availableActions'] {
-  const transitions: Record<AdminUserStatus, AdminUserStatus[]> = {
-    active: ['suspended', 'banned', 'archived'],
-    suspended: ['active', 'banned', 'archived'],
-    banned: ['active', 'archived'],
-    archived: ['active'],
+	type MutableAdminUserStatus = 'active' | 'suspended' | 'banned'
+	const transitions: Record<AdminUserStatus, MutableAdminUserStatus[]> = {
+		active: ['suspended', 'banned'],
+		suspended: ['active', 'banned'],
+		banned: ['active'],
+		archived: [],
   }
   const activeAdminCount = adminUserMockStore.filter(user => user.isAdmin && user.accountStatus === 'active').length
   const statusActions: AdminUserDetail['availableActions'] = transitions[item.accountStatus].map(targetStatus => {
-    const action = targetStatus === 'active' ? 'restore' : targetStatus === 'suspended' ? 'suspend' : targetStatus === 'banned' ? 'ban' : 'archive'
+		const action = targetStatus === 'active' ? 'restore' : targetStatus === 'suspended' ? 'suspend' : 'ban'
     const lastActiveAdmin = item.isAdmin && item.accountStatus === 'active' && activeAdminCount <= 1
     return {
       action,
@@ -3628,8 +4182,12 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserDetai
 export async function updateAdminUserStatus(input: {
   userId: string
   version: number
-  status: AdminUserStatus
+	status: 'active' | 'suspended' | 'banned'
   reason: string
+	publicReason?: string
+	internalNote?: string
+	expiresAt?: string
+	isIndefinite?: boolean
 }): Promise<AdminUserDetail> {
   if (shouldUseRealBackend()) return backendUpdateAdminUserStatus(input)
   await wait()
@@ -3681,6 +4239,30 @@ export async function updateAdminUserPermission(input: {
   return mockAdminUserDetail(item)
 }
 
+function mapMockAdminAPIOrder(item: ApiOrder): AdminRow {
+  return {
+    id: item.id,
+    primary: `${item.serviceTitle} API 订单`,
+    secondary: `${item.orderNo} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
+    owner: `${item.seller} / 买家 ${item.buyer}`,
+    status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
+    risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
+    targetType: 'api-order',
+    targetTo: `/admin/api-orders/${item.id}`,
+    detailItems: [
+      { label: '订单号', value: item.orderNo },
+      { label: '订单状态', value: item.status },
+      { label: 'API 服务 ID', value: item.apiServiceId },
+      { label: '买家用户 ID', value: item.buyerId },
+      { label: '商户用户 ID', value: item.sellerId },
+      { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
+      { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
+      { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
+      { label: '最近更新', value: item.updatedAt },
+    ],
+  }
+}
+
 export async function getAdminSectionRows(section: AdminSection): Promise<AdminRow[]> {
   await wait()
 
@@ -3710,6 +4292,10 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
 
   if (shouldUseRealBackend() && section === 'trade-intents') {
     return backendAdminAPIOrderRows()
+  }
+
+  if (shouldUseRealBackend() && section === 'logs') {
+    return backendAdminAuditLogRows()
   }
 
   function apiServiceAdminTargetLink(item: ApiService) {
@@ -3761,7 +4347,11 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       owner: canOpenApiMerchantProfile(item)
         ? `${getApiMerchantDisplayName(item)} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`
         : `${getApiMerchantDisplayName(item)} → ${item.merchantUsername} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
-      status: item.online ? '在线' : '离线',
+      status: item.state === 'reviewing'
+        ? '待处理'
+        : item.state === 'paused'
+          ? item.warning === '已下架' ? '已下架' : '暂停'
+          : item.online ? '在线' : '已通过',
       risk: item.unresolvedDisputes === null ? '纠纷数据暂无' : item.unresolvedDisputes > 0 ? `${item.unresolvedDisputes} 个未解决纠纷` : item.warranty,
       targetType: 'api-service',
       targetTo: apiServiceAdminTargetLink(item),
@@ -3776,23 +4366,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
 
   if (section === 'trade-intents') {
     materializeMockApiOrderReviews()
-    return withAdminRowLinks(apiOrderStore.map(item => ({
-      id: item.id,
-      primary: `${item.serviceTitle} API 订单`,
-      secondary: `${item.orderNo} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
-      owner: `${item.seller} / 买家 ${item.buyer}`,
-      status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
-      risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
-      targetType: 'api-order',
-      targetTo: `/admin/api-orders/${item.id}`,
-      detailItems: [
-        { label: '订单号', value: item.orderNo },
-        { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
-        { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
-        { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
-        { label: '最近更新', value: item.updatedAt },
-      ],
-    })))
+    return withAdminRowLinks(apiOrderStore.map(mapMockAdminAPIOrder))
   }
 
   if (section === 'feedback') {
@@ -3833,6 +4407,138 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       { label: '请求追踪', value: `trace-${item.id}` },
     ],
   })))
+}
+
+export type AdminSectionPageFilters = {
+  q?: string
+  view?: 'public' | 'exceptions'
+  activeStatus?: string
+  risk?: 'all' | 'high' | 'has_note'
+  action?: string
+  targetType?: string
+  actorUserId?: string
+  targetId?: string
+  orderStatus?: ApiOrderStatus | 'all'
+  orderDateRange?: 'all' | 'today' | '7d' | '30d'
+  orderBuyerId?: string
+  orderSellerId?: string
+  orderServiceId?: string
+  orderDispute?: 'all' | 'active' | 'none'
+  orderMinAmount?: string
+  orderMaxAmount?: string
+  orderSort?: 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
+}
+
+function adminSectionBackendStatuses(section: AdminSection, activeStatus: string | undefined) {
+  if (!activeStatus || activeStatus === '全部') return undefined
+  if (section === 'carpools') {
+    if (activeStatus === '待处理') return ['pending_review', 'paused']
+    if (activeStatus === '需复核') return ['changes_requested']
+  }
+  if (section === 'api-services') {
+    if (activeStatus === '待处理') return ['pending', 'suspended']
+    if (activeStatus === '需复核') return ['changes_requested']
+  }
+  return undefined
+}
+
+function filterAdminSectionPageRows(rows: AdminRow[], filters: AdminSectionPageFilters) {
+  const query = filters.q?.trim().toLowerCase()
+  return rows.filter((row) => {
+    const viewMatched = !filters.view
+      || (filters.view === 'public' && (row.targetType === 'carpool' ? !isCarpoolExceptionStatus(row.status) : isApiServicePublicStatus(row.status)))
+      || (filters.view === 'exceptions' && (row.targetType === 'carpool' ? isCarpoolExceptionStatus(row.status) : isApiServiceExceptionStatus(row.status)))
+    const statusMatched = !filters.activeStatus || filters.activeStatus === '全部'
+      || (filters.activeStatus === '待处理' && (row.targetType === 'carpool' ? isCarpoolAdminActionStatus(row.status) : isApiServiceAdminActionStatus(row.status)))
+      || (filters.activeStatus === '需复核' && row.status.includes('复核'))
+      || row.status === filters.activeStatus
+    const riskText = `${row.risk} ${row.status}`
+    const riskMatched = !filters.risk || filters.risk === 'all'
+      || filters.risk === 'has_note' && Boolean(row.risk.trim())
+      || filters.risk === 'high' && /高风险|纠纷|举报|封禁|异常|超时|未解决|危险/i.test(riskText)
+    return viewMatched && statusMatched && riskMatched
+      && (!query || [row.id, row.primary, row.secondary, row.owner, row.status, row.risk, ...(row.detailItems ?? []).flatMap(item => [item.label, item.value])]
+        .some(value => value.toLowerCase().includes(query)))
+  })
+}
+
+function adminSectionAPIOrderFilters(filters: AdminSectionPageFilters): ApiOrderFilters {
+  const minAmount = normalizeMockAdminOrderAmount(filters.orderMinAmount, '最小金额')
+  const maxAmount = normalizeMockAdminOrderAmount(filters.orderMaxAmount, '最大金额')
+  if (minAmount && maxAmount && compareDecimal(minAmount, maxAmount) > 0) {
+    throw new Error('最大金额不能小于最小金额。')
+  }
+  return {
+    search: filters.q,
+    status: filters.orderStatus && filters.orderStatus !== 'all' ? filters.orderStatus : undefined,
+    dateRange: filters.orderDateRange,
+    buyerId: filters.orderBuyerId?.trim() || undefined,
+    sellerId: filters.orderSellerId?.trim() || undefined,
+    serviceId: filters.orderServiceId?.trim() || undefined,
+    dispute: filters.orderDispute,
+    minAmount,
+    maxAmount,
+    sort: filters.orderSort ?? 'updated_desc',
+  }
+}
+
+function normalizeMockAdminOrderAmount(value: string | undefined, label: string) {
+  const normalized = value?.trim()
+  if (!normalized) return undefined
+  if (!/^[0-9]+(?:\.[0-9]+)?$/.test(normalized)) {
+    throw new Error(`${label}必须是非负十进制数。`)
+  }
+  return normalized
+}
+
+export function paginateMockAdminAPIOrderRows(rows: AdminRow[], page: CursorPageRequest, sort: NonNullable<AdminSectionPageFilters['orderSort']>) {
+  const limit = Math.min(100, Math.max(1, page.limit ?? 20))
+  const match = page.cursor?.match(/^mock:api-orders:([a-z_]+):(\d+)$/)
+  if (page.cursor && (!match || match[1] !== sort)) throw new Error('分页 cursor 无效。')
+  const offset = match ? Number(match[2]) : 0
+  if (!Number.isSafeInteger(offset)) throw new Error('分页 cursor 无效。')
+  const end = Math.min(rows.length, offset + limit)
+  return {
+    items: rows.slice(offset, end),
+    nextCursor: end < rows.length ? `mock:api-orders:${sort}:${end}` : undefined,
+  }
+}
+
+export async function getAdminSectionRowsPage(section: AdminSection, filters: AdminSectionPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
+  const statuses = adminSectionBackendStatuses(section, filters.activeStatus)
+  if (shouldUseRealBackend() && section === 'carpools') {
+    return backendAdminCarpoolRowsPage({ q: filters.q, view: filters.view, statuses, risk: filters.risk }, page)
+  }
+  if (shouldUseRealBackend() && section === 'api-services') {
+    return backendAdminAPIServiceRowsPage({ q: filters.q, view: filters.view, statuses, risk: filters.risk }, page)
+  }
+  if (shouldUseRealBackend() && (section === 'official-prices' || section === 'price-leads')) {
+    return backendAdminOfficialPriceRowsPage({
+      q: filters.q,
+      none: filters.risk === 'high' || Boolean(filters.activeStatus && filters.activeStatus !== '全部'),
+    }, page)
+  }
+  if (shouldUseRealBackend() && section === 'trade-intents') {
+    return backendAdminAPIOrderRowsPage(adminSectionAPIOrderFilters(filters), page)
+  }
+  if (shouldUseRealBackend() && section === 'logs') {
+    return backendAdminAuditLogRowsPage({
+      search: filters.q,
+      action: filters.action,
+      targetType: filters.targetType,
+      actorUserId: filters.actorUserId,
+      targetId: filters.targetId,
+    }, page)
+  }
+  if (shouldUseRealBackend()) {
+    throw new Error(`管理模块 ${section} 未配置服务端分页适配器。`)
+  }
+  if (section === 'trade-intents') {
+    const orderFilters = adminSectionAPIOrderFilters(filters)
+    const rows = filterApiOrders(orderFilters).map(mapMockAdminAPIOrder)
+    return paginateMockAdminAPIOrderRows(rows, page, filters.orderSort ?? 'updated_desc')
+  }
+  return paginateCursorItems(filterAdminSectionPageRows(await getAdminSectionRows(section), filters), page)
 }
 
 function stringValue(value: unknown, fallback = '') {
@@ -3891,8 +4597,8 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (typeof payload.providesAdminAccount !== 'boolean') {
     throw new Error('请选择是否提供管理员账号。')
   }
-  if (!payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0 || !payload.monthlyQuotaAmount || payload.monthlyQuotaAmount <= 0) {
-    throw new Error('请填写有效的每周额度与每月额度。')
+  if (!payload.dailyQuotaAmount || payload.dailyQuotaAmount <= 0 || !payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0) {
+    throw new Error('请填写有效的每天额度与每周额度。')
   }
   if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
   if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
@@ -3930,6 +4636,13 @@ function apiDeliveryModes(value: unknown): ApiDeliveryMode[] {
   return modes.length ? modes : ['api_key_endpoint']
 }
 
+function apiModelProviderLabel(provider: string | undefined) {
+  if (provider === 'openai') return 'OpenAI'
+  if (provider === 'anthropic') return 'Anthropic'
+  if (provider === 'xai') return 'xAI'
+  return provider || '未标注供应商'
+}
+
 function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaultMultiplier: number): ApiService['modelPriceRows'] {
   const selected = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   return selected
@@ -3938,8 +4651,8 @@ function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaul
       const model = modelCatalog.find(row => row.id === item.modelId)
       return {
         modelId: model?.id ?? item.modelId ?? 'custom-model',
-        modelName: model?.displayName ?? item.modelId ?? '自定义模型',
-        provider: model?.provider === 'openai' ? 'OpenAI' : model?.provider === 'anthropic' ? 'Anthropic' : 'Other',
+        modelName: model?.name ?? item.modelId ?? '自定义模型',
+        provider: apiModelProviderLabel(model?.provider),
         officialInputPricePerMillion: model?.officialInputPricePerMillion ?? 0,
         officialCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion ?? null,
         officialOutputPricePerMillion: model?.officialOutputPricePerMillion ?? 0,
@@ -3996,16 +4709,16 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
   const monthly = payload.monthlyPriceCny ?? 0
+  const dailyQuotaAmount = payload.dailyQuotaAmount ?? 0
   const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? 0
-  const monthlyQuotaAmount = payload.monthlyQuotaAmount ?? 0
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
     region: regionName,
     monthly,
     serviceMultiplier: 1,
+    dailyQuotaAmount,
     weeklyQuotaAmount,
-    monthlyQuotaAmount,
     followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
     vpsRegion: payload.vpsRegion.trim() || null,
     supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
@@ -4060,6 +4773,23 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
 export async function submitApiService(payload: Record<string, unknown>) {
   if (shouldUseRealBackend()) return backendSubmitAPIService(payload)
   await wait()
+  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
+  const isPublish = payload.status === 'reviewing'
+	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
+		? payload.ownerContactMethodIds.map(value => String(value).trim()).filter(Boolean)
+		: []
+	if (new Set(ownerContactMethodIds).size !== ownerContactMethodIds.length) {
+		throw new Error('订单联系方式不能重复选择。')
+	}
+	const ownerContacts = ownerContactMethodIds.map(id => myContactMethodStore.find(contact => contact.id === id))
+	if (!ownerContactMethodIds.length || ownerContacts.some(contact => !contact || !contact.enabled || !contact.usageScopes.includes('api_merchant'))) {
+		throw new Error('请先在个人中心添加并选择至少一种可用的 API 订单联系方式。')
+	}
+  const probeConnectionId = stringValue(payload.probeConnectionId, '')
+  const probeConnection = (await getOwnerAPIProbeConnections()).find(connection => connection.id === probeConnectionId)
+  if (isPublish && (!probeConnection || !probeConnection.enabled || probeConnection.verificationStatus !== 'verified')) {
+    throw new Error('请选择已验证且启用的探针连接。')
+  }
   const id = `api-${Date.now()}`
   const normalized = normalizeMerchantDisplayName(payload)
   const gateway = apiGatewayFromDistribution(payload.distributionSystem)
@@ -4068,15 +4798,13 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const models = selectedModels
     .filter(item => item.enabled !== false)
-    .map(item => modelCatalog.find(model => model.id === item.modelId)?.displayName ?? item.modelId ?? '自定义模型')
+    .map(item => modelCatalog.find(model => model.id === item.modelId)?.name ?? item.modelId ?? '自定义模型')
     .filter(Boolean)
   const merchantIdentityMode = apiMerchantIdentityMode(normalized.merchantIdentityMode)
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
-  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const rawPackages = Array.isArray(payload.packages)
     ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, quotaUsagePolicy?: unknown, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
     : []
-  const isPublish = payload.status === 'reviewing'
   const paymentOptions = Array.isArray(payload.paymentOptions)
     ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string, paymentQrCodeDataUrl?: string | null }>
     : []
@@ -4103,6 +4831,9 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
   const service: ApiService = {
     id,
+    version: 1,
+    probeConnectionId,
+    probeReady: Boolean(probeConnection?.enabled && probeConnection.verificationStatus === 'verified'),
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
     sourceUrl: stringValue(payload.sourceUrl, ''),
     quotaUsagePolicy,
@@ -4155,7 +4886,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     warranty: merchantRefundCommitment
       ? '商户退款承诺：订单有效期内符合规则时退还全部实付金额；平台不垫付、不代赔'
       : '无额外退款承诺，具体问题由双方站外协商；平台不担保、不代赔',
-    refundPolicy: merchantRefundCommitment ? 'api-merchant-refund-v1' : '无额外退款承诺',
+		refundPolicy: apiOrderPlatformTradeBoundary,
     accountPoolType,
     accountPoolLabel,
     merchantRefundCommitment,
@@ -4186,7 +4917,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
           serviceModelId: `service-${modelId}`,
           modelCatalogId: modelId,
           modelPriceVersionId: '',
-          modelName: model?.displayName ?? modelId,
+          modelName: model?.name ?? modelId,
           provider: model?.provider ?? 'other',
           merchantMultiplier: defaultMultiplier,
         }
@@ -4194,7 +4925,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     })),
     recommendationResponseMedianMinutes: null,
     serviceUpdatedAt: nowText(),
-    contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: `@${currentMerchantName}` }],
+		contactChannels: ownerContacts.flatMap(contact => contact ? [{ type: contact.type, label: contact.label, value: contact.displayValue }] : []),
     acceptedPaymentMethods: normalizedPaymentOptions.filter(option => option.enabled).map(option => option.paymentMethod),
   }
   apiServicePaymentSnapshotStore[id] = normalizeApiPaymentAccountSettings({
@@ -4202,6 +4933,11 @@ export async function submitApiService(payload: Record<string, unknown>) {
     paymentOptions: normalizedPaymentOptions,
   }).paymentOptions
   apiServiceStore.unshift(service)
+  updateMockAPIProbeConnectionReference({
+    connectionId: probeConnectionId,
+    serviceId: service.id,
+    serviceTitle: service.title,
+  })
   persistMarketStores()
   appendAdminAuditLog({
     actorType: 'system',
@@ -4224,11 +4960,46 @@ export async function publishApiService(id: string) {
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'offline') throw new Error('当前 API 服务不能上线。')
   requireSupportedApiServiceBillingMode(target.billingMode)
+  if (!target.probeConnectionId || !target.probeReady) throw new Error('上线前必须绑定已验证且启用的探针连接。')
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
   target.warning = undefined
   target.lastOnlineConfirmedAt = nowText()
+  persistMarketStores()
+  return clone(target)
+}
+
+export async function updateApiServiceProbeConnection(input: {
+  id: string
+  probeConnectionId: string
+  version: number
+}) {
+  if (shouldUseRealBackend()) return backendUpdateAPIServiceProbeConnection(input)
+  await wait()
+  const target = apiServiceStore.find(item => item.id === input.id)
+  if (!target) throw new Error('API 服务不存在。')
+  const currentVersion = target.version ?? 1
+  if (currentVersion !== input.version) throw new Error('API 服务已更新，请刷新后重试。')
+  const connection = input.probeConnectionId
+    ? (await getOwnerAPIProbeConnections()).find(item => item.id === input.probeConnectionId)
+    : null
+  if (input.probeConnectionId && (!connection || !connection.enabled || connection.verificationStatus !== 'verified')) {
+    throw new Error('只能绑定已验证且启用的探针连接。')
+  }
+  const previousConnectionId = target.probeConnectionId
+  target.probeConnectionId = connection?.id
+  target.probeReady = Boolean(connection)
+  target.version = currentVersion + 1
+  target.publiclyOrderable = Boolean(connection) && target.online
+  target.warning = connection ? undefined : '未绑定可用探针连接'
+  target.serviceUpdatedAt = nowText()
+  updateMockAPIProbeConnectionReference({
+    previousConnectionId,
+    connectionId: connection?.id,
+    serviceId: target.id,
+    serviceTitle: target.title,
+  })
   persistMarketStores()
   return clone(target)
 }
@@ -4255,6 +5026,7 @@ export async function resumeApiService(id: string) {
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'paused') throw new Error('当前 API 服务不能恢复。')
   requireSupportedApiServiceBillingMode(target.billingMode)
+  if (!target.probeConnectionId || !target.probeReady) throw new Error('恢复接单前必须绑定已验证且启用的探针连接。')
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
@@ -4673,11 +5445,11 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     admin: null,
   }
 
-  if (myUserProfileStore.permissions.includes('admin')) {
+  if (hasCapability(syncMockProfileIdentity(), CAPABILITY.adminAccess)) {
     const admin = {
       officialPrices: officialPriceStore.filter(item => item.status === '待验证').length,
-      carpools: carpoolStore.filter(item => item.status === '审核中').length,
-      apiServices: apiServiceStore.filter(item => item.state === 'reviewing').length,
+      carpools: carpoolStore.filter(item => item.status === '审核中' || item.status === '暂停').length,
+      apiServices: apiServiceStore.filter(item => item.state === 'reviewing' || (item.state === 'paused' && item.warning === '已下架')).length,
       feedbackTickets: feedbackTicketStore.filter(item => item.status === 'submitted' || item.status === 'following_up').length,
       reports: reportRows.filter(item => !item.status.includes('关闭') && !item.status.includes('需要补充')).length
         + appealRows.filter(item => item.status === '申诉复核中').length,
@@ -4851,6 +5623,11 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
       const ownReviewerRole = currentIsBuyer ? 'buyer' as const : 'seller' as const
       const ownRevieweeRole = currentIsBuyer ? 'seller' as const : 'buyer' as const
       const rows: ReviewCenterRow[] = []
+      const allowedTags = mockReviewTags.filter(tag => (
+        ['smooth_comm', 'quick_response', 'clear_rules', 'good_coop', 'slow_response', 'hard_to_comm', 'late_change'].includes(tag.code)
+        || (ownReviewerRole === 'buyer' && ['true_desc', 'good_aftercare', 'desc_diff'].includes(tag.code))
+        || (ownReviewerRole === 'seller' && ['quick_payment', 'quick_confirm', 'clear_needs', 'kept_agreement'].includes(tag.code))
+      ))
 
       if (ownReview) {
         rows.push({
@@ -4865,7 +5642,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownRevieweeRole,
           status: published ? 'published' : 'sealed',
           visibility: published ? 'published' : 'sealed',
-          counterpartySubmitted: Boolean(counterpartyReview),
+          allowedTags,
           canCreate: false,
           canEdit: !published,
           rating: ownReview.rating,
@@ -4893,7 +5670,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownRevieweeRole,
           status: deadlinePassed ? 'expired' : 'reviewable',
           visibility: 'none',
-          counterpartySubmitted: Boolean(counterpartyReview),
+          allowedTags,
           canCreate: !deadlinePassed,
           canEdit: false,
           rating: null,
@@ -4910,7 +5687,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
         })
       }
 
-      if (counterpartyReview) {
+      if (counterpartyReview && published) {
         rows.push({
           id: `review-carpool-${item.id}-received`,
           transactionType: 'carpool_membership',
@@ -4923,7 +5700,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownReviewerRole,
           status: published ? 'published' : 'sealed',
           visibility: published ? 'published' : 'sealed',
-          counterpartySubmitted: true,
+          allowedTags: [],
           canCreate: false,
           canEdit: false,
           rating: published ? counterpartyReview.rating : null,
@@ -4943,7 +5720,16 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
     })
   return {
     items: clone(carpoolRows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
-    presetTags: ['沟通顺畅', '描述真实', '响应及时', '规则清晰', '付款及时', '确认及时', '交付清晰', '合作愉快', '响应较慢', '与描述不符'],
+    presetTags: mockReviewTags,
+  }
+}
+
+export async function getReviewCenterPage(direction: ReviewCenterRow['direction'] | undefined, page: CursorPageRequest = {}): Promise<CursorPage<ReviewCenterRow> & { presetTags: ReviewTag[] }> {
+  if (shouldUseRealBackend()) return backendReviewCenterPage(direction, page)
+  const center = await getReviewCenterRows()
+  return {
+    ...paginateCursorItems(center.items.filter(item => !direction || item.direction === direction), page),
+    presetTags: center.presetTags,
   }
 }
 
@@ -4972,10 +5758,20 @@ export async function getMyCarpoolApplications(filters: CarpoolApplicationFilter
   return clone(filterCarpoolApplications({ ...filters, buyerId: currentBuyerId, sort: filters.sort ?? 'default_buyer' }))
 }
 
+export async function getMyCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendMyCarpoolApplicationsPage(filters, page)
+  return paginateCursorItems(filterCarpoolApplications({ ...filters, buyerId: currentBuyerId, sort: filters.sort ?? 'default_buyer' }), page)
+}
+
 export async function getMerchantCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplications(filters)
   await wait()
   return clone(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }))
+}
+
+export async function getMerchantCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendMerchantCarpoolApplicationsPage(filters, page)
+  return paginateCursorItems(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }), page)
 }
 
 export async function getCarpoolApplicationById(id: string): Promise<CarpoolApplicationWithMeta | null> {
@@ -5461,6 +6257,7 @@ function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
   updater(order)
   order.updatedAt = nowText()
   order.version += 1
+	applyMockApiOrderAfterSales(order)
   persistApiOrderStore()
   return clone(order)
 }
@@ -5512,6 +6309,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes: 10,
     paymentExpiresAt: minutesFromNow(10),
+    buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intent.snapshot),
     selectedDeliveryMode: intent.selectedDeliveryMode,
@@ -5588,7 +6386,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       selectedDeliveryMode,
       status: 'closed',
       requiresFirstLoginPasswordReset: selectedDeliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
-      note: '限时额度包已直接生成订单。',
+      note: '限量额度包已直接生成订单。',
     },
     contactChannels: clone(service.contactChannels),
     buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],
@@ -5615,6 +6413,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes,
     paymentExpiresAt: minutesFromNow(paymentWindowMinutes),
+    buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intentSnapshot),
     selectedDeliveryMode,
@@ -5643,6 +6442,8 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       accountPoolLabel: service.accountPoolLabel,
       merchantRefundCommitment: service.merchantRefundCommitment,
       merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+			warranty: service.warranty,
+			refundPolicy: service.refundPolicy,
       serviceValidityExpiresAt: offer.expiresAt,
       performanceConfirmedAt: service.performanceConfirmedAt,
       performanceUnverified: true,
@@ -5691,10 +6492,20 @@ export async function getMyApiOrders(filters: ApiOrderFilters = {}) {
   return clone(filterApiOrders({ ...filters, buyerId: currentBuyerId }))
 }
 
+export async function getMyApiOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendMyAPIOrdersPage(filters, page)
+  return paginateCursorItems(filterApiOrders({ ...filters, buyerId: currentBuyerId }), page)
+}
+
 export async function getMerchantApiOrders(filters: ApiOrderFilters = {}) {
   if (shouldUseRealBackend()) return backendOwnerAPIOrders(filters)
   await wait()
   return clone(filterApiOrders({ ...filters, sellerId: currentMerchantId }))
+}
+
+export async function getMerchantApiOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendOwnerAPIOrdersPage(filters, page)
+  return paginateCursorItems(filterApiOrders({ ...filters, sellerId: currentMerchantId }), page)
 }
 
 export async function getApiOrderById(id: string, perspective: 'buyer' | 'merchant' = 'buyer') {
@@ -5732,6 +6543,8 @@ export async function submitApiOrderPayment(id: string, paymentSummary: string, 
     order.status = 'payment_submitted'
     order.paymentSummary = paymentSummary.trim()
     order.paymentSubmittedAt = nowText()
+    order.merchantConfirmDueAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    order.merchantConfirmOverdue = false
     order.paymentIssueReason = undefined
     order.paymentIssueNote = undefined
     order.paymentIssueReportedAt = undefined
@@ -5776,31 +6589,54 @@ export async function cancelApiOrder(id: string, reason: string, version: number
   return updated
 }
 
+export async function reportLateApiOrderPayment(id: string, note: string, version: number) {
+  if (shouldUseRealBackend()) return backendReportLateAPIOrderPayment(id, note, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'cancelled' || order.cancelReason !== 'payment_timeout') throw new Error('只能为付款超时取消的订单报告逾期付款。')
+    if (!order.canReportLatePayment) throw new Error('逾期付款报告窗口已结束。')
+    order.latePaymentStatus = 'reported'
+    order.latePaymentReportedAt = nowText()
+    order.latePaymentNote = note.trim() || undefined
+    order.canReportLatePayment = false
+  })
+}
+
 export async function confirmApiOrderComplete(id: string, version: number) {
   if (shouldUseRealBackend()) return backendConfirmAPIOrderComplete(id, version)
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (order.status !== 'delivery_submitted') throw new Error('只有待核验凭证的订单可以确认可用。')
-    if (order.disputeStatus === 'open') throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
+		if (isApiOrderDisputeActive(order.disputeStatus)) throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
     order.status = 'completed'
     order.completionSource = 'buyer_confirmed'
     order.completedAt = nowText()
   })
 }
 
-export async function openApiOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
-  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, reason, version, perspective)
+export async function openApiOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
+  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, input, version, perspective)
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
     if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
-    if (order.status === 'cancelled' || order.status === 'completed' || order.disputeStatus === 'open') {
+		applyMockApiOrderAfterSales(order)
+		if (!order.canOpenDispute) {
       throw new Error('当前订单不能再次申请平台介入。')
     }
-    if (!reason.trim()) throw new Error('请填写订单问题说明。')
-    order.disputeStatus = 'open'
+		if (order.status === 'completed' && !input.issueOccurredAt) throw new Error('请选择问题实际发生时间。')
+		if (input.issueOccurredAt) {
+			const occurredAt = Date.parse(input.issueOccurredAt)
+			const validityExpiresAt = mockApiOrderValidityExpiresAt(order)
+			const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
+			if (!Number.isFinite(occurredAt) || occurredAt > Date.now()) throw new Error('问题发生时间不正确。')
+			if (Number.isFinite(validityTimestamp) && occurredAt > validityTimestamp) throw new Error('问题必须发生在所购服务有效期内。')
+		}
+    if (!input.reason.trim()) throw new Error('请填写订单问题说明。')
+    order.disputeStatus = 'negotiating'
   })
 }
 
@@ -5813,6 +6649,9 @@ export async function confirmApiOrderPayment(id: string, version: number) {
     if (order.status !== 'payment_submitted') throw new Error('只有买家已付款订单可以确认收款。')
     const confirmedAt = nowText()
     order.paidConfirmedAt = confirmedAt
+    const deliveryMinutes = order.quotaSnapshot?.deliveryEtaMinutes ?? 10
+    order.deliveryDueAt = new Date(Date.parse(confirmedAt) + deliveryMinutes * 60 * 1000).toISOString()
+    order.deliveryOverdue = false
     order.packageStockReserved = false
     if (order.purchaseKind !== 'limited_quota_offer' || order.quotaSnapshot?.deliveryMode !== 'preimported') {
       order.status = 'paid_confirmed'
@@ -5859,6 +6698,18 @@ export async function reportApiOrderPaymentIssue(id: string, reason: ApiOrderPay
     order.paymentIssueReason = reason
     order.paymentIssueNote = note.trim() || undefined
     order.paymentIssueReportedAt = nowText()
+  })
+}
+
+export async function resolveLateApiOrderPayment(id: string, status: Exclude<ApiOrderLatePaymentStatus, 'reported'>, note: string, version: number) {
+  if (shouldUseRealBackend()) return backendResolveLateAPIOrderPayment(id, status, note, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.latePaymentStatus !== 'reported') throw new Error('当前没有待处理的逾期付款报告。')
+    order.latePaymentStatus = status
+    order.latePaymentNote = note.trim() || order.latePaymentNote
+    order.latePaymentResolvedAt = nowText()
   })
 }
 

@@ -1,7 +1,7 @@
 # Limited API Quota Offer Frontend Contract
 
 Date: 2026-07-19
-Updated: 2026-08-04
+Updated: 2026-08-14
 Author: Codex
 
 ## Scenario: Quota Offer Market, Purchase, And Owner Management
@@ -49,6 +49,7 @@ URL contract:
 
 - `ApiMarketPage` owns two peer tabs: `limited` and `free`. Distribution system, `1.00x`, and orderability are filters inside the limited view, not primary navigation.
 - The market header and limited-offer empty state expose `发布限时额度包` and route to `/my/api-services?intent=quota`. Do not discard the intent, route directly to the generic API service publish form, or create a second quota publish domain.
+- Generic and rush publication pages query seller orders with `dispute=active` before the final write. They always state upfront that unresolved API-order disputes prevent publishing/restoring services and quota and prevent new orders; loading/error/active states disable the final publish action, while the backend remains authoritative.
 - The account-recovery guard preserves the complete `returnTo=/my/api-services?intent=quota` target. `MyCenterPage` names the blocked action and exposes `继续发布限时额度包` after setup instead of a generic profile-page continuation.
 - `MyApiServicesPage` is the seller selection step: quota intent changes the heading to `选择 API 服务`; existing rows expose `选择并发布额度包` and deep-link to `/my/api-services/{id}#quota-offers`. When no service exists, the empty state explains the prerequisite and links to `/api-market/new?after=quota`.
 - `ApiServicePublishPage` reads `after=quota`. Successful prerequisite creation routes to `/my/api-services/{newServiceId}#quota-offers`; ordinary service publishing still returns to `/my/api-services`.
@@ -63,6 +64,7 @@ URL contract:
 - The generic publisher has no separate confirmation step or repeated seller checklist. Completed configuration steps remain revisitable, the adjacent buyer preview is the only review surface, and the sticky action bar shows completeness plus the final publish action on step three. Below the desktop-preview breakpoint, that final action bar also exposes the shared preview dialog without creating another preview tree. Final publication validates the complete form and returns focus to the first error-owning step.
 - The shared free-quota marketplace card shows one or two model tags directly. For three or more models it shows the first two tags plus `+N`, while the subtitle states the distribution system and total supported-model count. The full model list remains on the service detail page. Publish-preview purchase controls remain visually primary but are non-interactive and visibly labeled `预览状态，不可操作`.
 - `ApiQuotaRushPublishPage` begins with `选择要发布额度的 API 服务` and a compact `我的 API 服务` list. `新建 API 服务` is a secondary action and must not be a peer tab beside service selection.
+- Contact selectors show the account-bound linux.do method at most once and may show manual WeChat/email channels separately. Buyer order, purchase-intent, carpool publish, and carpool-application adapters reuse the bound linux.do method returned by `/me/contact-methods`; they never POST a synthetic `@buyer` or `@owner` linux.do contact.
 - Existing-service rows show title, orderability, model summary, and a stable short service ID. The list has a bounded height with internal scrolling, and the selected row is repeated in a compact `当前服务` summary.
 - A `serviceId` query selects only that exact eligible service. If it is missing or no longer orderable, show the explicit unavailable state and never select a different service.
 - New-service mode is a subordinate state with `返回选择服务`. After creation, return to the workflow with the new service selected. Copy and quota drafts survive every switch between the list, new-service mode, and payment dialog.
@@ -213,14 +215,15 @@ createApiQuotaOrder({ offerId, saleRoundId })
 
 ### 3. Contracts
 
-- Render the `09:00`, `13:00`, and `20:00` sessions from the server response. Do not build Beijing dates or infer the seven-day range in the browser.
+- Render the daily `20:00` sessions from the server response. Do not build Beijing dates or infer the seven-day range in the browser.
 - Select the active session first, otherwise the next non-ended session. After all sessions for the first returned date end, preview the next date and derive its heading from the selected slot.
 - Compute a display-only clock offset from `serverNow`. When the selected slot reaches start or end, refetch both slots and slot-filtered offers before changing purchase authority.
 - Only `isOrderable=true` enables `立即抢购 ¥xx`. One click creates the existing quota order with the current round ID and navigates to payment; pending state keeps the button dimensions stable and prevents duplicate submission.
 - The three-step seller wizard selects or creates an eligible API service, configures one offer, then selects a `registration_open` slot and an absolute expiry. It uses the existing API service field components and the atomic rush publication endpoint.
-- The three-step seller wizard follows the shared progressive contract without merging its business state into the free-amount form: step one owns service selection/creation, step two owns the package and CSV draft, and step three owns slot/expiry plus final atomic publication. Back/edit navigation changes only the current step and must retain `rush`, slot, expiry, and selected-file state.
+- The three-step seller wizard follows the shared progressive contract without merging its business state into the free-amount form: step one owns service selection/creation, step two owns the manual-delivery package draft, and step three owns slot/expiry plus final atomic publication. Back/edit navigation changes only the current step and must retain `rush`, slot, and expiry state.
 - When the first open slot arrives asynchronously, default expiry must be initialized from that selected slot immediately. Expiry shortcuts still produce an absolute Beijing input and must satisfy slot end plus one hour.
-- Manual delivery is the default and hides CSV controls. Pre-imported delivery expands one template/file input and requires the parsed row count to cover `copies`.
+- New rush publication is manual-delivery only and limits `copies` to `1..10`. Historical pre-imported offers remain readable, but the wizard must not expose CSV or credential fields.
+- The owner manager shows fulfillment confirmation for unconfirmed system rounds. It must keep the action visible and let the server accept or reject the `[startsAt-30m, startsAt)` window; client time is display-only.
 - `复制再发` may copy only service ID, name, USD allowance, CNY price, multiplier, delivery mode, and delivery ETA. It must not copy copies, slot key, expiry, or CSV.
 - The advanced owner manager remains available. For a locked system-slot batch, keep owner pause/archive actions disabled with the lock reason and let the backend remain authoritative if state changes after render.
 
@@ -231,7 +234,8 @@ createApiQuotaOrder({ offerId, saleRoundId })
 | Slot query is loading or fails | Show stable loading/error state; do not synthesize slots |
 | No `registration_open` slot | Disable publication and explain that no session accepts registration |
 | Expiry is earlier than slot end plus one hour | Disable publication and show the absolute minimum |
-| Pre-imported CSV rows are fewer than copies | Disable publication; keep user input for correction |
+| Copies are outside `1..10` | Disable publication and preserve the entered package fields |
+| Unconfirmed system round | Show confirmation state/action; public purchase remains disabled until the server returns orderable |
 | Countdown reaches a boundary | Refetch authoritative slot and offer data once for that boundary |
 | Purchase is pending | Disable the fixed-size offer button and ignore repeat clicks |
 | Purchase returns a quota Problem Details code | Show the mapped message and refresh session data |
@@ -239,17 +243,18 @@ createApiQuotaOrder({ offerId, saleRoundId })
 
 ### 5. Good / Base / Bad Cases
 
-- Good: the market opens on an active `13:00` session, shows a tabular `HH:MM:SS` countdown, and directly creates one order after a single click.
+- Good: the market opens on an active `20:00` session, shows a tabular `HH:MM:SS` countdown, and directly creates one order after a single click.
 - Good: copying a scheduled `$100` offer preserves pricing and delivery settings, while copies remain `10` and slot/expiry are freshly selected.
+- Good: at `19:29` the seller can still see the confirmation action; a server rejection explains that the window has not opened instead of the UI silently hiding the workflow.
 - Base: a seller with no eligible service creates the prerequisite service inside step one and resumes the same wizard.
 - Bad: the browser enables purchase merely because its local countdown reached zero.
 - Bad: a copy URL carries old `copies`, `slotKey`, `expiresAt`, or raw CSV data.
 
 ### 6. Tests Required
 
-- Vitest: default/active/tomorrow session selection, dynamic heading, server clock offset, boundary refetch, one-click purchase, pending deduplication, Problem Details mapping, wizard prerequisites, conditional CSV, immediate default expiry, and copy-field allowlist.
+- Vitest: default/active/tomorrow 20:00 session selection, dynamic heading, server clock offset, boundary refetch, one-click purchase, pending deduplication, Problem Details mapping, wizard prerequisites, 10-copy validation, immediate default expiry, confirmation action/state, and copy-field allowlist.
 - Type/build: `pnpm --dir frontend typecheck`, then run `pnpm --dir frontend build` with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
-- Browser: `1440x900` and `390x844`; assert three tabs, fixed countdown/button dimensions, enabled valid publication, conditional CSV, no application console errors, and no page-level horizontal overflow.
+- Browser: `1440x900` and `390x844`; assert the 20:00 session, fixed countdown/button dimensions, enabled valid manual publication, confirmation state, no application console errors, and no page-level horizontal overflow.
 
 ### 7. Wrong vs Correct
 
@@ -257,6 +262,7 @@ createApiQuotaOrder({ offerId, saleRoundId })
 
 ```ts
 if (countdown.value === '00:00:00') offer.isOrderable = true
+if (deviceNow >= confirmationOpensAt) showConfirmButton = true
 const copied = { ...oldOffer, copies: oldCopies, slotKey: oldSlot, expiresAt: oldExpiry }
 ```
 
@@ -291,6 +297,12 @@ The server owns orderability and timing; copy drafts carry stable editable comme
 type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
 
 type ApiPurchaseOrder = {
+  merchantConfirmDueAt?: string
+  merchantConfirmOverdue: boolean
+  deliveryDueAt?: string
+  deliveryOverdue: boolean
+  latePaymentStatus?: 'reported' | 'not_received' | 'received_refund_pending'
+  canReportLatePayment: boolean
   deliveryReviewExpiresAt?: string
   completionSource?: ApiOrderCompletionSource
 }
@@ -310,6 +322,10 @@ getAdminApiOrder(id: string): Promise<AdminApiOrder>
 - The shared timeline keeps the same fulfillment events while role wording changes. Buyer pending badges may include `delivery_submitted`; seller pending badges must not.
 - Credential access remains available to participants after either completion source. Seller delivery remains immutable and the UI must not offer resubmission or editing.
 - Admin detail shows buyer/seller IDs, frozen commercial data, event times, deadline, completion source, and a dispute link when present. It renders no raw credential, payment/contact value, or participant contact detail.
+- Payment, merchant-confirmation, delivery, and review deadlines come from the order DTO. Device time may animate a countdown but never authorizes an action or synthesizes an overdue state.
+- While `pending_payment`, buyer detail persistently states that an off-platform transfer does not update the order and that the buyer must click `我已完成付款` before the deadline.
+- A cancelled buyer order shows `我已发生逾期付款` only when `canReportLatePayment=true`. Seller detail shows a resolution action only for `latePaymentStatus=reported`; both views state that reporting cannot restore the order, stock, or rush eligibility.
+- New dispute controls omit `continue_fulfillment`. The shared read-only label remains so historical disputes are explainable.
 
 ### 4. Validation & Error Matrix
 
@@ -321,17 +337,21 @@ getAdminApiOrder(id: string): Promise<AdminApiOrder>
 | `completionSource=buyer_confirmed` | Show buyer-confirmed completion copy |
 | `completionSource=auto_completed` | Show review-window-ended copy without endorsement semantics |
 | Deadline missing in `delivery_submitted` | Show stable state without fabricating a browser deadline |
+| `merchantConfirmOverdue=true` or `deliveryOverdue=true` | Show the matching server-projected overdue state and existing dispute entry; do not cancel or release inventory |
+| Timed-out cancellation has `canReportLatePayment=true` | Show report dialog; optional note contains no credential or full account data |
+| Seller sees `latePaymentStatus=reported` | Offer only `not_received` or `received_refund_pending` |
 | Admin response contains no credential | Render order facts only; never infer or request participant credential fields |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: buyer and seller open the same delivered order; the buyer sees two review actions and the seller sees a completed delivery with no task.
+- Good: an order cancelled for payment timeout exposes one late-payment report action for 24 hours, then renders the recorded seller outcome without implying refund completion.
 - Base: after automatic completion both participants can still read the delivered credential, while completion copy says the review window ended.
 - Bad: seller detail says `等待买家确认`, the browser starts a fresh 24-hour timer, or admin detail renders a credential/contact section.
 
 ### 6. Tests Required
 
-- Vitest asserts buyer/seller status copy, actions, pending-badge differences, deadline rendering, both completion-source labels, dispute entry, and admin credential/contact omission.
+- Vitest asserts buyer/seller status copy, actions, pending-badge differences, all server deadline/overdue projections, persistent transfer warning, late-payment report/resolution, both completion-source labels, new-dispute option filtering, historical dispute labels, and admin credential/contact omission.
 - Adapter tests assert real and mock projections preserve `deliveryReviewExpiresAt` and `completionSource` and never add credentials to admin rows/details.
 - Run full Vitest, Nuxt typecheck, and real-mode production build.
 - Browser-check buyer and seller at `1440x900` and `390x844`, administrator at `1440x900`, both buyer dialogs, no page-level horizontal overflow, and no relevant console errors.
@@ -342,6 +362,7 @@ getAdminApiOrder(id: string): Promise<AdminApiOrder>
 
 ```ts
 const deadline = addHours(order.deliverySubmittedAt, 24)
+const canReportLatePayment = order.cancelReason === 'payment_timeout' && deviceNow < addHours(order.cancelledAt, 24)
 const sellerNextStep = order.status === 'delivery_submitted' ? '等待买家确认' : ''
 ```
 
@@ -349,5 +370,6 @@ const sellerNextStep = order.status === 'delivery_submitted' ? '等待买家确�
 
 ```ts
 const deadline = order.deliveryReviewExpiresAt
+const canReportLatePayment = order.canReportLatePayment
 const sellerNextStep = order.status === 'delivery_submitted' ? '无需操作' : nextStepFor(order)
 ```

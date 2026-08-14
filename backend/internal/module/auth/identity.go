@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,8 +14,20 @@ import (
 
 const (
 	InitialAdminBootstrapKey = "initial-admin-v1"
+	minUsernameLength        = 3
 	maxUsernameLength        = 24
 )
+
+var reservedUsernames = map[string]struct{}{
+	"admin": {}, "administrator": {}, "root": {}, "system": {}, "support": {},
+	"staff": {}, "moderator": {}, "moderation": {}, "security": {}, "official": {},
+	"c2cmarket": {}, "c2c-market": {}, "c2c_market": {},
+	"api": {}, "auth": {}, "oauth": {}, "login": {}, "logout": {}, "register": {},
+	"signup": {}, "settings": {}, "profile": {}, "user": {}, "users": {},
+	"owner": {}, "merchant": {}, "merchants": {}, "marketplace": {}, "api-market": {},
+	"api_market": {}, "carpool": {}, "carpools": {}, "notifications": {},
+	"announcements": {}, "help": {}, "null": {}, "undefined": {},
+}
 
 type adminBootstrapRun struct {
 	UserID   string
@@ -38,8 +52,11 @@ func IsLinuxDoProvider(provider string) bool {
 
 func OAuthUsernameCandidate(rawUsername, provider, subject string, attempt int) string {
 	base := oauthUsernameBase(rawUsername)
-	if attempt <= 0 {
+	if attempt <= 0 && !IsReservedUsername(base) {
 		return truncateUsername(base, maxUsernameLength)
+	}
+	if attempt <= 0 {
+		attempt = 1
 	}
 
 	sum := sha256.Sum256([]byte(CanonicalOAuthProvider(provider) + "\x00" + CanonicalOAuthSubject(subject)))
@@ -56,6 +73,54 @@ func OAuthUsernameCandidate(rawUsername, provider, subject string, attempt int) 
 		base = "u"
 	}
 	return base + "-" + stableSuffix
+}
+
+func ValidatePublicUsername(value string) *domain.AppError {
+	if !publicUsernamePattern.MatchString(value) {
+		return UsernameInvalidError()
+	}
+	if IsReservedUsername(value) {
+		return UsernameUnavailableError()
+	}
+	return nil
+}
+
+func IsReservedUsername(value string) bool {
+	_, reserved := reservedUsernames[value]
+	return reserved
+}
+
+func ReservedUsernames() []string {
+	items := make([]string, 0, len(reservedUsernames))
+	for username := range reservedUsernames {
+		items = append(items, username)
+	}
+	sort.Strings(items)
+	return items
+}
+
+func UsernameInvalidError() *domain.AppError {
+	return domain.NewFieldError(
+		http.StatusUnprocessableEntity,
+		domain.CodeUsernameInvalid,
+		"Username invalid",
+		"用户名必须是 3-24 位小写字母、数字、下划线或连字符。",
+		"username",
+		"invalid",
+		"用户名必须是 3-24 位小写字母、数字、下划线或连字符。",
+	)
+}
+
+func UsernameUnavailableError() *domain.AppError {
+	return domain.NewFieldError(
+		http.StatusConflict,
+		domain.CodeUsernameUnavailable,
+		"Username unavailable",
+		"该用户名不可用，请选择其他用户名。",
+		"username",
+		"unavailable",
+		"该用户名不可用，请选择其他用户名。",
+	)
 }
 
 func AdminBootstrapConflictError() *domain.AppError {
@@ -106,3 +171,5 @@ func truncateUsername(value string, maxLength int) string {
 	}
 	return value[:maxLength]
 }
+
+var publicUsernamePattern = regexp.MustCompile(`^[a-z0-9_-]{3,24}$`)

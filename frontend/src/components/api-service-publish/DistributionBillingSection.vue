@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { AcceptableValue } from 'reka-ui'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,11 +16,11 @@ const emit = defineEmits<{
   setBilling: [value: BillingMode]
 }>()
 
-function setDistribution(value: AcceptableValue) {
+function setDistribution(value: unknown) {
   if (value === 'sub2api' || value === 'other') emit('setDistribution', value)
 }
 
-function setBilling(value: AcceptableValue) {
+function setBilling(value: unknown) {
   if (value === 'metered_credit' || value === 'fixed_package') emit('setBilling', value)
 }
 </script>

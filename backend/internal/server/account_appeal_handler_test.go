@@ -31,7 +31,7 @@ func TestAccountAppealOAuthUsesIsolatedFixedExpirySession(t *testing.T) {
 	}
 	var stateCookie *http.Cookie
 	for _, cookie := range startResponse.Result().Cookies() {
-		if cookie.Name == oauthStateCookieName {
+		if cookie.Name == accountAppealOAuthStateCookieName {
 			stateCookie = cookie
 		}
 	}
@@ -46,7 +46,7 @@ func TestAccountAppealOAuthUsesIsolatedFixedExpirySession(t *testing.T) {
 	admin := createSession(t, server, "account-appeal-admin", true)
 	member := createLinuxDoSession(t, server, "account-appeal-member")
 
-	suspend := newJSONRequest(http.MethodPost, "/api/v1/admin/users/"+member.userID+"/status", `{"status":"suspended","reason":"测试受限账号申诉入口"}`)
+	suspend := newJSONRequest(http.MethodPost, "/api/v1/admin/users/"+member.userID+"/status", `{"status":"suspended","reason":"测试受限账号申诉入口","isIndefinite":true}`)
 	suspend.Header.Set("If-Match", `"1"`)
 	addAuth(suspend, admin, "account-appeal-suspend")
 	suspendResponse := httptest.NewRecorder()
@@ -55,13 +55,9 @@ func TestAccountAppealOAuthUsesIsolatedFixedExpirySession(t *testing.T) {
 		t.Fatalf("suspend account status %d body %s", suspendResponse.Code, suspendResponse.Body.String())
 	}
 
-	state := "account-appeal-state"
+	state := statePayload.State
 	callback := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/callback?state="+url.QueryEscape(state)+"&code=account-appeal-member", nil)
-	callback.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: encodeOAuthStateCookie(oauthStateCookiePayload{
-		State:    state,
-		ReturnTo: accountAppealFrontendPath,
-		Purpose:  oauthPurposeAccountAppeal,
-	})})
+	callback.AddCookie(stateCookie)
 	callbackResponse := httptest.NewRecorder()
 	server.ServeHTTP(callbackResponse, callback)
 	if callbackResponse.Code != http.StatusFound {
@@ -125,11 +121,29 @@ func TestAccountAppealOAuthUsesGenericIneligibleRedirect(t *testing.T) {
 		if strings.HasPrefix(code, "active") {
 			createLinuxDoSession(t, server, code)
 		}
-		state := "state-" + code
+		start := httptest.NewRequest(http.MethodGet, "/api/v1/auth/account-appeal/start", nil)
+		startResponse := httptest.NewRecorder()
+		server.ServeHTTP(startResponse, start)
+		if startResponse.Code != http.StatusOK {
+			t.Fatalf("%s account appeal start status=%d body=%s", code, startResponse.Code, startResponse.Body.String())
+		}
+		var stateCookie *http.Cookie
+		for _, cookie := range startResponse.Result().Cookies() {
+			if cookie.Name == accountAppealOAuthStateCookieName {
+				stateCookie = cookie
+				break
+			}
+		}
+		if stateCookie == nil {
+			t.Fatalf("%s account appeal start missing dedicated state cookie", code)
+		}
+		payload, ok := decodeOAuthStateCookie(stateCookie.Value)
+		if !ok {
+			t.Fatalf("%s decode account appeal state cookie", code)
+		}
+		state := payload.State
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/callback?state="+url.QueryEscape(state)+"&code="+url.QueryEscape(code), nil)
-		request.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: encodeOAuthStateCookie(oauthStateCookiePayload{
-			State: state, Purpose: oauthPurposeAccountAppeal, ReturnTo: accountAppealFrontendPath,
-		})})
+		request.AddCookie(stateCookie)
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, request)
 		if response.Code != http.StatusFound || response.Header().Get("Location") != "/account-appeal?accountAppealOutcome=ineligible" {
@@ -140,6 +154,20 @@ func TestAccountAppealOAuthUsesGenericIneligibleRedirect(t *testing.T) {
 				t.Fatalf("ineligible account appeal issued an authentication cookie: %+v", cookie)
 			}
 		}
+	}
+}
+
+func TestOAuthCallbackRejectsStateCookiePurposeMismatch(t *testing.T) {
+	server := newTestServer(time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC))
+	state := "purpose-mismatch-state"
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/callback?state="+url.QueryEscape(state)+"&code=purpose-user", nil)
+	request.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: encodeOAuthStateCookie(oauthStateCookiePayload{
+		State: state, Purpose: oauthPurposeAccountAppeal, ReturnTo: accountAppealFrontendPath,
+	})})
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("purpose-mismatched OAuth cookie status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

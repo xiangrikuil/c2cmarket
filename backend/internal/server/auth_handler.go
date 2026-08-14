@@ -5,6 +5,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/devpersona"
 	"c2c-market/backend/internal/module/promotionreward"
 	"context"
 	"crypto/rand"
@@ -21,8 +22,15 @@ import (
 )
 
 const oauthStateCookieName = "c2c_oauth_state"
+const oauthLinkStateCookieName = "c2c_oauth_link_state"
+const restrictedBusinessOAuthStateCookieName = "c2c_restricted_business_oauth_state"
+const adminReauthenticationOAuthStateCookieName = "c2c_admin_reauthentication_oauth_state"
+const accountAppealOAuthStateCookieName = "c2c_account_appeal_oauth_state"
 const oauthMaxResponseBodyBytes = 1 << 20
 const oauthPurposeAccountAppeal = "account_appeal"
+const oauthPurposeLinkLinuxDo = auth.OAuthPurposeLinkLinuxDo
+const oauthPurposeRestrictedBusiness = auth.SessionAudienceRestrictedBusiness
+const oauthPurposeGrantAdminReauthentication = auth.OAuthPurposeGrantAdminReauthentication
 const accountAppealFrontendPath = "/account-appeal"
 
 type devSessionRequest struct {
@@ -30,13 +38,19 @@ type devSessionRequest struct {
 	Admin    bool   `json:"admin"`
 }
 
+type devPersonaSessionRequest struct {
+	Persona string `json:"persona"`
+}
+
 type passwordLoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	TurnstileToken string `json:"turnstileToken"`
 }
 
 type emailRegistrationStartRequest struct {
-	Email string `json:"email"`
+	Email          string `json:"email"`
+	TurnstileToken string `json:"turnstileToken"`
 }
 
 type emailRegistrationStartResponse struct {
@@ -48,7 +62,29 @@ type emailRegistrationStartResponse struct {
 type emailRegistrationConfirmRequest struct {
 	Email       string                         `json:"email"`
 	Code        string                         `json:"code"`
+	Username    string                         `json:"username"`
+	Password    string                         `json:"password"`
 	Attribution registrationAttributionRequest `json:"attribution"`
+}
+
+type passwordReauthenticateRequest struct {
+	Password string `json:"password"`
+	Purpose  string `json:"purpose"`
+}
+
+type emailRegistrationConfigResponse struct {
+	Enabled      bool                                   `json:"enabled"`
+	Institutions []emailRegistrationInstitutionResponse `json:"institutions"`
+}
+
+type usernameAvailabilityResponse struct {
+	Username  string `json:"username"`
+	Available bool   `json:"available"`
+}
+
+type emailRegistrationInstitutionResponse struct {
+	Domain          string `json:"domain"`
+	InstitutionName string `json:"institutionName"`
 }
 
 type registrationAttributionRequest struct {
@@ -113,8 +149,16 @@ func (id *oauthProviderID) UnmarshalJSON(data []byte) error {
 
 type sessionResponse struct {
 	User      userDTO `json:"user"`
+	Audience  string  `json:"audience"`
 	CSRFToken string  `json:"csrfToken"`
 	ExpiresAt string  `json:"expiresAt"`
+}
+
+type devPersonaSessionResponse struct {
+	Persona   devpersona.Persona `json:"persona"`
+	User      userDTO            `json:"user"`
+	CSRFToken string             `json:"csrfToken"`
+	ExpiresAt string             `json:"expiresAt"`
 }
 
 type userDTO struct {
@@ -124,7 +168,18 @@ type userDTO struct {
 	DisplayName     string                   `json:"displayName"`
 	IsAdmin         bool                     `json:"isAdmin"`
 	Permissions     []string                 `json:"permissions"`
+	Capabilities    []string                 `json:"capabilities"`
+	StudentClaim    *sessionStudentClaimDTO  `json:"studentClaim"`
 	LinuxDo         sessionLinuxDoBindingDTO `json:"linuxDoBinding"`
+}
+
+// sessionStudentClaimDTO intentionally omits the canonical email and internal
+// identifiers. Session consumers only need the safe institution proof and its
+// timestamp; authorization always reloads the durable claim on the backend.
+type sessionStudentClaimDTO struct {
+	InstitutionDomain string `json:"institutionDomain"`
+	InstitutionName   string `json:"institutionName"`
+	ClaimedAt         string `json:"claimedAt"`
 }
 
 type sessionLinuxDoBindingDTO struct {
@@ -174,6 +229,30 @@ func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleDevPersonaSession(w http.ResponseWriter, r *http.Request) {
+	if !s.enableDevAuth {
+		writeProblem(w, r, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Not found", "接口不存在。"))
+		return
+	}
+	req, appErr := decodeStrictJSONOnly[devPersonaSessionRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	result, appErr := s.devPersonas.PrepareDevPersonaSession(r.Context(), req.Persona)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.setSessionCookie(w, result.Session)
+	writeJSON(w, http.StatusOK, devPersonaSessionResponse{
+		Persona:   result.Persona,
+		User:      toUserDTO(result.User),
+		CSRFToken: result.Session.CSRFToken,
+		ExpiresAt: result.Session.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
@@ -199,19 +278,69 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, err)
 		return
 	}
+	if appErr := s.verifyTurnstile(r, req.TurnstileToken, turnstileActionPasswordLogin); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 
-	user, session, appErr := s.app.LoginWithPassword(r.Context(), req.Username, req.Password)
+	result, appErr := s.app.AuthenticateWithPassword(r.Context(), req.Username, req.Password)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.setSessionCookie(w, session)
+	s.writeAuthenticationResult(w, result)
+}
 
-	writeJSON(w, http.StatusOK, sessionResponse{
-		User:      toUserDTO(user),
-		CSRFToken: session.CSRFToken,
-		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
-	})
+func (s *Server) handlePasswordReauthenticate(w http.ResponseWriter, r *http.Request) {
+	sessionToken, ok := middleware.SessionToken(r)
+	if !ok {
+		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+		return
+	}
+	_, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	req, appErr := decodeStrictJSONOnly[passwordReauthenticateRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if appErr := s.app.ReauthenticatePasswordForPurpose(r.Context(), sessionToken, middleware.CSRFToken(r), req.Password, req.Purpose); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleEmailRegistrationConfig(w http.ResponseWriter, r *http.Request) {
+	config, appErr := s.app.StudentRegistrationConfig(r.Context())
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	institutions := make([]emailRegistrationInstitutionResponse, 0, len(config.Institutions))
+	for _, institution := range config.Institutions {
+		if !institution.Enabled {
+			continue
+		}
+		institutions = append(institutions, emailRegistrationInstitutionResponse{
+			Domain: institution.Domain, InstitutionName: institution.InstitutionName,
+		})
+	}
+	writeJSON(w, http.StatusOK, emailRegistrationConfigResponse{Enabled: config.Enabled, Institutions: institutions})
+}
+
+func (s *Server) handleUsernameAvailability(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	username := r.URL.Query().Get("username")
+	available, appErr := s.app.UsernameAvailable(r.Context(), username)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, usernameAvailabilityResponse{Username: username, Available: available})
 }
 
 func (s *Server) handleStartEmailRegistration(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +350,10 @@ func (s *Server) handleStartEmailRegistration(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !s.allowTarget(w, r, emailRegistrationStartRateLimit, "email", req.Email) {
+		return
+	}
+	if appErr := s.verifyTurnstile(r, req.TurnstileToken, turnstileActionStudentSignup); appErr != nil {
+		writeProblem(w, r, appErr)
 		return
 	}
 	challenge, appErr := s.app.StartEmailRegistration(r.Context(), auth.EmailRegistrationStartInput{Email: req.Email})
@@ -247,6 +380,8 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 	user, session, appErr := s.app.ConfirmEmailRegistration(r.Context(), auth.EmailRegistrationConfirmInput{
 		Email:       req.Email,
 		Code:        req.Code,
+		Username:    req.Username,
+		Password:    req.Password,
 		Attribution: req.Attribution.model(),
 	})
 	if appErr != nil {
@@ -256,6 +391,7 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 	s.setSessionCookie(w, session)
 	writeJSON(w, http.StatusOK, sessionResponse{
 		User:      toUserDTO(user),
+		Audience:  auth.SessionAudienceNormal,
 		CSRFToken: session.CSRFToken,
 		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
 	})
@@ -284,7 +420,46 @@ func (s *Server) handleSetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	purpose := strings.TrimSpace(r.URL.Query().Get("purpose"))
 	state := newOAuthState()
+	if purpose != "" && purpose != oauthPurposeLinkLinuxDo && purpose != oauthPurposeRestrictedBusiness && purpose != oauthPurposeGrantAdminReauthentication {
+		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "OAuth purpose invalid", "OAuth purpose 无效。", "purpose", "invalid", "OAuth purpose 无效。"))
+		return
+	}
+	if purpose == oauthPurposeLinkLinuxDo {
+		sessionToken, ok := middleware.SessionToken(r)
+		if !ok {
+			writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+			return
+		}
+		var appErr *domain.AppError
+		state, appErr = s.app.StartLinuxDoLink(r.Context(), sessionToken)
+		if appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+	}
+	if purpose == oauthPurposeGrantAdminReauthentication {
+		sessionToken, ok := middleware.SessionToken(r)
+		if !ok {
+			writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+			return
+		}
+		var appErr *domain.AppError
+		state, appErr = s.app.StartAdminReauthenticationOAuth(r.Context(), sessionToken)
+		if appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+	}
+	if purpose == oauthPurposeRestrictedBusiness {
+		var appErr *domain.AppError
+		state, appErr = s.app.StartRestrictedBusinessOAuth(r.Context())
+		if appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+	}
 	returnTo := cleanReturnTo(r.URL.Query().Get("returnTo"))
 	attribution := auth.NormalizeRegistrationAttribution(auth.RegistrationAttribution{
 		Source:       r.URL.Query().Get("utmSource"),
@@ -293,9 +468,10 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		ReferrerHost: r.URL.Query().Get("referrerHost"),
 		LandingPath:  r.URL.Query().Get("landingPath"),
 	})
-	s.setOAuthStateCookie(w, encodeOAuthStateCookie(oauthStateCookiePayload{
+	s.setOAuthStateCookie(w, oauthStateCookieNameForPurpose(purpose), encodeOAuthStateCookie(oauthStateCookiePayload{
 		State:       state,
 		ReturnTo:    returnTo,
+		Purpose:     purpose,
 		Attribution: attribution,
 		InviteCode:  promotionreward.CanonicalReferralCode(r.URL.Query().Get("inviteCode")),
 	}))
@@ -303,8 +479,12 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAccountAppealOAuthStart(w http.ResponseWriter, r *http.Request) {
-	state := newOAuthState()
-	s.setOAuthStateCookie(w, encodeOAuthStateCookie(oauthStateCookiePayload{
+	state, appErr := s.app.StartAccountAppealOAuth(r.Context())
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.setOAuthStateCookie(w, accountAppealOAuthStateCookieName, encodeOAuthStateCookie(oauthStateCookiePayload{
 		State:    state,
 		ReturnTo: accountAppealFrontendPath,
 		Purpose:  oauthPurposeAccountAppeal,
@@ -316,17 +496,12 @@ func (s *Server) handleAccountAppealOAuthStart(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
-	stateCookie, err := r.Cookie(oauthStateCookieName)
-	if err != nil || state == "" {
+	payload, stateCookieName, ok := oauthStatePayloadFromRequest(r, state)
+	if !ok {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
-	payload, ok := decodeOAuthStateCookie(stateCookie.Value)
-	if !ok || payload.State == "" || payload.State != state {
-		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
-		return
-	}
-	if payload.Purpose != "" && payload.Purpose != oauthPurposeAccountAppeal {
+	if payload.Purpose != "" && payload.Purpose != oauthPurposeAccountAppeal && payload.Purpose != oauthPurposeLinkLinuxDo && payload.Purpose != oauthPurposeRestrictedBusiness && payload.Purpose != oauthPurposeGrantAdminReauthentication {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
@@ -341,31 +516,78 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if payload.Purpose == oauthPurposeAccountAppeal {
-		s.handleAccountAppealOAuthCallback(w, r, profile)
+		s.handleAccountAppealOAuthCallback(w, r, stateCookieName, state, profile)
 		return
 	}
-	profile.Attribution = payload.Attribution
-	profile.ReferralCode = payload.InviteCode
-	user, session, appErr := s.app.LoginWithOAuthProfile(r.Context(), profile)
+	if payload.Purpose == oauthPurposeLinkLinuxDo {
+		sessionToken, ok := middleware.SessionToken(r)
+		if !ok {
+			writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+			return
+		}
+		user, session, appErr := s.app.CompleteLinuxDoLink(r.Context(), sessionToken, state, profile)
+		if appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+		s.setSessionCookie(w, session)
+		s.clearOAuthStateCookie(w, stateCookieName)
+		_ = user
+		http.Redirect(w, r, s.oauthRedirectTarget(appendAuthOutcome(payload.ReturnTo, "linked")), http.StatusFound)
+		return
+	}
+	if payload.Purpose == oauthPurposeGrantAdminReauthentication {
+		sessionToken, ok := middleware.SessionToken(r)
+		if !ok {
+			writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+			return
+		}
+		if appErr := s.app.CompleteAdminReauthenticationOAuth(r.Context(), sessionToken, state, profile); appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+		s.clearOAuthStateCookie(w, stateCookieName)
+		http.Redirect(w, r, s.oauthRedirectTarget(appendAuthOutcome(payload.ReturnTo, "admin_reauthenticated")), http.StatusFound)
+		return
+	}
+	var result auth.AuthenticationResult
+	if payload.Purpose == oauthPurposeRestrictedBusiness {
+		result, appErr = s.app.CompleteRestrictedBusinessOAuth(r.Context(), state, profile)
+	} else {
+		profile.Attribution = payload.Attribution
+		profile.ReferralCode = payload.InviteCode
+		result, appErr = s.app.AuthenticateWithOAuthProfile(r.Context(), profile)
+	}
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.setSessionCookie(w, session)
-	s.clearOAuthStateCookie(w)
-	_ = user
+	if payload.Purpose == oauthPurposeRestrictedBusiness && result.Audience != auth.SessionAudienceRestrictedBusiness {
+		s.clearOAuthStateCookie(w, stateCookieName)
+		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Restricted business unavailable", "当前账号没有可用的受限业务入口。"))
+		return
+	}
+	if result.Audience == auth.SessionAudienceRestrictedBusiness {
+		s.setRestrictedBusinessSessionCookie(w, result.RestrictedSession)
+	} else {
+		s.setSessionCookie(w, result.Session)
+	}
+	s.clearOAuthStateCookie(w, stateCookieName)
 	outcome := "logged_in"
-	if session.NewRegistration {
+	if result.Session.NewRegistration {
 		outcome = "registered"
+	}
+	if result.Audience == auth.SessionAudienceRestrictedBusiness {
+		outcome = "restricted_business"
 	}
 	http.Redirect(w, r, s.oauthRedirectTarget(appendAuthOutcome(payload.ReturnTo, outcome)), http.StatusFound)
 }
 
-func (s *Server) handleAccountAppealOAuthCallback(w http.ResponseWriter, r *http.Request, profile auth.OAuthProfile) {
-	_, session, appErr := s.app.StartAccountAppealSession(r.Context(), profile)
+func (s *Server) handleAccountAppealOAuthCallback(w http.ResponseWriter, r *http.Request, stateCookieName, state string, profile auth.OAuthProfile) {
+	_, session, appErr := s.app.CompleteAccountAppealOAuth(r.Context(), state, profile)
 	if appErr != nil {
 		if appErr.Code == domain.CodeAccountAppealIneligible {
-			s.clearOAuthStateCookie(w)
+			s.clearOAuthStateCookie(w, stateCookieName)
 			s.clearAccountAppealCookie(w)
 			http.Redirect(w, r, s.oauthRedirectTarget(appendAccountAppealOutcome("ineligible")), http.StatusFound)
 			return
@@ -374,7 +596,7 @@ func (s *Server) handleAccountAppealOAuthCallback(w http.ResponseWriter, r *http
 		return
 	}
 	s.setAccountAppealCookie(w, session)
-	s.clearOAuthStateCookie(w)
+	s.clearOAuthStateCookie(w, stateCookieName)
 	http.Redirect(w, r, s.oauthRedirectTarget(appendAccountAppealOutcome("verified")), http.StatusFound)
 }
 
@@ -397,18 +619,82 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	session.CSRFToken = csrfToken
 	writeJSON(w, http.StatusOK, sessionResponse{
 		User:      toUserDTO(user),
+		Audience:  auth.SessionAudienceNormal,
 		CSRFToken: session.CSRFToken,
 		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 
-func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	_, session, appErr := s.requireSessionAndCSRF(w, r)
+func (s *Server) handleGetRestrictedBusinessSession(w http.ResponseWriter, r *http.Request) {
+	sessionToken, ok := middleware.RestrictedBusinessSessionToken(r)
+	if !ok {
+		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Restricted business session required", "请先完成受限业务身份验证。"))
+		return
+	}
+	user, session, appErr := s.app.GetRestrictedBusinessSession(r.Context(), sessionToken)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.app.Logout(r.Context(), session.ID)
+	csrfToken, appErr := s.app.RefreshRestrictedBusinessSessionCSRF(r.Context(), sessionToken)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, sessionResponse{
+		User:      toUserDTO(user),
+		Audience:  auth.SessionAudienceRestrictedBusiness,
+		CSRFToken: csrfToken,
+		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleRestrictedBusinessLogout(w http.ResponseWriter, r *http.Request) {
+	sessionToken, ok := middleware.RestrictedBusinessSessionToken(r)
+	if !ok {
+		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Restricted business session required", "请先完成受限业务身份验证。"))
+		return
+	}
+	csrfToken := middleware.RestrictedBusinessCSRFToken(r)
+	if csrfToken == "" {
+		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "CSRF token invalid", "受限业务 CSRF token 无效或缺失。"))
+		return
+	}
+	if _, _, appErr := s.app.GetRestrictedBusinessSessionWithCSRF(r.Context(), sessionToken, csrfToken); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.app.LogoutRestrictedBusinessSession(r.Context(), sessionToken)
+	s.clearRestrictedBusinessSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) writeAuthenticationResult(w http.ResponseWriter, result auth.AuthenticationResult) {
+	response := sessionResponse{User: toUserDTO(result.User), Audience: result.Audience}
+	if result.Audience == auth.SessionAudienceRestrictedBusiness {
+		s.setRestrictedBusinessSessionCookie(w, result.RestrictedSession)
+		response.CSRFToken = result.RestrictedSession.CSRFToken
+		response.ExpiresAt = result.RestrictedSession.ExpiresAt.UTC().Format(time.RFC3339)
+	} else {
+		s.setSessionCookie(w, result.Session)
+		response.CSRFToken = result.Session.CSRFToken
+		response.ExpiresAt = result.Session.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	sessionToken, ok := middleware.SessionToken(r)
+	if !ok {
+		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+		return
+	}
+	_, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.app.Logout(r.Context(), sessionToken)
 	s.clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -425,7 +711,20 @@ func toUserDTO(user auth.User) userDTO {
 		DisplayName:     user.DisplayName,
 		IsAdmin:         user.IsAdmin,
 		Permissions:     permissions,
+		Capabilities:    append([]string(nil), auth.ProjectCapabilities(user)...),
+		StudentClaim:    toStudentClaimDTO(user.StudentClaim),
 		LinuxDo:         toLinuxDoBindingDTO(user.LinuxDoBinding),
+	}
+}
+
+func toStudentClaimDTO(claim *auth.StudentEmailClaim) *sessionStudentClaimDTO {
+	if claim == nil {
+		return nil
+	}
+	return &sessionStudentClaimDTO{
+		InstitutionDomain: claim.InstitutionDomain,
+		InstitutionName:   claim.InstitutionName,
+		ClaimedAt:         claim.ClaimedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -490,9 +789,34 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
-func (s *Server) setOAuthStateCookie(w http.ResponseWriter, value string) {
+func (s *Server) setRestrictedBusinessSessionCookie(w http.ResponseWriter, session auth.RestrictedBusinessSession) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     oauthStateCookieName,
+		Name:     middleware.RestrictedBusinessSessionCookieName,
+		Value:    session.ID,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.cookieSecure,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  session.ExpiresAt,
+		MaxAge:   max(0, int(time.Until(session.ExpiresAt)/time.Second)),
+	})
+}
+
+func (s *Server) clearRestrictedBusinessSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.RestrictedBusinessSessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.cookieSecure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
+func (s *Server) setOAuthStateCookie(w http.ResponseWriter, name, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
@@ -502,9 +826,9 @@ func (s *Server) setOAuthStateCookie(w http.ResponseWriter, value string) {
 	})
 }
 
-func (s *Server) clearOAuthStateCookie(w http.ResponseWriter) {
+func (s *Server) clearOAuthStateCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     oauthStateCookieName,
+		Name:     name,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
@@ -512,6 +836,57 @@ func (s *Server) clearOAuthStateCookie(w http.ResponseWriter) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
+}
+
+func oauthStateCookieNameForPurpose(purpose string) string {
+	switch purpose {
+	case oauthPurposeLinkLinuxDo:
+		return oauthLinkStateCookieName
+	case oauthPurposeRestrictedBusiness:
+		return restrictedBusinessOAuthStateCookieName
+	case oauthPurposeGrantAdminReauthentication:
+		return adminReauthenticationOAuthStateCookieName
+	case oauthPurposeAccountAppeal:
+		return accountAppealOAuthStateCookieName
+	default:
+		return oauthStateCookieName
+	}
+}
+
+func oauthStatePayloadFromRequest(r *http.Request, state string) (oauthStateCookiePayload, string, bool) {
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return oauthStateCookiePayload{}, "", false
+	}
+	type candidate struct {
+		name    string
+		purpose string
+	}
+	candidates := []candidate{
+		{name: oauthStateCookieName, purpose: ""},
+		{name: oauthLinkStateCookieName, purpose: oauthPurposeLinkLinuxDo},
+		{name: restrictedBusinessOAuthStateCookieName, purpose: oauthPurposeRestrictedBusiness},
+		{name: adminReauthenticationOAuthStateCookieName, purpose: oauthPurposeGrantAdminReauthentication},
+		{name: accountAppealOAuthStateCookieName, purpose: oauthPurposeAccountAppeal},
+	}
+	var matched oauthStateCookiePayload
+	matchedName := ""
+	for _, item := range candidates {
+		cookie, err := r.Cookie(item.name)
+		if err != nil {
+			continue
+		}
+		payload, ok := decodeOAuthStateCookie(cookie.Value)
+		if !ok || payload.State != state || payload.Purpose != item.purpose || matchedName != "" {
+			if ok && payload.State == state {
+				return oauthStateCookiePayload{}, "", false
+			}
+			continue
+		}
+		matched = payload
+		matchedName = item.name
+	}
+	return matched, matchedName, matchedName != ""
 }
 
 func newOAuthState() string {

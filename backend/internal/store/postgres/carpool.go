@@ -4,6 +4,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
+	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,7 +27,7 @@ func (s *Store) CreateCarpoolListing(ctx context.Context, listing carpool.Listin
 	}
 	defer rollback(ctx, tx)
 
-	if appErr := insertCarpoolListingInTx(ctx, tx, listing, ack); appErr != nil {
+	if appErr := createCarpoolListingMutationInTx(ctx, tx, listing, ack, "carpool_listing.created", listing.OwnerUserID, "user", listing.RequestID, false, listing.CreatedAt); appErr != nil {
 		return appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -44,12 +46,6 @@ func (s *Store) PublishCarpoolListing(ctx context.Context, listing carpool.Listi
 	}
 	defer rollback(ctx, tx)
 
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, "车主联系方式不可用或不属于当前用户。"); appErr != nil {
-		return carpool.Listing{}, appErr
-	}
-	if appErr := ensureCarpoolPlanAllowedForPublish(ctx, tx, listing.ProductPlanID); appErr != nil {
-		return carpool.Listing{}, appErr
-	}
 	listing.Status = carpool.ListingStatusActive
 	listing.CreatedAt = now
 	listing.UpdatedAt = now
@@ -57,7 +53,7 @@ func (s *Store) PublishCarpoolListing(ctx context.Context, listing carpool.Listi
 		listing.CycleTerm.CreatedAt = now
 		listing.CycleTerm.UpdatedAt = now
 	}
-	if appErr := insertCarpoolListingInTx(ctx, tx, listing, ack); appErr != nil {
+	if appErr := createCarpoolListingMutationInTx(ctx, tx, listing, ack, "carpool_listing.published", listing.OwnerUserID, "user", listing.RequestID, true, now); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -66,13 +62,75 @@ func (s *Store) PublishCarpoolListing(ctx context.Context, listing carpool.Listi
 	return listing, nil
 }
 
+func createCarpoolListingMutationInTx(ctx context.Context, tx pgx.Tx, listing carpool.Listing, ack *carpool.RiskAcknowledgement, eventType, actorUserID, actorKind, requestID string, validatePublish bool, now time.Time) *domain.AppError {
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, listing.OwnerUserID); appErr != nil {
+		return appErr
+	}
+	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
+		return appErr
+	}
+	if validatePublish {
+		if appErr := ensureCarpoolPlanAllowedForPublish(ctx, tx, listing.ProductPlanID); appErr != nil {
+			return appErr
+		}
+	}
+	if appErr := insertCarpoolListingInTx(ctx, tx, listing, ack); appErr != nil {
+		return appErr
+	}
+	return insertCarpoolListingEvent(ctx, tx, listing, actorUserID, actorKind, eventType, requestID, now)
+}
+
+func (s *Store) CreateCarpoolListingWithIdempotency(ctx context.Context, entry idempotency.Entry, listing carpool.Listing, ack *carpool.RiskAcknowledgement, buildCompletion carpool.ListingCompletionBuilder) (carpool.Listing, idempotency.Completion, *domain.AppError) {
+	return s.createCarpoolListingWithIdempotency(ctx, entry, listing, ack, "carpool_listing.created", false, listing.CreatedAt, buildCompletion)
+}
+
+func (s *Store) PublishCarpoolListingWithIdempotency(ctx context.Context, entry idempotency.Entry, listing carpool.Listing, ack *carpool.RiskAcknowledgement, now time.Time, buildCompletion carpool.ListingCompletionBuilder) (carpool.Listing, idempotency.Completion, *domain.AppError) {
+	listing.Status = carpool.ListingStatusActive
+	listing.CreatedAt = now
+	listing.UpdatedAt = now
+	if listing.CycleTerm != nil {
+		listing.CycleTerm.CreatedAt = now
+		listing.CycleTerm.UpdatedAt = now
+	}
+	return s.createCarpoolListingWithIdempotency(ctx, entry, listing, ack, "carpool_listing.published", true, now, buildCompletion)
+}
+
+func (s *Store) createCarpoolListingWithIdempotency(ctx context.Context, entry idempotency.Entry, listing carpool.Listing, ack *carpool.RiskAcknowledgement, eventType string, validatePublish bool, now time.Time, buildCompletion carpool.ListingCompletionBuilder) (carpool.Listing, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if appErr := createCarpoolListingMutationInTx(ctx, tx, listing, ack, eventType, listing.OwnerUserID, "user", listing.RequestID, validatePublish, now); appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(listing)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	return listing, completion, nil
+}
+
 func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Listing, ack *carpool.RiskAcknowledgement) *domain.AppError {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO carpool_listings (
 			id, owner_user_id, product_plan_id, owner_contact_method_id, title, summary, access_arrangement,
 			distribution_method, distribution_method_note, provides_admin_account,
 			region_code, region_name, source_url, price_monthly_cny, service_multiplier,
-			weekly_quota_amount, monthly_quota_amount, follows_official_quota_reset, vps_region,
+			daily_quota_amount, weekly_quota_amount, follows_official_quota_reset, vps_region,
 			supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
 			payment_method_code, custom_payment_method, quota_label, quota_unit, quota_period,
 			buyer_seat_capacity, active_buyer_members,
@@ -91,7 +149,7 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 	`, listing.ID, listing.OwnerUserID, listing.ProductPlanID, listing.OwnerContactMethodID, listing.Title, listing.Summary, listing.AccessArrangement,
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
 		listing.RegionCode, listing.RegionName, nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
-		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.DailyQuotaAmount, listing.WeeklyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
 		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
 		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
@@ -124,45 +182,8 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 	return nil
 }
 
-func (s *Store) ListPublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return domain.Page[carpool.Listing]{}, internalStoreError()
-	}
-	page = normalizePageRequest(page)
-	position, appErr := decodeKeysetCursor(page.Cursor)
-	if appErr != nil {
-		return domain.Page[carpool.Listing]{}, appErr
-	}
-	limit := page.Limit + 1
-	var rows pgx.Rows
-	var err error
-	if page.Cursor == "" {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			WHERE `+publicCarpoolListingPredicate("listing_view")+`
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $1
-		`, limit)
-	} else {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			WHERE `+publicCarpoolListingPredicate("listing_view")+`
-			  AND (updated_at, id) < ($1, $2::uuid)
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $3
-		`, position.Time, position.ID, limit)
-	}
-	if err != nil {
-		return domain.Page[carpool.Listing]{}, internalStoreError()
-	}
-	defer rows.Close()
-	listings, appErr := scanCarpoolListings(rows)
-	if appErr != nil {
-		return domain.Page[carpool.Listing]{}, appErr
-	}
-	return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
+func (s *Store) ListPublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+	return s.listCarpoolListingsPage(ctx, filter, page, true, "")
 }
 
 func (s *Store) GetPublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError) {
@@ -196,51 +217,143 @@ func publicCarpoolListingPredicate(alias string) string {
 	  )`
 }
 
-func (s *Store) ListCarpoolListingsByOwner(ctx context.Context, ownerUserID string) ([]carpool.Listing, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return nil, internalStoreError()
-	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+carpoolListingColumns+`
-		FROM `+carpoolListingViewSource+`
-		WHERE owner_user_id = $1
-		ORDER BY updated_at DESC
-	`, ownerUserID)
-	if err != nil {
-		return nil, internalStoreError()
-	}
-	defer rows.Close()
-	return scanCarpoolListings(rows)
+func (s *Store) ListCarpoolListingsByOwner(ctx context.Context, ownerUserID, view string, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+	return s.listCarpoolListingsPage(ctx, carpool.ListingFilter{View: view}, page, false, ownerUserID)
 }
 
-func (s *Store) ListAdminCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+func (s *Store) GetCarpoolListingByOwner(ctx context.Context, ownerUserID, listingID string) (carpool.Listing, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Listing{}, internalStoreError()
+	}
+	listing, err := s.getCarpoolListing(ctx, s.pool, listingID, false, false)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && listing.OwnerUserID != ownerUserID) {
+		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
+	}
+	if err != nil {
+		return carpool.Listing{}, internalStoreError()
+	}
+	return listing, nil
+}
+
+func (s *Store) ListAdminCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+	return s.listCarpoolListingsPage(ctx, filter, page, false, "")
+}
+
+func (s *Store) listCarpoolListingsPage(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest, publicOnly bool, ownerUserID string) (domain.Page[carpool.Listing], *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
 	page = normalizePageRequest(page)
-	position, appErr := decodeKeysetCursor(page.Cursor)
+	sortMode := filter.NormalizedSort()
+	var timePosition keysetPosition
+	var scalarPosition scalarKeysetPosition
+	var appErr *domain.AppError
+	if sortMode == carpool.ListingSortUpdatedDesc {
+		timePosition, appErr = decodeKeysetCursor(page.Cursor)
+	} else {
+		scalarPosition, appErr = decodeScalarKeysetCursor(page.Cursor, sortMode)
+	}
 	if appErr != nil {
 		return domain.Page[carpool.Listing]{}, appErr
 	}
-	limit := page.Limit + 1
-	var rows pgx.Rows
-	var err error
-	if page.Cursor == "" {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $1
-		`, limit)
-	} else {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			WHERE (updated_at, id) < ($1, $2::uuid)
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $3
-		`, position.Time, position.ID, limit)
+	if page.Cursor != "" && sortMode == carpool.ListingSortPriceAsc {
+		if appErr := validateNonNegativeDecimalCursor(scalarPosition); appErr != nil {
+			return domain.Page[carpool.Listing]{}, appErr
+		}
 	}
+
+	conditions := make([]string, 0, 8)
+	args := make([]any, 0, 10)
+	addArgument := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
+	if publicOnly {
+		conditions = append(conditions, "("+publicCarpoolListingPredicate("listing_view")+")")
+	}
+	if strings.TrimSpace(ownerUserID) != "" {
+		placeholder := addArgument(ownerUserID)
+		conditions = append(conditions, "owner_user_id = "+placeholder+"::uuid")
+	}
+	if filter.None {
+		conditions = append(conditions, "FALSE")
+	}
+	if len(filter.ProductPlanIDs) > 0 {
+		placeholder := addArgument(filter.ProductPlanIDs)
+		conditions = append(conditions, "product_plan_id::text = ANY("+placeholder+"::text[])")
+	}
+	if len(filter.Statuses) > 0 {
+		placeholder := addArgument(filter.Statuses)
+		conditions = append(conditions, "status = ANY("+placeholder+"::text[])")
+	}
+	if region := strings.TrimSpace(filter.Region); region != "" {
+		placeholder := addArgument(region)
+		conditions = append(conditions, "(region_code = "+placeholder+" OR region_name = "+placeholder+")")
+	}
+	switch strings.TrimSpace(filter.View) {
+	case carpool.ListingViewPublic:
+		conditions = append(conditions, "status = 'active'")
+	case carpool.ListingViewExceptions:
+		conditions = append(conditions, "status <> 'active'")
+	case carpool.OwnerListingViewRecruiting:
+		conditions = append(conditions, "status = 'active'", "active_buyer_members = 0")
+	case carpool.OwnerListingViewServing:
+		conditions = append(conditions, "status = 'active'", "active_buyer_members > 0")
+	case carpool.OwnerListingViewHistory:
+		conditions = append(conditions, "status = ANY('{rejected,removed}'::text[])")
+	case carpool.OwnerListingViewNeedsEdit:
+		conditions = append(conditions, "status = ANY('{draft,changes_requested,pending_review,paused}'::text[])")
+	}
+	if strings.TrimSpace(filter.Risk) == carpool.ListingRiskHigh {
+		conditions = append(conditions, "(risk_ack_required = true OR strpos(lower(COALESCE(review_reason, '')), '风险') > 0)")
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		placeholder := addArgument(strings.ToLower(query))
+		conditions = append(conditions, `(
+			strpos(lower(id::text), `+placeholder+`) > 0 OR
+			strpos(lower(title), `+placeholder+`) > 0 OR
+			strpos(lower(summary), `+placeholder+`) > 0 OR
+			strpos(lower(region_name), `+placeholder+`) > 0 OR
+			strpos(lower(owner_user_id::text), `+placeholder+`) > 0 OR
+			strpos(lower(COALESCE(review_reason, '')), `+placeholder+`) > 0
+		)`)
+	}
+	if page.Cursor != "" {
+		switch sortMode {
+		case carpool.ListingSortPriceAsc:
+			valuePlaceholder := addArgument(scalarPosition.Value)
+			idPlaceholder := addArgument(scalarPosition.ID)
+			conditions = append(conditions, "(price_monthly_cny, id) > ("+valuePlaceholder+"::numeric, "+idPlaceholder+"::uuid)")
+		case carpool.ListingSortSeatsDesc:
+			availableSeats, err := strconv.Atoi(scalarPosition.Value)
+			if err != nil || availableSeats < 0 {
+				return domain.Page[carpool.Listing]{}, invalidPageCursorError()
+			}
+			valuePlaceholder := addArgument(availableSeats)
+			idPlaceholder := addArgument(scalarPosition.ID)
+			conditions = append(conditions, "("+carpoolAvailableSeatsExpression+", id) < ("+valuePlaceholder+", "+idPlaceholder+"::uuid)")
+		default:
+			timePlaceholder := addArgument(timePosition.Time)
+			idPlaceholder := addArgument(timePosition.ID)
+			conditions = append(conditions, "(updated_at, id) < ("+timePlaceholder+", "+idPlaceholder+"::uuid)")
+		}
+	}
+
+	query := "SELECT " + carpoolListingColumns + " FROM " + carpoolListingViewSource
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	switch sortMode {
+	case carpool.ListingSortPriceAsc:
+		query += " ORDER BY price_monthly_cny ASC, id ASC"
+	case carpool.ListingSortSeatsDesc:
+		query += " ORDER BY " + carpoolAvailableSeatsExpression + " DESC, id DESC"
+	default:
+		query += " ORDER BY updated_at DESC, id DESC"
+	}
+	args = append(args, page.Limit+1)
+	query += " LIMIT $" + strconv.Itoa(len(args))
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
@@ -249,7 +362,18 @@ func (s *Store) ListAdminCarpoolListings(ctx context.Context, page domain.PageRe
 	if appErr != nil {
 		return domain.Page[carpool.Listing]{}, appErr
 	}
-	return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
+	switch sortMode {
+	case carpool.ListingSortPriceAsc:
+		return pageFromScalarItems(listings, page, sortMode, func(item carpool.Listing) (string, string) {
+			return item.PriceMonthlyCNY, item.ID
+		}), nil
+	case carpool.ListingSortSeatsDesc:
+		return pageFromScalarItems(listings, page, sortMode, func(item carpool.Listing) (string, string) {
+			return strconv.Itoa(item.AvailableSeats), item.ID
+		}), nil
+	default:
+		return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
+	}
 }
 
 func (s *Store) GetAdminCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError) {
@@ -275,7 +399,47 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		return carpool.Listing{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
+	listing, appErr := s.updateCarpoolListingInTx(ctx, tx, input, ack, now)
+	if appErr != nil {
+		return carpool.Listing{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Listing{}, internalStoreError()
+	}
+	return listing, nil
+}
 
+func (s *Store) UpdateCarpoolListingWithIdempotency(ctx context.Context, entry idempotency.Entry, input carpool.UpdateListingInput, ack *carpool.RiskAcknowledgement, now time.Time, buildCompletion carpool.ListingCompletionBuilder) (carpool.Listing, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	listing, appErr := s.updateCarpoolListingInTx(ctx, tx, input, ack, now)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(listing)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	return listing, completion, nil
+}
+
+func (s *Store) updateCarpoolListingInTx(ctx context.Context, tx pgx.Tx, input carpool.UpdateListingInput, ack *carpool.RiskAcknowledgement, now time.Time) (carpool.Listing, *domain.AppError) {
 	listing, err := s.getCarpoolListing(ctx, tx, input.ListingID, true, true)
 	if errors.Is(err, pgx.ErrNoRows) || listing.OwnerUserID != input.OwnerUserID {
 		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -289,7 +453,7 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 	if listing.Status != carpool.ListingStatusDraft && listing.Status != carpool.ListingStatusChangesRequested {
 		return carpool.Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源状态不能修改。")
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, input.OwnerContactMethodID, input.OwnerUserID, "车主联系方式不可用或不属于当前用户。"); appErr != nil {
+	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
 	var planPolicyVersion int64
@@ -299,9 +463,11 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 	var planQuotaUnit string
 	var planQuotaPeriod string
 	err = tx.QueryRow(ctx, `
-		SELECT policy_version, COALESCE(risk_notice_code, ''), risk_ack_required, quota_label, quota_unit, quota_period
-		FROM product_plans
-		WHERE id = $1 AND active = true
+		SELECT plan.policy_version, COALESCE(plan.risk_notice_code, ''), plan.risk_ack_required,
+		       plan.quota_label, plan.quota_unit, plan.quota_period
+		FROM product_plans plan
+		JOIN product_categories category ON category.id = plan.category_id
+		WHERE plan.id = $1 AND plan.status = 'active' AND category.status = 'active'
 	`, input.ProductPlanID).Scan(&planPolicyVersion, &planRiskNoticeCode, &planRiskAckRequired, &planQuotaLabel, &planQuotaUnit, &planQuotaPeriod)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Product plan not found", "产品套餐不存在。")
@@ -341,8 +507,8 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
-	listing.WeeklyQuotaAmount = nullStringPointer(input.WeeklyQuotaAmount)
-	listing.MonthlyQuotaAmount = strings.TrimSpace(input.MonthlyQuotaAmount)
+	listing.DailyQuotaAmount = nullStringPointer(input.DailyQuotaAmount)
+	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = nullStringPointer(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -375,8 +541,8 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		    source_url = $12,
 		    price_monthly_cny = $13,
 		    service_multiplier = $14,
-		    weekly_quota_amount = $15,
-		    monthly_quota_amount = $16,
+		    daily_quota_amount = $15,
+		    weekly_quota_amount = $16,
 		    follows_official_quota_reset = $17,
 		    vps_region = $18,
 		    supports_mainland_china_direct_connection = $19,
@@ -399,7 +565,7 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
 		listing.RegionCode, listing.RegionName,
 		nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
-		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.DailyQuotaAmount, listing.WeeklyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
 		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
 		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
@@ -427,8 +593,8 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 			return carpool.Listing{}, internalStoreError()
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return carpool.Listing{}, internalStoreError()
+	if appErr := insertCarpoolListingEvent(ctx, tx, listing, listing.OwnerUserID, "user", "carpool_listing.updated", input.RequestID, now); appErr != nil {
+		return carpool.Listing{}, appErr
 	}
 	return listing, nil
 }
@@ -442,7 +608,99 @@ func (s *Store) SubmitCarpoolListingForReview(ctx context.Context, user auth.Use
 		return carpool.Listing{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
+	listing, appErr := s.submitCarpoolListingForReviewInTx(ctx, tx, user, input, now)
+	if appErr != nil {
+		return carpool.Listing{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Listing{}, internalStoreError()
+	}
+	return listing, nil
+}
 
+func (s *Store) UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.User, input carpool.ReviewInput, now time.Time) (carpool.Listing, *domain.AppError) {
+	if !user.IsAdmin {
+		return carpool.Listing{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Listing{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	listing, appErr := s.updateCarpoolListingReviewStatusInTx(ctx, tx, user, input, now)
+	if appErr != nil {
+		return carpool.Listing{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Listing{}, internalStoreError()
+	}
+	return listing, nil
+}
+
+func (s *Store) SubmitCarpoolListingForReviewWithIdempotency(ctx context.Context, entry idempotency.Entry, user auth.User, input carpool.SubmitListingReviewInput, now time.Time, buildCompletion carpool.ListingCompletionBuilder) (carpool.Listing, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	listing, appErr := s.submitCarpoolListingForReviewInTx(ctx, tx, user, input, now)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(listing)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	return listing, completion, nil
+}
+
+func (s *Store) UpdateCarpoolListingReviewStatusWithIdempotency(ctx context.Context, entry idempotency.Entry, user auth.User, input carpool.ReviewInput, now time.Time, buildCompletion carpool.ListingCompletionBuilder) (carpool.Listing, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil || !user.IsAdmin {
+		if !user.IsAdmin {
+			return carpool.Listing{}, idempotency.Completion{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+		}
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	listing, appErr := s.updateCarpoolListingReviewStatusInTx(ctx, tx, user, input, now)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(listing)
+	if appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return carpool.Listing{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Listing{}, idempotency.Completion{}, internalStoreError()
+	}
+	return listing, completion, nil
+}
+
+func (s *Store) submitCarpoolListingForReviewInTx(ctx context.Context, tx pgx.Tx, user auth.User, input carpool.SubmitListingReviewInput, now time.Time) (carpool.Listing, *domain.AppError) {
 	listing, err := s.getCarpoolListing(ctx, tx, input.ListingID, true, true)
 	if errors.Is(err, pgx.ErrNoRows) || listing.OwnerUserID != input.OwnerUserID {
 		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -462,7 +720,7 @@ func (s *Store) SubmitCarpoolListingForReview(ctx context.Context, user auth.Use
 	if appErr := ensureCarpoolPlanAllowedForPublish(ctx, tx, listing.ProductPlanID); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, "车主联系方式不可用或不属于当前用户。"); appErr != nil {
+	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
 	listing.Status = carpool.ListingStatusActive
@@ -471,35 +729,21 @@ func (s *Store) SubmitCarpoolListingForReview(ctx context.Context, user auth.Use
 	listing.ReviewReason = ""
 	listing.UpdatedAt = now
 	listing.Version++
-	_, err = tx.Exec(ctx, `
+	if _, err = tx.Exec(ctx, `
 		UPDATE carpool_listings
-		SET status = $2,
-		    reviewed_by_admin_id = NULL,
-		    reviewed_at = NULL,
-		    review_reason = NULL,
-		    updated_at = $3,
-		    version = $4
+		SET status = $2, reviewed_by_admin_id = NULL, reviewed_at = NULL, review_reason = NULL,
+		    updated_at = $3, version = $4
 		WHERE id = $1
-	`, listing.ID, listing.Status, listing.UpdatedAt, listing.Version)
-	if err != nil {
+	`, listing.ID, listing.Status, listing.UpdatedAt, listing.Version); err != nil {
 		return carpool.Listing{}, internalStoreError()
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return carpool.Listing{}, internalStoreError()
+	if appErr := insertCarpoolListingEvent(ctx, tx, listing, listing.OwnerUserID, "user", "carpool_listing.published", input.RequestID, now); appErr != nil {
+		return carpool.Listing{}, appErr
 	}
 	return listing, nil
 }
 
-func (s *Store) UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.User, input carpool.ReviewInput, now time.Time) (carpool.Listing, *domain.AppError) {
-	if !user.IsAdmin {
-		return carpool.Listing{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return carpool.Listing{}, internalStoreError()
-	}
-	defer rollback(ctx, tx)
-
+func (s *Store) updateCarpoolListingReviewStatusInTx(ctx context.Context, tx pgx.Tx, user auth.User, input carpool.ReviewInput, now time.Time) (carpool.Listing, *domain.AppError) {
 	listing, err := s.getCarpoolListing(ctx, tx, input.ListingID, true, true)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -524,21 +768,20 @@ func (s *Store) UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.
 	listing.ReviewReason = strings.TrimSpace(input.Reason)
 	listing.UpdatedAt = now
 	listing.Version++
-	_, err = tx.Exec(ctx, `
+	if _, err = tx.Exec(ctx, `
 		UPDATE carpool_listings
-		SET status = $2,
-		    reviewed_by_admin_id = $3,
-		    reviewed_at = $4,
-		    review_reason = $5,
-		    updated_at = $6,
-		    version = $7
+		SET status = $2, reviewed_by_admin_id = $3, reviewed_at = $4, review_reason = $5,
+		    updated_at = $6, version = $7
 		WHERE id = $1
-	`, listing.ID, listing.Status, listing.ReviewedByAdminID, listing.ReviewedAt, listing.ReviewReason, listing.UpdatedAt, listing.Version)
-	if err != nil {
+	`, listing.ID, listing.Status, listing.ReviewedByAdminID, listing.ReviewedAt, listing.ReviewReason, listing.UpdatedAt, listing.Version); err != nil {
 		return carpool.Listing{}, internalStoreError()
 	}
-	if err := tx.Commit(ctx); err != nil {
+	eventType := carpoolListingReviewEventType(input.Action)
+	if eventType == "" {
 		return carpool.Listing{}, internalStoreError()
+	}
+	if appErr := insertCarpoolListingEvent(ctx, tx, listing, user.ID, "admin", eventType, input.RequestID, now); appErr != nil {
+		return carpool.Listing{}, appErr
 	}
 	return listing, nil
 }
@@ -552,22 +795,72 @@ func (s *Store) CreateCarpoolApplication(ctx context.Context, application carpoo
 		return internalStoreError()
 	}
 	defer rollback(ctx, tx)
-
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, "买家联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := createCarpoolApplicationMutationInTx(ctx, tx, application, ack); appErr != nil {
 		return appErr
 	}
-	_, err = tx.Exec(ctx, `
-		UPDATE carpool_applications
-		SET status = 'expired',
-		    updated_at = $3,
-		    version = version + 1
-		WHERE carpool_listing_id = $1
-		  AND buyer_user_id = $2
-		  AND status = 'accepted_reserved'
-		  AND reservation_expires_at <= $3
-	`, application.CarpoolListingID, application.BuyerUserID, application.CreatedAt)
+	if err := tx.Commit(ctx); err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func (s *Store) CreateCarpoolApplicationWithIdempotency(ctx context.Context, entry idempotency.Entry, application carpool.Application, ack *carpool.RiskAcknowledgement, buildCompletion carpool.ApplicationCompletionBuilder) (carpool.Application, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Application{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Application{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	if appErr := createCarpoolApplicationMutationInTx(ctx, tx, application, ack); appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(application)
+	if appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, application.CreatedAt); appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Application{}, idempotency.Completion{}, internalStoreError()
+	}
+	return application, completion, nil
+}
+
+func createCarpoolApplicationMutationInTx(ctx context.Context, tx pgx.Tx, application carpool.Application, ack *carpool.RiskAcknowledgement) *domain.AppError {
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
+		return appErr
+	}
+	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。"); appErr != nil {
+		return appErr
+	}
+	var listingStatus, lockedPlanID, planStatus, categoryStatus string
+	var lockedOwnerID string
+	err := tx.QueryRow(ctx, `
+		SELECT listing.status, listing.owner_user_id::text, plan.id::text, plan.status, category.status
+		FROM carpool_listings listing
+		JOIN product_plans plan ON plan.id = listing.product_plan_id
+		JOIN product_categories category ON category.id = plan.category_id
+		WHERE listing.id = $1
+		FOR SHARE OF listing, plan, category
+	`, application.CarpoolListingID).Scan(&listingStatus, &lockedOwnerID, &lockedPlanID, &planStatus, &categoryStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Carpool catalog unavailable", "车源或关联目录已不可用，请刷新后重试。")
+	}
 	if err != nil {
 		return internalStoreError()
+	}
+	if listingStatus != carpool.ListingStatusActive || lockedOwnerID != application.OwnerUserID || lockedPlanID != application.ProductPlanID || planStatus != "active" || categoryStatus != "active" {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Carpool catalog unavailable", "车源或关联目录已退役、被阻断或发生变化，当前不能提交申请。")
+	}
+	if appErr := expireCarpoolApplicationsForBuyerInTx(ctx, tx, application.CarpoolListingID, application.BuyerUserID, application.RequestID, application.CreatedAt); appErr != nil {
+		return appErr
 	}
 	var activeMembershipExists bool
 	err = tx.QueryRow(ctx, `
@@ -622,11 +915,43 @@ func (s *Store) CreateCarpoolApplication(ctx context.Context, application carpoo
 			return internalStoreError()
 		}
 	}
-	if appErr := insertCarpoolApplicationEventAndOwnerNotification(ctx, tx, application, application.BuyerUserID, "carpool_application.created", "收到新的上车申请", "你的车源收到新的上车申请，请查看申请详情。", "", application.CreatedAt); appErr != nil {
+	if appErr := insertCarpoolApplicationEventAndOwnerNotification(ctx, tx, application, application.BuyerUserID, "carpool_application.created", "收到新的上车申请", "你的车源收到新的上车申请，请查看申请详情。", application.RequestID, application.CreatedAt); appErr != nil {
 		return appErr
 	}
-	if err := tx.Commit(ctx); err != nil {
+	return nil
+}
+
+func expireCarpoolApplicationsForBuyerInTx(ctx context.Context, tx pgx.Tx, listingID, buyerUserID, requestID string, now time.Time) *domain.AppError {
+	rows, err := tx.Query(ctx, `
+		UPDATE carpool_applications
+		SET status = 'expired',
+		    updated_at = $3,
+		    version = version + 1
+		WHERE carpool_listing_id = $1
+		  AND buyer_user_id = $2
+		  AND status = 'accepted_reserved'
+		  AND reservation_expires_at <= $3
+		RETURNING `+carpoolApplicationColumns+`
+	`, listingID, buyerUserID, now)
+	if err != nil {
 		return internalStoreError()
+	}
+	defer rows.Close()
+	applications, appErr := scanCarpoolApplications(rows)
+	if appErr != nil {
+		return appErr
+	}
+	for _, application := range applications {
+		if appErr := updateCarpoolContactSessionStatus(ctx, tx, application.ContactSessionID, "expired", now); appErr != nil {
+			return appErr
+		}
+		if appErr := insertSystemCarpoolApplicationEventAndTargetNotification(
+			ctx, tx, application, application.OwnerUserID,
+			"carpool_application.expired", "拼车预留已过期", "拼车预留已自动过期，名额已释放。",
+			requestID, now,
+		); appErr != nil {
+			return appErr
+		}
 	}
 	return nil
 }
@@ -648,12 +973,62 @@ func (s *Store) ListCarpoolApplicationsByBuyer(ctx context.Context, buyerUserID 
 	return scanCarpoolApplications(rows)
 }
 
+func (s *Store) ListCarpoolApplicationsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Application, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == carpool.JoinActorOwner {
+			return s.ListCarpoolApplicationsByOwner(ctx, actor.UserID)
+		}
+		return s.ListCarpoolApplicationsByBuyer(ctx, actor.UserID)
+	}
+	where, args, ok := restrictedCarpoolWhere(actor, participantRole, "carpool_application", "carpool_applications", "")
+	if !ok {
+		return nil, carpoolRelationshipNotFound()
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+carpoolApplicationColumns+` FROM carpool_applications `+where+` ORDER BY updated_at DESC`, args...)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanCarpoolApplications(rows)
+}
+
 func (s *Store) GetCarpoolApplicationForBuyer(ctx context.Context, buyerUserID, applicationID string) (carpool.Application, *domain.AppError) {
 	application, err := s.getCarpoolApplication(ctx, s.pool, applicationID, false)
 	if errors.Is(err, pgx.ErrNoRows) || application.BuyerUserID != buyerUserID {
 		return carpool.Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
 	}
 	if err != nil {
+		return carpool.Application{}, internalStoreError()
+	}
+	return application, nil
+}
+
+func (s *Store) GetCarpoolApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (carpool.Application, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == carpool.JoinActorOwner {
+			return s.GetCarpoolApplicationForOwner(ctx, actor.UserID, applicationID)
+		}
+		return s.GetCarpoolApplicationForBuyer(ctx, actor.UserID, applicationID)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Application{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	if appErr := lockAccountGovernanceUser(ctx, tx, actor.UserID); appErr != nil {
+		return carpool.Application{}, appErr
+	}
+	application, err := s.getCarpoolApplication(ctx, tx, applicationID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return carpool.Application{}, carpoolRelationshipNotFound()
+	}
+	if err != nil {
+		return carpool.Application{}, internalStoreError()
+	}
+	if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, participantRole, "carpool_application", application.ID, application.BuyerUserID, application.OwnerUserID, application.CreatedAt); appErr != nil {
+		return carpool.Application{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return carpool.Application{}, internalStoreError()
 	}
 	return application, nil
@@ -720,12 +1095,55 @@ func (s *Store) AcceptCarpoolApplicationWithIdempotency(ctx context.Context, ent
 }
 
 func (s *Store) RejectCarpoolApplication(ctx context.Context, input carpool.RejectApplicationInput, now time.Time) (carpool.Application, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Application{}, internalStoreError()
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return carpool.Application{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
+	application, appErr := s.rejectCarpoolApplicationInTx(ctx, tx, input, now)
+	if appErr != nil {
+		return carpool.Application{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Application{}, internalStoreError()
+	}
+	return application, nil
+}
 
+func (s *Store) RejectCarpoolApplicationWithIdempotency(ctx context.Context, entry idempotency.Entry, input carpool.RejectApplicationInput, now time.Time, buildCompletion carpool.ApplicationCompletionBuilder) (carpool.Application, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Application{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Application{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	application, appErr := s.rejectCarpoolApplicationInTx(ctx, tx, input, now)
+	if appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(application)
+	if appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return carpool.Application{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Application{}, idempotency.Completion{}, internalStoreError()
+	}
+	return application, completion, nil
+}
+
+func (s *Store) rejectCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, input carpool.RejectApplicationInput, now time.Time) (carpool.Application, *domain.AppError) {
 	application, err := s.getCarpoolApplication(ctx, tx, input.ApplicationID, true)
 	if errors.Is(err, pgx.ErrNoRows) || application.OwnerUserID != input.OwnerUserID {
 		return carpool.Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
@@ -758,9 +1176,6 @@ func (s *Store) RejectCarpoolApplication(ctx context.Context, input carpool.Reje
 	}
 	if appErr := insertCarpoolApplicationEventAndNotification(ctx, tx, application, input.OwnerUserID, "carpool_application.rejected", "上车申请已被车主拒绝", "车主已拒绝你的上车申请，请查看申请详情。", input.RequestID, now); appErr != nil {
 		return carpool.Application{}, appErr
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return carpool.Application{}, internalStoreError()
 	}
 	return application, nil
 }
@@ -895,6 +1310,134 @@ func (s *Store) ListCarpoolMembershipsByOwner(ctx context.Context, ownerUserID s
 	return scanCarpoolMemberships(rows)
 }
 
+func (s *Store) ListCarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Membership, *domain.AppError) {
+	if actor.Audience == auth.SessionAudienceNormal {
+		if participantRole == carpool.JoinActorOwner {
+			return s.ListCarpoolMembershipsByOwner(ctx, actor.UserID)
+		}
+		return s.ListCarpoolMembershipsByBuyer(ctx, actor.UserID)
+	}
+	where, args, ok := restrictedCarpoolWhere(actor, participantRole, "carpool_membership", "carpool_memberships", "")
+	if !ok {
+		return nil, carpoolRelationshipNotFound()
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+carpoolMembershipColumns+` FROM carpool_memberships `+where+` ORDER BY updated_at DESC`, args...)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanCarpoolMemberships(rows)
+}
+
+func (s *Store) GetCarpoolMembershipForActor(ctx context.Context, actor auth.BusinessActor, membershipID, participantRole string) (carpool.Membership, *domain.AppError) {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Membership{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	if appErr := lockAccountGovernanceUser(ctx, tx, actor.UserID); appErr != nil {
+		return carpool.Membership{}, appErr
+	}
+	membership, err := s.getCarpoolMembership(ctx, tx, membershipID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
+	}
+	if err != nil {
+		return carpool.Membership{}, internalStoreError()
+	}
+	if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, participantRole, "carpool_membership", membership.ID, membership.BuyerUserID, membership.OwnerUserID, membership.CreatedAt); appErr != nil {
+		return carpool.Membership{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Membership{}, internalStoreError()
+	}
+	return membership, nil
+}
+
+func restrictedCarpoolWhere(actor auth.BusinessActor, participantRole, resourceType, tableName, resourceID string) (string, []any, bool) {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || actor.UserID == "" || actor.GovernanceActionID == "" || actor.GovernanceVersion < 1 || actor.RestrictionEffectiveAt.IsZero() {
+		return "", nil, false
+	}
+	participantColumn := "buyer_user_id"
+	if participantRole == carpool.JoinActorOwner {
+		participantColumn = "owner_user_id"
+	} else if participantRole != carpool.JoinActorBuyer {
+		return "", nil, false
+	}
+	where := `WHERE ` + tableName + `.` + participantColumn + ` = $1
+		AND ` + tableName + `.created_at <= $4
+		AND EXISTS (
+			SELECT 1
+			FROM account_governance_resource_dispositions disposition
+			JOIN account_governance_disposition_actions link ON link.disposition_id = disposition.id
+			JOIN account_governance_actions action ON action.id = link.governance_action_id
+			JOIN users user_account ON user_account.id = action.target_user_id
+			WHERE disposition.resource_type = $5
+			  AND disposition.resource_id = ` + tableName + `.id
+			  AND disposition.result = 'preserved'
+			  AND link.governance_action_id = $2
+			  AND action.target_user_id = $1
+			  AND action.governance_version = $3
+			  AND action.effective_at = $4
+			  AND action.status = 'effective'
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = action.id
+			  AND user_account.governance_version = action.governance_version
+		)`
+	args := []any{actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt, resourceType}
+	if strings.TrimSpace(resourceID) != "" {
+		where += ` AND ` + tableName + `.id = $6`
+		args = append(args, resourceID)
+	}
+	return where, args, true
+}
+
+func authorizeRestrictedCarpoolInTx(ctx context.Context, tx pgx.Tx, actor auth.BusinessActor, participantRole, resourceType, resourceID, buyerUserID, ownerUserID string, createdAt time.Time) *domain.AppError {
+	if actor.Audience != auth.SessionAudienceRestrictedBusiness || createdAt.After(actor.RestrictionEffectiveAt) {
+		return carpoolRelationshipNotFound()
+	}
+	if participantRole == carpool.JoinActorBuyer && buyerUserID != actor.UserID || participantRole == carpool.JoinActorOwner && ownerUserID != actor.UserID {
+		return carpoolRelationshipNotFound()
+	}
+	if participantRole != carpool.JoinActorBuyer && participantRole != carpool.JoinActorOwner {
+		return carpoolRelationshipNotFound()
+	}
+	var authorized bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users user_account
+			JOIN account_governance_actions action ON action.id = user_account.current_governance_action_id
+			JOIN account_governance_disposition_actions link ON link.governance_action_id = action.id
+			JOIN account_governance_resource_dispositions disposition ON disposition.id = link.disposition_id
+			WHERE user_account.id = $1
+			  AND user_account.account_status IN ('suspended', 'banned')
+			  AND user_account.security_locked_at IS NULL
+			  AND user_account.current_governance_action_id = $2
+			  AND user_account.governance_version = $3
+			  AND action.status = 'effective'
+			  AND action.effective_at = $4
+			  AND disposition.resource_type = $5
+			  AND disposition.resource_id = $6
+			  AND disposition.result = 'preserved'
+		)
+	`, actor.UserID, actor.GovernanceActionID, actor.GovernanceVersion, actor.RestrictionEffectiveAt, resourceType, resourceID).Scan(&authorized); err != nil {
+		return internalStoreError()
+	}
+	if !authorized {
+		return carpoolRelationshipNotFound()
+	}
+	return nil
+}
+
+func carpoolRelationshipNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool relationship not found", "拼车关系不存在。")
+}
+
 func (s *Store) ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, entry idempotency.Entry, input carpool.ConfirmMembershipCompleteInput, now time.Time, buildCompletion carpool.MembershipCompletionBuilder) (carpool.Membership, idempotency.Completion, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return carpool.Membership{}, idempotency.Completion{}, internalStoreError()
@@ -908,6 +1451,11 @@ func (s *Store) ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Cont
 	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
 	if appErr != nil {
 		return carpool.Membership{}, idempotency.Completion{}, appErr
+	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.ActorUserID); appErr != nil {
+			return carpool.Membership{}, idempotency.Completion{}, appErr
+		}
 	}
 
 	membership, appErr := s.confirmCarpoolMembershipCompleteInTx(ctx, tx, input, now)
@@ -941,6 +1489,11 @@ func (s *Store) EndCarpoolMembershipWithIdempotency(ctx context.Context, entry i
 	if appErr != nil {
 		return carpool.Membership{}, idempotency.Completion{}, appErr
 	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.ActorUserID); appErr != nil {
+			return carpool.Membership{}, idempotency.Completion{}, appErr
+		}
+	}
 
 	membership, appErr := s.endCarpoolMembershipInTx(ctx, tx, input, now)
 	if appErr != nil {
@@ -958,6 +1511,8 @@ func (s *Store) EndCarpoolMembershipWithIdempotency(ctx context.Context, entry i
 	}
 	return membership, completion, nil
 }
+
+const carpoolAvailableSeatsExpression = `GREATEST(buyer_seat_capacity - active_buyer_members - reserved_seats, 0)`
 
 const carpoolListingColumns = `
 	id::text, owner_user_id::text, product_plan_id::text, owner_contact_method_id::text, title, summary, access_arrangement,
@@ -1013,13 +1568,13 @@ const carpoolListingColumns = `
 	    AND verification.status = 'verified'
 	),
 	price_monthly_cny::text, service_multiplier::text,
-	weekly_quota_amount::text, monthly_quota_amount::text, follows_official_quota_reset, vps_region,
+	daily_quota_amount::text, weekly_quota_amount::text, follows_official_quota_reset, vps_region,
 	supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
 	payment_method_code, custom_payment_method,
 	quota_label, quota_unit, quota_period, buyer_seat_capacity, active_buyer_members,
 	status, COALESCE(reviewed_by_admin_id::text, ''), reviewed_at, COALESCE(review_reason, ''),
 	policy_version, COALESCE(risk_notice_code, ''), risk_ack_required, reserved_seats::int,
-	GREATEST(buyer_seat_capacity - active_buyer_members - reserved_seats, 0)::int AS available_seats,
+	` + carpoolAvailableSeatsExpression + `::int AS available_seats,
 	created_at, updated_at, version
 `
 
@@ -1090,7 +1645,7 @@ func scanCarpoolListings(rows pgx.Rows) ([]carpool.Listing, *domain.AppError) {
 func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	var cycleTermID string
 	var cycleTerm carpool.CycleTerm
-	var weeklyQuotaAmount *string
+	var dailyQuotaAmount *string
 	var followsOfficialQuotaReset *bool
 	var vpsRegion *string
 	var supportsMainlandChinaDirectConnection *bool
@@ -1126,8 +1681,8 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		&listing.SourceAuthorVerification.ExpiresAt,
 		&listing.PriceMonthlyCNY,
 		&listing.ServiceMultiplier,
-		&weeklyQuotaAmount,
-		&listing.MonthlyQuotaAmount,
+		&dailyQuotaAmount,
+		&listing.WeeklyQuotaAmount,
 		&followsOfficialQuotaReset,
 		&vpsRegion,
 		&supportsMainlandChinaDirectConnection,
@@ -1155,7 +1710,7 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	); err != nil {
 		return err
 	}
-	listing.WeeklyQuotaAmount = weeklyQuotaAmount
+	listing.DailyQuotaAmount = dailyQuotaAmount
 	listing.FollowsOfficialQuotaReset = followsOfficialQuotaReset
 	listing.VPSRegion = vpsRegion
 	listing.SupportsMainlandChinaDirectConnection = supportsMainlandChinaDirectConnection
@@ -1360,6 +1915,9 @@ func (s *Store) acceptCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, inp
 	if err != nil {
 		return carpool.Application{}, internalStoreError()
 	}
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
+		return carpool.Application{}, appErr
+	}
 	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
 		return carpool.Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
@@ -1381,11 +1939,11 @@ func (s *Store) acceptCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, inp
 		return carpool.Application{}, domain.NewError(http.StatusConflict, domain.CodeSeatUnavailable, "Seat unavailable", "当前车源没有可预留名额。")
 	}
 
-	_, buyerVersion, appErr := lockContactVersionForOwner(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, "买家联系方式不可用或不属于当前用户。")
+	_, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
 	if appErr != nil {
 		return carpool.Application{}, appErr
 	}
-	_, ownerVersion, appErr := lockContactVersionForOwner(ctx, tx, listing.OwnerContactMethodID, input.OwnerUserID, "车主联系方式不可用或不属于当前用户。")
+	_, ownerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
 	if appErr != nil {
 		return carpool.Application{}, appErr
 	}
@@ -1525,6 +2083,9 @@ func (s *Store) confirmCarpoolApplicationJoinInTx(ctx context.Context, tx pgx.Tx
 	}
 	if err != nil {
 		return carpool.Application{}, internalStoreError()
+	}
+	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
+		return carpool.Application{}, appErr
 	}
 	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
 		return carpool.Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
@@ -1680,6 +2241,14 @@ func (s *Store) confirmCarpoolMembershipCompleteInTx(ctx context.Context, tx pgx
 	if err != nil {
 		return carpool.Membership{}, internalStoreError()
 	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		actor := auth.BusinessActor{UserID: input.ActorUserID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+		if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, input.ActorRole, "carpool_membership", membership.ID, membership.BuyerUserID, membership.OwnerUserID, membership.CreatedAt); appErr != nil {
+			return carpool.Membership{}, appErr
+		}
+	} else if input.ActorAudience != "" && input.ActorAudience != auth.SessionAudienceNormal {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
+	}
 	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
 		return carpool.Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
@@ -1778,6 +2347,14 @@ func (s *Store) endCarpoolMembershipInTx(ctx context.Context, tx pgx.Tx, input c
 	if err != nil {
 		return carpool.Membership{}, internalStoreError()
 	}
+	if input.ActorAudience == auth.SessionAudienceRestrictedBusiness {
+		actor := auth.BusinessActor{UserID: input.ActorUserID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+		if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, input.ActorRole, "carpool_membership", membership.ID, membership.BuyerUserID, membership.OwnerUserID, membership.CreatedAt); appErr != nil {
+			return carpool.Membership{}, appErr
+		}
+	} else if input.ActorAudience != "" && input.ActorAudience != auth.SessionAudienceNormal {
+		return carpool.Membership{}, carpoolRelationshipNotFound()
+	}
 	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
 		return carpool.Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
@@ -1835,12 +2412,89 @@ func insertCarpoolApplicationEventAndNotification(ctx context.Context, tx pgx.Tx
 	return insertCarpoolApplicationEventAndTargetNotification(ctx, tx, application, actorUserID, application.BuyerUserID, eventType, title, body, requestID, now)
 }
 
+func insertCarpoolListingEvent(ctx context.Context, tx pgx.Tx, listing carpool.Listing, actorUserID, actorKind, eventType, requestID string, now time.Time) *domain.AppError {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		requestID = "unknown"
+	}
+	metadata, err := json.Marshal(map[string]string{"status": listing.Status})
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO domain_events (
+			id, aggregate_type, aggregate_id, event_type, actor_user_id, actor_kind,
+			aggregate_version, request_id, metadata_json, created_at
+		)
+		VALUES ($1, 'carpool_listing', $2, $3, $4, $5, $6, $7, $8, $9)
+	`, uuid.NewString(), listing.ID, eventType, actorUserID, actorKind, listing.Version, requestID, metadata, now)
+	if err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func carpoolListingReviewEventType(action string) string {
+	switch strings.TrimSpace(action) {
+	case "approve":
+		return "carpool_listing.published"
+	case "reject":
+		return "carpool_listing.rejected"
+	case "request_changes":
+		return "carpool_listing.changes_requested"
+	case "pause":
+		return "carpool_listing.paused"
+	case "restore":
+		return "carpool_listing.resumed"
+	default:
+		return ""
+	}
+}
+
 func insertCarpoolApplicationEventAndTargetNotification(ctx context.Context, tx pgx.Tx, application carpool.Application, actorUserID, notifyUserID, eventType, title, body, requestID string, now time.Time) *domain.AppError {
 	return insertCarpoolApplicationEventAndTargetNotificationURL(ctx, tx, application, actorUserID, notifyUserID, eventType, title, body, requestID, now, "/my/rides/"+application.ID)
 }
 
 func insertCarpoolApplicationEventAndOwnerNotification(ctx context.Context, tx pgx.Tx, application carpool.Application, actorUserID, eventType, title, body, requestID string, now time.Time) *domain.AppError {
 	return insertCarpoolApplicationEventAndTargetNotificationURL(ctx, tx, application, actorUserID, application.OwnerUserID, eventType, title, body, requestID, now, "/merchant/carpool-applications/"+application.ID)
+}
+
+func insertSystemCarpoolApplicationEventAndTargetNotification(ctx context.Context, tx pgx.Tx, application carpool.Application, notifyUserID, eventType, title, body, requestID string, now time.Time) *domain.AppError {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		requestID = "system:carpool-reservation-expiry"
+	}
+	eventID := uuid.NewString()
+	metadata, err := json.Marshal(map[string]string{
+		"carpoolListingId": application.CarpoolListingID,
+		"status":           application.Status,
+	})
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO domain_events (
+			id, aggregate_type, aggregate_id, event_type, actor_user_id, actor_kind,
+			aggregate_version, request_id, metadata_json, created_at
+		)
+		VALUES ($1, 'carpool_application', $2, $3, NULL, 'system', $4, $5, $6, $7)
+	`, eventID, application.ID, eventType, application.Version, requestID, metadata, now)
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO notifications (
+			user_id, type, title, body, target_type, target_id, target_url,
+			source_event_type, source_event_id, dedupe_key, created_at
+		)
+		VALUES ($1, $2, $3, $4, 'carpool_application', $5, $6, $2, $7, $8, $9)
+		ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+	`, notifyUserID, eventType, title, body, application.ID, "/merchant/carpool-applications/"+application.ID,
+		eventID, "carpool_application:"+application.ID+":"+application.Status+":"+notifyUserID, now)
+	if err != nil {
+		return internalStoreError()
+	}
+	return nil
 }
 
 func insertCarpoolApplicationEventAndTargetNotificationURL(ctx context.Context, tx pgx.Tx, application carpool.Application, actorUserID, notifyUserID, eventType, title, body, requestID string, now time.Time, targetURL string) *domain.AppError {
@@ -2056,7 +2710,7 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 	case "reject":
 		return nextStatus == carpool.ListingStatusRejected && currentStatus == carpool.ListingStatusPendingReview
 	case "request_changes":
-		return nextStatus == carpool.ListingStatusChangesRequested && currentStatus == carpool.ListingStatusPendingReview
+		return nextStatus == carpool.ListingStatusChangesRequested && (currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive)
 	case "pause":
 		return nextStatus == carpool.ListingStatusPaused && currentStatus == carpool.ListingStatusActive
 	case "restore":
@@ -2068,7 +2722,7 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 	case carpool.ListingStatusRejected:
 		return currentStatus == carpool.ListingStatusPendingReview
 	case carpool.ListingStatusChangesRequested:
-		return currentStatus == carpool.ListingStatusPendingReview
+		return currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive
 	case carpool.ListingStatusPaused:
 		return currentStatus == carpool.ListingStatusActive
 	default:
@@ -2078,7 +2732,12 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 
 func ensureCarpoolPlanAllowedForPublish(ctx context.Context, q queryer, productPlanID string) *domain.AppError {
 	var publishPolicy string
-	err := q.QueryRow(ctx, `SELECT publish_policy FROM product_plans WHERE id = $1 AND active = true`, productPlanID).Scan(&publishPolicy)
+	err := q.QueryRow(ctx, `
+		SELECT plan.publish_policy
+		FROM product_plans plan
+		JOIN product_categories category ON category.id = plan.category_id
+		WHERE plan.id = $1 AND plan.status = 'active' AND category.status = 'active'
+	`, productPlanID).Scan(&publishPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Product plan not found", "产品套餐不存在。")
 	}
