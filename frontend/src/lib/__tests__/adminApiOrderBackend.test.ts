@@ -12,6 +12,11 @@ describe('管理员 API 订单适配', () => {
       buyerUserId: 'buyer-user-id',
       sellerUserId: 'seller-user-id',
       status: 'delivery_submitted',
+      disputeStatus: 'awaiting_fulfillment',
+      disputeCaseId: 'dispute-1',
+      latestDisputeCaseId: 'dispute-1',
+      hasDisputeHistory: true,
+      activeRemedyAction: 'full_refund',
       serviceTitleSnapshot: 'GPT 服务',
       amount: '10.00',
       requestedUsdAllowanceSnapshot: '12.500000',
@@ -21,6 +26,13 @@ describe('管理员 API 订单适配', () => {
       selectedPaymentMethod: 'wechat',
       paymentWindowMinutesSnapshot: 10,
       paymentExpiresAt: '2026-07-12T01:00:00Z',
+      merchantConfirmOverdue: true,
+      merchantConfirmOverdueAt: '2026-07-12T00:21:00Z',
+      deliveryOverdue: true,
+      deliveryOverdueAt: '2026-07-12T00:31:00Z',
+      commercialOutcome: 'pending',
+      quotaValidityIssueAt: '2026-07-12T00:35:00Z',
+      quotaValidityIssueReason: 'delivery_insufficient',
       deliverySubmittedAt: '2026-07-12T00:40:00Z',
       deliveryReviewExpiresAt: '2026-07-13T00:40:00Z',
       deliveryCredential: {
@@ -40,6 +52,9 @@ describe('管理员 API 订单适配', () => {
     expect(row.detailItems).toContainEqual({ label: '订单号', value: 'API-20260802-K7M4P9Q2XZ' })
     expect(row.secondary).toContain('订单金额 ¥10.00')
     expect(row.detailItems).toContainEqual({ label: '购买额度', value: '12.500000 美元额度' })
+    expect(row.detailItems).toContainEqual({ label: '商业结果', value: '商业结果待确认' })
+    expect(row.detailItems).toContainEqual({ label: '历史纠纷', value: '有历史案件' })
+    expect(row.detailItems).toContainEqual({ label: '额度有效期', value: '首次交付时剩余不足 60 分钟' })
     expect(JSON.stringify(row)).not.toContain('must-not-leak')
     expect(row.targetType).toBe('api-order')
     expect(row.targetTo).toBe('/admin/api-orders/order-1')
@@ -55,16 +70,22 @@ describe('管理员 API 订单适配', () => {
       sellerUserId: 'seller-user-id',
       status: 'completed',
       disputeStatus: 'none',
+      latestDisputeCaseId: 'dispute-closed-1',
+      hasDisputeHistory: true,
       serviceTitleSnapshot: '额度包服务',
       amount: '20.00',
       currency: 'CNY',
       selectedPaymentMethod: 'alipay',
       paymentWindowMinutesSnapshot: 10,
       paymentExpiresAt: '2026-07-12T00:10:00Z',
+      merchantConfirmOverdue: false,
+      deliveryOverdue: false,
       deliverySubmittedAt: '2026-07-12T00:40:00Z',
       deliveryReviewExpiresAt: '2026-07-13T00:40:00Z',
       completionSource: 'auto_completed',
       completedAt: '2026-07-13T00:40:00Z',
+      commercialOutcome: 'normal_fulfillment',
+      commercialOutcomeUpdatedAt: '2026-07-13T00:40:00Z',
       deliveryCredential: {
         deliveryKind: 'api_key_endpoint',
         apiKey: 'must-not-leak',
@@ -80,6 +101,9 @@ describe('管理员 API 订单适配', () => {
     expect(detail.buyerUserId).toBe('buyer-user-id')
     expect(detail.sellerUserId).toBe('seller-user-id')
     expect(detail.completionSource).toBe('auto_completed')
+    expect(detail.latestDisputeCaseId).toBe('dispute-closed-1')
+    expect(detail.hasDisputeHistory).toBe(true)
+    expect(detail.commercialOutcome).toBe('normal_fulfillment')
     expect(JSON.stringify(detail)).not.toContain('must-not-leak')
     expect(detail).not.toHaveProperty('deliveryCredential')
   })

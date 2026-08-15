@@ -307,6 +307,11 @@ func (s *Service) disputeParticipantAction(ctx context.Context, userID, routeKey
 	input.ProposalID = strings.TrimSpace(input.ProposalID)
 	input.Note = strings.TrimSpace(input.Note)
 	input.Reason = strings.TrimSpace(input.Reason)
+	input.NegotiationSummary = strings.TrimSpace(input.NegotiationSummary)
+	input.RequestedPlatformAction = strings.TrimSpace(input.RequestedPlatformAction)
+	for index := range input.NegotiationChannels {
+		input.NegotiationChannels[index] = strings.ToLower(strings.TrimSpace(input.NegotiationChannels[index]))
+	}
 	if appErr := validateDisputeParticipantAction(input); appErr != nil {
 		return idempotency.Completion{}, appErr
 	}
@@ -379,8 +384,8 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 	projectionStatus := ""
 	switch input.Action {
 	case DisputeMessageActionAppend:
-		if item.Status != DisputeStatusNegotiating && item.Status != DisputeStatusOpen && item.Status != DisputeStatusWaitingInfo {
-			return DisputeCase{}, "", func() {}, invalidState("当前纠纷状态不能继续留言。")
+		if item.Status != DisputeStatusNegotiating {
+			return DisputeCase{}, "", func() {}, invalidState("平台已介入或纠纷已结束，不能继续双方留言。")
 		}
 		s.disputeMessages[item.ID] = append(s.disputeMessages[item.ID], DisputeMessage{
 			ID: uuid.NewString(), DisputeCaseID: item.ID, SenderUserID: input.ActorUserID,
@@ -390,10 +395,14 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		if item.Status != DisputeStatusNegotiating {
 			return DisputeCase{}, "", func() {}, invalidState("平台已介入或纠纷已结束，不能再提交协商方案。")
 		}
+		if input.FulfillmentRequired && (!isDisputeParticipant(item, input.ResponsibleUserID) || !isDisputeParticipant(item, input.BeneficiaryUserID)) {
+			return DisputeCase{}, "", func() {}, invalidState("方案履行责任方和受益方必须是当前纠纷参与者。")
+		}
 		proposals := s.settlementProposals[item.ID]
 		for index := range proposals {
 			if proposals[index].Status == SettlementStatusPending {
 				proposals[index].Status = SettlementStatusSuperseded
+				proposals[index].SupersededReason = "new_proposal"
 				proposals[index].UpdatedAt = now
 				proposals[index].Version++
 			}
@@ -401,6 +410,8 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		proposals = append(proposals, SettlementProposal{
 			ID: uuid.NewString(), DisputeCaseID: item.ID, ProposedByUserID: input.ActorUserID,
 			Resolution: input.Resolution, AmountCNY: input.AmountCNY, Terms: input.Terms,
+			FulfillmentRequired: input.FulfillmentRequired, ResponsibleUserID: input.ResponsibleUserID,
+			BeneficiaryUserID: input.BeneficiaryUserID, DueAt: optionalTime(input.DueAt),
 			Status: SettlementStatusPending, CreatedAt: now, UpdatedAt: now, Version: 1,
 		})
 		s.settlementProposals[item.ID] = proposals
@@ -433,10 +444,33 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 			proposal.Status = SettlementStatusAccepted
 			proposal.AcceptedByUserID = input.ActorUserID
 			proposal.AcceptedAt = &now
-			item.Status = DisputeStatusClosed
-			item.PublicResult = "双方已确认协商方案"
-			item.ClosedAt = &now
-			projectionStatus = apiorder.DisputeStatusClosed
+			if proposal.FulfillmentRequired {
+				if proposal.DueAt == nil {
+					return DisputeCase{}, "", func() {}, invalidState("协商方案缺少履行期限。")
+				}
+				item.Status = DisputeStatusResolved
+				item.ResolvedAt = &now
+				s.disputeRemedies[item.ID] = append(s.disputeRemedies[item.ID], DisputeRemedy{
+					ID: uuid.NewString(), DisputeCaseID: item.ID, Action: proposal.Resolution,
+					AmountCNY: proposal.AmountCNY, Currency: "CNY", ResponsibleUserID: proposal.ResponsibleUserID,
+					BeneficiaryUserID: proposal.BeneficiaryUserID, Instructions: proposal.Terms,
+					Status: RemedyStatusPending, DueAt: *proposal.DueAt, LatenessStatus: RemedyLatenessNotDue,
+					Source: RemedySourceMutualAgreement, SettlementProposalID: proposal.ID,
+					CreatedAt: now, UpdatedAt: now, Version: 1,
+				})
+				item.PublicResult = "双方已确认协商方案，等待履行"
+				projectionStatus = apiorder.DisputeStatusAwaitingFulfillment
+			} else {
+				item.Status = DisputeStatusClosed
+				item.PublicResult = "双方已确认协商方案"
+				item.ClosedAt = &now
+				item.Active = false
+				item.FinalReason = "mutual_agreement_no_remedy"
+				expiresAt := now.Add(DisputeAppealWindow)
+				item.AppealExpiresAt = &expiresAt
+				item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
+				projectionStatus = apiorder.DisputeStatusClosed
+			}
 		}
 		proposals[index] = proposal
 		s.settlementProposals[item.ID] = proposals
@@ -448,6 +482,7 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		for index := range proposals {
 			if proposals[index].Status == SettlementStatusPending {
 				proposals[index].Status = SettlementStatusSuperseded
+				proposals[index].SupersededReason = "platform_escalation"
 				proposals[index].UpdatedAt = now
 				proposals[index].Version++
 			}
@@ -455,6 +490,12 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		s.settlementProposals[item.ID] = proposals
 		item.Status = DisputeStatusOpen
 		item.PublicResult = "平台审核中"
+		item.NegotiationChannels = append([]string(nil), input.NegotiationChannels...)
+		item.NegotiationEndedConfirmed = input.NegotiationEndedConfirmed
+		item.NegotiationSummary = input.NegotiationSummary
+		item.RequestedPlatformAction = input.RequestedPlatformAction
+		item.EscalatedByUserID = input.ActorUserID
+		item.EscalatedAt = &now
 		projectionStatus = apiorder.DisputeStatusOpen
 	case DisputeRemedyActionClaim:
 		index := currentRemedyIndex(s.disputeRemedies[item.ID])
@@ -471,6 +512,7 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		remedy.ClaimNote = input.Note
 		remedy.ClaimedAt = &now
 		remedy.ConfirmationDueAt = &confirmationDueAt
+		materializeRemedyLatenessForClaim(&remedy, now)
 		remedy.UpdatedAt = now
 		remedy.Version++
 		remedies[index] = remedy
@@ -498,6 +540,11 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 			item.Status = DisputeStatusClosed
 			item.PublicResult = RemedyConfirmationExpiredPublicResult
 			item.ClosedAt = &now
+			item.Active = false
+			item.FinalReason = "remedy_confirmation_expired"
+			expiresAt := now.Add(DisputeAppealWindow)
+			item.AppealExpiresAt = &expiresAt
+			item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
 			projectionStatus = apiorder.DisputeStatusClosed
 			break
 		}
@@ -517,6 +564,11 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 			item.Status = DisputeStatusClosed
 			item.PublicResult = "对方已确认整改履行完成"
 			item.ClosedAt = &now
+			item.Active = false
+			item.FinalReason = "remedy_confirmed"
+			expiresAt := now.Add(DisputeAppealWindow)
+			item.AppealExpiresAt = &expiresAt
+			item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
 			projectionStatus = apiorder.DisputeStatusClosed
 		}
 		remedies[index] = remedy
@@ -554,6 +606,40 @@ func currentRemedyIndex(items []DisputeRemedy) int {
 	return -1
 }
 
+func latestRemedyIndex(items []DisputeRemedy) int {
+	if len(items) == 0 {
+		return -1
+	}
+	return len(items) - 1
+}
+
+func materializeRemedyLatenessForClaim(remedy *DisputeRemedy, claimedAt time.Time) {
+	if remedy == nil {
+		return
+	}
+	if !claimedAt.Before(remedy.DueAt) {
+		lateAt := remedy.DueAt
+		if remedy.LatenessStatus != RemedyLatenessLateConfirmed && remedy.LatenessStatus != RemedyLatenessLateExcused {
+			remedy.LatenessStatus = RemedyLatenessLateUnreviewed
+		}
+		remedy.LateAt = &lateAt
+		remedy.ClaimedLate = true
+		return
+	}
+	if remedy.LatenessStatus == "" || remedy.LatenessStatus == RemedyLatenessNotDue {
+		remedy.LatenessStatus = RemedyLatenessOnTime
+	}
+}
+
+func materializeRemedyLatenessAtDeadline(remedy *DisputeRemedy, now time.Time) {
+	if remedy == nil || now.Before(remedy.DueAt) || (remedy.LatenessStatus != "" && remedy.LatenessStatus != RemedyLatenessNotDue) {
+		return
+	}
+	lateAt := remedy.DueAt
+	remedy.LatenessStatus = RemedyLatenessLateUnreviewed
+	remedy.LateAt = &lateAt
+}
+
 func (s *Service) normalizeExpiredDisputeRemedyMemory(ctx context.Context, disputeID string) *domain.AppError {
 	now := s.now()
 	s.mu.Lock()
@@ -573,6 +659,7 @@ func (s *Service) normalizeExpiredDisputeRemedyMemory(ctx context.Context, dispu
 	}
 	remedy := remedies[index]
 	remedy.Status = RemedyStatusConfirmationExpired
+	materializeRemedyLatenessForClaim(&remedy, *remedy.ClaimedAt)
 	remedy.ResponseNote = RemedyConfirmationExpiredNote
 	remedy.ConfirmationExpiredAt = &now
 	remedy.UpdatedAt = now
@@ -582,6 +669,11 @@ func (s *Service) normalizeExpiredDisputeRemedyMemory(ctx context.Context, dispu
 	item.Status = DisputeStatusClosed
 	item.PublicResult = RemedyConfirmationExpiredPublicResult
 	item.ClosedAt = &now
+	item.Active = false
+	item.FinalReason = "remedy_confirmation_expired"
+	expiresAt := now.Add(DisputeAppealWindow)
+	item.AppealExpiresAt = &expiresAt
+	item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
 	item.UpdatedAt = now
 	item.Version++
 	s.disputes[disputeID] = item
@@ -675,7 +767,7 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user au
 			if input.Remedy != nil {
 				projectionStatus = apiorder.DisputeStatusAwaitingFulfillment
 			}
-		case "close", "mark_overdue":
+		case "close":
 			projectionStatus = apiorder.DisputeStatusClosed
 		}
 		if projectionStatus != "" {
@@ -724,9 +816,9 @@ func (s *Service) notifyDisputeRemedyMemory(item DisputeCase, action string) {
 		eventType, title = "dispute.remedy_contested", "整改结果已申请平台复核"
 		body = "对方反馈未收到或未完成，纠纷已重新进入平台审核。"
 		recipients = []string{remedy.ResponsibleUserID}
-	case action == "mark_overdue" && remedy.Status == RemedyStatusOverdue:
+	case action == "confirm_lateness" && remedy.LatenessStatus == RemedyLatenessLateConfirmed:
 		eventType, title = "dispute.remedy_overdue", "平台已确认整改逾期"
-		body = "平台已确认责任方未在裁决期限内履行，纠纷已结案。"
+		body = "平台已确认客观逾期事实；仅该裁定可作为责任影响依据。"
 		recipients = []string{remedy.ResponsibleUserID, remedy.BeneficiaryUserID}
 	default:
 		return
@@ -1041,6 +1133,8 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 	}
 	item := DisputeCase{
 		ID:                  uuid.NewString(),
+		APIOrderID:          strings.TrimSpace(input.OrderID),
+		Active:              true,
 		TargetType:          TargetAPIOrder,
 		TargetID:            strings.TrimSpace(input.OrderID),
 		TargetLabel:         nonEmpty(input.ServiceTitle, "API 订单"),
@@ -1166,6 +1260,7 @@ func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResul
 			PrimaryDisplayName:   item.ReporterName,
 			CounterpartyUsername: item.ReportedUsername,
 			Status:               DisputeStatusOpen,
+			Active:               nonEmpty(item.CanonicalTargetType, item.TargetType) == TargetAPIOrder,
 			PublicSummary:        nonEmpty(input.PublicSummary, item.Title),
 			PublicResultCode:     nonEmpty(normalizePublicResultCode(input.PublicResultCode), PublicResultNoAction),
 			PublicResult:         nonEmpty(input.PublicResult, "已进入人工处理中"),
@@ -1272,6 +1367,7 @@ func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResu
 				ResponsibleUserID: input.Remedy.ResponsibleUserID, BeneficiaryUserID: beneficiaryID,
 				Instructions: input.Remedy.Instructions, Status: RemedyStatusPending,
 				DueAt: input.Remedy.DueAt, CreatedByAdminID: input.AdminUserID,
+				LatenessStatus: RemedyLatenessNotDue, Source: RemedySourceAdminDecision,
 				CreatedAt: now, UpdatedAt: now, Version: 1,
 			})
 		}
@@ -1284,28 +1380,49 @@ func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResu
 		}
 		item.Status = DisputeStatusClosed
 		item.ClosedAt = &now
-	case "mark_overdue":
-		index := currentRemedyIndex(s.disputeRemedies[item.ID])
-		if item.Status != DisputeStatusResolved || index < 0 {
-			return MutationResult{}, func() {}, invalidState("当前纠纷没有可确认逾期的整改要求。")
+	case "confirm_lateness", "excuse_lateness":
+		index := latestRemedyIndex(s.disputeRemedies[item.ID])
+		if item.TargetType != TargetAPIOrder || (item.Status != DisputeStatusResolved && item.Status != DisputeStatusClosed) || index < 0 {
+			return MutationResult{}, func() {}, invalidState("当前纠纷没有可裁定逾期状态的整改要求。")
 		}
 		remedies := s.disputeRemedies[item.ID]
 		remedy := remedies[index]
-		if remedy.Status != RemedyStatusPending || now.Before(remedy.DueAt) {
-			return MutationResult{}, func() {}, invalidState("整改尚未到期或已提交履行声明。")
+		materializeRemedyLatenessAtDeadline(&remedy, now)
+		if remedy.LatenessStatus != RemedyLatenessLateUnreviewed {
+			return MutationResult{}, func() {}, invalidState("当前整改没有待裁定的客观逾期事实。")
 		}
-		remedy.Status = RemedyStatusOverdue
-		remedy.ResponseNote = input.Reason
-		remedy.OverdueAt = &now
+		remedy.LatenessDecidedAt = &now
+		remedy.LatenessDecidedByAdminID = input.AdminUserID
+		remedy.LatenessReason = strings.TrimSpace(input.Reason)
 		remedy.UpdatedAt = now
 		remedy.Version++
+		if input.Action == "confirm_lateness" {
+			remedy.LatenessStatus = RemedyLatenessLateConfirmed
+		} else {
+			remedy.LatenessStatus = RemedyLatenessLateExcused
+		}
 		remedies[index] = remedy
 		s.disputeRemedies[item.ID] = remedies
-		item.Status = DisputeStatusClosed
-		item.PublicResult = "责任方未在裁决期限内履行"
-		item.ClosedAt = &now
 	default:
 		return MutationResult{}, func() {}, invalidState("纠纷处理动作不支持。")
+	}
+	if item.Status == DisputeStatusClosed && item.FinalReason == "" {
+		item.Active = false
+		switch input.Action {
+		case "resolve":
+			item.FinalReason = "admin_resolved_no_remedy"
+		case "close":
+			item.FinalReason = "admin_closed"
+		default:
+			item.FinalReason = "dispute_closed"
+		}
+		affected, appErr := ResolveAdverselyAffectedUsers(item, input.AdverselyAffectedUserIDs)
+		if appErr != nil {
+			return MutationResult{}, func() {}, appErr
+		}
+		item.AdverselyAffectedIDs = affected
+		expiresAt := now.Add(DisputeAppealWindow)
+		item.AppealExpiresAt = &expiresAt
 	}
 	item.AdminReason = strings.TrimSpace(input.Reason)
 	item.PublicSummary = nonEmpty(input.PublicSummary, item.PublicSummary)
@@ -1420,6 +1537,7 @@ func (s *Service) recordInfoSupplementMemory(input SupplementInput, now time.Tim
 func (s *Service) createAppealMemory(input CreateAppealInput) (Appeal, *domain.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now()
 	var sourceReport *Report
 	var sourceDispute *DisputeCase
 	reportID := strings.TrimSpace(input.ReportID)
@@ -1438,7 +1556,7 @@ func (s *Service) createAppealMemory(input CreateAppealInput) (Appeal, *domain.A
 		}
 		sourceDispute = &item
 	}
-	source, appErr := ResolveAppealSource(input.AppellantUserID, sourceReport, sourceDispute)
+	source, appErr := ResolveAppealSourceAt(input.AppellantUserID, sourceReport, sourceDispute, now)
 	if appErr != nil {
 		return Appeal{}, appErr
 	}
@@ -1454,7 +1572,6 @@ func (s *Service) createAppealMemory(input CreateAppealInput) (Appeal, *domain.A
 			return Appeal{}, appErr
 		}
 	}
-	now := s.now()
 	item := Appeal{
 		ID:                uuid.NewString(),
 		AppellantUserID:   input.AppellantUserID,
@@ -1601,7 +1718,7 @@ func validateReportAction(input AdminActionInput) *domain.AppError {
 
 func validateDisputeAction(input AdminActionInput) *domain.AppError {
 	switch input.Action {
-	case "request_info", "resolve", "close", "mark_overdue":
+	case "request_info", "resolve", "close", "confirm_lateness", "excuse_lateness":
 	default:
 		return invalidState("纠纷处理动作不支持。")
 	}
@@ -1671,6 +1788,22 @@ func validateDisputeParticipantAction(input DisputeParticipantActionInput) *doma
 		if appErr := apiorder.ValidateRequestedDisputeAmount(input.Resolution, input.AmountCNY, ""); appErr != nil {
 			return appErr
 		}
+		if apiorder.DisputeResolutionRequiresFulfillment(input.Resolution) && !input.FulfillmentRequired {
+			return fieldError("fulfillmentRequired", "退款或继续履约方案必须进入履行确认流程。")
+		}
+		if input.FulfillmentRequired {
+			if input.ResponsibleUserID == "" {
+				return fieldError("responsibleUserId", "必须指定方案履行责任方。")
+			}
+			if input.BeneficiaryUserID == "" || input.BeneficiaryUserID == input.ResponsibleUserID {
+				return fieldError("beneficiaryUserId", "必须指定不同于责任方的方案受益方。")
+			}
+			if input.DueAt.IsZero() {
+				return fieldError("dueAt", "必须填写方案履行期限。")
+			}
+		} else if input.ResponsibleUserID != "" || input.BeneficiaryUserID != "" || !input.DueAt.IsZero() {
+			return fieldError("fulfillmentRequired", "无需后续履行的方案不能携带责任方或期限。")
+		}
 		return validateDisputeParticipantText("terms", input.Terms, 1, 2000, "方案说明需为 1 至 2000 个字符。")
 	case DisputeMessageActionConfirm:
 		if input.ProposalID == "" {
@@ -1686,7 +1819,26 @@ func validateDisputeParticipantAction(input DisputeParticipantActionInput) *doma
 		}
 		return validateDisputeParticipantText("reason", input.Reason, 1, 500, "拒绝说明不能超过 500 个字符。")
 	case DisputeMessageActionEscalate:
-		return validateDisputeParticipantText("reason", input.Reason, 2, 500, "平台介入原因需为 2 至 500 个字符。")
+		if !input.NegotiationEndedConfirmed {
+			return fieldError("negotiationEndedConfirmed", "申请平台介入前必须确认双方协商已经结束。")
+		}
+		if len(input.NegotiationChannels) == 0 || len(input.NegotiationChannels) > 5 {
+			return fieldError("negotiationChannels", "请选择至少一种实际使用过的沟通渠道。")
+		}
+		seenChannels := make(map[string]struct{}, len(input.NegotiationChannels))
+		for _, channel := range input.NegotiationChannels {
+			if !validNegotiationChannel(channel) {
+				return fieldError("negotiationChannels", "沟通渠道不支持。")
+			}
+			if _, exists := seenChannels[channel]; exists {
+				return fieldError("negotiationChannels", "沟通渠道不能重复。")
+			}
+			seenChannels[channel] = struct{}{}
+		}
+		if appErr := validateDisputeParticipantText("negotiationSummary", input.NegotiationSummary, 2, 2000, "请用 2 至 2000 个字符说明最终分歧。"); appErr != nil {
+			return appErr
+		}
+		return validateDisputeParticipantText("requestedPlatformAction", input.RequestedPlatformAction, 2, 1000, "请用 2 至 1000 个字符说明希望平台处理的事项。")
 	case DisputeRemedyActionClaim:
 		return validateDisputeParticipantText("note", input.Note, 2, 2000, "履行说明需为 2 至 2000 个字符。")
 	case DisputeRemedyActionConfirm:
@@ -1698,6 +1850,15 @@ func validateDisputeParticipantAction(input DisputeParticipantActionInput) *doma
 		return validateDisputeParticipantText("reason", input.Reason, 2, 2000, "未收到或未履行说明需为 2 至 2000 个字符。")
 	default:
 		return invalidState("纠纷参与方动作不支持。")
+	}
+}
+
+func validNegotiationChannel(value string) bool {
+	switch value {
+	case NegotiationChannelWeChat, NegotiationChannelEmail, NegotiationChannelLinuxDO, NegotiationChannelInSite, NegotiationChannelOther:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1869,6 +2030,13 @@ func nonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func looksLikeSecret(value string) bool {

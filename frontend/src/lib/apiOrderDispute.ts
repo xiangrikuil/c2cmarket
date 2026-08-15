@@ -17,7 +17,10 @@ export type ApiOrderDisputeIssueCode =
   | 'other'
 
 export type ApiOrderDisputeResolution = 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other'
-export type ApiOrderDisputeRemedyStatus = 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'overdue' | 'cancelled'
+export type ApiOrderDisputeRemedyStatus = 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'cancelled'
+export type ApiOrderDisputeRemedyLateness = 'not_due' | 'on_time' | 'late_unreviewed' | 'late_confirmed' | 'late_excused'
+export type ApiOrderDisputeRemedySource = 'admin_decision' | 'mutual_agreement'
+export type ApiOrderCommercialOutcome = 'pending' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'cancelled_unpaid' | 'closed_unverified'
 
 export const apiMerchantRefundPolicyVersion = 'api-merchant-refund-v1'
 export const apiMerchantRefundPolicyApplicability = '服务有效期内未交付、订单事实（号池、模型或额度）不符，或交付后连续不可用超过 1 小时。'
@@ -28,8 +31,9 @@ export type OpenApiOrderDisputeInput = {
   issueCode: ApiOrderDisputeIssueCode
   requestedResolution: ApiOrderDisputeResolution
   requestedAmountCny: string | null
-	issueOccurredAt?: string | null
+  issueOccurredAt?: string | null
   reason: string
+  evidenceAssetIds?: string[]
 }
 
 export const apiOrderDisputeIssueLabels: Record<ApiOrderDisputeIssueCode, string> = {
@@ -56,8 +60,30 @@ export const apiOrderDisputeRemedyStatusLabels: Record<ApiOrderDisputeRemedyStat
   confirmed: '对方已确认',
   contested: '平台重新审核中',
   confirmation_expired: '确认超时中性结案',
-  overdue: '平台已确认逾期',
   cancelled: '整改已终止',
+}
+
+export const apiOrderDisputeRemedyLatenessLabels: Record<ApiOrderDisputeRemedyLateness, string> = {
+  not_due: '尚未到期',
+  on_time: '按时声明履行',
+  late_unreviewed: '迟到待平台裁定',
+  late_confirmed: '平台已确认迟到',
+  late_excused: '平台已豁免迟到',
+}
+
+export const apiOrderDisputeRemedySourceLabels: Record<ApiOrderDisputeRemedySource, string> = {
+  admin_decision: '平台裁决',
+  mutual_agreement: '双方协商',
+}
+
+export const apiOrderCommercialOutcomeLabels: Record<ApiOrderCommercialOutcome, string> = {
+  pending: '商业结果待确认',
+  normal_fulfillment: '正常履约',
+  continued_fulfillment: '整改后履约',
+  full_refund: '已确认全额退款',
+  partial_refund: '已确认部分退款',
+  cancelled_unpaid: '未付款取消',
+  closed_unverified: '未核实终局',
 }
 
 export function normalizeApiOrderDisputeStatus(value: unknown): ApiOrderDisputeStatus {

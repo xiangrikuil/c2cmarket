@@ -18,7 +18,7 @@ type BackendReviewCenterRow = {
   counterpartyName: string
   reviewerRole: 'buyer' | 'seller'
   revieweeRole: 'buyer' | 'seller'
-  status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
+  status: 'reviewable' | 'paused' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
   allowedTags: ReviewTag[]
   canCreate: boolean
@@ -28,6 +28,8 @@ type BackendReviewCenterRow = {
   note: string | null
   completedAt: string
   reviewDeadlineAt: string
+  commercialOutcome: '' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'legacy_fulfillment'
+  reviewPaused: boolean
   submittedAt: string | null
   visibleAt: string | null
   frozenAt: string | null
@@ -78,6 +80,8 @@ function mapReviewCenterRow(row: BackendReviewCenterRow): ReviewCenterRow {
     note: row.note,
     completedAt: row.completedAt,
     reviewDeadlineAt: row.reviewDeadlineAt,
+    commercialOutcome: row.commercialOutcome,
+    reviewPaused: row.reviewPaused,
     submittedAt: row.submittedAt,
     visibleAt: row.visibleAt,
     frozenAt: row.frozenAt,

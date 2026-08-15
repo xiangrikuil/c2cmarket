@@ -172,18 +172,20 @@ func loadAPIOrderSanctionRecommendation(ctx context.Context, q queryer, disputeC
 		return recommendation, nil
 	}
 
-	var remedyStatus, responsibleUserID string
+	var remedyLatenessStatus, responsibleUserID string
 	var overdueAt *time.Time
+	var latenessReversedAt *time.Time
 	err = q.QueryRow(ctx, `
-		SELECT id::text, status, responsible_user_id::text, overdue_at
+		SELECT id::text, lateness_status, responsible_user_id::text, lateness_decided_at, lateness_reversed_at
 		FROM api_order_dispute_remedies
 		WHERE dispute_case_id = $1
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1`+lockClause, disputeCaseID).Scan(
 		&recommendation.RemedyID,
-		&remedyStatus,
+		&remedyLatenessStatus,
 		&responsibleUserID,
 		&overdueAt,
+		&latenessReversedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		recommendation.ReasonCode = "overdue_remedy_required"
@@ -197,7 +199,9 @@ func loadAPIOrderSanctionRecommendation(ctx context.Context, q queryer, disputeC
 	err = q.QueryRow(ctx, `
 		SELECT id::text, subject_user_id::text, status, responsibility
 		FROM dispute_reputation_outcomes
-		WHERE dispute_case_id = $1`+lockClause, disputeCaseID).Scan(
+		WHERE dispute_case_id = $1
+		  AND subject_user_id = $2
+		  AND status = 'active'`+lockClause, disputeCaseID, responsibleUserID).Scan(
 		&recommendation.OutcomeID,
 		&recommendation.SubjectUserID,
 		&outcomeStatus,
@@ -240,7 +244,7 @@ func loadAPIOrderSanctionRecommendation(ctx context.Context, q queryer, disputeC
 	}
 
 	switch {
-	case remedyStatus != report.RemedyStatusOverdue || overdueAt == nil:
+	case remedyLatenessStatus != report.RemedyLatenessLateConfirmed || latenessReversedAt != nil || overdueAt == nil:
 		recommendation.ReasonCode = "overdue_remedy_required"
 		return recommendation, nil
 	case outcomeStatus != reputation.OutcomeStatusActive:
@@ -263,8 +267,9 @@ func loadAPIOrderSanctionRecommendation(ctx context.Context, q queryer, disputeC
 		 AND dispute.target_type = 'api_order'
 		JOIN api_orders order_row
 		  ON order_row.id::text = dispute.target_id
-		WHERE remedy.status = 'overdue'
-		  AND remedy.overdue_at >= $1
+		WHERE remedy.lateness_status = 'late_confirmed'
+		  AND remedy.lateness_reversed_at IS NULL
+		  AND remedy.lateness_decided_at >= $1
 		  AND remedy.responsible_user_id = $2
 		  AND order_row.seller_user_id = remedy.responsible_user_id
 	`, windowStart, recommendation.SubjectUserID).Scan(&recommendation.ConfirmedBreaches180Days); err != nil {

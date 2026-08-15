@@ -157,6 +157,7 @@ type sessionResponse struct {
 type devPersonaSessionResponse struct {
 	Persona   devpersona.Persona `json:"persona"`
 	User      userDTO            `json:"user"`
+	Audience  string             `json:"audience"`
 	CSRFToken string             `json:"csrfToken"`
 	ExpiresAt string             `json:"expiresAt"`
 }
@@ -224,6 +225,7 @@ func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, sessionResponse{
 		User:      toUserDTO(user),
+		Audience:  auth.SessionAudienceNormal,
 		CSRFToken: session.CSRFToken,
 		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
 	})
@@ -248,6 +250,7 @@ func (s *Server) handleDevPersonaSession(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, devPersonaSessionResponse{
 		Persona:   result.Persona,
 		User:      toUserDTO(result.User),
+		Audience:  auth.SessionAudienceNormal,
 		CSRFToken: result.Session.CSRFToken,
 		ExpiresAt: result.Session.ExpiresAt.UTC().Format(time.RFC3339),
 	})

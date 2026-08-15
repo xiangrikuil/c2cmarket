@@ -135,6 +135,56 @@ func TestReviewDeadlinePublishesExistingReviewAndRejectsLateSubmission(t *testin
 	}
 }
 
+func TestActiveDisputePausesSealedReviewAndFinalOutcomeRefreshesWindow(t *testing.T) {
+	baseTime := time.Date(2026, 8, 15, 8, 0, 0, 0, time.UTC)
+	current := baseTime
+	transaction := testReviewTransaction(TransactionAPIOrder, baseTime.Add(-13*24*time.Hour))
+	transaction.CommercialOutcome = APIOrderOutcomeNormalFulfillment
+	resolver := &staticTransactionResolver{transactions: []Transaction{transaction}}
+	service := NewService(nil, nil, resolver, nil, func() time.Time { return current })
+
+	_, appErr := service.SubmitWithIdempotency(context.Background(), transaction.BuyerUserID, "buyer-create", "pause-create", "pause-create-hash", SubmitReviewInput{
+		TransactionType: transaction.Type,
+		TransactionID:   transaction.ID,
+		Operation:       OperationCreate,
+		Rating:          5,
+		Tags:            []string{"clear_delivery"},
+		Note:            "纠纷前提交的评价。",
+	}, testReviewCompletion)
+	if appErr != nil {
+		t.Fatalf("submit initial review: %v", appErr)
+	}
+
+	current = baseTime.Add(2 * 24 * time.Hour)
+	resolver.transactions[0].ReviewPaused = true
+	sellerRows, appErr := service.ListMine(context.Background(), transaction.SellerUserID)
+	if appErr != nil {
+		t.Fatalf("list paused seller rows: %v", appErr)
+	}
+	pending := findReviewRow(t, sellerRows, DirectionPending)
+	if pending.Status != CenterStatusPaused || pending.CanCreate || !pending.ReviewPaused {
+		t.Fatalf("active dispute did not pause pending review: %+v", pending)
+	}
+	for _, row := range sellerRows {
+		if row.Direction == DirectionReceived {
+			t.Fatalf("paused sealed counterparty review leaked: %+v", row)
+		}
+	}
+	buyerSent := findReviewRow(t, mustListReviews(t, service, transaction.BuyerUserID), DirectionSent)
+	if buyerSent.Status != StatusSealed || buyerSent.FrozenAt != nil || buyerSent.CanEdit {
+		t.Fatalf("paused review was published or remained editable: %+v", buyerSent)
+	}
+
+	resolver.transactions[0].ReviewPaused = false
+	resolver.transactions[0].CommercialOutcome = APIOrderOutcomeFullRefund
+	resolver.transactions[0].CompletedAt = current
+	resolver.transactions[0].ReviewDeadlineAt = ReviewDeadlineForAPIOrder(current)
+	buyerSent = findReviewRow(t, mustListReviews(t, service, transaction.BuyerUserID), DirectionSent)
+	if buyerSent.Status != StatusSealed || !buyerSent.CanEdit || buyerSent.CommercialOutcome != APIOrderOutcomeFullRefund || !buyerSent.ReviewDeadlineAt.Equal(current.Add(ReviewWindow)) {
+		t.Fatalf("final commercial outcome did not refresh mutable review: %+v", buyerSent)
+	}
+}
+
 func TestReviewValidationRequiresPresetTags(t *testing.T) {
 	appErr := ValidateSubmitInput(SubmitReviewInput{
 		TransactionType: TransactionAPIOrder,
@@ -225,6 +275,15 @@ func findReviewRow(t *testing.T, rows []ReviewCenterRow, direction string) Revie
 	}
 	t.Fatalf("review row direction %s not found in %+v", direction, rows)
 	return ReviewCenterRow{}
+}
+
+func mustListReviews(t *testing.T, service *Service, userID string) []ReviewCenterRow {
+	t.Helper()
+	rows, appErr := service.ListMine(context.Background(), userID)
+	if appErr != nil {
+		t.Fatalf("list review center: %v", appErr)
+	}
+	return rows
 }
 
 func testReviewCompletion(result MutationResult) (idempotency.Completion, *domain.AppError) {

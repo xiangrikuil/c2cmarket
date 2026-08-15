@@ -381,8 +381,21 @@ review_candidates AS (
     END AS source_scope,
     review.rating,
     review.tags,
-    review.status,
-    review.review_deadline_at,
+	    review.status,
+	    review.review_deadline_at,
+	    CASE WHEN review.transaction_type = 'api_order' THEN
+	      NOT EXISTS (
+	        SELECT 1
+	        FROM api_orders order_row
+	        WHERE order_row.id = review.api_order_id
+	          AND order_row.commercial_outcome IN ('normal_fulfillment', 'full_refund', 'partial_refund', 'continued_fulfillment')
+	          AND order_row.commercial_outcome_updated_at IS NOT NULL
+	          AND NOT EXISTS (
+	            SELECT 1 FROM dispute_cases dispute
+	            WHERE dispute.api_order_id = order_row.id AND dispute.active = true
+	          )
+	      )
+	    ELSE false END AS publication_paused,
     COALESCE(review.visible_at, review.review_deadline_at) AS effective_visible_at,
     GREATEST(review.updated_at, COALESCE(exclusion.updated_at, review.updated_at)) AS source_updated_at
   FROM transaction_reviews review
@@ -406,9 +419,10 @@ review_events AS (
     VALUES (review_candidates.source_scope), ('overall'::text)
   ) AS scopes(scope)
   WHERE review_candidates.status = 'published'
-     OR (
-       review_candidates.status = 'sealed'
-       AND review_candidates.review_deadline_at <= $2
+	     OR (
+	       review_candidates.status = 'sealed'
+	       AND review_candidates.publication_paused = false
+	       AND review_candidates.review_deadline_at <= $2
      )
 ),
 review_stats AS (
@@ -543,8 +557,9 @@ review_deadlines AS (
   CROSS JOIN LATERAL (
     VALUES (review_candidates.source_scope), ('overall'::text)
   ) AS scopes(scope)
-  WHERE review_candidates.status = 'sealed'
-    AND review_candidates.review_deadline_at > $2
+	  WHERE review_candidates.status = 'sealed'
+	    AND review_candidates.publication_paused = false
+	    AND review_candidates.review_deadline_at > $2
   GROUP BY review_candidates.user_id, review_candidates.role, scopes.scope
 ),
 platform_review_stats AS (
@@ -754,13 +769,16 @@ outcome_candidates AS (
     AND outcome.responsibility IN ('responsible', 'shared')
     AND (
       dispute.target_type <> 'api_order'
-      OR (
-        SELECT remedy.status
-        FROM api_order_dispute_remedies remedy
+	      OR (
+	        SELECT CASE
+	          WHEN remedy.lateness_reversed_at IS NULL THEN remedy.lateness_status
+	          ELSE ''
+	        END
+	        FROM api_order_dispute_remedies remedy
         WHERE remedy.dispute_case_id = dispute.id
         ORDER BY remedy.created_at DESC, remedy.id DESC
         LIMIT 1
-      ) = 'overdue'
+	      ) = 'late_confirmed'
     )
     AND outcome.decided_at >= $2 - interval '365 days'
 ),
@@ -1197,20 +1215,21 @@ func (s *Store) CreateDisputeOutcomeWithIdempotency(ctx context.Context, entry i
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Dispute unresolved", "未解决纠纷只能形成提醒，不能创建责任裁定。")
 	}
 	if targetType == report.TargetAPIOrder && (input.Responsibility == reputation.ResponsibilityResponsible || input.Responsibility == reputation.ResponsibilityShared) {
-		var remedyStatus string
+		var remedyLatenessStatus string
+		var latenessReversedAt *time.Time
 		if err := tx.QueryRow(ctx, `
-			SELECT status
+			SELECT lateness_status, lateness_reversed_at
 			FROM api_order_dispute_remedies
 			WHERE dispute_case_id = $1
 			ORDER BY created_at DESC, id DESC
 			LIMIT 1
 			FOR UPDATE
-		`, input.DisputeCaseID).Scan(&remedyStatus); errors.Is(err, pgx.ErrNoRows) {
+		`, input.DisputeCaseID).Scan(&remedyLatenessStatus, &latenessReversedAt); errors.Is(err, pgx.ErrNoRows) {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRemedyOutcomeUnavailable()
 		} else if err != nil {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
 		}
-		if remedyStatus != report.RemedyStatusOverdue {
+		if remedyLatenessStatus != report.RemedyLatenessLateConfirmed || latenessReversedAt != nil {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRemedyOutcomeUnavailable()
 		}
 	}
@@ -1220,9 +1239,10 @@ func (s *Store) CreateDisputeOutcomeWithIdempotency(ctx context.Context, entry i
 			SELECT 1
 			FROM appeals
 			WHERE dispute_case_id = $1
+			  AND appellant_user_id = $2
 			  AND status IN ('submitted', 'approved')
 		)
-	`, input.DisputeCaseID).Scan(&appealBlocksOutcome); err != nil {
+	`, input.DisputeCaseID, input.SubjectUserID).Scan(&appealBlocksOutcome); err != nil {
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
 	}
 	if appealBlocksOutcome {

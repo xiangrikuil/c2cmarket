@@ -765,6 +765,7 @@ export type DevPersonaSessionRequest = {
 export type DevPersonaSessionResponse = {
     persona: 'buyer' | 'seller' | 'admin';
     user: User;
+    audience: 'normal';
     csrfToken: string;
     expiresAt: string;
 };
@@ -2773,6 +2774,7 @@ export type ApiOrderDisputeRequest = {
      * Immutable credential-free initial message.
      */
     reason: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 /**
@@ -2802,7 +2804,19 @@ export type ApiOrder = {
      * Order projection of the linked dispute phase. The order fulfillment status remains independent.
      */
     disputeStatus: 'none' | 'negotiating' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
+    /**
+     * Current active dispute only. Omitted after the case closes.
+     */
     disputeCaseId?: string;
+    /**
+     * Latest historical dispute, including a closed case when there is no active dispute.
+     */
+    latestDisputeCaseId?: string;
+    hasDisputeHistory: boolean;
+    /**
+     * Current remedy projection only; it does not mean the action has been fulfilled.
+     */
+    activeRemedyAction?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     /**
      * Frozen validity expiry plus the 24-hour reporting grace period. This does not extend service validity.
      */
@@ -2880,12 +2894,24 @@ export type ApiOrder = {
     paymentSubmittedAt?: string | null;
     merchantConfirmDueAt?: string | null;
     merchantConfirmOverdue: boolean;
+    /**
+     * Persisted lateness fact. It never cancels the paid order or releases inventory.
+     */
+    merchantConfirmOverdueAt?: string | null;
     paymentIssueReason?: 'not_received' | 'amount_mismatch' | 'remark_mismatch';
     paymentIssueNote?: string;
     paymentIssueReportedAt?: string | null;
     paidConfirmedAt?: string | null;
     deliveryDueAt?: string | null;
     deliveryOverdue: boolean;
+    /**
+     * Persisted delivery lateness fact. It does not automatically refund, cancel, or sanction.
+     */
+    deliveryOverdueAt?: string | null;
+    /**
+     * Timestamp of the single pre-deadline delivery reminder. An overdue first maintenance run does not backfill it.
+     */
+    deliveryDueRemindedAt?: string | null;
     /**
      * Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
      */
@@ -2899,6 +2925,16 @@ export type ApiOrder = {
      * Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses. After destruction it contains audit timestamps and no secret payload fields.
      */
     deliveryCredential?: ApiOrderDeliveryCredential;
+    /**
+     * Independent commercial result. It does not replace order fulfillment status.
+     */
+    commercialOutcome: 'pending' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'cancelled_unpaid' | 'closed_unverified';
+    commercialOutcomeUpdatedAt?: string | null;
+    /**
+     * First-delivery validity failure fact. No quota replacement, expiry extension, or inventory restoration occurs.
+     */
+    quotaValidityIssueAt?: string | null;
+    quotaValidityIssueReason?: 'delivery_insufficient';
     /**
      * Present only after completion. Automatic completion records review-window expiry and is not a buyer rating or endorsement.
      */
@@ -3299,7 +3335,7 @@ export type ReviewCenterRow = {
     counterpartyName: string;
     reviewerRole: 'buyer' | 'seller';
     revieweeRole: 'buyer' | 'seller';
-    status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed';
+    status: 'reviewable' | 'paused' | 'expired' | 'sealed' | 'published' | 'removed';
     visibility: 'none' | 'sealed' | 'published' | 'removed';
     /**
      * Tags allowed for this transaction type and review direction.
@@ -3318,6 +3354,8 @@ export type ReviewCenterRow = {
     note: string | null;
     completedAt: string;
     reviewDeadlineAt: string;
+    commercialOutcome: '' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'legacy_fulfillment';
+    reviewPaused: boolean;
     submittedAt: string | null;
     visibleAt: string | null;
     frozenAt: string | null;
@@ -3365,6 +3403,7 @@ export type PublicReview = {
     tags: Array<string>;
     note: string;
     verified: boolean;
+    commercialOutcome: '' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'legacy_fulfillment';
 };
 
 export type PublicReviewList = {
@@ -3497,6 +3536,55 @@ export type InfoSupplementRequest = {
      * Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
      */
     body: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
+};
+
+/**
+ * Private uploaded assets bound atomically to this action. Each asset may be bound only once.
+ */
+export type DisputeEvidenceAssetIds = Array<string>;
+
+export type DisputeEvidenceUploadRequest = {
+    kind: 'payment_result' | 'refund_result' | 'api_error' | 'quota_insufficient' | 'expired_early' | 'description_mismatch' | 'other_redacted_fact';
+    /**
+     * Confirms that credentials and unrelated private data were removed before upload.
+     */
+    redactionConfirmed: boolean;
+    files: Array<Blob | File>;
+};
+
+export type DisputeEvidenceAsset = {
+    id: string;
+    kind: 'payment_result' | 'refund_result' | 'api_error' | 'quota_insufficient' | 'expired_early' | 'description_mismatch' | 'other_redacted_fact';
+    mime: 'image/jpeg' | 'image/png';
+    byteSize: number;
+    width: number;
+    height: number;
+    createdAt: string;
+    contentPath: string;
+    version: number;
+};
+
+export type DisputeEvidenceReference = DisputeEvidenceAsset & {
+    visibility: 'participants_admin' | 'submitter_admin' | 'appellant_admin';
+    usage: 'dispute_initial' | 'platform_escalation' | 'message' | 'info_supplement' | 'remedy_claim' | 'remedy_contest' | 'appeal';
+    sourceType: 'dispute_case' | 'dispute_message' | 'info_supplement' | 'dispute_remedy' | 'appeal';
+    sourceId: string;
+};
+
+export type DisputeEvidenceUploadResponse = {
+    items: Array<DisputeEvidenceAsset>;
+};
+
+export type DisputeEvidenceQuarantineRequest = {
+    reason: string;
+};
+
+export type DisputeEvidenceQuarantineResult = {
+    id: string;
+    status: 'quarantined';
+    quarantinedExpiresAt: string;
+    version: number;
 };
 
 export type DisputeMessageRequest = {
@@ -3504,6 +3592,7 @@ export type DisputeMessageRequest = {
      * Immutable credential-free plain text.
      */
     body: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type DisputeSettlementProposalRequest = {
@@ -3516,6 +3605,16 @@ export type DisputeSettlementProposalRequest = {
      * Exact credential-free terms that the counterparty will confirm or reject.
      */
     terms: string;
+    /**
+     * Must be true for full refund, partial refund, and continue fulfillment.
+     */
+    fulfillmentRequired: boolean;
+    responsibleUserId?: string;
+    beneficiaryUserId?: string;
+    /**
+     * Required when fulfillmentRequired is true and must be later than submission time.
+     */
+    dueAt?: string;
 };
 
 export type DisputeParticipantReasonRequest = {
@@ -3523,7 +3622,20 @@ export type DisputeParticipantReasonRequest = {
 };
 
 export type DisputeEscalationRequest = {
-    reason: string;
+    negotiationChannels: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    /**
+     * Confirms that bilateral negotiation has ended before platform intervention starts.
+     */
+    negotiationEndedConfirmed: true;
+    /**
+     * Credential-free summary of the final unresolved disagreement.
+     */
+    negotiationSummary: string;
+    /**
+     * Credential-free description of the decision or direction requested from the platform.
+     */
+    requestedPlatformAction: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type DisputeRemedyRequest = {
@@ -3548,6 +3660,7 @@ export type DisputeRemedyClaimRequest = {
      * Credential-free declaration from the responsible participant; it does not close the dispute.
      */
     note: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type DisputeRemedyConfirmRequest = {
@@ -3562,6 +3675,7 @@ export type DisputeRemedyContestRequest = {
      * Required credential-free explanation that returns the dispute to platform review.
      */
     reason: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type DisputeMessage = {
@@ -3577,11 +3691,16 @@ export type DisputeSettlementProposal = {
     resolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     amountCny?: DecimalString;
     terms: string;
+    fulfillmentRequired: boolean;
+    responsibleUserId?: string;
+    beneficiaryUserId?: string;
+    dueAt?: string | null;
     status: 'pending' | 'accepted' | 'rejected' | 'superseded';
     acceptedByUserId?: string;
     acceptedAt?: string | null;
     rejectedByUserId?: string;
     rejectedAt?: string | null;
+    supersededReason?: 'new_proposal' | 'platform_escalation';
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3595,14 +3714,23 @@ export type DisputeRemedy = {
     responsibleUserId: string;
     beneficiaryUserId: string;
     instructions: string;
-    status: 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'overdue' | 'cancelled';
+    status: 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'cancelled';
     dueAt: string;
     claimedAt?: string;
     confirmationDueAt?: string;
     confirmedAt?: string;
     contestedAt?: string;
     confirmationExpiredAt?: string;
-    overdueAt?: string;
+    /**
+     * Independent lateness fact. Only late_confirmed may support reputation or sanctions.
+     */
+    latenessStatus: 'not_due' | 'on_time' | 'late_unreviewed' | 'late_confirmed' | 'late_excused';
+    lateAt?: string | null;
+    latenessDecidedAt?: string | null;
+    latenessReason?: string;
+    claimedLate: boolean;
+    source: 'admin_decision' | 'mutual_agreement';
+    settlementProposalId?: string;
     claimNote?: string;
     responseNote?: string;
     createdAt: string;
@@ -3612,6 +3740,14 @@ export type DisputeRemedy = {
 
 export type DisputeCase = {
     id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * At most one active case may exist per API order; closed historical cases remain readable.
+     */
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -3660,6 +3796,21 @@ export type DisputeCase = {
     resolvedAt?: string | null;
     closedAt?: string | null;
     /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    /**
+     * Frozen terminal snapshot. Appeal approval reverses only effects matching the appellant.
+     */
+    adverselyAffectedUserIds?: Array<string>;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed?: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
+    /**
      * Present on current-user dispute responses. True only when the case is resolved or closed and the current user is eligible to appeal; when a subject is assigned, only that subject is eligible.
      */
     readonly canAppeal?: boolean;
@@ -3681,6 +3832,7 @@ export type DisputeCase = {
      * Newest-first auditable API-order remedy history.
      */
     readonly remedies?: Array<DisputeRemedy>;
+    readonly evidence?: Array<DisputeEvidenceReference>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3864,6 +4016,7 @@ export type CreateAppealRequest = unknown & {
      * Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
      */
     statement: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type Appeal = {
@@ -3896,6 +4049,7 @@ export type Appeal = {
     createdAt: string;
     updatedAt: string;
     version: number;
+    readonly evidence?: Array<DisputeEvidenceReference>;
 };
 
 export type AppealList = {
@@ -4143,7 +4297,19 @@ export type SelfReportList = {
 };
 
 export type SelfDispute = {
+    /**
+     * Authoritative authenticated viewer identity for message and action attribution.
+     */
+    viewerUserId: string;
     id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * True only while this is the current active case for its API order.
+     */
+    active?: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -4171,6 +4337,17 @@ export type SelfDispute = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -4192,6 +4369,7 @@ export type SelfDispute = {
      * Newest-first API-order remedy history visible to both participants.
      */
     readonly remedies?: Array<DisputeRemedy>;
+    readonly evidence?: Array<DisputeEvidenceReference>;
 };
 
 export type SelfDisputeList = {
@@ -4752,6 +4930,14 @@ export type ReportListWritable = {
 
 export type DisputeCaseWritable = {
     id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * At most one active case may exist per API order; closed historical cases remain readable.
+     */
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -4799,6 +4985,21 @@ export type DisputeCaseWritable = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    /**
+     * Frozen terminal snapshot. Appeal approval reverses only effects matching the appellant.
+     */
+    adverselyAffectedUserIds?: Array<string>;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed?: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -4809,8 +5010,57 @@ export type DisputeListWritable = {
     nextCursor?: string | null;
 };
 
-export type SelfDisputeWritable = {
+export type AppealWritable = {
     id: string;
+    /**
+     * Admin response only.
+     */
+    appellantUserId?: string;
+    appellantUsername: string;
+    appellantName: string;
+    reportId?: string;
+    disputeId?: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order' | 'account_governance';
+    targetId: string;
+    title: string;
+    /**
+     * Admin response only; public endpoints never expose appeal statements.
+     */
+    statement?: string;
+    status: 'submitted' | 'approved' | 'rejected';
+    /**
+     * Admin/self moderation context only.
+     */
+    adminReason?: string;
+    /**
+     * Admin response only.
+     */
+    handledByAdminId?: string;
+    handledAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type AppealListWritable = {
+    items: Array<AppealWritable>;
+    nextCursor?: string | null;
+};
+
+export type SelfDisputeWritable = {
+    /**
+     * Authoritative authenticated viewer identity for message and action attribution.
+     */
+    viewerUserId: string;
+    id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * True only while this is the current active case for its API order.
+     */
+    active?: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -4838,6 +5088,17 @@ export type SelfDisputeWritable = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -4865,7 +5126,7 @@ export type SelfModerationSupplementMutationWritable = {
 export type AdminReportMutationWritable = {
     report?: ReportWritable;
     dispute?: DisputeCaseWritable;
-    appeal?: Appeal;
+    appeal?: AppealWritable;
 };
 
 export type EmptyRequestWritable = {
@@ -7628,6 +7889,37 @@ export type GetMyDisputeResponses = {
 
 export type GetMyDisputeResponse = GetMyDisputeResponses[keyof GetMyDisputeResponses];
 
+export type GetMyDisputeEvidenceContentData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/dispute-evidence/{id}/content';
+};
+
+export type GetMyDisputeEvidenceContentErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetMyDisputeEvidenceContentError = GetMyDisputeEvidenceContentErrors[keyof GetMyDisputeEvidenceContentErrors];
+
+export type GetMyDisputeEvidenceContentResponses = {
+    /**
+     * Private evidence image bytes.
+     */
+    200: Blob | File;
+};
+
+export type GetMyDisputeEvidenceContentResponse = GetMyDisputeEvidenceContentResponses[keyof GetMyDisputeEvidenceContentResponses];
+
 export type AppendMyDisputeMessageData = {
     body: DisputeMessageRequest;
     headers: {
@@ -8782,6 +9074,45 @@ export type OpenMyApiOrderDisputeResponses = {
 };
 
 export type OpenMyApiOrderDisputeResponse = OpenMyApiOrderDisputeResponses[keyof OpenMyApiOrderDisputeResponses];
+
+export type UploadMyApiOrderDisputeEvidenceData = {
+    body: DisputeEvidenceUploadRequest;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/api-orders/{id}/dispute-evidence';
+};
+
+export type UploadMyApiOrderDisputeEvidenceErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type UploadMyApiOrderDisputeEvidenceError = UploadMyApiOrderDisputeEvidenceErrors[keyof UploadMyApiOrderDisputeEvidenceErrors];
+
+export type UploadMyApiOrderDisputeEvidenceResponses = {
+    /**
+     * Processed private evidence assets ready for one-time binding.
+     */
+    201: DisputeEvidenceUploadResponse;
+};
+
+export type UploadMyApiOrderDisputeEvidenceResponse = UploadMyApiOrderDisputeEvidenceResponses[keyof UploadMyApiOrderDisputeEvidenceResponses];
 
 export type ReportMyApiOrderLatePaymentData = {
     body: ApiOrderLatePaymentRequest;
@@ -13562,7 +13893,7 @@ export type CloseDisputeResponses = {
 
 export type CloseDisputeResponse = CloseDisputeResponses[keyof CloseDisputeResponses];
 
-export type MarkDisputeRemedyOverdueData = {
+export type ConfirmDisputeRemedyLatenessData = {
     body: ReportActionRequest;
     headers: {
         'If-Match': string;
@@ -13572,10 +13903,10 @@ export type MarkDisputeRemedyOverdueData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/disputes/{id}/remedy/mark-overdue';
+    url: '/api/v1/admin/disputes/{id}/remedy/confirm-lateness';
 };
 
-export type MarkDisputeRemedyOverdueErrors = {
+export type ConfirmDisputeRemedyLatenessErrors = {
     /**
      * Problem Details error.
      */
@@ -13590,16 +13921,55 @@ export type MarkDisputeRemedyOverdueErrors = {
     428: ProblemDetails;
 };
 
-export type MarkDisputeRemedyOverdueError = MarkDisputeRemedyOverdueErrors[keyof MarkDisputeRemedyOverdueErrors];
+export type ConfirmDisputeRemedyLatenessError = ConfirmDisputeRemedyLatenessErrors[keyof ConfirmDisputeRemedyLatenessErrors];
 
-export type MarkDisputeRemedyOverdueResponses = {
+export type ConfirmDisputeRemedyLatenessResponses = {
     /**
-     * Remedy marked overdue and dispute closed by an administrator.
+     * Remedy lateness confirmed as an independent governance fact.
      */
     200: AdminReportMutation;
 };
 
-export type MarkDisputeRemedyOverdueResponse = MarkDisputeRemedyOverdueResponses[keyof MarkDisputeRemedyOverdueResponses];
+export type ConfirmDisputeRemedyLatenessResponse = ConfirmDisputeRemedyLatenessResponses[keyof ConfirmDisputeRemedyLatenessResponses];
+
+export type ExcuseDisputeRemedyLatenessData = {
+    body: ReportActionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/remedy/excuse-lateness';
+};
+
+export type ExcuseDisputeRemedyLatenessErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ExcuseDisputeRemedyLatenessError = ExcuseDisputeRemedyLatenessErrors[keyof ExcuseDisputeRemedyLatenessErrors];
+
+export type ExcuseDisputeRemedyLatenessResponses = {
+    /**
+     * Remedy lateness excused as an independent governance fact.
+     */
+    200: AdminReportMutation;
+};
+
+export type ExcuseDisputeRemedyLatenessResponse = ExcuseDisputeRemedyLatenessResponses[keyof ExcuseDisputeRemedyLatenessResponses];
 
 export type CreateDisputeReputationOutcomeData = {
     body: CreateDisputeReputationOutcomeRequest;
@@ -13745,6 +14115,96 @@ export type ApplyApiOrderSanctionResponses = {
 };
 
 export type ApplyApiOrderSanctionResponse = ApplyApiOrderSanctionResponses[keyof ApplyApiOrderSanctionResponses];
+
+export type GetAdminDisputeEvidenceContentData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/dispute-evidence/{id}/content';
+};
+
+export type GetAdminDisputeEvidenceContentErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetAdminDisputeEvidenceContentError = GetAdminDisputeEvidenceContentErrors[keyof GetAdminDisputeEvidenceContentErrors];
+
+export type GetAdminDisputeEvidenceContentResponses = {
+    /**
+     * Private evidence image bytes.
+     */
+    200: Blob | File;
+};
+
+export type GetAdminDisputeEvidenceContentResponse = GetAdminDisputeEvidenceContentResponses[keyof GetAdminDisputeEvidenceContentResponses];
+
+export type QuarantineAdminDisputeEvidenceData = {
+    body: DisputeEvidenceQuarantineRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/dispute-evidence/{id}/quarantine';
+};
+
+export type QuarantineAdminDisputeEvidenceErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type QuarantineAdminDisputeEvidenceError = QuarantineAdminDisputeEvidenceErrors[keyof QuarantineAdminDisputeEvidenceErrors];
+
+export type QuarantineAdminDisputeEvidenceResponses = {
+    /**
+     * Evidence quarantined and scheduled for bounded destruction.
+     */
+    200: DisputeEvidenceQuarantineResult;
+};
+
+export type QuarantineAdminDisputeEvidenceResponse = QuarantineAdminDisputeEvidenceResponses[keyof QuarantineAdminDisputeEvidenceResponses];
 
 export type CreateUserReputationRestrictionData = {
     body: CreateUserReputationRestrictionRequest;

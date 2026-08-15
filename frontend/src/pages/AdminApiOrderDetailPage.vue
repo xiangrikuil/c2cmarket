@@ -26,6 +26,7 @@ import {
 } from '@/lib/api'
 import { formatOrderDateTime } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
+import { apiOrderCommercialOutcomeLabels } from '@/lib/apiOrderDispute'
 import { formatDecimal } from '@/lib/decimal'
 import { useAdminApiOrder, useResolveAdminApiOrderCatalogRiskHoldMutation } from '@/queries/useMarketQueries'
 
@@ -128,13 +129,19 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
         </div>
         <p class="mt-2 text-sm text-muted-foreground">{{ order.serviceTitleSnapshot }} · <ShortId :value="order.id" prefix="API" copyable /></p>
       </div>
-      <RouterLink v-if="order.disputeStatus === 'open'" to="/admin/reports"><Button variant="outline"><ShieldAlert class="h-4 w-4" />进入纠纷处理</Button></RouterLink>
+      <RouterLink v-if="isApiOrderDisputeActive(order.disputeStatus)" to="/admin/reports"><Button variant="outline"><ShieldAlert class="h-4 w-4" />进入纠纷处理</Button></RouterLink>
     </div>
 
     <Alert v-if="order.disputeStatus !== 'none'" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
       <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
       <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
-      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}<span v-if="order.disputeCaseId"> 纠纷编号 {{ order.disputeCaseId }}。</span></AlertDescription>
+      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) || '该订单有历史纠纷记录。' }}<span v-if="order.disputeCaseId || order.latestDisputeCaseId"> 最近纠纷编号 {{ order.disputeCaseId || order.latestDisputeCaseId }}。</span></AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.quotaValidityIssueAt" variant="destructive">
+      <Clock3 />
+      <AlertTitle>首次交付有效期不足</AlertTitle>
+      <AlertDescription>额度在首次交付时剩余不足 60 分钟，交付已被拒绝；系统没有替换额度、延长有效期或恢复库存。</AlertDescription>
     </Alert>
 
     <Alert v-if="order.catalogRiskHold" :class="order.catalogRiskHold.status === 'active' ? 'border-destructive/35 bg-destructive/5' : 'border-border bg-muted/20'">
@@ -198,6 +205,10 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
             <div><dt class="text-xs text-muted-foreground">完成方式</dt><dd class="mt-1">{{ getApiOrderCompletionSourceLabel(order.completionSource) }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">完成时间</dt><dd class="mt-1">{{ formatOrderDateTime(order.completedAt) }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">纠纷状态</dt><dd class="mt-1">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">历史纠纷</dt><dd class="mt-1">{{ order.hasDisputeHistory ? '有历史案件' : '无' }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">商业结果</dt><dd class="mt-1">{{ apiOrderCommercialOutcomeLabels[order.commercialOutcome] }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">核款逾期事实</dt><dd class="mt-1">{{ formatOrderDateTime(order.merchantConfirmOverdueAt) }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">交付逾期事实</dt><dd class="mt-1">{{ formatOrderDateTime(order.deliveryOverdueAt) }}</dd></div>
           </dl>
         </Card>
 

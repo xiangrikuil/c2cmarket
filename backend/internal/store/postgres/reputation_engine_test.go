@@ -21,7 +21,7 @@ func TestAggregateReputationEngineFactsSQLCoversRulesAndTimeBoundaries(t *testin
 		"outcome.responsibility IN ('responsible', 'shared')",
 		"dispute.target_type <> 'api_order'",
 		"FROM api_order_dispute_remedies remedy",
-		") = 'overdue'",
+		") = 'late_confirmed'",
 		"outcome_candidates.severity IN ('high', 'critical')",
 		"restriction_candidates.starts_at <= $2",
 		"restriction.revoked_at IS NULL",

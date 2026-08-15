@@ -63,7 +63,7 @@ func TestTransactionReviewPostgresLifecycle(t *testing.T) {
 
 	submitReviewForTest(t, ctx, service, buyerID, review.TransactionAPIOrder, orderID, review.OperationCreate, 5, []string{"沟通顺畅", "描述真实"}, "卖家说明清晰，交付过程顺畅。", "api-buyer-create")
 	sellerPending := findReviewCenterRow(t, listReviewCenter(t, ctx, service, sellerID), review.DirectionPending, orderID)
-	if !sellerPending.CounterpartySubmitted || sellerPending.ContentVisible || sellerPending.Rating != 0 || len(sellerPending.Tags) != 0 || sellerPending.Note != "" {
+	if sellerPending.CounterpartySubmitted || sellerPending.ContentVisible || sellerPending.Rating != 0 || len(sellerPending.Tags) != 0 || sellerPending.Note != "" {
 		t.Fatalf("sealed counterparty content leaked: %#v", sellerPending)
 	}
 	if public := listPublicReviews(t, ctx, service, sellerUsername); hasPublicReviewForTransaction(public, review.TransactionAPIOrder, "卖家说明清晰，交付过程顺畅。") {
@@ -288,6 +288,8 @@ func TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles(t *testing.T)
 	if _, err := pool.Exec(ctx, `
 		UPDATE api_orders
 		SET status = 'paid_confirmed',
+		    commercial_outcome = 'pending',
+		    commercial_outcome_updated_at = NULL,
 		    delivery_note = NULL,
 		    delivery_submitted_at = NULL,
 		    delivery_review_expires_at = NULL,
@@ -353,7 +355,7 @@ func TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles(t *testing.T)
 		t.Fatalf("unexpected carpool seller direction: %#v", sellerSent)
 	}
 	buyerPending := findReviewCenterRow(t, listReviewCenter(t, ctx, service, buyerID), review.DirectionPending, membershipID)
-	if !buyerPending.CounterpartySubmitted || buyerPending.ContentVisible || buyerPending.Rating != 0 || buyerPending.Note != "" {
+	if buyerPending.CounterpartySubmitted || buyerPending.ContentVisible || buyerPending.Rating != 0 || buyerPending.Note != "" {
 		t.Fatalf("sealed carpool seller review leaked to buyer: %#v", buyerPending)
 	}
 	submitReviewForTest(t, ctx, service, buyerID, review.TransactionCarpoolMembership, membershipID, review.OperationCreate, 4, []string{"规则清晰"}, "买家评价卖家。", "carpool-buyer-create")
@@ -460,8 +462,9 @@ func seedCompletedAPIOrderForReview(
 		  amount, currency, selected_payment_method, payment_window_minutes_snapshot,
 		  payment_expires_at, payment_instructions_snapshot,
 		  payment_summary, payment_submitted_at, paid_confirmed_at,
-		  delivery_note, delivery_submitted_at, delivery_review_expires_at, completion_source,
-		  completed_at, created_at, updated_at, order_no
+			  delivery_note, delivery_submitted_at, delivery_review_expires_at, completion_source,
+			  completed_at, commercial_outcome, commercial_outcome_updated_at,
+			  created_at, updated_at, order_no
 		)
 		VALUES (
 		  $1, $2, $3, $4, $5,
@@ -469,7 +472,7 @@ func seedCompletedAPIOrderForReview(
 		  20, 'CNY', 'wechat', 10,
 		  $6, '站外确认付款',
 		  '已付款', $7, $8,
-		  '已交付', $9, $10, 'buyer_confirmed', $11, $12, $11, $13
+			  '已交付', $9, $10, 'buyer_confirmed', $11, 'normal_fulfillment', $11, $12, $11, $13
 		)
 	`, orderID, intentID, serviceID, buyerID, sellerID,
 		completedAt.Add(-3*time.Hour),

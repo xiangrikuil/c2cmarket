@@ -25,7 +25,9 @@ func TestDisputeRemedyRequiresResponsibleClaimAndBeneficiaryConfirmation(t *test
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
 
 	escalated := runNegotiationAction(t, service, buyer, "remedy-escalate", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeMessageActionEscalate, Reason: "需要平台裁决继续履行事项。",
+		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
+		NegotiationChannels: []string{NegotiationChannelEmail}, NegotiationEndedConfirmed: true,
+		NegotiationSummary: "双方无法就继续履行达成一致。", RequestedPlatformAction: "请平台裁决继续履行事项。",
 	})
 	projection.statuses = nil
 	resolved := runRemedyAdminAction(t, service, admin, "remedy-resolve", AdminActionInput{
@@ -151,7 +153,7 @@ func TestDisputeRemedyDetailReadNormalizesExpiredConfirmation(t *testing.T) {
 	}
 }
 
-func TestActiveDisputeRemedyBlocksAdminCloseAndRequiresDueDateForOverdue(t *testing.T) {
+func TestActiveDisputeRemedyLatenessDecisionPreservesFulfillmentProgress(t *testing.T) {
 	now := time.Date(2026, 8, 9, 14, 0, 0, 0, time.UTC)
 	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
 	projection := &negotiationProjection{}
@@ -160,7 +162,9 @@ func TestActiveDisputeRemedyBlocksAdminCloseAndRequiresDueDateForOverdue(t *test
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
 	escalated := runNegotiationAction(t, service, buyer, "overdue-escalate", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeMessageActionEscalate, Reason: "需要平台确认整改期限。",
+		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
+		NegotiationChannels: []string{NegotiationChannelInSite}, NegotiationEndedConfirmed: true,
+		NegotiationSummary: "双方无法就整改期限达成一致。", RequestedPlatformAction: "请平台确认整改期限。",
 	})
 	dueAt := now.Add(2 * time.Hour)
 	resolved := runRemedyAdminAction(t, service, admin, "overdue-resolve", AdminActionInput{
@@ -173,7 +177,7 @@ func TestActiveDisputeRemedyBlocksAdminCloseAndRequiresDueDateForOverdue(t *test
 		},
 	})
 
-	for key, action := range map[string]string{"close-active-remedy": "close", "overdue-before-deadline": "mark_overdue"} {
+	for key, action := range map[string]string{"close-active-remedy": "close", "overdue-before-deadline": "confirm_lateness"} {
 		_, appErr := service.AdminDisputeActionWithIdempotency(context.Background(), admin, key, key, key, AdminActionInput{
 			ID: disputeID, Action: action, ExpectedVersion: resolved.Version, Reason: "管理员执行整改状态检查。",
 		}, adminMutationCompletion)
@@ -183,12 +187,53 @@ func TestActiveDisputeRemedyBlocksAdminCloseAndRequiresDueDateForOverdue(t *test
 	}
 
 	now = dueAt
-	overdue := runRemedyAdminAction(t, service, admin, "mark-overdue-at-deadline", AdminActionInput{
-		ID: disputeID, Action: "mark_overdue", ExpectedVersion: resolved.Version,
+	overdue := runRemedyAdminAction(t, service, admin, "confirm-lateness-at-deadline", AdminActionInput{
+		ID: disputeID, Action: "confirm_lateness", ExpectedVersion: resolved.Version,
 		Reason: "责任方未在裁决期限内履行。",
 	})
-	if overdue.Status != DisputeStatusClosed || overdue.Remedies[0].Status != RemedyStatusOverdue {
-		t.Fatalf("administrator overdue confirmation must close with an overdue fact: %+v", overdue)
+	if overdue.Status != DisputeStatusResolved || overdue.Remedies[0].Status != RemedyStatusPending || overdue.Remedies[0].LatenessStatus != RemedyLatenessLateConfirmed {
+		t.Fatalf("administrator lateness confirmation must preserve fulfillment progress: %+v", overdue)
+	}
+	if !overdue.Active || overdue.ClosedAt != nil || overdue.FinalReason != "" {
+		t.Fatalf("lateness confirmation must not finalize the dispute: %+v", overdue)
+	}
+
+	claimed := runNegotiationAction(t, service, auth.User{ID: "seller-1", Status: auth.AccountStatusActive}, "claim-after-confirmed-lateness", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeRemedyActionClaim, Note: "已在逾期裁定后补充履行。",
+	})
+	if claimed.Remedies[0].Status != RemedyStatusClaimedFulfilled || claimed.Remedies[0].LatenessStatus != RemedyLatenessLateConfirmed {
+		t.Fatalf("late fulfillment claim must preserve the independent lateness decision: %+v", claimed.Remedies[0])
+	}
+}
+
+func TestActiveDisputeRemedyLatenessExcusePreservesPendingProgress(t *testing.T) {
+	now := time.Date(2026, 8, 9, 14, 0, 0, 0, time.UTC)
+	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
+	disputeID := registerNegotiationDispute(t, service, now)
+	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
+	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
+	escalated := runNegotiationAction(t, service, buyer, "excuse-escalate", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
+		NegotiationChannels: []string{NegotiationChannelLinuxDO}, NegotiationEndedConfirmed: true,
+		NegotiationSummary: "双方无法就整改期限达成一致。", RequestedPlatformAction: "请平台确认整改期限。",
+	})
+	dueAt := now.Add(time.Hour)
+	resolved := runRemedyAdminAction(t, service, admin, "excuse-resolve", AdminActionInput{
+		ID: disputeID, Action: "resolve", ExpectedVersion: escalated.Version,
+		Reason: "平台裁决卖家退款。", PublicResultCode: PublicResultAPIDeliveryIssue,
+		PublicResult: "卖家应按裁决退款",
+		Remedy: &DisputeRemedyInput{
+			Action: apiorder.DisputeResolutionFullRefund, ResponsibleUserID: "seller-1",
+			Instructions: "请按原站外支付方式完成退款。", DueAt: dueAt,
+		},
+	})
+	now = dueAt
+	excused := runRemedyAdminAction(t, service, admin, "excuse-lateness-at-deadline", AdminActionInput{
+		ID: disputeID, Action: "excuse_lateness", ExpectedVersion: resolved.Version,
+		Reason: "责任方提供了可核实的客观延期原因。",
+	})
+	if excused.Status != DisputeStatusResolved || excused.Remedies[0].Status != RemedyStatusPending || excused.Remedies[0].LatenessStatus != RemedyLatenessLateExcused {
+		t.Fatalf("administrator lateness excuse must preserve pending progress: %+v", excused)
 	}
 }
 
@@ -202,7 +247,9 @@ func setupClaimedRemedy(t *testing.T, now *time.Time) (*Service, *negotiationPro
 	seller := auth.User{ID: "seller-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
 	escalated := runNegotiationAction(t, service, buyer, "setup-remedy-escalate", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeMessageActionEscalate, Reason: "双方无法自行解决，请平台裁决。",
+		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
+		NegotiationChannels: []string{NegotiationChannelWeChat, NegotiationChannelEmail}, NegotiationEndedConfirmed: true,
+		NegotiationSummary: "双方无法自行解决履行争议。", RequestedPlatformAction: "请平台裁决。",
 	})
 	runRemedyAdminAction(t, service, admin, "setup-remedy-resolve", AdminActionInput{
 		ID: disputeID, Action: "resolve", ExpectedVersion: escalated.Version,

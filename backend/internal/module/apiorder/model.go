@@ -10,9 +10,11 @@ import (
 )
 
 const (
-	MerchantConfirmWindow = 10 * time.Minute
-	DefaultDeliveryWindow = 10 * time.Minute
-	LatePaymentWindow     = 24 * time.Hour
+	MerchantConfirmWindow        = 10 * time.Minute
+	DefaultDeliveryWindow        = 10 * time.Minute
+	LatePaymentWindow            = 24 * time.Hour
+	MinimumDeliveryValidity      = 60 * time.Minute
+	QuotaDeliveryModePreimported = "preimported"
 )
 
 const (
@@ -48,8 +50,17 @@ const (
 	DisputeResolutionContinueFulfillment = "continue_fulfillment"
 	DisputeResolutionOther               = "other"
 
-	CompletionSourceBuyerConfirmed = "buyer_confirmed"
-	CompletionSourceAutoCompleted  = "auto_completed"
+	CompletionSourceBuyerConfirmed  = "buyer_confirmed"
+	CompletionSourceAutoCompleted   = "auto_completed"
+	CompletionSourceRemedyConfirmed = "remedy_confirmed"
+
+	CommercialOutcomePending              = "pending"
+	CommercialOutcomeCancelledUnpaid      = "cancelled_unpaid"
+	CommercialOutcomeNormalFulfillment    = "normal_fulfillment"
+	CommercialOutcomeFullRefund           = "full_refund"
+	CommercialOutcomePartialRefund        = "partial_refund"
+	CommercialOutcomeContinuedFulfillment = "continued_fulfillment"
+	CommercialOutcomeClosedUnverified     = "closed_unverified"
 
 	CancelReasonBuyer             = "buyer_cancelled"
 	CancelReasonPaymentTimeout    = "payment_timeout"
@@ -72,6 +83,10 @@ const (
 	EventLatePaymentResolved     = "api_order.late_payment_resolved"
 	EventDisputeRemedyContested  = "api_order.dispute_remedy_contested"
 	EventDisputeClosed           = "api_order.dispute_closed"
+	EventPaymentReviewOverdue    = "api_order.payment_review_overdue"
+	EventDeliveryOverdue         = "api_order.delivery_overdue"
+	EventQuotaValidityIssue      = "api_order.quota_validity_issue"
+	EventDeliveryDueReminder     = "api_order.delivery_due_reminder_sent"
 	EventDeliveryReviewReminder  = "api_order.delivery_review_reminder_sent"
 	EventAutoCompleted           = "api_order.auto_completed"
 	EventCatalogRiskHoldCreated  = "api_order.catalog_risk_hold_created"
@@ -88,6 +103,9 @@ const (
 
 	DeliveryReviewWindow       = 24 * time.Hour
 	DeliveryReviewReminderLead = 2 * time.Hour
+	DeliveryDueReminderLead    = 3 * time.Minute
+
+	QuotaValidityIssueDelivery = "delivery_insufficient"
 )
 
 const (
@@ -126,6 +144,15 @@ func IsDisputeResolution(value string) bool {
 	}
 }
 
+func DisputeResolutionRequiresFulfillment(value string) bool {
+	switch value {
+	case DisputeResolutionFullRefund, DisputeResolutionPartialRefund, DisputeResolutionContinueFulfillment:
+		return true
+	default:
+		return false
+	}
+}
+
 type Order struct {
 	ID                            string
 	OrderNo                       string
@@ -137,6 +164,9 @@ type Order struct {
 	Status                        string
 	DisputeStatus                 string
 	DisputeCaseID                 string
+	LatestDisputeCaseID           string
+	HasDisputeHistory             bool
+	ActiveRemedyAction            string
 	ServiceTitleSnapshot          string
 	ServiceVersionSnapshot        int64
 	BillingModeSnapshot           string
@@ -188,17 +218,24 @@ type Order struct {
 	PaymentSubmittedAt            *time.Time
 	MerchantConfirmDueAt          *time.Time
 	MerchantConfirmOverdue        bool
+	MerchantConfirmOverdueAt      *time.Time
 	PaymentIssueReason            string
 	PaymentIssueNote              string
 	PaymentIssueReportedAt        *time.Time
 	PaidConfirmedAt               *time.Time
 	DeliveryDueAt                 *time.Time
 	DeliveryOverdue               bool
+	DeliveryOverdueAt             *time.Time
+	DeliveryDueRemindedAt         *time.Time
 	DeliveryNote                  string
 	DeliverySubmittedAt           *time.Time
 	DeliveryReviewExpiresAt       *time.Time
 	DeliveryReviewRemindedAt      *time.Time
 	DeliveryCredential            *DeliveryCredential
+	CommercialOutcome             string
+	CommercialOutcomeUpdatedAt    *time.Time
+	QuotaValidityIssueAt          *time.Time
+	QuotaValidityIssueReason      string
 	CompletionSource              string
 	CompletedAt                   *time.Time
 	CancelledAt                   *time.Time
@@ -306,6 +343,7 @@ type ActionInput struct {
 	IssueOccurredAt        string
 	ExpectedVersion        int64
 	RequestID              string
+	EvidenceAssetIDs       []string
 }
 
 type CatalogRiskHoldActionInput struct {

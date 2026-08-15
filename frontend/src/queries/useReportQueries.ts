@@ -1,4 +1,5 @@
 import { computed, type Ref } from 'vue'
+import type { DisputeEscalationRequest } from '@/api/generated/openapi'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   backendAppendDisputeMessage,
@@ -65,7 +66,7 @@ function useDisputeMutation<T>(mutationFn: (input: T) => ReturnType<typeof backe
 }
 
 export function useAppendDisputeMessageMutation() {
-  return useDisputeMutation(({ disputeId, body }: { disputeId: string, body: string }) => backendAppendDisputeMessage(disputeId, body))
+  return useDisputeMutation(({ disputeId, body, evidenceAssetIds }: { disputeId: string, body: string, evidenceAssetIds?: string[] }) => backendAppendDisputeMessage(disputeId, { body, evidenceAssetIds }))
 }
 
 export function useCreateDisputeSettlementProposalMutation() {
@@ -81,11 +82,11 @@ export function useRejectDisputeSettlementProposalMutation() {
 }
 
 export function useEscalateDisputeMutation() {
-  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendEscalateDispute(disputeId, reason))
+  return useDisputeMutation(({ disputeId, input }: { disputeId: string, input: DisputeEscalationRequest }) => backendEscalateDispute(disputeId, input))
 }
 
 export function useClaimDisputeRemedyMutation() {
-  return useDisputeMutation(({ disputeId, note }: { disputeId: string, note: string }) => backendClaimDisputeRemedy(disputeId, note))
+  return useDisputeMutation(({ disputeId, note, evidenceAssetIds }: { disputeId: string, note: string, evidenceAssetIds?: string[] }) => backendClaimDisputeRemedy(disputeId, { note, evidenceAssetIds }))
 }
 
 export function useConfirmDisputeRemedyMutation() {
@@ -93,7 +94,7 @@ export function useConfirmDisputeRemedyMutation() {
 }
 
 export function useContestDisputeRemedyMutation() {
-  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendContestDisputeRemedy(disputeId, reason))
+  return useDisputeMutation(({ disputeId, reason, evidenceAssetIds }: { disputeId: string, reason: string, evidenceAssetIds?: string[] }) => backendContestDisputeRemedy(disputeId, { reason, evidenceAssetIds }))
 }
 
 export function useMyAppealsQuery() {

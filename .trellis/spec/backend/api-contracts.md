@@ -1015,7 +1015,7 @@ return PublicDispute{Type: dispute.PublicSummary, Result: dispute.PublicResult}
 ### 1. Scope / Trigger
 
 - Trigger: cross-layer API and database contract for user reports, manual dispute cases, and user appeals.
-- Scope: reports/disputes/appeals are manual risk records and public-safe summaries. They are not payment, refund, compensation, escrow, guarantee, fulfillment, credential delivery, file upload, email, webhook, external ticket, or automatic penalty systems.
+- Scope: reports/disputes/appeals are manual risk records and public-safe summaries. They are not payment, refund, compensation, escrow, guarantee, fulfillment, credential delivery, email, webhook, external ticket, or automatic penalty systems. API-order disputes alone may attach bounded private image evidence under the authorization and lifecycle contract in `api-order-disputes.md`; generic reports and non-API disputes do not gain a file-upload surface.
 
 ### 2. Signatures
 
@@ -2622,7 +2622,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 98 (current repository target)
+  ExpectedMigrationVersion = 106 (current repository target)
 ```
 
 ### 3. Contracts

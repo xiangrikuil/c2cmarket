@@ -309,7 +309,7 @@ func TestReportSchemaUpgradeMigrationAlignsLegacyDatabases(t *testing.T) {
 	}
 }
 
-func TestAppealApprovalChecksOutcomeSubjectBeforeReversal(t *testing.T) {
+func TestAppealApprovalScopesReversalToAppellant(t *testing.T) {
 	path := filepath.Join("report.go")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -325,14 +325,28 @@ func TestAppealApprovalChecksOutcomeSubjectBeforeReversal(t *testing.T) {
 		t.Fatal("appeal reversal function boundaries not found")
 	}
 	section := source[start : start+end]
-	guard := strings.Index(section, "report.ValidateAppealOutcomeSubject")
+	adverseGuard := strings.Index(section, "report.ValidateAppealAdverseSubject")
+	subjectFilter := strings.Index(section, "AND subject_user_id = $2")
 	outcomeUpdate := strings.Index(section, "UPDATE dispute_reputation_outcomes")
 	restrictionUpdate := strings.Index(section, "UPDATE user_restrictions")
-	if guard < 0 || outcomeUpdate < 0 || restrictionUpdate < 0 {
-		t.Fatalf("appeal reversal guard or mutations missing: guard=%d outcome=%d restriction=%d", guard, outcomeUpdate, restrictionUpdate)
+	restrictionSubjectFilter := strings.Index(section, "AND user_id = $2")
+	latenessSubjectFilter := strings.Index(section, "AND responsible_user_id = $2")
+	if adverseGuard < 0 || subjectFilter < 0 || outcomeUpdate < 0 || restrictionUpdate < 0 || restrictionSubjectFilter < 0 || latenessSubjectFilter < 0 {
+		t.Fatalf("appeal reversal subject filters or mutations missing: adverse=%d outcomeSubject=%d outcome=%d restriction=%d restrictionSubject=%d latenessSubject=%d", adverseGuard, subjectFilter, outcomeUpdate, restrictionUpdate, restrictionSubjectFilter, latenessSubjectFilter)
 	}
-	if guard > outcomeUpdate || guard > restrictionUpdate {
-		t.Fatal("appeal subject guard must run before outcome and restriction mutations")
+	if adverseGuard > outcomeUpdate || subjectFilter > outcomeUpdate {
+		t.Fatal("appeal outcome must be selected by appellant before reversal")
+	}
+	for _, required := range []string{"lateness_reversed_at = $3", "lateness_reversal_appeal_id = $5", "lateness_status = 'late_confirmed'", "lateness_reversed_at IS NULL"} {
+		if !strings.Contains(section, required) {
+			t.Fatalf("appeal lateness reversal missing %q", required)
+		}
+	}
+	if !strings.Contains(section, `insertDisputeEvent(ctx, tx, "dispute", disputeID, "remedy_lateness_reversed"`) {
+		t.Fatal("appeal lateness reversal must use the existing dispute event entity contract")
+	}
+	if strings.Contains(section, `insertDisputeEvent(ctx, tx, "remedy"`) {
+		t.Fatal("dispute_events does not support a remedy entity type")
 	}
 }
 

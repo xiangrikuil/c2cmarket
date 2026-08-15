@@ -10,6 +10,7 @@ const myCenter = optionalSource('../../../pages/MyCenterPage.vue')
 const publishPage = optionalSource('../../../pages/ApiServicePublishPage.vue')
 const quotaRushPublishPage = optionalSource('../../../pages/ApiQuotaRushPublishPage.vue')
 const contactMethodCard = optionalSource('../ContactMethodCard.vue')
+const contactUsageScopeSelector = optionalSource('../ContactUsageScopeSelector.vue')
 const paymentMethodCard = optionalSource('../PaymentMethodCard.vue')
 const paymentSettingsEditor = optionalSource('../ApiPaymentSettingsEditor.vue')
 const paymentSettingsDialog = optionalSource('../ApiPaymentSettingsDialog.vue')
@@ -57,6 +58,19 @@ describe('联系方式与收款设置 UI', () => {
     expect(myCenter).toContain('id="avatar-mode-linuxdo" value="linuxdo"')
     expect(myCenter).toContain('id="avatar-mode-custom-url" value="custom_url"')
     expect(myCenter).not.toContain('type="radio"')
+  })
+
+  it('联系方式可显式选择订单用途并把用途变化计入未保存状态', () => {
+    expect(contactUsageScopeSelector).toContain("import { Checkbox } from '@/components/ui/checkbox'")
+    expect(contactUsageScopeSelector).toContain("emit('update:modelValue'")
+    expect(contactUsageScopeSelector).toContain('请至少选择一个适用场景')
+    expect(myCenter.match(/<ContactUsageScopeSelector/g)).toHaveLength(2)
+    expect(myCenter).toContain('availableContactUsageScopeOptions')
+    expect(myCenter).toContain('wechatUsageScopesDirty')
+    expect(myCenter).toContain('emailUsageScopesDirty')
+    expect(myCenter).toContain('usageScopes: wechatForm.usageScopes')
+    expect(myCenter).toContain('usageScopes: emailForm.usageScopes')
+    expect(publishPage).toContain("contact.enabled && contact.usageScopes.includes('api_merchant')")
   })
 
   it('显示未保存状态并在离开页面前保护草稿', () => {

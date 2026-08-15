@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
   canOpenApiOrderDispute,
+  apiOrderDisputeRemedyLatenessLabels,
   apiOrderDisputeRemedyStatusLabels,
   getApiOrderDisputeStatusLabel,
   isApiOrderDisputeActive,
@@ -11,6 +12,8 @@ import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
 
 const orderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
 const disputePanelSource = readFileSync(new URL('../../components/api-order/ApiOrderDisputePanel.vue', import.meta.url), 'utf8')
+const disputePageSource = readFileSync(new URL('../../pages/MyApiOrderDisputePage.vue', import.meta.url), 'utf8')
+const routerSource = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
 const adminDialogSource = readFileSync(new URL('../../components/admin/AdminDisputeResolutionDialog.vue', import.meta.url), 'utf8')
 
 describe('API order dispute projection', () => {
@@ -64,17 +67,34 @@ describe('API order dispute projection', () => {
     expect(disputePanelSource).toContain('getDisputeCaseStatusLabel(dispute.status)')
   })
 
-  test('requires bilateral settlement and keeps platform review as a separate action', () => {
+  test('requires bilateral settlement and ends negotiation before platform intervention', () => {
     expect(orderDetailSource).toContain('v-model="disputeIssueCode"')
     expect(orderDetailSource).toContain('v-model="disputeRequestedResolution"')
+    expect(orderDetailSource).toContain('evidenceAssetIds: disputeEvidence.value.map(item => item.id)')
     expect(orderDetailSource).toContain('提交后进入双方协商；任一方可在无法达成一致时申请平台审核。')
 
     expect(disputePanelSource).toContain('pendingFromMe')
     expect(disputePanelSource).toContain('等待对方确认或拒绝。')
     expect(disputePanelSource).toContain('确认方案并结案')
+    expect(disputePanelSource).toContain('确认方案并等待履行')
+    expect(disputePanelSource).toContain('fulfillmentRequired')
+    expect(disputePanelSource).toContain('proposalResponsibleUserId')
     expect(disputePanelSource).toContain('拒绝方案')
-    expect(disputePanelSource).toContain('申请平台审核')
+    expect(disputePanelSource).toContain('结束协商并申请平台介入')
+    expect(disputePanelSource).toContain("const canNegotiate = computed(() => dispute.value?.status === 'negotiating')")
+    expect(disputePanelSource).toContain("const canMessage = computed(() => dispute.value?.status === 'negotiating')")
+    expect(disputePanelSource).toContain('双方协商已结束，平台处理中')
     expect(disputePanelSource).not.toMatch(/诉求不成立|关闭纠纷|单方面关闭/)
+  })
+
+  test('uses a standalone dispute page and backend viewer identity for message ownership', () => {
+    expect(routerSource).toContain("path: '/my/disputes/:id'")
+    expect(disputePageSource).toContain('<ApiOrderDisputePanel :dispute-id="disputeId" />')
+    expect(orderDetailSource).toContain('进入纠纷处理')
+    expect(orderDetailSource).toContain('`/my/disputes/${disputePanelId}`')
+    expect(orderDetailSource).not.toContain('<ApiOrderDisputePanel')
+    expect(disputePanelSource).toContain("const viewerUserId = computed(() => dispute.value?.viewerUserId ?? '')")
+    expect(disputePanelSource).toContain("return senderUserId === viewerUserId.value ? '我' : '对方'")
   })
 
   test('renders every remedy state and keeps claim separate from closure', () => {
@@ -84,8 +104,14 @@ describe('API order dispute projection', () => {
       '对方已确认',
       '平台重新审核中',
       '确认超时中性结案',
-      '平台已确认逾期',
       '整改已终止',
+    ])
+    expect(Object.values(apiOrderDisputeRemedyLatenessLabels)).toEqual([
+      '尚未到期',
+      '按时声明履行',
+      '迟到待平台裁定',
+      '平台已确认迟到',
+      '平台已豁免迟到',
     ])
     expect(disputePanelSource).toContain('声明已履行')
     expect(disputePanelSource).toContain('等待对方确认。')
@@ -95,13 +121,15 @@ describe('API order dispute projection', () => {
     expect(disputePanelSource).not.toMatch(/声明已履行并结案|平台已确认退款到账|自动确认退款成功/)
   })
 
-  test('requires an explicit admin remedy decision and gates overdue confirmation', () => {
+  test('requires an explicit admin remedy decision and keeps lateness independent', () => {
     expect(adminDialogSource).toContain('无需履行，直接结案')
     expect(adminDialogSource).toContain('remedyForm.responsibleUserId')
     expect(adminDialogSource).toContain('remedyForm.dueAt')
     expect(adminDialogSource).toContain('责任方声明履行后不会自动结案')
-    expect(adminDialogSource).toContain('确认逾期未履行')
-    expect(adminDialogSource).toContain('!remedyDeadlineReached')
-    expect(adminDialogSource).toContain('后续处罚可消费的逾期事实')
+    expect(adminDialogSource).toContain('确认迟到')
+    expect(adminDialogSource).toContain('豁免迟到')
+    expect(adminDialogSource).toContain('canDecideRemedyLateness')
+    expect(adminDialogSource).toContain('不改变当前履行进度')
+    expect(adminDialogSource).toContain('只有“确认迟到”可作为后续责任或限制依据')
   })
 })

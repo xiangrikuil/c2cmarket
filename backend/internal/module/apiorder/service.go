@@ -429,17 +429,30 @@ func (s *Service) SetDisputeProjection(_ context.Context, disputeCaseID, status,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, order := range s.orders {
+		if status == DisputeStatusClosed && order.DisputeCaseID == "" && order.LatestDisputeCaseID == disputeCaseID && order.DisputeStatus == DisputeStatusNone {
+			return nil
+		}
 		if order.DisputeCaseID != disputeCaseID {
 			continue
 		}
-		if order.DisputeStatus == status {
+		if status != DisputeStatusClosed && order.DisputeStatus == status {
 			return nil
 		}
 		if !IsDisputeActive(order.DisputeStatus) {
 			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单状态不一致，无法结案。")
 		}
 		previousDisputeStatus := order.DisputeStatus
-		order.DisputeStatus = status
+		if status == DisputeStatusClosed {
+			order.LatestDisputeCaseID = order.DisputeCaseID
+			order.DisputeCaseID = ""
+			order.DisputeStatus = DisputeStatusNone
+			order.ActiveRemedyAction = ""
+			order.CommercialOutcome = CommercialOutcomeClosedUnverified
+			closedAt := s.now()
+			order.CommercialOutcomeUpdatedAt = &closedAt
+		} else {
+			order.DisputeStatus = status
+		}
 		order.UpdatedAt = s.now()
 		order.Version++
 		s.orders[id] = order
@@ -475,7 +488,7 @@ func (s *Service) ValidateDisputeProposalAmount(_ context.Context, disputeCaseID
 	defer s.mu.Unlock()
 	for _, order := range s.orders {
 		if order.DisputeCaseID == strings.TrimSpace(disputeCaseID) {
-			return ValidateRequestedDisputeAmount(resolution, amount, order.Amount)
+			return ValidateDisputeResolutionForOrder(order, resolution, amount)
 		}
 	}
 	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单不存在或关联不一致。")
@@ -758,10 +771,29 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 		}
 	}
 	from := order.Status
+	if action == "confirm_payment" && order.PurchaseKind == PurchaseKindLimitedQuotaOffer &&
+		order.QuotaDeliveryMode == QuotaDeliveryModePreimported && !HasMinimumDeliveryValidity(order, now) {
+		order.QuotaValidityIssueAt = &now
+		order.QuotaValidityIssueReason = QuotaValidityIssueDelivery
+		order.UpdatedAt = now
+		order.Version++
+		s.orders[order.ID] = WithAfterSalesProjection(order, now)
+		s.appendEventLocked(order, input.ActorUserID, EventQuotaValidityIssue, order.Status, order.Status, "首次交付剩余有效期不足 60 分钟", input.RequestID)
+		return order, QuotaValidityIssueError()
+	}
 	if action == "cancel" {
 		s.releaseInventoryLocked(&order)
 	}
 	if action == "submit_delivery" {
+		if !HasMinimumDeliveryValidity(order, now) {
+			order.QuotaValidityIssueAt = &now
+			order.QuotaValidityIssueReason = QuotaValidityIssueDelivery
+			order.UpdatedAt = now
+			order.Version++
+			s.orders[order.ID] = WithAfterSalesProjection(order, now)
+			s.appendEventLocked(order, input.ActorUserID, EventQuotaValidityIssue, order.Status, order.Status, "首次交付剩余有效期不足 60 分钟", input.RequestID)
+			return order, QuotaValidityIssueError()
+		}
 		expiresAt, appErr := PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, now)
 		if appErr != nil {
 			return Order{}, appErr
@@ -829,6 +861,8 @@ func (s *Service) materializeTimeoutLockedAt(orderID string, now time.Time) Orde
 		order.Status = StatusCancelled
 		order.CancelReason = CancelReasonPaymentTimeout
 		order.CancelledAt = &now
+		order.CommercialOutcome = CommercialOutcomeCancelledUnpaid
+		order.CommercialOutcomeUpdatedAt = &now
 		order.UpdatedAt = now
 		order.Version++
 		s.releaseInventoryLocked(&order)
@@ -844,6 +878,8 @@ func (s *Service) materializeTimeoutLockedAt(orderID string, now time.Time) Orde
 		order.Status = StatusCompleted
 		order.CompletionSource = CompletionSourceAutoCompleted
 		order.CompletedAt = &completedAt
+		order.CommercialOutcome = CommercialOutcomeNormalFulfillment
+		order.CommercialOutcomeUpdatedAt = &completedAt
 		order.UpdatedAt = now
 		order.Version++
 		s.orders[orderID] = order
@@ -997,6 +1033,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		SellerUserID:                  intent.OwnerUserID,
 		Status:                        StatusPendingPayment,
 		DisputeStatus:                 DisputeStatusNone,
+		CommercialOutcome:             CommercialOutcomePending,
 		ServiceTitleSnapshot:          service.Title,
 		ServiceVersionSnapshot:        service.Version,
 		BillingModeSnapshot:           service.BillingMode,
@@ -1435,6 +1472,8 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusCancelled
 		order.CancelReason = strings.TrimSpace(input.Reason)
 		order.CancelledAt = &now
+		order.CommercialOutcome = CommercialOutcomeCancelledUnpaid
+		order.CommercialOutcomeUpdatedAt = &now
 	case "confirm_payment":
 		order.Status = StatusPaidConfirmed
 		order.PaidConfirmedAt = &now
@@ -1451,6 +1490,8 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusCompleted
 		order.CompletionSource = CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
+		order.CommercialOutcome = CommercialOutcomeNormalFulfillment
+		order.CommercialOutcomeUpdatedAt = &now
 	case "open_dispute":
 		order.DisputeStatus = DisputeStatusNegotiating
 	case "report_late_payment":

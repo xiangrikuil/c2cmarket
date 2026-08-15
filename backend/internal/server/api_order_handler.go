@@ -40,11 +40,12 @@ type apiOrderReasonRequest struct {
 }
 
 type apiOrderDisputeRequest struct {
-	IssueCode           string `json:"issueCode"`
-	RequestedResolution string `json:"requestedResolution"`
-	RequestedAmountCNY  string `json:"requestedAmountCny"`
-	IssueOccurredAt     string `json:"issueOccurredAt"`
-	Reason              string `json:"reason"`
+	IssueCode           string   `json:"issueCode"`
+	RequestedResolution string   `json:"requestedResolution"`
+	RequestedAmountCNY  string   `json:"requestedAmountCny"`
+	IssueOccurredAt     string   `json:"issueOccurredAt"`
+	Reason              string   `json:"reason"`
+	EvidenceAssetIDs    []string `json:"evidenceAssetIds"`
 }
 
 type apiOrderPaymentIssueRequest struct {
@@ -70,6 +71,9 @@ type apiOrderResponse struct {
 	Status                        string                              `json:"status"`
 	DisputeStatus                 string                              `json:"disputeStatus"`
 	DisputeCaseID                 string                              `json:"disputeCaseId,omitempty"`
+	LatestDisputeCaseID           string                              `json:"latestDisputeCaseId,omitempty"`
+	HasDisputeHistory             bool                                `json:"hasDisputeHistory"`
+	ActiveRemedyAction            string                              `json:"activeRemedyAction,omitempty"`
 	ServiceTitleSnapshot          string                              `json:"serviceTitleSnapshot"`
 	ServiceVersionSnapshot        int64                               `json:"serviceVersionSnapshot"`
 	BillingModeSnapshot           string                              `json:"billingModeSnapshot"`
@@ -114,16 +118,23 @@ type apiOrderResponse struct {
 	PaymentSubmittedAt            *string                             `json:"paymentSubmittedAt,omitempty"`
 	MerchantConfirmDueAt          *string                             `json:"merchantConfirmDueAt,omitempty"`
 	MerchantConfirmOverdue        bool                                `json:"merchantConfirmOverdue"`
+	MerchantConfirmOverdueAt      *string                             `json:"merchantConfirmOverdueAt,omitempty"`
 	PaymentIssueReason            string                              `json:"paymentIssueReason,omitempty"`
 	PaymentIssueNote              string                              `json:"paymentIssueNote,omitempty"`
 	PaymentIssueReportedAt        *string                             `json:"paymentIssueReportedAt,omitempty"`
 	PaidConfirmedAt               *string                             `json:"paidConfirmedAt,omitempty"`
 	DeliveryDueAt                 *string                             `json:"deliveryDueAt,omitempty"`
 	DeliveryOverdue               bool                                `json:"deliveryOverdue"`
+	DeliveryOverdueAt             *string                             `json:"deliveryOverdueAt,omitempty"`
+	DeliveryDueRemindedAt         *string                             `json:"deliveryDueRemindedAt,omitempty"`
 	DeliveryNote                  string                              `json:"deliveryNote,omitempty"`
 	DeliverySubmittedAt           *string                             `json:"deliverySubmittedAt,omitempty"`
 	DeliveryReviewExpiresAt       *string                             `json:"deliveryReviewExpiresAt,omitempty"`
 	DeliveryCredential            *apiOrderDeliveryCredentialResponse `json:"deliveryCredential,omitempty"`
+	CommercialOutcome             string                              `json:"commercialOutcome"`
+	CommercialOutcomeUpdatedAt    *string                             `json:"commercialOutcomeUpdatedAt,omitempty"`
+	QuotaValidityIssueAt          *string                             `json:"quotaValidityIssueAt,omitempty"`
+	QuotaValidityIssueReason      string                              `json:"quotaValidityIssueReason,omitempty"`
 	CompletionSource              string                              `json:"completionSource,omitempty"`
 	CompletedAt                   *string                             `json:"completedAt,omitempty"`
 	CancelledAt                   *string                             `json:"cancelledAt,omitempty"`
@@ -629,6 +640,7 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 			RequestedAmountCNY:  req.RequestedAmountCNY,
 			IssueOccurredAt:     req.IssueOccurredAt,
 			Reason:              req.Reason,
+			EvidenceAssetIDs:    append([]string(nil), req.EvidenceAssetIDs...),
 		}, appErr
 	default:
 		body, _, appErr := decodeStrictJSON[emptyRequest](r)
@@ -672,6 +684,9 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		Status:                        order.Status,
 		DisputeStatus:                 order.DisputeStatus,
 		DisputeCaseID:                 order.DisputeCaseID,
+		LatestDisputeCaseID:           order.LatestDisputeCaseID,
+		HasDisputeHistory:             order.HasDisputeHistory,
+		ActiveRemedyAction:            order.ActiveRemedyAction,
 		ServiceTitleSnapshot:          order.ServiceTitleSnapshot,
 		ServiceVersionSnapshot:        order.ServiceVersionSnapshot,
 		BillingModeSnapshot:           order.BillingModeSnapshot,
@@ -717,14 +732,21 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		PaymentSubmittedAt:            formatOptionalTime(order.PaymentSubmittedAt),
 		MerchantConfirmDueAt:          formatOptionalTime(order.MerchantConfirmDueAt),
 		MerchantConfirmOverdue:        order.MerchantConfirmOverdue,
+		MerchantConfirmOverdueAt:      formatOptionalTime(order.MerchantConfirmOverdueAt),
 		PaymentIssueReason:            order.PaymentIssueReason,
 		PaymentIssueNote:              order.PaymentIssueNote,
 		PaymentIssueReportedAt:        formatOptionalTime(order.PaymentIssueReportedAt),
 		DeliveryDueAt:                 formatOptionalTime(order.DeliveryDueAt),
 		DeliveryOverdue:               order.DeliveryOverdue,
+		DeliveryOverdueAt:             formatOptionalTime(order.DeliveryOverdueAt),
+		DeliveryDueRemindedAt:         formatOptionalTime(order.DeliveryDueRemindedAt),
 		DeliveryNote:                  order.DeliveryNote,
 		DeliverySubmittedAt:           formatOptionalTime(order.DeliverySubmittedAt),
 		DeliveryReviewExpiresAt:       formatOptionalTime(order.DeliveryReviewExpiresAt),
+		CommercialOutcome:             order.CommercialOutcome,
+		CommercialOutcomeUpdatedAt:    formatOptionalTime(order.CommercialOutcomeUpdatedAt),
+		QuotaValidityIssueAt:          formatOptionalTime(order.QuotaValidityIssueAt),
+		QuotaValidityIssueReason:      order.QuotaValidityIssueReason,
 		CompletionSource:              order.CompletionSource,
 		CompletedAt:                   formatOptionalTime(order.CompletedAt),
 		CancelledAt:                   formatOptionalTime(order.CancelledAt),

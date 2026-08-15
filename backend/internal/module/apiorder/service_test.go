@@ -380,10 +380,10 @@ func TestCloseDisputeProjectionConvergesOnceAndPreservesOrderLifecycle(t *testin
 		t.Fatalf("close dispute projection: %v", appErr)
 	}
 	closed := service.orders[order.ID]
-	if closed.DisputeStatus != DisputeStatusClosed || closed.Version != 4 {
-		t.Fatalf("expected closed projection and one version increment, got %+v", closed)
+	if closed.DisputeStatus != DisputeStatusNone || closed.DisputeCaseID != "" || closed.LatestDisputeCaseID != order.DisputeCaseID || closed.Version != 4 {
+		t.Fatalf("expected inactive projection with retained dispute history and one version increment, got %+v", closed)
 	}
-	if closed.Status != order.Status || closed.PaymentSummary != order.PaymentSummary || closed.DisputeCaseID != order.DisputeCaseID {
+	if closed.Status != order.Status || closed.PaymentSummary != order.PaymentSummary {
 		t.Fatalf("projection update changed order lifecycle facts: before=%+v after=%+v", order, closed)
 	}
 

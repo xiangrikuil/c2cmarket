@@ -2270,6 +2270,26 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/dispute-evidence/{id}/content:
+    get:
+      operationId: getMyDisputeEvidenceContent
+      tags: [Reports]
+      summary: Read private image evidence visible to the current participant.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Private evidence image bytes.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /api/v1/me/disputes/{id}/messages:
     post:
       operationId: appendMyDisputeMessage
@@ -3114,6 +3134,32 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/api-orders/{id}/dispute-evidence:
+    post:
+      operationId: uploadMyAPIOrderDisputeEvidence
+      tags: [APIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Upload private redacted image evidence before binding it to a dispute action.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/DisputeEvidenceUploadRequest"
+      responses:
+        "201":
+          description: Processed private evidence assets ready for one-time binding.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisputeEvidenceUploadResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
   /api/v1/me/api-orders/{id}/report-late-payment:
     post:
       operationId: reportMyAPIOrderLatePayment
@@ -6853,14 +6899,14 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/disputes/{id}/remedy/mark-overdue:
+  /api/v1/admin/disputes/{id}/remedy/confirm-lateness:
     post:
-      operationId: markDisputeRemedyOverdue
+      operationId: confirmDisputeRemedyLateness
       tags: [AdminReports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Confirm after the remedy deadline that the responsible participant did not fulfill it.
+      summary: Confirm that a remedy claim was late without replacing its fulfillment progress.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -6872,7 +6918,36 @@ paths:
             schema: { $ref: "#/components/schemas/ReportActionRequest" }
       responses:
         "200":
-          description: Remedy marked overdue and dispute closed by an administrator.
+          description: Remedy lateness confirmed as an independent governance fact.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminReportMutation" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/disputes/{id}/remedy/excuse-lateness:
+    post:
+      operationId: excuseDisputeRemedyLateness
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Excuse a late remedy claim without replacing its fulfillment progress.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReportActionRequest" }
+      responses:
+        "200":
+          description: Remedy lateness excused as an independent governance fact.
           headers:
             ETag:
               schema: { type: string }
@@ -6995,6 +7070,59 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/dispute-evidence/{id}/content:
+    get:
+      operationId: getAdminDisputeEvidenceContent
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+      summary: Read private dispute evidence as an administrator.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Private evidence image bytes.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/dispute-evidence/{id}/quarantine:
+    post:
+      operationId: quarantineAdminDisputeEvidence
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Quarantine private evidence after explicit administrator review.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisputeEvidenceQuarantineRequest" }
+      responses:
+        "200":
+          description: Evidence quarantined and scheduled for bounded destruction.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisputeEvidenceQuarantineResult" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
   /api/v1/admin/users/{id}/reputation-restrictions:
     post:
       operationId: createUserReputationRestriction
@@ -10882,13 +11010,16 @@ components:
     DevPersonaSessionResponse:
       type: object
       additionalProperties: false
-      required: [persona, user, csrfToken, expiresAt]
+      required: [persona, user, audience, csrfToken, expiresAt]
       properties:
         persona:
           type: string
           enum: [buyer, seller, admin]
         user:
           $ref: "#/components/schemas/User"
+        audience:
+          type: string
+          enum: [normal]
         csrfToken:
           type: string
         expiresAt:
@@ -14857,6 +14988,8 @@ components:
           minLength: 1
           maxLength: 500
           description: Immutable credential-free initial message.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     APIOrder:
       type: object
       additionalProperties: false
@@ -14871,6 +15004,7 @@ components:
         - sellerReputation
         - status
         - disputeStatus
+        - hasDisputeHistory
         - serviceTitleSnapshot
         - serviceVersionSnapshot
         - billingModeSnapshot
@@ -14883,6 +15017,7 @@ components:
         - paymentExpiresAt
         - merchantConfirmOverdue
         - deliveryOverdue
+        - commercialOutcome
         - canReportLatePayment
         - canOpenDispute
         - disputeEligibilityReason
@@ -14932,6 +15067,17 @@ components:
         disputeCaseId:
           type: string
           format: uuid
+          description: Current active dispute only. Omitted after the case closes.
+        latestDisputeCaseId:
+          type: string
+          format: uuid
+          description: Latest historical dispute, including a closed case when there is no active dispute.
+        hasDisputeHistory:
+          type: boolean
+        activeRemedyAction:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+          description: Current remedy projection only; it does not mean the action has been fulfilled.
         afterSalesExpiresAt:
           type: [string, "null"]
           format: date-time
@@ -15064,6 +15210,10 @@ components:
           format: date-time
         merchantConfirmOverdue:
           type: boolean
+        merchantConfirmOverdueAt:
+          type: [string, "null"]
+          format: date-time
+          description: Persisted lateness fact. It never cancels the paid order or releases inventory.
         paymentIssueReason:
           type: string
           enum: [not_received, amount_mismatch, remark_mismatch]
@@ -15080,6 +15230,14 @@ components:
           format: date-time
         deliveryOverdue:
           type: boolean
+        deliveryOverdueAt:
+          type: [string, "null"]
+          format: date-time
+          description: Persisted delivery lateness fact. It does not automatically refund, cancel, or sanction.
+        deliveryDueRemindedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Timestamp of the single pre-deadline delivery reminder. An overdue first maintenance run does not backfill it.
         deliveryNote:
           type: string
           description: Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
@@ -15093,6 +15251,20 @@ components:
         deliveryCredential:
           $ref: "#/components/schemas/APIOrderDeliveryCredential"
           description: Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses. After destruction it contains audit timestamps and no secret payload fields.
+        commercialOutcome:
+          type: string
+          enum: [pending, normal_fulfillment, continued_fulfillment, full_refund, partial_refund, cancelled_unpaid, closed_unverified]
+          description: Independent commercial result. It does not replace order fulfillment status.
+        commercialOutcomeUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        quotaValidityIssueAt:
+          type: [string, "null"]
+          format: date-time
+          description: First-delivery validity failure fact. No quota replacement, expiry extension, or inventory restoration occurs.
+        quotaValidityIssueReason:
+          type: string
+          enum: [delivery_insufficient]
         completionSource:
           type: string
           enum: [buyer_confirmed, auto_completed]
@@ -15941,6 +16113,8 @@ components:
         - note
         - completedAt
         - reviewDeadlineAt
+        - commercialOutcome
+        - reviewPaused
         - submittedAt
         - visibleAt
         - frozenAt
@@ -15979,7 +16153,7 @@ components:
           enum: [buyer, seller]
         status:
           type: string
-          enum: [reviewable, expired, sealed, published, removed]
+          enum: [reviewable, paused, expired, sealed, published, removed]
         visibility:
           type: string
           enum: [none, sealed, published, removed]
@@ -16012,6 +16186,11 @@ components:
         reviewDeadlineAt:
           type: string
           format: date-time
+        commercialOutcome:
+          type: string
+          enum: ["", normal_fulfillment, continued_fulfillment, full_refund, partial_refund, legacy_fulfillment]
+        reviewPaused:
+          type: boolean
         submittedAt:
           type: [string, "null"]
           format: date-time
@@ -16086,7 +16265,7 @@ components:
           maxLength: 500
     PublicReview:
       type: object
-      required: [id, username, date, serviceType, transactionType, reviewerRole, revieweeRole, rating, tags, note, verified]
+      required: [id, username, date, serviceType, transactionType, reviewerRole, revieweeRole, rating, tags, note, verified, commercialOutcome]
       properties:
         id:
           type: string
@@ -16119,6 +16298,9 @@ components:
           type: string
         verified:
           type: boolean
+        commercialOutcome:
+          type: string
+          enum: ["", normal_fulfillment, continued_fulfillment, full_refund, partial_refund, legacy_fulfillment]
     PublicReviewList:
       type: object
       required: [items]
@@ -16317,6 +16499,95 @@ components:
           minLength: 4
           maxLength: 1200
           description: Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
+    DisputeEvidenceAssetIds:
+      type: array
+      maxItems: 3
+      uniqueItems: true
+      items:
+        type: string
+        format: uuid
+      description: Private uploaded assets bound atomically to this action. Each asset may be bound only once.
+    DisputeEvidenceUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, redactionConfirmed, files]
+      properties:
+        kind:
+          type: string
+          enum: [payment_result, refund_result, api_error, quota_insufficient, expired_early, description_mismatch, other_redacted_fact]
+        redactionConfirmed:
+          type: boolean
+          description: Confirms that credentials and unrelated private data were removed before upload.
+        files:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            type: string
+            format: binary
+    DisputeEvidenceAsset:
+      type: object
+      required: [id, kind, mime, byteSize, width, height, createdAt, contentPath, version]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [payment_result, refund_result, api_error, quota_insufficient, expired_early, description_mismatch, other_redacted_fact]
+        mime:
+          type: string
+          enum: [image/jpeg, image/png]
+        byteSize: { type: integer, format: int64 }
+        width: { type: integer }
+        height: { type: integer }
+        createdAt: { type: string, format: date-time }
+        contentPath: { type: string }
+        version: { type: integer, format: int64 }
+    DisputeEvidenceReference:
+      allOf:
+        - $ref: "#/components/schemas/DisputeEvidenceAsset"
+        - type: object
+          required: [visibility, usage, sourceType, sourceId]
+          properties:
+            visibility:
+              type: string
+              enum: [participants_admin, submitter_admin, appellant_admin]
+            usage:
+              type: string
+              enum: [dispute_initial, platform_escalation, message, info_supplement, remedy_claim, remedy_contest, appeal]
+            sourceType:
+              type: string
+              enum: [dispute_case, dispute_message, info_supplement, dispute_remedy, appeal]
+            sourceId: { type: string, format: uuid }
+    DisputeEvidenceUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DisputeEvidenceAsset" }
+    DisputeEvidenceQuarantineRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 800
+    DisputeEvidenceQuarantineResult:
+      type: object
+      additionalProperties: false
+      required: [id, status, quarantinedExpiresAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [quarantined]
+        quarantinedExpiresAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
     DisputeMessageRequest:
       type: object
       additionalProperties: false
@@ -16327,10 +16598,12 @@ components:
           minLength: 1
           maxLength: 2000
           description: Immutable credential-free plain text.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeSettlementProposalRequest:
       type: object
       additionalProperties: false
-      required: [resolution, terms]
+      required: [resolution, terms, fulfillmentRequired]
       properties:
         resolution:
           type: string
@@ -16344,6 +16617,19 @@ components:
           minLength: 1
           maxLength: 2000
           description: Exact credential-free terms that the counterparty will confirm or reject.
+        fulfillmentRequired:
+          type: boolean
+          description: Must be true for full refund, partial refund, and continue fulfillment.
+        responsibleUserId:
+          type: string
+          format: uuid
+        beneficiaryUserId:
+          type: string
+          format: uuid
+        dueAt:
+          type: string
+          format: date-time
+          description: Required when fulfillmentRequired is true and must be later than submission time.
     DisputeParticipantReasonRequest:
       type: object
       additionalProperties: false
@@ -16355,12 +16641,32 @@ components:
     DisputeEscalationRequest:
       type: object
       additionalProperties: false
-      required: [reason]
+      required: [negotiationChannels, negotiationEndedConfirmed, negotiationSummary, requestedPlatformAction]
       properties:
-        reason:
+        negotiationChannels:
+          type: array
+          minItems: 1
+          maxItems: 5
+          uniqueItems: true
+          items:
+            type: string
+            enum: [wechat, email, linux_do, in_site, other]
+        negotiationEndedConfirmed:
+          type: boolean
+          const: true
+          description: Confirms that bilateral negotiation has ended before platform intervention starts.
+        negotiationSummary:
           type: string
           minLength: 2
-          maxLength: 500
+          maxLength: 2000
+          description: Credential-free summary of the final unresolved disagreement.
+        requestedPlatformAction:
+          type: string
+          minLength: 2
+          maxLength: 1000
+          description: Credential-free description of the decision or direction requested from the platform.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeRemedyRequest:
       type: object
       additionalProperties: false
@@ -16395,6 +16701,8 @@ components:
           minLength: 2
           maxLength: 2000
           description: Credential-free declaration from the responsible participant; it does not close the dispute.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeRemedyConfirmRequest:
       type: object
       additionalProperties: false
@@ -16414,6 +16722,8 @@ components:
           minLength: 2
           maxLength: 2000
           description: Required credential-free explanation that returns the dispute to platform review.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeMessage:
       type: object
       additionalProperties: false
@@ -16426,7 +16736,7 @@ components:
     DisputeSettlementProposal:
       type: object
       additionalProperties: false
-      required: [id, proposedByUserId, resolution, terms, status, createdAt, updatedAt, version]
+      required: [id, proposedByUserId, resolution, terms, fulfillmentRequired, status, createdAt, updatedAt, version]
       properties:
         id: { type: string, format: uuid }
         proposedByUserId: { type: string, format: uuid }
@@ -16435,6 +16745,10 @@ components:
           enum: [full_refund, partial_refund, continue_fulfillment, other]
         amountCny: { $ref: "#/components/schemas/DecimalString" }
         terms: { type: string }
+        fulfillmentRequired: { type: boolean }
+        responsibleUserId: { type: string, format: uuid }
+        beneficiaryUserId: { type: string, format: uuid }
+        dueAt: { type: [string, "null"], format: date-time }
         status:
           type: string
           enum: [pending, accepted, rejected, superseded]
@@ -16442,13 +16756,16 @@ components:
         acceptedAt: { type: [string, "null"], format: date-time }
         rejectedByUserId: { type: string, format: uuid }
         rejectedAt: { type: [string, "null"], format: date-time }
+        supersededReason:
+          type: string
+          enum: [new_proposal, platform_escalation]
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer }
     DisputeRemedy:
       type: object
       additionalProperties: false
-      required: [id, action, currency, responsibleUserId, beneficiaryUserId, instructions, status, dueAt, createdAt, updatedAt, version]
+      required: [id, action, currency, responsibleUserId, beneficiaryUserId, instructions, status, dueAt, latenessStatus, claimedLate, source, createdAt, updatedAt, version]
       properties:
         id: { type: string, format: uuid }
         action:
@@ -16463,14 +16780,25 @@ components:
         instructions: { type: string }
         status:
           type: string
-          enum: [pending, claimed_fulfilled, confirmed, contested, confirmation_expired, overdue, cancelled]
+          enum: [pending, claimed_fulfilled, confirmed, contested, confirmation_expired, cancelled]
         dueAt: { type: string, format: date-time }
         claimedAt: { type: string, format: date-time }
         confirmationDueAt: { type: string, format: date-time }
         confirmedAt: { type: string, format: date-time }
         contestedAt: { type: string, format: date-time }
         confirmationExpiredAt: { type: string, format: date-time }
-        overdueAt: { type: string, format: date-time }
+        latenessStatus:
+          type: string
+          enum: [not_due, on_time, late_unreviewed, late_confirmed, late_excused]
+          description: Independent lateness fact. Only late_confirmed may support reputation or sanctions.
+        lateAt: { type: [string, "null"], format: date-time }
+        latenessDecidedAt: { type: [string, "null"], format: date-time }
+        latenessReason: { type: string }
+        claimedLate: { type: boolean }
+        source:
+          type: string
+          enum: [admin_decision, mutual_agreement]
+        settlementProposalId: { type: string, format: uuid }
         claimNote: { type: string }
         responseNote: { type: string }
         createdAt: { type: string, format: date-time }
@@ -16478,11 +16806,18 @@ components:
         version: { type: integer }
     DisputeCase:
       type: object
-      required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version]
+      required: [id, active, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version]
       properties:
         id:
           type: string
           format: uuid
+        apiOrderId:
+          type: string
+          format: uuid
+          description: Canonical API order relation for API-order disputes.
+        active:
+          type: boolean
+          description: At most one active case may exist per API order; closed historical cases remain readable.
         reportId:
           type: string
           format: uuid
@@ -16556,6 +16891,33 @@ components:
         closedAt:
           type: [string, "null"]
           format: date-time
+        finalReason:
+          type: string
+          description: Frozen terminal reason used for appeal eligibility and audit.
+        appealExpiresAt:
+          type: [string, "null"]
+          format: date-time
+        adverselyAffectedUserIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: Frozen terminal snapshot. Appeal approval reverses only effects matching the appellant.
+        negotiationChannels:
+          type: array
+          items:
+            type: string
+            enum: [wechat, email, linux_do, in_site, other]
+        negotiationEndedConfirmed:
+          type: boolean
+        negotiationSummary:
+          type: string
+        requestedPlatformAction:
+          type: string
+        escalatedByUserId:
+          type: string
+          format: uuid
+        escalatedAt:
+          type: [string, "null"]
+          format: date-time
         canAppeal:
           type: boolean
           readOnly: true
@@ -16588,6 +16950,10 @@ components:
           readOnly: true
           description: Newest-first auditable API-order remedy history.
           items: { $ref: "#/components/schemas/DisputeRemedy" }
+        evidence:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeEvidenceReference" }
         createdAt:
           type: string
           format: date-time
@@ -16949,6 +17315,8 @@ components:
           minLength: 4
           maxLength: 1000
           description: Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     Appeal:
       type: object
       required: [id, appellantUsername, appellantName, targetType, targetId, title, status, createdAt, updatedAt, version]
@@ -17001,6 +17369,10 @@ components:
           format: date-time
         version:
           type: integer
+        evidence:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeEvidenceReference" }
     AppealList:
       type: object
       required: [items]
@@ -17546,11 +17918,22 @@ components:
     SelfDispute:
       type: object
       additionalProperties: false
-      required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version, canAppeal, canSupplement]
+      required: [viewerUserId, id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, negotiationEndedConfirmed, openedAt, createdAt, updatedAt, version, canAppeal, canSupplement]
       properties:
+        viewerUserId:
+          type: string
+          format: uuid
+          description: Authoritative authenticated viewer identity for message and action attribution.
         id:
           type: string
           format: uuid
+        apiOrderId:
+          type: string
+          format: uuid
+          description: Canonical API order relation for API-order disputes.
+        active:
+          type: boolean
+          description: True only while this is the current active case for its API order.
         reportId:
           type: string
           format: uuid
@@ -17607,6 +17990,29 @@ components:
         closedAt:
           type: [string, "null"]
           format: date-time
+        finalReason:
+          type: string
+          description: Frozen terminal reason used for appeal eligibility and audit.
+        appealExpiresAt:
+          type: [string, "null"]
+          format: date-time
+        negotiationChannels:
+          type: array
+          items:
+            type: string
+            enum: [wechat, email, linux_do, in_site, other]
+        negotiationEndedConfirmed:
+          type: boolean
+        negotiationSummary:
+          type: string
+        requestedPlatformAction:
+          type: string
+        escalatedByUserId:
+          type: string
+          format: uuid
+        escalatedAt:
+          type: [string, "null"]
+          format: date-time
         createdAt:
           type: string
           format: date-time
@@ -17638,6 +18044,10 @@ components:
           readOnly: true
           description: Newest-first API-order remedy history visible to both participants.
           items: { $ref: "#/components/schemas/DisputeRemedy" }
+        evidence:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeEvidenceReference" }
     SelfDisputeList:
       type: object
       additionalProperties: false

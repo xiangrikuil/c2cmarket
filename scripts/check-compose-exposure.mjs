@@ -97,6 +97,15 @@ for (const variant of variants) {
     failures.push(`${variant.name}: development backend must retain its local build context`)
   }
 
+  const minioInitCommand = config.services?.['minio-init']?.command ?? []
+  if (
+    minioInitCommand.length !== 1 ||
+    !minioInitCommand[0].includes('mc alias set') ||
+    !minioInitCommand[0].includes('mc mb --ignore-existing')
+  ) {
+    failures.push(`${variant.name}: minio-init must pass bucket setup as one shell command`)
+  }
+
   if (variant.requirePrivatePostgres) {
     const postgresPorts = config.services?.postgres?.ports ?? []
     if (postgresPorts.length > 0) {

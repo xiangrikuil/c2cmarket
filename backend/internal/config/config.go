@@ -51,6 +51,7 @@ type Config struct {
 	SMTP                    SMTPConfig
 	Maintenance             MaintenanceConfig
 	APIHealth               APIHealthConfig
+	Evidence                EvidenceConfig
 	MetricsBearerToken      string
 	TurnstileSecret         string
 	TurnstileHostnames      []string
@@ -84,6 +85,24 @@ type APIHealthConfig struct {
 	Concurrency   int
 	BatchSize     int
 	Retention     time.Duration
+}
+
+type EvidenceConfig struct {
+	Enabled      bool
+	Endpoint     string
+	Region       string
+	Bucket       string
+	AccessKey    string
+	SecretKey    string
+	UsePathStyle bool
+}
+
+func (cfg EvidenceConfig) StorageConfigured() bool {
+	return strings.TrimSpace(cfg.Endpoint) != "" &&
+		strings.TrimSpace(cfg.Region) != "" &&
+		strings.TrimSpace(cfg.Bucket) != "" &&
+		strings.TrimSpace(cfg.AccessKey) != "" &&
+		strings.TrimSpace(cfg.SecretKey) != ""
 }
 
 type SentryConfig struct {
@@ -154,6 +173,13 @@ func Load() (Config, error) {
 			Password:    strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
 			FromAddress: strings.TrimSpace(os.Getenv("MAIL_FROM_ADDRESS")),
 			FromName:    strings.TrimSpace(os.Getenv("MAIL_FROM_NAME")),
+		},
+		Evidence: EvidenceConfig{
+			Endpoint:  strings.TrimSpace(os.Getenv("EVIDENCE_S3_ENDPOINT")),
+			Region:    strings.TrimSpace(os.Getenv("EVIDENCE_S3_REGION")),
+			Bucket:    strings.TrimSpace(os.Getenv("EVIDENCE_S3_BUCKET")),
+			AccessKey: strings.TrimSpace(os.Getenv("EVIDENCE_S3_ACCESS_KEY")),
+			SecretKey: strings.TrimSpace(os.Getenv("EVIDENCE_S3_SECRET_KEY")),
 		},
 	}
 	var err error
@@ -259,6 +285,19 @@ func Load() (Config, error) {
 	}
 	if cfg.APIHealth.Retention < 24*time.Hour || cfg.APIHealth.Retention > 30*24*time.Hour {
 		return Config{}, fmt.Errorf("API_HEALTH_SAMPLE_RETENTION must be between 24h and 720h")
+	}
+	cfg.Evidence.Enabled, err = parseBoolEnv("EVIDENCE_ENABLED", os.Getenv("EVIDENCE_ENABLED"), false)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Evidence.UsePathStyle, err = parseBoolEnv("EVIDENCE_S3_PATH_STYLE", os.Getenv("EVIDENCE_S3_PATH_STYLE"), false)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.Evidence.Enabled || cfg.Evidence.StorageConfigured() {
+		if err := validateEvidenceConfig(cfg.Evidence); err != nil {
+			return Config{}, err
+		}
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"
@@ -608,6 +647,29 @@ func validateSMTPConfig(cfg SMTPConfig) error {
 	}
 	if cfg.Port != 465 {
 		return fmt.Errorf("SMTP_PORT must be 465 for aliyun_directmail")
+	}
+	return nil
+}
+
+func validateEvidenceConfig(cfg EvidenceConfig) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "EVIDENCE_S3_ENDPOINT", value: cfg.Endpoint},
+		{name: "EVIDENCE_S3_REGION", value: cfg.Region},
+		{name: "EVIDENCE_S3_BUCKET", value: cfg.Bucket},
+		{name: "EVIDENCE_S3_ACCESS_KEY", value: cfg.AccessKey},
+		{name: "EVIDENCE_S3_SECRET_KEY", value: cfg.SecretKey},
+	}
+	for _, item := range required {
+		if strings.TrimSpace(item.value) == "" {
+			return fmt.Errorf("%s is required when evidence storage is configured", item.name)
+		}
+	}
+	endpoint, err := url.Parse(cfg.Endpoint)
+	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return fmt.Errorf("EVIDENCE_S3_ENDPOINT must be an absolute HTTP(S) URL without credentials, query, or fragment")
 	}
 	return nil
 }

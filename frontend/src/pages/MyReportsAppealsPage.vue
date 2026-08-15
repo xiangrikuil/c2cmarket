@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { FileWarning, Gavel, Scale, SendHorizontal, ShieldAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import CompactStats from '@/components/market/CompactStats.vue'
+import DisputeEvidencePicker from '@/components/api-order/DisputeEvidencePicker.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
@@ -19,6 +20,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { backendErrorMessage } from '@/lib/backendClient'
+import type { DisputeEvidenceAsset } from '@/lib/disputeEvidenceBackend'
 import {
   buildModerationRecords,
   canCreateAppeal,
@@ -58,9 +60,11 @@ const activeFilter = ref<ModerationRecordFilter>('all')
 const appealDialogOpen = ref(false)
 const appealTarget = ref<ModerationRecord | null>(null)
 const appealForm = reactive({ title: '', statement: '' })
+const appealEvidence = ref<DisputeEvidenceAsset[]>([])
 const supplementDialogOpen = ref(false)
 const supplementTarget = ref<ModerationRecord | null>(null)
 const supplementBody = ref('')
+const supplementEvidence = ref<DisputeEvidenceAsset[]>([])
 
 const records = computed(() => buildModerationRecords(
   reportsQuery.data.value ?? [],
@@ -131,6 +135,7 @@ function openAppeal(record: ModerationRecord) {
   appealTarget.value = record
   appealForm.title = `申诉：${record.title}`.slice(0, 80)
   appealForm.statement = ''
+  appealEvidence.value = []
   appealDialogOpen.value = true
 }
 
@@ -149,12 +154,13 @@ function submitAppeal() {
   }
   const payload = createAppealPayload(target, title, statement)
   if (!payload) return
-  createAppealMutation.mutate(payload, {
+  createAppealMutation.mutate({ ...payload, evidenceAssetIds: appealEvidence.value.map(item => item.id) }, {
     onSuccess: appeal => {
       appealDialogOpen.value = false
       appealTarget.value = null
       appealForm.title = ''
       appealForm.statement = ''
+      appealEvidence.value = []
       toast.success('申诉已提交，处理状态已更新。')
       router.push(`/my/reports/appeal/${appeal.id}`)
     },
@@ -170,6 +176,7 @@ function openSupplement(record: ModerationRecord) {
   if (!canSupplement(record)) return
   supplementTarget.value = record
   supplementBody.value = ''
+  supplementEvidence.value = []
   supplementDialogOpen.value = true
 }
 
@@ -186,15 +193,26 @@ function submitSupplement() {
     entityId: target.id,
     openInfoRequestId: target.source.openInfoRequestId,
     body,
+    evidenceAssetIds: supplementEvidence.value.map(item => item.id),
   }, {
     onSuccess: () => {
       supplementDialogOpen.value = false
       supplementTarget.value = null
       supplementBody.value = ''
+      supplementEvidence.value = []
       toast.success('补充材料已提交，等待平台继续处理。')
     },
     onError: error => toast.error(backendErrorMessage(error, '补充材料提交失败，请刷新后重试。')),
   })
+}
+
+function recordAPIOrderId(record: ModerationRecord | null) {
+  if (!record) return ''
+  if (record.kind === 'dispute' && record.source.targetType === 'api_order') {
+    return record.source.apiOrderId ?? record.source.targetId
+  }
+  if (record.kind === 'appeal' && record.source.targetType === 'api_order') return record.source.targetId
+  return ''
 }
 </script>
 
@@ -343,6 +361,7 @@ function submitSupplement() {
             <span class="font-medium">申诉说明</span>
             <Textarea v-model="appealForm.statement" class="min-h-32" maxlength="1000" placeholder="说明你认为需要复核的事实和理由。" />
           </label>
+          <DisputeEvidencePicker v-if="recordAPIOrderId(appealTarget)" v-model="appealEvidence" :order-id="recordAPIOrderId(appealTarget)" visibility="appellant_admin" />
         </div>
         <DialogFooter>
           <Button variant="outline" :disabled="createAppealMutation.isPending.value" @click="appealDialogOpen = false">取消</Button>
@@ -363,6 +382,7 @@ function submitSupplement() {
           <span class="font-medium">补充说明</span>
           <Textarea v-model="supplementBody" class="min-h-36" maxlength="1200" placeholder="说明需要平台继续核对的事实。" />
         </label>
+        <DisputeEvidencePicker v-if="recordAPIOrderId(supplementTarget)" v-model="supplementEvidence" :order-id="recordAPIOrderId(supplementTarget)" visibility="submitter_admin" />
         <DialogFooter>
           <Button variant="outline" :disabled="submitSupplementMutation.isPending.value" @click="supplementDialogOpen = false">取消</Button>
           <Button :disabled="submitSupplementMutation.isPending.value" @click="submitSupplement">

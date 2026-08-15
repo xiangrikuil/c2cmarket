@@ -2,12 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, FileCheck2, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
-import ApiOrderDisputePanel from '@/components/api-order/ApiOrderDisputePanel.vue'
 import ApiRefundPolicyEvidence from '@/components/api-order/ApiRefundPolicyEvidence.vue'
+import DisputeEvidencePicker from '@/components/api-order/DisputeEvidencePicker.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import ReviewDialog from '@/components/review/ReviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -59,12 +59,14 @@ import {
 } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels, apiPaymentMethodRequiresQrCode } from '@/lib/apiPaymentSettings'
 import {
+  apiOrderCommercialOutcomeLabels,
   apiOrderDisputeIssueLabels,
   apiOrderDisputeResolutionLabels,
   type ApiOrderDisputeIssueCode,
   type ApiOrderDisputeResolution,
 } from '@/lib/apiOrderDispute'
 import { formatDecimal } from '@/lib/decimal'
+import type { DisputeEvidenceAsset } from '@/lib/disputeEvidenceBackend'
 import { functionalMotion } from '@/lib/motion'
 import {
   useApiOrder,
@@ -124,6 +126,7 @@ const disputeRequestedResolution = ref<ApiOrderDisputeResolution>('full_refund')
 const disputeRequestedAmount = ref('')
 const disputeIssueOccurredAt = ref('')
 const disputeReason = ref('')
+const disputeEvidence = ref<DisputeEvidenceAsset[]>([])
 const completionConfirmOpen = ref(false)
 const credentialProblemOpen = ref(false)
 const credentialProblemReason = ref<CredentialProblemReason | ''>('')
@@ -164,11 +167,8 @@ const canOpenDispute = computed(() => Boolean(
   order.value
 	&& (order.value.canOpenDispute ?? (order.value.status !== 'cancelled' && order.value.status !== 'completed' && (order.value.disputeStatus ?? 'none') === 'none')),
 ))
-const showDisputeStatus = computed(() => Boolean(order.value && (order.value.disputeStatus ?? 'none') !== 'none'))
-const disputeViewerUserId = computed(() => {
-  if (!order.value) return ''
-  return isMerchantView.value ? order.value.sellerId : order.value.buyerId
-})
+const showDisputeStatus = computed(() => Boolean(order.value?.hasDisputeHistory || (order.value?.disputeStatus ?? 'none') !== 'none'))
+const disputePanelId = computed(() => order.value?.disputeCaseId ?? order.value?.latestDisputeCaseId ?? '')
 const canSubmitDispute = computed(() => Boolean(
   disputeReason.value.trim()
 	&& (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim())
@@ -483,6 +483,7 @@ async function submitOrderDispute() {
         requestedAmountCny: disputeRequestedResolution.value === 'partial_refund' ? disputeRequestedAmount.value.trim() : null,
 				issueOccurredAt: disputeIssueOccurredAt.value ? new Date(disputeIssueOccurredAt.value).toISOString() : null,
         reason: disputeReason.value.trim(),
+        evidenceAssetIds: disputeEvidence.value.map(item => item.id),
       },
       version: order.value.version,
       perspective: perspective.value,
@@ -491,6 +492,7 @@ async function submitOrderDispute() {
     disputeRequestedAmount.value = ''
 		disputeIssueOccurredAt.value = ''
     disputeReason.value = ''
+    disputeEvidence.value = []
     await refresh(order.value.id)
     toast.success('订单纠纷已发起，双方可先协商处理。')
   } catch (error) {
@@ -705,7 +707,24 @@ onBeforeUnmount(() => {
     <Alert v-if="showDisputeStatus" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
       <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
       <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
-      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}</AlertDescription>
+      <AlertDescription>
+        <p>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) || '该订单有历史纠纷记录，可查看最近案件的终局与申诉期限。' }}</p>
+        <Button v-if="disputePanelId" class="mt-3" size="sm" variant="outline" @click="router.push({ path: `/my/disputes/${disputePanelId}`, query: { from: isMerchantView ? 'merchant' : 'buyer', orderId: order.id } })">
+          <Headphones class="h-4 w-4" />进入纠纷处理
+        </Button>
+      </AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.quotaValidityIssueAt" variant="destructive">
+      <Clock3 />
+      <AlertTitle>首次交付有效期不足</AlertTitle>
+      <AlertDescription>交付时额度剩余不足 60 分钟，系统已拒绝本次交付并记录异常；不会自动替换额度、延长有效期或恢复库存。</AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.commercialOutcome !== 'pending'">
+      <FileCheck2 />
+      <AlertTitle>{{ apiOrderCommercialOutcomeLabels[order.commercialOutcome] }}</AlertTitle>
+      <AlertDescription>该商业结果独立于订单履约状态，用于评价资格和售后事实，不代表平台代收、退款或验真。</AlertDescription>
     </Alert>
 
     <Alert v-if="order.catalogRiskHold?.status === 'active'" variant="destructive">
@@ -715,12 +734,6 @@ onBeforeUnmount(() => {
         {{ order.catalogRiskHold.reason }} 付款、核款、交付、确认完成和自动超时已暂停；订单证据与纠纷入口保持可用。
       </AlertDescription>
     </Alert>
-
-    <ApiOrderDisputePanel
-      v-if="order.disputeCaseId"
-      :dispute-id="order.disputeCaseId"
-      :viewer-user-id="disputeViewerUserId"
-    />
 
     <Alert v-if="isMerchantView && order.status === 'delivery_submitted'" class="border-success/35 bg-success/10">
       <CheckCircle2 class="text-success" />
@@ -1194,6 +1207,7 @@ onBeforeUnmount(() => {
           <Textarea v-model="disputeReason" class="min-h-32" maxlength="500" placeholder="请描述发生时间、当前状态和希望协助处理的事项。不要填写密码、API Key、验证码等敏感信息。" />
           <span class="block text-right text-xs text-muted-foreground">{{ disputeReason.length }} / 500</span>
         </label>
+        <DisputeEvidencePicker v-model="disputeEvidence" :order-id="order.id" />
         <Alert>
           <ShieldAlert />
           <AlertTitle>请勿提交敏感信息</AlertTitle>

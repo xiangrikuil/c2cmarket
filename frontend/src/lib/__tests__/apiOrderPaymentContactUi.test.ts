@@ -5,6 +5,8 @@ import { afterEach, describe, test, vi } from 'vitest'
 const merchantListSource = readFileSync(new URL('../../pages/MerchantApiOrdersPage.vue', import.meta.url), 'utf8')
 const orderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
 const disputePanelSource = readFileSync(new URL('../../components/api-order/ApiOrderDisputePanel.vue', import.meta.url), 'utf8')
+const disputePageSource = readFileSync(new URL('../../pages/MyApiOrderDisputePage.vue', import.meta.url), 'utf8')
+const routerSource = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
 const orderContactCardSource = readFileSync(new URL('../../components/profile/OrderContactCard.vue', import.meta.url), 'utf8')
 const paymentMethodCardSource = readFileSync(new URL('../../components/contact-payment/PaymentMethodCard.vue', import.meta.url), 'utf8')
 const paymentSettingsEditorSource = readFileSync(new URL('../../components/contact-payment/ApiPaymentSettingsEditor.vue', import.meta.url), 'utf8')
@@ -161,7 +163,7 @@ describe('付款联系与平台兜底文案', () => {
     assert.match(paymentSettingsEditorSource, /收款核对说明不能包含 API Key、token、密码、Session、Cookie、付款码或面板凭据/)
   })
 
-  test('纠纷先进入结构化双方协商，平台审核是后续独立动作', () => {
+  test('订单详情只保留纠纷入口，独立页面承载协商和平台介入', () => {
     assert.match(orderDetailSource, /v-model="disputeIssueCode"/)
     assert.match(orderDetailSource, /v-model="disputeRequestedResolution"/)
     assert.match(orderDetailSource, /v-if="disputeRequestedResolution === 'partial_refund'"/)
@@ -176,7 +178,14 @@ describe('付款联系与平台兜底文案', () => {
     assert.match(disputePanelSource, /proposalHistory/)
     assert.match(disputePanelSource, /历史方案/)
     assert.match(disputePanelSource, /双方已确认/)
-    assert.match(disputePanelSource, /申请平台审核/)
+    assert.match(orderDetailSource, /进入纠纷处理/)
+    assert.match(orderDetailSource, /`\/my\/disputes\/\$\{disputePanelId\}`/)
+    assert.doesNotMatch(orderDetailSource, /<ApiOrderDisputePanel/)
+    assert.match(routerSource, /path: '\/my\/disputes\/:id'/)
+    assert.match(disputePageSource, /<ApiOrderDisputePanel :dispute-id="disputeId" \/>/)
+    assert.match(disputePanelSource, /结束协商并申请平台介入/)
+    assert.match(disputePanelSource, /const canMessage = computed\(\(\) => dispute\.value\?\.status === 'negotiating'\)/)
+    assert.match(disputePanelSource, /双方协商已结束，平台处理中/)
     assert.doesNotMatch(disputePanelSource, /诉求不成立|关闭纠纷|单方面关闭/)
     assert.doesNotMatch(orderDetailSource, /即时客服|实时客服|立即处理/)
   })
