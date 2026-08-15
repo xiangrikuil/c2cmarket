@@ -67,7 +67,7 @@ import { backendCreateContact, backendMyContactMethods, backendMyMerchantProfile
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { apiOrderCommercialOutcomeLabels, apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeResolution, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { apiOrderCommercialOutcomeLabels, apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
@@ -277,7 +277,10 @@ export type BackendAPIOrder = {
   disputeNextActor?: ApiOrder['disputeNextActor']
   disputeDueAt?: string | null
   disputeNeedsAction?: boolean
+  disputeResponseOverdue?: boolean
+  disputeAvailableActions?: ApiOrderDisputeAction[]
   activeRemedyAction?: ApiOrderDisputeResolution
+  activeRemedySource?: ApiOrderDisputeRemedySource
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -1482,7 +1485,10 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
 	    disputeNextActor: order.disputeNextActor,
 	    disputeDueAt: order.disputeDueAt ?? undefined,
 	    disputeNeedsAction: order.disputeNeedsAction,
+	    disputeResponseOverdue: order.disputeResponseOverdue,
+	    disputeAvailableActions: order.disputeAvailableActions ?? [],
 	    activeRemedyAction: order.activeRemedyAction,
+	    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitleSnapshot,
     billingModeSnapshot: order.billingModeSnapshot,
@@ -1830,7 +1836,10 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
 	    disputeNextActor: order.disputeNextActor,
 	    disputeDueAt: order.disputeDueAt ?? undefined,
 	    disputeNeedsAction: order.disputeNeedsAction,
+	    disputeResponseOverdue: order.disputeResponseOverdue,
+	    disputeAvailableActions: order.disputeAvailableActions ?? [],
 	    activeRemedyAction: order.activeRemedyAction,
+	    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
@@ -1992,14 +2001,14 @@ export async function backendConfirmAPIOrderComplete(id: string, version: number
   return mapBackendAPIOrder(response, 'buyer')
 }
 
-export function apiOrderDisputePath(id: string, perspective: 'buyer' | 'merchant') {
-  const scope = perspective === 'merchant' ? 'owner' : 'me'
-  return `/api/v1/${scope}/api-orders/${encodeURIComponent(id)}/dispute`
+export function apiOrderDisputePath(id: string) {
+  return `/api/v1/me/api-orders/${encodeURIComponent(id)}/dispute`
 }
 
 export async function backendOpenAPIOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
-  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id, perspective), input, {
-    idempotencyPrefix: `api-order-${perspective}-dispute`,
+  if (perspective !== 'buyer') throw new Error('只有买家可以发起订单售后申请。')
+  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id), input, {
+    idempotencyPrefix: 'api-order-buyer-dispute',
     ifMatch: version,
   })
   return mapBackendAPIOrder(response, perspective)

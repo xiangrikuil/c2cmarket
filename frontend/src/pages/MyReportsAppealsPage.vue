@@ -86,7 +86,7 @@ const hasError = computed(() => reportsQuery.isError.value || disputesQuery.isEr
 const stats = computed(() => [
   { label: '我的举报', value: reportsQuery.data.value?.length ?? 0 },
   { label: '相关纠纷', value: disputesQuery.data.value?.length ?? 0 },
-  { label: '处理中', value: records.value.filter(item => ['submitted', 'triaged', 'negotiating', 'open', 'waiting_info'].includes(item.status)).length },
+  { label: '处理中', value: records.value.filter(item => ['submitted', 'triaged', 'negotiating', 'pending_seller_response', 'pending_applicant_decision', 'voluntary_fulfillment', 'open', 'waiting_info'].includes(item.status)).length },
   { label: '我的申诉', value: appealsQuery.data.value?.length ?? 0 },
 ])
 

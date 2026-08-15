@@ -20,6 +20,7 @@ func TestDisputeRemedyRequiresResponsibleClaimAndBeneficiaryConfirmation(t *test
 	projection := &negotiationProjection{}
 	service.SetDisputeProjectionCloser(projection)
 	disputeID := registerNegotiationDispute(t, service, now)
+	moveDisputeToPlatformReviewForTest(service, disputeID)
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	seller := auth.User{ID: "seller-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
@@ -155,6 +156,7 @@ func TestActiveDisputeRemedyLatenessDecisionPreservesFulfillmentProgress(t *test
 	projection := &negotiationProjection{}
 	service.SetDisputeProjectionCloser(projection)
 	disputeID := registerNegotiationDispute(t, service, now)
+	moveDisputeToPlatformReviewForTest(service, disputeID)
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
 	opened := disputeForTest(t, service, buyer, disputeID)
@@ -202,6 +204,7 @@ func TestActiveDisputeRemedyLatenessExcusePreservesPendingProgress(t *testing.T)
 	now := time.Date(2026, 8, 9, 14, 0, 0, 0, time.UTC)
 	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
 	disputeID := registerNegotiationDispute(t, service, now)
+	moveDisputeToPlatformReviewForTest(service, disputeID)
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
 	opened := disputeForTest(t, service, buyer, disputeID)
@@ -231,6 +234,7 @@ func setupClaimedRemedy(t *testing.T, now *time.Time) (*Service, *negotiationPro
 	projection := &negotiationProjection{}
 	service.SetDisputeProjectionCloser(projection)
 	disputeID := registerNegotiationDispute(t, service, *now)
+	moveDisputeToPlatformReviewForTest(service, disputeID)
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	seller := auth.User{ID: "seller-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}

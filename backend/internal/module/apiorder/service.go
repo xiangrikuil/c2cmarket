@@ -420,7 +420,8 @@ func (s *Service) SetDisputeProjection(_ context.Context, projection DisputeProj
 		return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "数据库纠纷投影必须在管理员事务中更新。")
 	}
 	status := strings.TrimSpace(projection.Status)
-	if status != DisputeStatusOpen && status != DisputeStatusAwaitingFulfillment && status != DisputeStatusFulfillmentConfirmation && status != DisputeStatusClosed {
+	if status != DisputeStatusPendingSellerResponse && status != DisputeStatusPendingApplicantDecision &&
+		status != DisputeStatusOpen && status != DisputeStatusAwaitingFulfillment && status != DisputeStatusFulfillmentConfirmation && status != DisputeStatusClosed {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷投影目标状态不支持。")
 	}
 	disputeCaseID := strings.TrimSpace(projection.CaseID)
@@ -693,14 +694,7 @@ func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action st
 	case "create", "submit_payment", "cancel", "confirm_complete", "report_late_payment":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "open_dispute":
-		order, appErr := s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
-		if appErr == nil {
-			return order, nil
-		}
-		if appErr.Status != http.StatusNotFound {
-			return Order{}, appErr
-		}
-		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
+		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	default:
@@ -1439,7 +1433,7 @@ func canActorAccess(order Order, actorUserID, action string) bool {
 	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
 	case "open_dispute":
-		return order.BuyerUserID == actorUserID || order.SellerUserID == actorUserID
+		return order.BuyerUserID == actorUserID
 	default:
 		return false
 	}
@@ -1514,7 +1508,7 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.CommercialOutcome = CommercialOutcomeNormalFulfillment
 		order.CommercialOutcomeUpdatedAt = &now
 	case "open_dispute":
-		order.DisputeStatus = DisputeStatusOpen
+		order.DisputeStatus = DisputeStatusPendingSellerResponse
 	case "report_late_payment":
 		order.LatePaymentStatus = LatePaymentStatusReported
 		order.LatePaymentReportedAt = &now

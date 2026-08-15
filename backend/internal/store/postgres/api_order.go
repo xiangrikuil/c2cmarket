@@ -1377,8 +1377,15 @@ const apiOrderColumns = `
 		END::text
 		FROM dispute_cases dispute WHERE dispute.id = dispute_case_id
 	), ''),
-	(SELECT due_at FROM dispute_cases WHERE id = dispute_case_id),
-	COALESCE(active_remedy_action, ''), service_title_snapshot,
+		(SELECT due_at FROM dispute_cases WHERE id = dispute_case_id),
+		COALESCE(active_remedy_action, ''),
+		COALESCE((
+			SELECT remedy.source FROM api_order_dispute_remedies remedy
+			WHERE remedy.dispute_case_id = dispute_case_id
+			  AND remedy.status IN ('pending', 'claimed_fulfilled')
+			ORDER BY remedy.created_at DESC LIMIT 1
+		), ''),
+		service_title_snapshot,
 	service_version_snapshot, billing_mode_snapshot, COALESCE(selected_package_id::text, ''),
 	COALESCE(selected_package_snapshot::text, ''), COALESCE(quote_version_snapshot, 0),
 		COALESCE(requested_usd_allowance_snapshot::text, ''), COALESCE(cny_per_usd_allowance_snapshot::text, ''), pricing_snapshot::text,
@@ -1685,6 +1692,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.DisputeNextUserID,
 		&order.DisputeDueAt,
 		&order.ActiveRemedyAction,
+		&order.ActiveRemedySource,
 		&order.ServiceTitleSnapshot,
 		&order.ServiceVersionSnapshot,
 		&order.BillingModeSnapshot,
@@ -2191,7 +2199,7 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 			next_actor, due_at, fact_snapshot, applicant_statement,
 			created_at, updated_at, version
 		)
-		VALUES (NULL, $1, $2::text, $2::text::uuid, true, $3, $4, $5, $5, 'open', $6, $7, $8, $9, $10, $11, $12, $13, $4, $14, 'respondent', $15, $16::jsonb, $17, $14, $14, 1)
+		VALUES (NULL, $1, $2::text, $2::text::uuid, true, $3, $4, $5, $5, 'pending_seller_response', $6, $7, $8, $9, $10, $11, $12, $13, $4, $14, 'respondent', $15, $16::jsonb, $17, $14, $14, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, report.TargetAPIOrder, order.ID, strings.TrimSpace(order.ServiceTitleSnapshot), input.ActorUserID, counterpartyID,
 		strings.TrimSpace(input.IssueCode), strings.TrimSpace(input.RequestedResolution), nullNumeric(input.RequestedAmountCNY), issueOccurredAt,
@@ -2238,7 +2246,7 @@ func storeCanActorAccessAPIOrder(order apiorder.Order, actorUserID, action strin
 	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
 	case "open_dispute":
-		return order.BuyerUserID == actorUserID || order.SellerUserID == actorUserID
+		return order.BuyerUserID == actorUserID
 	default:
 		return false
 	}
@@ -2350,7 +2358,7 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.CommercialOutcome = apiorder.CommercialOutcomeNormalFulfillment
 		order.CommercialOutcomeUpdatedAt = &now
 	case "open_dispute":
-		order.DisputeStatus = apiorder.DisputeStatusOpen
+		order.DisputeStatus = apiorder.DisputeStatusPendingSellerResponse
 	case "report_late_payment":
 		order.LatePaymentStatus = apiorder.LatePaymentStatusReported
 		order.LatePaymentReportedAt = &now

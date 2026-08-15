@@ -34,13 +34,16 @@ const (
 	ReportStatusDisputeOpened = "dispute_opened"
 	ReportStatusClosed        = "closed"
 
-	DisputeStatusNegotiating  = "negotiating"
-	DisputeStatusOpen         = "open"
-	DisputeStatusWaitingInfo  = "waiting_info"
-	DisputeStatusResolved     = "resolved"
-	DisputeStatusClosed       = "closed"
-	DisputeStatusWithdrawn    = "withdrawn"
-	DisputeStatusSelfResolved = "self_resolved"
+	DisputeStatusNegotiating              = "negotiating"
+	DisputeStatusPendingSellerResponse    = "pending_seller_response"
+	DisputeStatusPendingApplicantDecision = "pending_applicant_decision"
+	DisputeStatusVoluntaryFulfillment     = "voluntary_fulfillment"
+	DisputeStatusOpen                     = "open"
+	DisputeStatusWaitingInfo              = "waiting_info"
+	DisputeStatusResolved                 = "resolved"
+	DisputeStatusClosed                   = "closed"
+	DisputeStatusWithdrawn                = "withdrawn"
+	DisputeStatusSelfResolved             = "self_resolved"
 
 	DisputeNextActorApplicant        = "applicant"
 	DisputeNextActorRespondent       = "respondent"
@@ -67,12 +70,14 @@ const (
 	InfoRequestStatusAnswered = "answered"
 	InfoRequestStatusCanceled = "cancelled"
 
-	DisputeActionRespond       = "respond"
-	DisputeActionWithdraw      = "withdraw"
-	DisputeActionSelfResolve   = "self_resolve"
-	DisputeRemedyActionClaim   = "claim_remedy"
-	DisputeRemedyActionConfirm = "confirm_remedy"
-	DisputeRemedyActionContest = "contest_remedy"
+	DisputeActionRespond                     = "respond"
+	DisputeActionSellerDecision              = "seller_decision"
+	DisputeActionRequestPlatformIntervention = "request_platform_intervention"
+	DisputeActionWithdraw                    = "withdraw"
+	DisputeActionSelfResolve                 = "self_resolve"
+	DisputeRemedyActionClaim                 = "claim_remedy"
+	DisputeRemedyActionConfirm               = "confirm_remedy"
+	DisputeRemedyActionContest               = "contest_remedy"
 
 	SettlementStatusPending    = "pending"
 	SettlementStatusAccepted   = "accepted"
@@ -87,6 +92,10 @@ const (
 	RemedyStatusCancelled           = "cancelled"
 	RemedySourceAdminDecision       = "admin_decision"
 	RemedySourceMutualAgreement     = "mutual_agreement"
+	RemedySourceSellerAcceptance    = "seller_acceptance"
+
+	SellerDecisionAccepted = "accepted"
+	SellerDecisionRejected = "rejected"
 
 	RemedyLatenessNotDue         = "not_due"
 	RemedyLatenessOnTime         = "on_time"
@@ -94,14 +103,58 @@ const (
 	RemedyLatenessLateConfirmed  = "late_confirmed"
 	RemedyLatenessLateExcused    = "late_excused"
 
-	RemedyConfirmationWindow = 48 * time.Hour
-	DisputeResponseWindow    = 48 * time.Hour
-	DisputeInfoRequestWindow = 48 * time.Hour
-	DisputeAppealWindow      = 30 * 24 * time.Hour
+	RemedyConfirmationWindow          = 48 * time.Hour
+	VoluntaryRemedyConfirmationWindow = 24 * time.Hour
+	DisputeResponseWindow             = 24 * time.Hour
+	DisputeApplicantDecisionWindow    = 3 * 24 * time.Hour
+	VoluntaryRemedyFulfillmentWindow  = 24 * time.Hour
+	DisputeInfoRequestWindow          = 48 * time.Hour
+	DisputeAppealWindow               = 30 * 24 * time.Hour
 
 	RemedyConfirmationExpiredPublicResult = "对方未在期限内反馈，平台未核验到账或履约事实"
 	RemedyConfirmationExpiredNote         = "对方未在确认期限内反馈；平台未核验到账或履约事实。"
 )
+
+func AvailableDisputeActions(item DisputeCase, viewerUserID string, now time.Time) []string {
+	actions := make([]string, 0, 3)
+	if !item.Active || item.TargetType != TargetAPIOrder {
+		return actions
+	}
+	if viewerUserID == item.CounterpartyUserID && item.Status == DisputeStatusPendingSellerResponse && item.SellerDecision == "" {
+		actions = append(actions, DisputeActionSellerDecision)
+	}
+	if viewerUserID == item.PrimaryUserID {
+		if item.Status == DisputeStatusPendingSellerResponse || item.Status == DisputeStatusPendingApplicantDecision {
+			actions = append(actions, DisputeActionWithdraw)
+		}
+		if item.Status == DisputeStatusPendingSellerResponse && item.DueAt != nil && !now.Before(*item.DueAt) {
+			actions = append(actions, DisputeActionRequestPlatformIntervention)
+		}
+		if item.Status == DisputeStatusPendingApplicantDecision && item.ApplicantDecisionDueAt != nil && now.Before(*item.ApplicantDecisionDueAt) {
+			actions = append(actions, DisputeActionRequestPlatformIntervention)
+		}
+	}
+	index := currentRemedyIndex(item.Remedies)
+	if index < 0 {
+		return actions
+	}
+	remedy := item.Remedies[index]
+	if remedy.Status == RemedyStatusPending && viewerUserID == remedy.ResponsibleUserID {
+		actions = append(actions, DisputeRemedyActionClaim)
+	}
+	if item.Status == DisputeStatusVoluntaryFulfillment && viewerUserID == item.PrimaryUserID && remedy.Status == RemedyStatusPending && !now.Before(remedy.DueAt) {
+		actions = append(actions, DisputeActionRequestPlatformIntervention)
+	}
+	if remedy.Status == RemedyStatusClaimedFulfilled && viewerUserID == remedy.BeneficiaryUserID {
+		actions = append(actions, DisputeRemedyActionConfirm)
+		if remedy.Source == RemedySourceSellerAcceptance {
+			actions = append(actions, DisputeActionRequestPlatformIntervention)
+		} else {
+			actions = append(actions, DisputeRemedyActionContest)
+		}
+	}
+	return actions
+}
 
 type Report struct {
 	ID                  string
@@ -177,6 +230,12 @@ type DisputeCase struct {
 	RespondentResponse        string
 	RespondedByUserID         string
 	RespondedAt               *time.Time
+	SellerDecision            string
+	SellerDecisionReason      string
+	SellerDecidedByUserID     string
+	SellerDecidedAt           *time.Time
+	SellerResponseLate        bool
+	ApplicantDecisionDueAt    *time.Time
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
 	Version                   int64
@@ -402,6 +461,7 @@ type DisputeParticipantActionInput struct {
 	DisputeID              string
 	ActorUserID            string
 	Action                 string
+	Decision               string
 	Body                   string
 	Note                   string
 	Reason                 string

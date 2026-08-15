@@ -203,6 +203,9 @@ func (s *Service) AdminDisputes(ctx context.Context, user auth.User) ([]DisputeC
 	defer s.mu.Unlock()
 	items := make([]DisputeCase, 0, len(s.disputes))
 	for _, item := range s.disputes {
+		if item.Active && (item.Status == DisputeStatusPendingSellerResponse || item.Status == DisputeStatusPendingApplicantDecision || item.Status == DisputeStatusVoluntaryFulfillment) {
+			continue
+		}
 		items = append(items, item)
 	}
 	sortDisputes(items)
@@ -300,6 +303,7 @@ func (s *Service) DisputeParticipantActionWithIdempotency(ctx context.Context, u
 func (s *Service) disputeParticipantAction(ctx context.Context, userID, routeKey, key, requestHash string, input DisputeParticipantActionInput, buildCompletion DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.DisputeID = strings.TrimSpace(input.DisputeID)
 	input.Action = strings.TrimSpace(input.Action)
+	input.Decision = strings.TrimSpace(input.Decision)
 	input.Body = strings.TrimSpace(input.Body)
 	input.Note = strings.TrimSpace(input.Note)
 	input.Reason = strings.TrimSpace(input.Reason)
@@ -369,6 +373,76 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 	now := s.now()
 	projectionStatus := ""
 	switch input.Action {
+	case DisputeActionSellerDecision:
+		if !item.Active || item.Status != DisputeStatusPendingSellerResponse || item.CounterpartyUserID != input.ActorUserID || item.SellerDecision != "" || item.DueAt == nil {
+			return DisputeCase{}, "", func() {}, invalidState("当前售后申请不能再由卖家处理。")
+		}
+		responseDueAt := *item.DueAt
+		item.SellerDecision = input.Decision
+		item.SellerDecisionReason = input.Reason
+		item.SellerDecidedByUserID = input.ActorUserID
+		item.SellerDecidedAt = &now
+		item.SellerResponseLate = !now.Before(responseDueAt)
+		if input.Decision == SellerDecisionRejected {
+			decisionDueAt := now.Add(DisputeApplicantDecisionWindow)
+			item.Status = DisputeStatusPendingApplicantDecision
+			item.NextActor = DisputeNextActorApplicant
+			item.DueAt = &decisionDueAt
+			item.ApplicantDecisionDueAt = &decisionDueAt
+			item.PublicResult = "卖家已拒绝申请，等待买家决定是否申请平台介入"
+			projectionStatus = apiorder.DisputeStatusPendingApplicantDecision
+			break
+		}
+		remedyDueAt := now.Add(VoluntaryRemedyFulfillmentWindow)
+		remedy := DisputeRemedy{
+			ID: uuid.NewString(), DisputeCaseID: item.ID, Action: item.RequestedResolution,
+			AmountCNY: item.RequestedAmountCNY, Currency: "CNY", ResponsibleUserID: item.CounterpartyUserID,
+			BeneficiaryUserID: item.PrimaryUserID, Instructions: input.Reason, Status: RemedyStatusPending,
+			DueAt: remedyDueAt, LatenessStatus: RemedyLatenessNotDue, Source: RemedySourceSellerAcceptance,
+			CreatedAt: now, UpdatedAt: now, Version: 1,
+		}
+		s.disputeRemedies[item.ID] = append(s.disputeRemedies[item.ID], remedy)
+		item.Status = DisputeStatusVoluntaryFulfillment
+		item.NextActor = DisputeNextActorResponsibleParty
+		item.DueAt = &remedyDueAt
+		item.PublicResult = "卖家已同意申请，等待卖家履行"
+		projectionStatus = apiorder.DisputeStatusAwaitingFulfillment
+	case DisputeActionRequestPlatformIntervention:
+		allowed := item.PrimaryUserID == input.ActorUserID && item.Active
+		if item.Status == DisputeStatusPendingSellerResponse {
+			allowed = allowed && item.DueAt != nil && !now.Before(*item.DueAt)
+		} else if item.Status == DisputeStatusPendingApplicantDecision {
+			allowed = allowed && item.ApplicantDecisionDueAt != nil && now.Before(*item.ApplicantDecisionDueAt)
+		} else if item.Status == DisputeStatusVoluntaryFulfillment {
+			index := currentRemedyIndex(s.disputeRemedies[item.ID])
+			allowed = allowed && index >= 0
+			if allowed {
+				remedies := s.disputeRemedies[item.ID]
+				remedy := remedies[index]
+				allowed = remedy.Status == RemedyStatusClaimedFulfilled || !now.Before(remedy.DueAt)
+				if allowed {
+					remedy.Status = RemedyStatusContested
+					remedy.ResponseNote = input.Reason
+					remedy.ContestedAt = &now
+					remedy.UpdatedAt = now
+					remedy.Version++
+					remedies[index] = remedy
+					s.disputeRemedies[item.ID] = remedies
+				}
+			}
+		} else {
+			allowed = false
+		}
+		if !allowed {
+			return DisputeCase{}, "", func() {}, invalidState("当前售后申请不能申请平台介入。")
+		}
+		item.Status = DisputeStatusOpen
+		item.NextActor = DisputeNextActorAdmin
+		item.DueAt = nil
+		item.EscalatedByUserID = input.ActorUserID
+		item.EscalatedAt = &now
+		item.PublicResult = "买家已申请平台介入"
+		projectionStatus = apiorder.DisputeStatusOpen
 	case DisputeActionRespond:
 		if !item.Active || item.Status != DisputeStatusOpen || item.CounterpartyUserID != input.ActorUserID || item.RespondedAt != nil || item.NextActor != DisputeNextActorRespondent || item.DueAt == nil || !now.Before(*item.DueAt) {
 			return DisputeCase{}, "", func() {}, invalidState("只有被申请方可以提交一次正式答复。")
@@ -379,16 +453,12 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		item.NextActor = DisputeNextActorAdmin
 		item.DueAt = nil
 		item.PublicResult = "双方材料已提交，等待平台审核"
-	case DisputeActionWithdraw, DisputeActionSelfResolve:
-		if !item.Active || item.PrimaryUserID != input.ActorUserID || (item.Status != DisputeStatusOpen && item.Status != DisputeStatusWaitingInfo) || len(previousRemedies) > 0 {
-			return DisputeCase{}, "", func() {}, invalidState("只有申请人可以在平台裁决前结束案件。")
+	case DisputeActionWithdraw:
+		if !item.Active || item.PrimaryUserID != input.ActorUserID || (item.Status != DisputeStatusPendingSellerResponse && item.Status != DisputeStatusPendingApplicantDecision) || len(previousRemedies) > 0 {
+			return DisputeCase{}, "", func() {}, invalidState("只有申请人可以在卖家接受或平台介入前撤回申请。")
 		}
 		item.Status = DisputeStatusWithdrawn
-		item.PublicResult = "申请人已撤回平台处理申请"
-		if input.Action == DisputeActionSelfResolve {
-			item.Status = DisputeStatusSelfResolved
-			item.PublicResult = "申请人确认双方已在线下解决"
-		}
+		item.PublicResult = "申请人已撤回售后申请"
 		item.Active = false
 		item.ClosedAt = &now
 		item.NextActor = DisputeNextActorNone
@@ -396,7 +466,7 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		projectionStatus = apiorder.DisputeStatusClosed
 	case DisputeRemedyActionClaim:
 		index := currentRemedyIndex(s.disputeRemedies[item.ID])
-		if item.Status != DisputeStatusResolved || index < 0 {
+		if (item.Status != DisputeStatusResolved && item.Status != DisputeStatusVoluntaryFulfillment) || index < 0 {
 			return DisputeCase{}, "", func() {}, invalidState("当前纠纷没有待履行的整改要求。")
 		}
 		remedies := s.disputeRemedies[item.ID]
@@ -404,7 +474,11 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		if remedy.Status != RemedyStatusPending || remedy.ResponsibleUserID != input.ActorUserID {
 			return DisputeCase{}, "", func() {}, invalidState("只有整改责任方可以声明已履行。")
 		}
-		confirmationDueAt := now.Add(RemedyConfirmationWindow)
+		confirmationWindow := RemedyConfirmationWindow
+		if remedy.Source == RemedySourceSellerAcceptance {
+			confirmationWindow = VoluntaryRemedyConfirmationWindow
+		}
+		confirmationDueAt := now.Add(confirmationWindow)
 		remedy.Status = RemedyStatusClaimedFulfilled
 		remedy.ClaimNote = input.Note
 		remedy.ClaimedAt = &now
@@ -420,7 +494,7 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		projectionStatus = apiorder.DisputeStatusFulfillmentConfirmation
 	case DisputeRemedyActionConfirm, DisputeRemedyActionContest:
 		index := currentRemedyIndex(s.disputeRemedies[item.ID])
-		if item.Status != DisputeStatusResolved || index < 0 {
+		if (item.Status != DisputeStatusResolved && item.Status != DisputeStatusVoluntaryFulfillment) || index < 0 {
 			return DisputeCase{}, "", func() {}, invalidState("当前纠纷没有待确认的履行声明。")
 		}
 		remedies := s.disputeRemedies[item.ID]
@@ -441,9 +515,16 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 			item.ClosedAt = &now
 			item.Active = false
 			item.FinalReason = "remedy_confirmation_expired"
-			expiresAt := now.Add(DisputeAppealWindow)
-			item.AppealExpiresAt = &expiresAt
-			item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
+			if remedy.Source == RemedySourceSellerAcceptance {
+				item.PublicResult = "买家在确认期内未提出异议，售后申请已中性结束"
+				item.FinalReason = "voluntary_confirmation_no_objection"
+				item.AppealExpiresAt = nil
+				item.AdverselyAffectedIDs = nil
+			} else {
+				expiresAt := now.Add(DisputeAppealWindow)
+				item.AppealExpiresAt = &expiresAt
+				item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
+			}
 			item.NextActor = DisputeNextActorNone
 			item.DueAt = nil
 			projectionStatus = apiorder.DisputeStatusClosed
@@ -453,6 +534,9 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		remedy.UpdatedAt = now
 		remedy.Version++
 		if input.Action == DisputeRemedyActionContest {
+			if remedy.Source == RemedySourceSellerAcceptance {
+				return DisputeCase{}, "", func() {}, invalidState("卖家自愿履行存在异议时，请申请平台介入。")
+			}
 			remedy.Status = RemedyStatusContested
 			remedy.ContestedAt = &now
 			item.Status = DisputeStatusOpen
@@ -469,9 +553,15 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 			item.ClosedAt = &now
 			item.Active = false
 			item.FinalReason = "remedy_confirmed"
-			expiresAt := now.Add(DisputeAppealWindow)
-			item.AppealExpiresAt = &expiresAt
-			item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
+			if remedy.Source == RemedySourceSellerAcceptance {
+				item.FinalReason = "voluntary_fulfillment_confirmed"
+				item.AppealExpiresAt = nil
+				item.AdverselyAffectedIDs = nil
+			} else {
+				expiresAt := now.Add(DisputeAppealWindow)
+				item.AppealExpiresAt = &expiresAt
+				item.AdverselyAffectedIDs, _ = ResolveAdverselyAffectedUsers(item, nil)
+			}
 			item.NextActor = DisputeNextActorNone
 			item.DueAt = nil
 			projectionStatus = apiorder.DisputeStatusClosed
@@ -1055,14 +1145,14 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 		PrimaryUserID:       strings.TrimSpace(input.ActorUserID),
 		CounterpartyUserID:  strings.TrimSpace(counterpartyID),
 		SubjectUserID:       strings.TrimSpace(counterpartyID),
-		Status:              DisputeStatusOpen,
+		Status:              DisputeStatusPendingSellerResponse,
 		IssueCode:           strings.TrimSpace(input.IssueCode),
 		RequestedResolution: strings.TrimSpace(input.RequestedResolution),
 		RequestedAmountCNY:  strings.TrimSpace(input.RequestedAmountCNY),
 		IssueOccurredAt:     input.IssueOccurredAt,
 		PublicSummary:       "API 订单纠纷",
 		PublicResultCode:    PublicResultNoAction,
-		PublicResult:        "等待被申请方正式答复",
+		PublicResult:        "等待卖家处理售后申请",
 		NextActor:           DisputeNextActorRespondent,
 		DueAt:               optionalTime(now.Add(DisputeResponseWindow)),
 		ApplicantStatement:  strings.TrimSpace(input.Reason),
@@ -1081,7 +1171,7 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 func apiOrderDisputeProjection(item DisputeCase) apiorder.DisputeProjection {
 	projection := apiorder.DisputeProjection{
 		CaseID:    item.ID,
-		Status:    apiorder.DisputeStatusOpen,
+		Status:    apiorder.DisputeStatusPendingSellerResponse,
 		NextActor: item.NextActor,
 		DueAt:     cloneOptionalTime(item.DueAt),
 	}
@@ -1091,15 +1181,22 @@ func apiOrderDisputeProjection(item DisputeCase) apiorder.DisputeProjection {
 	case DisputeNextActorRespondent:
 		projection.NextUserID = item.CounterpartyUserID
 	}
+	if item.Status == DisputeStatusPendingSellerResponse {
+		projection.Status = apiorder.DisputeStatusPendingSellerResponse
+	}
+	if item.Status == DisputeStatusPendingApplicantDecision {
+		projection.Status = apiorder.DisputeStatusPendingApplicantDecision
+	}
 	if item.Status == DisputeStatusNegotiating {
 		projection.Status = apiorder.DisputeStatusNegotiating
 	}
-	if item.Status == DisputeStatusResolved {
+	if item.Status == DisputeStatusResolved || item.Status == DisputeStatusVoluntaryFulfillment {
 		projection.Status = apiorder.DisputeStatusAwaitingFulfillment
 		index := currentRemedyIndex(item.Remedies)
 		if index >= 0 {
 			remedy := item.Remedies[index]
 			projection.ActiveRemedyAction = remedy.Action
+			projection.ActiveRemedySource = remedy.Source
 			if item.NextActor == DisputeNextActorResponsibleParty {
 				projection.NextUserID = remedy.ResponsibleUserID
 			}
@@ -1773,9 +1870,16 @@ func validateDisputeParticipantAction(input DisputeParticipantActionInput) *doma
 		return fieldError("disputeId", "必须提供纠纷记录。")
 	}
 	switch input.Action {
+	case DisputeActionSellerDecision:
+		if input.Decision != SellerDecisionAccepted && input.Decision != SellerDecisionRejected {
+			return fieldError("decision", "请选择同意或拒绝。")
+		}
+		return validateDisputeParticipantText("reason", input.Reason, 2, 2000, "处理原因需为 2 至 2000 个字符。")
+	case DisputeActionRequestPlatformIntervention:
+		return validateDisputeParticipantText("reason", input.Reason, 2, 2000, "平台介入原因需为 2 至 2000 个字符。")
 	case DisputeActionRespond:
 		return validateDisputeParticipantText("body", input.Body, 2, 2000, "正式答复需为 2 至 2000 个字符。")
-	case DisputeActionWithdraw, DisputeActionSelfResolve:
+	case DisputeActionWithdraw:
 		if input.Reason == "" {
 			return nil
 		}
@@ -1901,6 +2005,12 @@ func statusLabel(status string) string {
 	switch status {
 	case DisputeStatusNegotiating:
 		return "协商中"
+	case DisputeStatusPendingSellerResponse:
+		return "等待卖家处理"
+	case DisputeStatusPendingApplicantDecision:
+		return "等待买家决定"
+	case DisputeStatusVoluntaryFulfillment:
+		return "卖家自愿履行中"
 	case DisputeStatusOpen:
 		return "人工处理中"
 	case DisputeStatusWaitingInfo:
@@ -1916,7 +2026,8 @@ func statusLabel(status string) string {
 
 func isUnresolvedDisputeStatus(status string) bool {
 	switch status {
-	case DisputeStatusNegotiating, DisputeStatusOpen, DisputeStatusWaitingInfo:
+	case DisputeStatusNegotiating, DisputeStatusPendingSellerResponse, DisputeStatusPendingApplicantDecision,
+		DisputeStatusVoluntaryFulfillment, DisputeStatusOpen, DisputeStatusWaitingInfo:
 		return true
 	default:
 		return false

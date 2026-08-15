@@ -63,6 +63,12 @@ type disputeFormalResponseRequest struct {
 	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
 }
 
+type disputeSellerDecisionRequest struct {
+	Decision         string   `json:"decision"`
+	Reason           string   `json:"reason"`
+	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
+}
+
 type disputeParticipantReasonRequest struct {
 	Reason           string   `json:"reason"`
 	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
@@ -158,6 +164,14 @@ type disputeResponse struct {
 	RespondentResponse        string                       `json:"respondentResponse,omitempty"`
 	RespondedByUserID         string                       `json:"respondedByUserId,omitempty"`
 	RespondedAt               *string                      `json:"respondedAt,omitempty"`
+	SellerDecision            string                       `json:"sellerDecision,omitempty"`
+	SellerDecisionReason      string                       `json:"sellerDecisionReason,omitempty"`
+	SellerDecidedByUserID     string                       `json:"sellerDecidedByUserId,omitempty"`
+	SellerDecidedAt           *string                      `json:"sellerDecidedAt,omitempty"`
+	SellerResponseLate        bool                         `json:"sellerResponseLate"`
+	ResponseOverdue           bool                         `json:"responseOverdue"`
+	ApplicantDecisionDueAt    *string                      `json:"applicantDecisionDueAt,omitempty"`
+	AvailableActions          []string                     `json:"availableActions"`
 	CreatedAt                 string                       `json:"createdAt"`
 	UpdatedAt                 string                       `json:"updatedAt"`
 	Version                   int64                        `json:"version"`
@@ -451,29 +465,42 @@ func (s *Server) handleMyDispute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toMyDisputeDetailResponse(item, actor.UserID))
 }
 
-func (s *Server) handleRespondDispute(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSellerDisputeDecision(w http.ResponseWriter, r *http.Request) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	body, req, appErr := decodeStrictJSON[disputeFormalResponseRequest](r)
+	body, req, appErr := decodeStrictJSON[disputeSellerDecisionRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action: report.DisputeActionRespond, Body: req.Body,
+		Action: report.DisputeActionSellerDecision, Decision: req.Decision, Reason: req.Reason,
+		EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
+	})
+}
+
+func (s *Server) handleRequestDisputePlatformIntervention(w http.ResponseWriter, r *http.Request) {
+	actor, appErr := s.requireBusinessActor(r, true, true)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[disputeParticipantReasonRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
+		Action: report.DisputeActionRequestPlatformIntervention, Reason: req.Reason,
 		EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 	})
 }
 
 func (s *Server) handleWithdrawDispute(w http.ResponseWriter, r *http.Request) {
 	s.handleFinishDisputeByApplicant(w, r, report.DisputeActionWithdraw)
-}
-
-func (s *Server) handleSelfResolveDispute(w http.ResponseWriter, r *http.Request) {
-	s.handleFinishDisputeByApplicant(w, r, report.DisputeActionSelfResolve)
 }
 
 func (s *Server) handleFinishDisputeByApplicant(w http.ResponseWriter, r *http.Request, action string) {
@@ -1041,6 +1068,9 @@ func toMyDisputeResponse(item report.DisputeCase, userID string) disputeResponse
 	response.CanAppeal = &canAppeal
 	canSupplement := item.Status == report.DisputeStatusWaitingInfo && item.InfoRequestedFromID == userID && item.OpenInfoRequestID != ""
 	response.CanSupplement = &canSupplement
+	now := time.Now()
+	response.ResponseOverdue = item.Status == report.DisputeStatusPendingSellerResponse && item.DueAt != nil && !now.Before(*item.DueAt)
+	response.AvailableActions = report.AvailableDisputeActions(item, userID, now)
 	if canSupplement {
 		response.OpenInfoRequestID = item.OpenInfoRequestID
 	}
@@ -1093,6 +1123,13 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		RespondentResponse:        item.RespondentResponse,
 		RespondedByUserID:         item.RespondedByUserID,
 		RespondedAt:               formatOptionalTime(item.RespondedAt),
+		SellerDecision:            item.SellerDecision,
+		SellerDecisionReason:      item.SellerDecisionReason,
+		SellerDecidedByUserID:     item.SellerDecidedByUserID,
+		SellerDecidedAt:           formatOptionalTime(item.SellerDecidedAt),
+		SellerResponseLate:        item.SellerResponseLate,
+		ApplicantDecisionDueAt:    formatOptionalTime(item.ApplicantDecisionDueAt),
+		AvailableActions:          []string{},
 		CreatedAt:                 item.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                 item.UpdatedAt.UTC().Format(time.RFC3339),
 		Version:                   item.Version,

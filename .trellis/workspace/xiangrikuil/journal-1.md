@@ -1791,3 +1791,25 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 59: API 订单退款申请式售后流程
+
+**Date**: 2026-08-16
+**Task**: API 订单退款申请式售后流程
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+将 API 订单纠纷改为买家申请、卖家 24 小时内同意或拒绝、买家按需申请平台介入的售后流程；增加自愿履行、并发保护、中立超时、migration 108、买卖订单待办和独立案件操作，并完成全量测试与桌面/移动端验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7bf465e` | `feat(api-orders): add seller-first after-sales flow` |
+
+### Status
+
+[OK] **Completed**

@@ -164,18 +164,21 @@ describe('付款联系与平台兜底文案', () => {
     assert.match(paymentSettingsEditorSource, /收款核对说明不能包含 API Key、token、密码、Session、Cookie、付款码或面板凭据/)
   })
 
-  test('订单详情只保留纠纷入口，独立页面承载平台处理', () => {
+  test('订单详情只保留售后入口，独立页面承载卖家处理和平台介入', () => {
     assert.match(orderDetailSource, /v-model="disputeIssueCode"/)
     assert.match(orderDetailSource, /v-model="disputeRequestedResolution"/)
     assert.match(orderDetailSource, /v-if="disputeRequestedResolution === 'partial_refund'"/)
-    assert.match(orderDetailSource, /提交后直接进入平台处理。被申请方可提交一次正式答复/)
-    assert.match(orderDetailSource, /发起后直接进入平台处理，被申请方可提交一次正式答复。/)
+    assert.match(orderDetailSource, /提交后卖家有 24 小时同意或拒绝/)
+    assert.match(orderDetailSource, /由卖家先同意或拒绝；拒绝或超时后，买家可申请平台介入/)
 
-    assert.match(disputePanelSource, /被申请方正式答复/)
-    assert.match(disputePanelSource, /正式答复只能提交一次，提交后不可修改。/)
+    assert.match(disputePanelSource, /卖家处理结果/)
+    assert.match(disputePanelSource, /同意申请/)
+    assert.match(disputePanelSource, /拒绝申请/)
+    assert.match(disputePanelSource, /availableActions/)
     assert.match(disputePanelSource, /平台定向补件/)
     assert.match(disputePanelSource, /撤回申请/)
-    assert.match(disputePanelSource, /确认线下解决/)
+    assert.match(disputePanelSource, /申请平台介入/)
+    assert.doesNotMatch(disputePanelSource, /确认线下解决|selfResolve/)
     assert.match(disputePanelSource, /旧流程历史记录/)
     assert.match(disputePanelSource, /仅供查看，不能继续留言或处理方案/)
     assert.match(orderDetailSource, /进入纠纷处理/)
@@ -192,8 +195,8 @@ describe('付款联系与平台兜底文案', () => {
     for (const source of [buyerListSource, merchantListSource]) {
       assert.match(source, /disputeCaseId/)
       assert.match(source, /disputeNeedsAction/)
-      assert.match(source, /纠纷中/)
-      assert.match(source, /纠纷待你处理/)
+	  assert.match(source, /售后处理中/)
+	  assert.match(source, /售后待你处理/)
       assert.match(source, /`\/my\/disputes\/\$\{item\.disputeCaseId\}/)
     }
   })

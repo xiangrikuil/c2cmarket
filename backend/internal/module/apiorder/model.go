@@ -29,12 +29,14 @@ const (
 	StatusCompleted         = "completed"
 	StatusCancelled         = "cancelled"
 
-	DisputeStatusNone                    = "none"
-	DisputeStatusNegotiating             = "negotiating"
-	DisputeStatusOpen                    = "open"
-	DisputeStatusAwaitingFulfillment     = "awaiting_fulfillment"
-	DisputeStatusFulfillmentConfirmation = "fulfillment_confirmation"
-	DisputeStatusClosed                  = "closed"
+	DisputeStatusNone                     = "none"
+	DisputeStatusNegotiating              = "negotiating"
+	DisputeStatusPendingSellerResponse    = "pending_seller_response"
+	DisputeStatusPendingApplicantDecision = "pending_applicant_decision"
+	DisputeStatusOpen                     = "open"
+	DisputeStatusAwaitingFulfillment      = "awaiting_fulfillment"
+	DisputeStatusFulfillmentConfirmation  = "fulfillment_confirmation"
+	DisputeStatusClosed                   = "closed"
 
 	DisputeIssueServiceUnavailable  = "service_unavailable"
 	DisputeIssueDescriptionMismatch = "description_mismatch"
@@ -116,7 +118,8 @@ const (
 
 func IsDisputeActive(status string) bool {
 	switch status {
-	case DisputeStatusNegotiating, DisputeStatusOpen, DisputeStatusAwaitingFulfillment, DisputeStatusFulfillmentConfirmation:
+	case DisputeStatusNegotiating, DisputeStatusPendingSellerResponse, DisputeStatusPendingApplicantDecision,
+		DisputeStatusOpen, DisputeStatusAwaitingFulfillment, DisputeStatusFulfillmentConfirmation:
 		return true
 	default:
 		return false
@@ -160,6 +163,7 @@ type DisputeProjection struct {
 	NextUserID         string
 	DueAt              *time.Time
 	ActiveRemedyAction string
+	ActiveRemedySource string
 }
 
 type Order struct {
@@ -179,6 +183,7 @@ type Order struct {
 	DisputeNextUserID             string
 	DisputeDueAt                  *time.Time
 	ActiveRemedyAction            string
+	ActiveRemedySource            string
 	ServiceTitleSnapshot          string
 	ServiceVersionSnapshot        int64
 	BillingModeSnapshot           string

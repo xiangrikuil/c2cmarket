@@ -2,10 +2,11 @@ import type { AdminRow } from '@/lib/api'
 import type {
   Appeal,
   DisputeCase,
-  DisputeFormalResponseRequest,
+  DisputePlatformInterventionRequest,
   DisputeRemedyRequest,
   DisputeRemedyClaimRequest,
   DisputeRemedyContestRequest,
+  DisputeSellerDecisionRequest,
   SelfDispute,
   SelfModerationSupplementMutation,
   SelfReport,
@@ -443,10 +444,17 @@ export async function backendMyDispute(id: string) {
   return backendRequest<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(id)}`)
 }
 
-export async function backendRespondDispute(disputeId: string, input: DisputeFormalResponseRequest) {
+export async function backendSellerDisputeDecision(disputeId: string, input: DisputeSellerDecisionRequest) {
   await ensureBackendSession('buyer', false)
-  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/response`, input, {
-    idempotencyPrefix: 'dispute-response',
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/seller-decision`, input, {
+    idempotencyPrefix: 'dispute-seller-decision',
+  })
+}
+
+export async function backendRequestDisputePlatformIntervention(disputeId: string, input: DisputePlatformInterventionRequest) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/platform-intervention`, input, {
+    idempotencyPrefix: 'dispute-platform-intervention',
   })
 }
 
@@ -454,13 +462,6 @@ export async function backendWithdrawDispute(disputeId: string, reason: string) 
   await ensureBackendSession('buyer', false)
   return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/withdraw`, { reason }, {
     idempotencyPrefix: 'dispute-withdraw',
-  })
-}
-
-export async function backendSelfResolveDispute(disputeId: string, reason: string) {
-  await ensureBackendSession('buyer', false)
-  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/self-resolve`, { reason }, {
-    idempotencyPrefix: 'dispute-self-resolve',
   })
 }
 

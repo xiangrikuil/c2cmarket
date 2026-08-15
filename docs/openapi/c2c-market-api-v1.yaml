@@ -2290,14 +2290,14 @@ paths:
               schema: { type: string, format: binary }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/response:
+  /api/v1/me/disputes/{id}/seller-decision:
     post:
-      operationId: respondMyDispute
+      operationId: decideMyDisputeAsSeller
       tags: [Reports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Submit the respondent's single immutable formal answer.
+      summary: Let the seller accept or reject the buyer's after-sales application once.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2306,10 +2306,38 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DisputeFormalResponseRequest"
+              $ref: "#/components/schemas/DisputeSellerDecisionRequest"
       responses:
         "200":
           description: Updated dispute detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfDispute"
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/platform-intervention:
+    post:
+      operationId: requestMyDisputePlatformIntervention
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Let the buyer request platform review after rejection, timeout, or disputed voluntary fulfillment.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisputePlatformInterventionRequest"
+      responses:
+        "200":
+          description: Updated dispute detail in platform review.
           content:
             application/json:
               schema:
@@ -2325,7 +2353,7 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Let the applicant withdraw before a platform ruling.
+      summary: Let the applicant withdraw before seller acceptance or platform intervention.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2346,31 +2374,6 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/self-resolve:
-    post:
-      operationId: selfResolveMyDispute
-      tags: [Reports]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: Let the applicant confirm that the parties resolved the issue offline.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/DisputeParticipantReasonRequest" }
-      responses:
-        "200":
-          description: Dispute closed as resolved offline without a platform responsibility finding.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SelfDispute" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
   /api/v1/me/disputes/{id}/remedy/claim:
     post:
       operationId: claimMyDisputeRemedyFulfilled
@@ -4888,46 +4891,6 @@ paths:
       responses:
         "200":
           description: Seller submitted the one-time delivery credential.
-          headers:
-            Cache-Control:
-              schema:
-                type: string
-            ETag:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIOrder"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/owner/api-orders/{id}/dispute:
-    post:
-      operationId: openOwnerAPIOrderDispute
-      tags: [OwnerAPIOrders]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: Allows the API service owner to open the same admin dispute workflow available to the buyer. The order fulfillment status remains unchanged, and the platform does not process refunds, compensation, escrow, or payment.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/APIOrderDisputeRequest"
-      responses:
-        "200":
-          description: API order dispute case opened by the service owner and linked to the order.
           headers:
             Cache-Control:
               schema:
@@ -14961,6 +14924,9 @@ components:
         - status
         - disputeStatus
         - hasDisputeHistory
+        - disputeNeedsAction
+        - disputeResponseOverdue
+        - disputeAvailableActions
         - serviceTitleSnapshot
         - serviceVersionSnapshot
         - billingModeSnapshot
@@ -15019,7 +14985,7 @@ components:
         disputeStatus:
           type: string
           description: Order projection of the linked dispute phase. The order fulfillment status remains independent.
-          enum: [none, negotiating, open, awaiting_fulfillment, fulfillment_confirmation, closed]
+          enum: [none, negotiating, pending_seller_response, pending_applicant_decision, open, awaiting_fulfillment, fulfillment_confirmation, closed]
         disputeCaseId:
           type: string
           format: uuid
@@ -15039,10 +15005,21 @@ components:
         disputeNeedsAction:
           type: boolean
           description: Server-derived viewer-specific pending action flag.
+        disputeResponseOverdue:
+          type: boolean
+          description: True when the seller's 24-hour response deadline has passed while a late seller decision remains possible.
+        disputeAvailableActions:
+          type: array
+          items:
+            type: string
+            enum: [seller_decision, request_platform_intervention, withdraw, claim_remedy, confirm_remedy, contest_remedy]
         activeRemedyAction:
           type: string
           enum: [full_refund, partial_refund, continue_fulfillment, other]
           description: Current remedy projection only; it does not mean the action has been fulfilled.
+        activeRemedySource:
+          type: string
+          enum: [admin_decision, mutual_agreement, seller_acceptance]
         afterSalesExpiresAt:
           type: [string, "null"]
           format: date-time
@@ -16553,16 +16530,30 @@ components:
           enum: [quarantined]
         quarantinedExpiresAt: { type: string, format: date-time }
         version: { type: integer, format: int64 }
-    DisputeFormalResponseRequest:
+    DisputeSellerDecisionRequest:
       type: object
       additionalProperties: false
-      required: [body]
+      required: [decision, reason]
       properties:
-        body:
+        decision:
+          type: string
+          enum: [accepted, rejected]
+        reason:
           type: string
           minLength: 2
           maxLength: 2000
-          description: Immutable credential-free plain text.
+          description: Immutable credential-free seller decision reason.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
+    DisputePlatformInterventionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 2000
         evidenceAssetIds:
           $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeParticipantReasonRequest:
@@ -16703,7 +16694,7 @@ components:
         claimedLate: { type: boolean }
         source:
           type: string
-          enum: [admin_decision, mutual_agreement]
+          enum: [admin_decision, mutual_agreement, seller_acceptance]
         settlementProposalId: { type: string, format: uuid }
         claimNote: { type: string }
         responseNote: { type: string }
@@ -16712,7 +16703,7 @@ components:
         version: { type: integer }
     DisputeCase:
       type: object
-      required: [id, active, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version]
+      required: [id, active, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, sellerResponseLate, responseOverdue, availableActions, createdAt, updatedAt, version]
       properties:
         id:
           type: string
@@ -16762,7 +16753,7 @@ components:
           description: Admin response only.
         status:
           type: string
-          enum: [open, waiting_info, resolved, closed, withdrawn, self_resolved]
+          enum: [pending_seller_response, pending_applicant_decision, voluntary_fulfillment, open, waiting_info, resolved, closed, withdrawn, self_resolved]
         issueCode:
           type: string
           enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
@@ -16843,6 +16834,29 @@ components:
         respondedAt:
           type: [string, "null"]
           format: date-time
+        sellerDecision:
+          type: string
+          enum: [accepted, rejected]
+        sellerDecisionReason:
+          type: string
+        sellerDecidedByUserId:
+          type: string
+          format: uuid
+        sellerDecidedAt:
+          type: [string, "null"]
+          format: date-time
+        sellerResponseLate:
+          type: boolean
+        responseOverdue:
+          type: boolean
+        applicantDecisionDueAt:
+          type: [string, "null"]
+          format: date-time
+        availableActions:
+          type: array
+          items:
+            type: string
+            enum: [seller_decision, request_platform_intervention, withdraw, claim_remedy, confirm_remedy, contest_remedy]
         canAppeal:
           type: boolean
           readOnly: true
@@ -17843,7 +17857,7 @@ components:
     SelfDispute:
       type: object
       additionalProperties: false
-      required: [viewerUserId, id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, negotiationEndedConfirmed, openedAt, createdAt, updatedAt, version, canAppeal, canSupplement]
+      required: [viewerUserId, id, active, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, negotiationEndedConfirmed, openedAt, sellerResponseLate, responseOverdue, availableActions, createdAt, updatedAt, version, canAppeal, canSupplement]
       properties:
         viewerUserId:
           type: string
@@ -17887,7 +17901,7 @@ components:
           description: Present on authorized detail and mutation responses for message attribution.
         status:
           type: string
-          enum: [open, waiting_info, resolved, closed, withdrawn, self_resolved]
+          enum: [pending_seller_response, pending_applicant_decision, voluntary_fulfillment, open, waiting_info, resolved, closed, withdrawn, self_resolved]
         issueCode:
           type: string
           enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
@@ -17954,6 +17968,29 @@ components:
         respondedAt:
           type: [string, "null"]
           format: date-time
+        sellerDecision:
+          type: string
+          enum: [accepted, rejected]
+        sellerDecisionReason:
+          type: string
+        sellerDecidedByUserId:
+          type: string
+          format: uuid
+        sellerDecidedAt:
+          type: [string, "null"]
+          format: date-time
+        sellerResponseLate:
+          type: boolean
+        responseOverdue:
+          type: boolean
+        applicantDecisionDueAt:
+          type: [string, "null"]
+          format: date-time
+        availableActions:
+          type: array
+          items:
+            type: string
+            enum: [seller_decision, request_platform_intervention, withdraw, claim_remedy, confirm_remedy, contest_remedy]
         createdAt:
           type: string
           format: date-time

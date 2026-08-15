@@ -1,9 +1,9 @@
 import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
-  backendRespondDispute,
+  backendRequestDisputePlatformIntervention,
+  backendSellerDisputeDecision,
   backendWithdrawDispute,
-  backendSelfResolveDispute,
   backendClaimDisputeRemedy,
   backendConfirmDisputeRemedy,
   backendContestDisputeRemedy,
@@ -61,16 +61,16 @@ function useDisputeMutation<T>(mutationFn: (input: T) => ReturnType<typeof backe
   })
 }
 
-export function useRespondDisputeMutation() {
-  return useDisputeMutation(({ disputeId, body, evidenceAssetIds }: { disputeId: string, body: string, evidenceAssetIds?: string[] }) => backendRespondDispute(disputeId, { body, evidenceAssetIds }))
+export function useSellerDisputeDecisionMutation() {
+  return useDisputeMutation(({ disputeId, decision, reason, evidenceAssetIds }: { disputeId: string, decision: 'accepted' | 'rejected', reason: string, evidenceAssetIds?: string[] }) => backendSellerDisputeDecision(disputeId, { decision, reason, evidenceAssetIds }))
+}
+
+export function useRequestDisputePlatformInterventionMutation() {
+  return useDisputeMutation(({ disputeId, reason, evidenceAssetIds }: { disputeId: string, reason: string, evidenceAssetIds?: string[] }) => backendRequestDisputePlatformIntervention(disputeId, { reason, evidenceAssetIds }))
 }
 
 export function useWithdrawDisputeMutation() {
   return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendWithdrawDispute(disputeId, reason))
-}
-
-export function useSelfResolveDisputeMutation() {
-  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendSelfResolveDispute(disputeId, reason))
 }
 
 export function useClaimDisputeRemedyMutation() {

@@ -165,6 +165,7 @@ const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMer
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
+	&& !isMerchantView.value
 	&& (order.value.canOpenDispute ?? (order.value.status !== 'cancelled' && order.value.status !== 'completed' && (order.value.disputeStatus ?? 'none') === 'none')),
 ))
 const showDisputeStatus = computed(() => Boolean(order.value?.hasDisputeHistory || (order.value?.disputeStatus ?? 'none') !== 'none'))
@@ -494,7 +495,7 @@ async function submitOrderDispute() {
     disputeReason.value = ''
     disputeEvidence.value = []
     await refresh(order.value.id)
-    toast.success('订单纠纷已发起，已进入平台处理。')
+    toast.success('售后申请已提交，等待卖家处理。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交订单问题失败。')
   }
@@ -1081,7 +1082,7 @@ onBeforeUnmount(() => {
     </Collapsible>
 
     <div class="flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-4">
-      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">发起后直接进入平台处理，被申请方可提交一次正式答复。</div></div>
+      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">买家提交售后申请后，由卖家先同意或拒绝；拒绝或超时后，买家可申请平台介入。</div></div>
       <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       <Badge v-else-if="showDisputeStatus" variant="status">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</Badge>
     </div>
@@ -1171,7 +1172,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>发起订单纠纷</DialogTitle>
-          <DialogDescription>提交后直接进入平台处理。被申请方可提交一次正式答复，双方后续按平台要求补充材料。</DialogDescription>
+          <DialogDescription>提交后卖家有 24 小时同意或拒绝。卖家拒绝或响应超时后，你可以撤回申请或申请平台介入。</DialogDescription>
         </DialogHeader>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="block space-y-2">
@@ -1380,7 +1381,7 @@ onBeforeUnmount(() => {
             <Alert variant="destructive">
               <ShieldAlert />
               <AlertTitle>请确认尚未付款</AlertTitle>
-              <AlertDescription>如果已经付款，请不要取消订单。你可以通过微信或 linux.do 私信联系商户，也可以直接发起纠纷申请平台处理。</AlertDescription>
+              <AlertDescription>如果已经付款，请不要取消订单。你可以通过微信或 linux.do 私信联系商户，也可以发起售后申请，由卖家先处理。</AlertDescription>
             </Alert>
 
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">

@@ -2,7 +2,7 @@
 
 Date: 2026-08-09
 Author: Codex
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 ## Scenario: Dispute Phase Projection Remains Separate From Order Fulfillment
 
@@ -15,11 +15,14 @@ Updated: 2026-08-15
 
 ```text
 dispute_cases.status:
-  open | waiting_info | resolved | closed | withdrawn | self_resolved
+  pending_seller_response | pending_applicant_decision |
+  voluntary_fulfillment | open | waiting_info |
+  resolved | closed | withdrawn | self_resolved
 
 api_orders.dispute_status:
-  none | negotiating | open | awaiting_fulfillment |
-  fulfillment_confirmation | closed
+  none | negotiating | pending_seller_response |
+  pending_applicant_decision | open |
+  awaiting_fulfillment | fulfillment_confirmation | closed
 
 apiorder.IsDisputeActive(status string) bool
 apiorder.Service.CloseDisputeProjection(
@@ -27,15 +30,16 @@ apiorder.Service.CloseDisputeProjection(
 ) *domain.AppError
 
 ApiOrder.disputeStatus:
-  none | negotiating | open | awaiting_fulfillment |
-  fulfillment_confirmation | closed
+  none | negotiating | pending_seller_response |
+  pending_applicant_decision | open |
+  awaiting_fulfillment | fulfillment_confirmation | closed
 ```
 
 ### 3. Contracts
 
 - `api_orders.status` continues to represent payment, delivery, completion, and cancellation only. A dispute projection update must not change that field or any payment, delivery, credential, completion, or cancellation fact.
 - Buyer, seller, and administrator order reads return the same `disputeStatus` for the same order.
-- `open` means platform review. New finalization clears the active projection to `none` and preserves the case through `latest_dispute_case_id`; `closed` remains a legacy read value only. Reserved remediation phases must not be rendered as platform review.
+- `pending_seller_response` and `pending_applicant_decision` are pre-platform after-sales phases; `open` alone means platform review. New finalization clears the active projection to `none` and preserves the case through `latest_dispute_case_id`; `negotiating` and `closed` remain legacy read values only. Remediation phases must not be rendered as platform review.
 - Only `dispute_status=none` permits opening the current dispute workflow. Every active dispute phase pauses every ordinary transaction mutation on that order: payment submission/instruction reads, buyer cancellation, seller payment confirmation or issue reporting, delivery submission, buyer completion, payment-timeout cancellation, delivery reminder, and delivery-review auto-completion. Formal response, directed supplement, applicant closure, remedy, and administrator mutations remain available when their own state guards allow them.
 - Administrator resolution or closure of an API order dispute that has no pending remediation clears `dispute_case_id`, sets `dispute_status=none`, preserves `latest_dispute_case_id`, and increments the order version once in the same PostgreSQL transaction.
 - In-memory mode performs the same projection through the report-to-apiorder callback. PostgreSQL mode updates it only inside the administrator dispute transaction.
@@ -62,11 +66,11 @@ ApiOrder.disputeStatus:
 
 ### 6. Tests Required
 
-- Migration test: both check constraints contain the documented values and migration 107 rewrites only the legacy projection fields required for direct platform handling.
+- Migration test: both check constraints contain the documented values and migration 108 adds the seller-first phases without changing order fulfillment status.
 - API order unit test: close convergence changes only projection metadata, increments once, and keeps event transaction statuses unchanged.
 - Route regression: after administrator resolution, buyer and seller detail DTOs both clear the active case, retain the latest case/history projection, and keep the order status unchanged.
 - PostgreSQL store test: projection convergence occurs inside the administrator transaction and locks the linked order relationship.
-- Frontend/helper tests: all six labels are exhaustive, only `none` permits opening, active phases block every ordinary action and timeout, and unknown values fail.
+- Frontend/helper tests: every documented projection label is exhaustive, only `none` permits opening, active phases block every ordinary action and timeout, and unknown values fail.
 - Page regression: buyer, seller, and administrator details use the shared label and description helpers.
 - Gates: full Go test/vet, focused Vitest, Nuxt typecheck, OpenAPI generated-type check, route parity, migration documentation, and `git diff --check`.
 
@@ -99,7 +103,6 @@ The event kind records the dispute transition while transaction status fields re
 
 ```text
 POST /api/v1/me/api-orders/{id}/dispute
-POST /api/v1/owner/api-orders/{id}/dispute
   { issueCode, requestedResolution, requestedAmountCny?, reason, issueOccurredAt? }
 
 ApiOrder:
@@ -122,7 +125,7 @@ apiorder.ValidateDisputeOccurrence(order, raw, now) (*time.Time, *domain.AppErro
 - When a validity end exists, `afterSalesExpiresAt = validityEnd + exactly 24 hours`. Eligibility is open only while `now < afterSalesExpiresAt`; the exact boundary is expired.
 - Cancelled orders and orders with any dispute projection other than `none` are always ineligible. A completed historical order without a usable frozen validity end remains ineligible instead of receiving an invented deadline.
 - A completed eligible order requires `issueOccurredAt`. It must be RFC 3339, no later than the authoritative validity end, and no later than the server's current time. Non-completed orders may omit it for compatibility.
-- Opening the completed-order dispute writes `issue_occurred_at`, creates the direct platform-handling record, and updates only the dispute projection. The completed transaction status, completion source, credential, payment, delivery, and validity facts remain unchanged.
+- Opening the completed-order dispute writes `issue_occurred_at`, creates a seller-first after-sales record, and updates only the dispute projection. The completed transaction status, completion source, credential, payment, delivery, and validity facts remain unchanged.
 - In-memory and PostgreSQL mutations use one authoritative `now` for timeout materialization, eligibility, occurrence validation, dispute persistence, and the response projection.
 - Buyer, seller, and administrator order DTOs return the same server-derived deadline, eligibility, and stable reason. Participant responses obtain frozen contact evidence through the authorized intent read; administrator responses contain no raw contacts or credentials.
 
@@ -173,34 +176,40 @@ const deadline = order.afterSalesExpiresAt
 
 The backend computes eligibility from frozen order facts; the browser renders it and never starts a new validity or grace clock.
 
-## Scenario: API-Order Disputes Enter Platform Handling Directly
+## Scenario: API-Order After-Sales Requests Use Seller-First Resolution
 
 ### 1. Scope / Trigger
 
-- Trigger: changing API-order dispute creation, participant response/closure actions, directed supplements, order-list dispute projections, or legacy negotiation presentation.
-- This workflow applies only to `target_type=api_order`. Buyer and seller may communicate through WeChat, email, or linux.do, but the platform does not record which external channel they used or require proof that negotiation ended.
+- Trigger: changing API-order after-sales creation, seller decisions, applicant withdrawal or platform intervention, voluntary remedies, directed supplements, order-list projections, or timeout maintenance.
+- This workflow applies only to `target_type=api_order`. Buyer and seller may communicate through WeChat, email, or linux.do, while the platform records only formal after-sales actions and evidence.
 
 ### 2. Signatures
 
 ```text
 POST /api/v1/me/api-orders/{id}/dispute
-POST /api/v1/owner/api-orders/{id}/dispute
 GET  /api/v1/me/disputes/{id}
-POST /api/v1/me/disputes/{id}/response
+POST /api/v1/me/disputes/{id}/seller-decision
+  { decision: accepted | rejected, reason, evidenceAssetIds? }
+POST /api/v1/me/disputes/{id}/platform-intervention
+  { reason, evidenceAssetIds? }
 POST /api/v1/me/disputes/{id}/withdraw
-POST /api/v1/me/disputes/{id}/self-resolve
 POST /api/v1/me/disputes/{id}/supplements
 POST /api/v1/me/disputes/{id}/remedy/claim
 POST /api/v1/me/disputes/{id}/remedy/confirm
 POST /api/v1/me/disputes/{id}/remedy/contest
 
 dispute_cases.status:
-  open | waiting_info | resolved | closed | withdrawn | self_resolved
+  pending_seller_response | pending_applicant_decision |
+  voluntary_fulfillment | open | waiting_info |
+  resolved | closed | withdrawn
 
 dispute_cases:
   applicant_statement text
-  respondent_response text nullable
-  responded_at timestamptz nullable
+  seller_decision text nullable
+  seller_decision_reason text nullable
+  seller_decided_at timestamptz nullable
+  seller_response_late boolean
+  applicant_decision_due_at timestamptz nullable
   next_actor text
   next_user_id uuid nullable
   due_at timestamptz nullable
@@ -213,14 +222,18 @@ participant order list projection:
 
 ### 3. Contracts
 
-- Opening requires `issueCode`, `requestedResolution`, a credential-free `reason`, and `requestedAmountCny` only for `partial_refund`. It atomically creates `status=open`, freezes the reason as `applicant_statement`, records an immutable `fact_snapshot`, and projects `next_actor=respondent` with `due_at=opened_at+48h`. It never changes `api_orders.status`.
-- The respondent may submit one immutable formal response with optional private image evidence. Success records `respondent_response/responded_at` and moves only the action projection to `next_actor=admin`, `due_at=NULL`; a second response is rejected.
-- Before an administrator ruling, only the applicant may end the case. `withdraw` records an applicant withdrawal; `self-resolve` records that the parties resolved the issue offline. Neither outcome assigns responsibility or adverse reputation facts.
+- Only the buyer may open an API-order after-sales request. Opening requires `issueCode`, `requestedResolution`, a credential-free `reason`, and `requestedAmountCny` only for `partial_refund`. It atomically creates `status=pending_seller_response`, freezes the reason and fact snapshot, sets `next_actor=respondent`, and sets `due_at=opened_at+24h`. It never changes `api_orders.status`.
+- The seller may submit one immutable `accepted` or `rejected` decision with a reason and optional private evidence. The seller may still respond after the 24-hour deadline while the buyer has not withdrawn or committed platform intervention; the case records `seller_response_late=true`. Concurrent seller decisions permit exactly one winner.
+- Rejection moves to `pending_applicant_decision`, sets `next_actor=applicant`, and gives the buyer three days to withdraw or request platform intervention. Expiry closes the case neutrally without assigning responsibility, sanctions, adverse facts, or appeal eligibility.
+- Acceptance creates a neutral `seller_acceptance` remedy and moves to voluntary fulfillment. The seller claims fulfillment with evidence; the buyer then has 24 hours to confirm or request platform intervention. Confirmation or expiry closes neutrally and creates no platform responsibility outcome.
+- Only the applicant may withdraw, and only before platform review or a committed remedy outcome. Withdrawal is the sole participant cancellation operation; `self-resolve` does not have a route or an available action.
+- The applicant may request platform intervention after seller rejection, after the initial 24-hour response deadline, after an accepted remedy becomes overdue, or while reviewing a claimed voluntary remedy. Intervention atomically moves the case to `open`, sets `next_actor=admin`, clears voluntary deadlines, and prevents any later seller-decision write.
 - `waiting_info` targets exactly one participant through `next_actor`, `next_user_id`, and a 48-hour `due_at`. Only that participant may submit the requested supplement. Completion returns the case to `open`, `next_actor=admin`, and clears the deadline.
-- Platform rulings, remedy fulfillment, counterparty confirmation/contest, lateness review, and appeals remain available. Participant response, withdrawal, and self-resolution do not bypass an existing ruling or remedy.
-- New message, settlement-proposal, proposal-confirm/reject, and escalation routes do not exist. Historical rows in `api_order_dispute_messages` and `api_order_dispute_settlement_proposals` remain readable in the participant detail as legacy history and have no write controls.
+- Platform rulings, remedy fulfillment, counterparty confirmation/contest, lateness review, and appeals remain available. Pre-platform seller decisions and applicant withdrawal cannot bypass an existing ruling or remedy.
+- Message, formal-response, self-resolution, settlement-proposal, proposal-confirm/reject, and legacy escalation routes do not exist. Historical messages and settlement proposals remain readable as legacy history and have no write controls.
 - Buyer and seller order lists keep fulfillment `status` unchanged and render the dispute as a second status. `disputeNeedsAction` is true only when the current viewer matches the action owner; every linked case exposes an independent case-page route.
-- In-memory and PostgreSQL flows must produce the same `next_actor`, deadline, remedy action, and viewer-specific needs-action projection. Changing only action/deadline metadata must not increment the API-order business version.
+- The backend-provided `availableActions` list is authoritative for participant controls. The frontend must not infer seller-decision, withdrawal, intervention, remedy, or appeal eligibility from labels or elapsed browser time.
+- In-memory and PostgreSQL flows must produce the same decisions, `next_actor`, deadlines, remedy action, and viewer-specific needs-action projection. Changing only action/deadline metadata must not increment the API-order business version.
 - Participant reads return `404 OBJECT_NOT_FOUND` to outsiders. Every mutation authenticates and validates CSRF before decoding JSON, and idempotent writes complete with the business transaction.
 
 ### 4. Validation & Error Matrix
@@ -229,31 +242,35 @@ participant order list projection:
 | --- | --- |
 | Missing/unknown issue or requested resolution | `422 VALIDATION_FAILED` on the matching field |
 | Invalid or excessive partial-refund amount | `422 VALIDATION_FAILED` on `requestedAmountCny` |
-| Applicant statement, response, supplement, or reason contains a secret | `422 SECRET_CONTENT_DETECTED` |
+| Applicant statement, seller decision, supplement, or reason contains a secret | `422 SECRET_CONTENT_DETECTED` |
+| Seller calls the removed owner dispute-creation path | `404 OBJECT_NOT_FOUND`; no case or order event is created |
 | Outsider or unsupported non-API dispute mutation | `404 OBJECT_NOT_FOUND` |
-| Applicant attempts the respondent response, or respondent answers twice | `409 INVALID_STATE_TRANSITION`; response fields remain unchanged |
-| Respondent attempts withdraw/self-resolve | `409 INVALID_STATE_TRANSITION` |
-| Applicant attempts withdraw/self-resolve after ruling/remedy creation | `409 INVALID_STATE_TRANSITION` |
+| Applicant attempts a seller decision, or seller decides twice | `409 INVALID_STATE_TRANSITION`; decision fields remain unchanged |
+| Seller attempts withdrawal or platform intervention | `409 INVALID_STATE_TRANSITION` |
+| Applicant withdraws after platform intervention or ruling/remedy commitment | `409 INVALID_STATE_TRANSITION` |
+| Seller responds after platform intervention wins a concurrent commit | `409 INVALID_STATE_TRANSITION`; platform-review projection remains unchanged |
+| Buyer requests intervention before any allowed trigger | `409 INVALID_STATE_TRANSITION`; deadlines remain unchanged |
 | Non-targeted participant submits a directed supplement | `409 INVALID_STATE_TRANSITION`; actor and deadline remain unchanged |
-| Legacy message/proposal/escalation route is called | `404`; no legacy row or event is written |
+| Legacy response/self-resolution/message/proposal/escalation route is called | `404`; no legacy row or event is written |
 | Same idempotency key and request hash is replayed | Return the original result without another event or version increment |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: a buyer opens a dispute; both order lists keep the original fulfillment status, show a dispute badge, and only the seller sees “纠纷待你处理” until the one formal response is submitted.
-- Good: the administrator requests evidence from the buyer; the buyer receives a 48-hour deadline, submits text and images, and the next actor returns to the administrator.
-- Base: the applicant confirms a WeChat refund and chooses `self-resolve`; the case remains in history without a platform responsibility finding.
-- Base: an upgraded case still displays old messages and proposals, but neither participant can add a message, submit a proposal, or request escalation.
-- Bad: opening creates `negotiating`, asks which chat application was used, or requires the applicant to certify that negotiation failed.
+- Good: a buyer applies, the seller accepts within 24 hours, submits refund evidence, and the buyer confirms; the case closes without responsibility or appeal facts while order fulfillment status remains unchanged.
+- Good: the seller rejects, the buyer requests platform intervention within three days, and the administrator receives the frozen request, seller decision, and evidence.
+- Base: the seller responds at hour 25 before the buyer intervenes; the response succeeds with `seller_response_late=true`.
+- Base: the seller never responds; after 24 hours the buyer sees intervention, while neutral expiry occurs only after the applicant-decision window.
+- Bad: the seller opens the original request, either party cancels it, or the UI infers actions from a status label instead of `availableActions`.
+- Bad: opening creates `negotiating`, asks which chat application was used, or requires proof that external negotiation failed.
 - Bad: the UI changes the order fulfillment status to `disputed`, or shows both participants that the same action is waiting on them.
 
 ### 6. Tests Required
 
-- API-order and report unit tests cover direct-open creation, 48-hour respondent deadline, immutable fact snapshot, one formal response, applicant-only closure, targeted supplements, remedy transitions, and in-memory projection parity.
-- Router tests cover buyer/seller creation, outsider `404`, authentication-before-decode, second-response conflict, applicant closure, legacy mutation route `404`, administrator ruling, and unchanged order fulfillment status.
-- Migration tests execute 106->107, 107 down, and 107 up; verify legacy negotiating/waiting/remedy mappings; and verify down migration refuses to discard new-flow data.
-- PostgreSQL integration scans both buyer and seller order-list queries with actual rows and validates actor/deadline/needs-action projections.
-- Frontend tests cover all six case labels, independent list badges/filters/links, one response with image evidence, applicant closure, directed supplement, remedy actions, and read-only legacy history.
+- API-order and report unit tests cover buyer-only creation, 24-hour seller deadline, accept/reject, late response, immutable fact snapshot, applicant-only withdrawal/intervention, voluntary remedies, targeted supplements, and in-memory projection parity.
+- Router tests cover removed seller creation, outsider `404`, authentication-before-decode, duplicate seller decision, applicant withdrawal/intervention, removed legacy routes, administrator ruling, and unchanged order fulfillment status.
+- Migration tests execute `107 -> 108`, `108 down`, and `108 up`; verify new statuses, constraints, neutral finalization, and timestamp expressions.
+- PostgreSQL integration validates accept/reject, remedy evidence, late response, concurrent decisions, applicant-decision expiry, voluntary-confirmation expiry, and no voluntary reputation or appeal outcome.
+- Frontend tests cover independent list badges/filters/links, seller decisions with evidence, applicant actions, voluntary remedy actions, directed supplements, and read-only legacy history.
 - Gates: full Go test/vet, full Vitest, Nuxt typecheck/build, OpenAPI regeneration, migration documentation, browser smoke checks, and `git diff --check`.
 
 ### 7. Wrong vs Correct
@@ -261,15 +278,18 @@ participant order list projection:
 #### Wrong
 
 ```text
-create -> negotiating -> messages/proposals -> confirm negotiation ended -> open
+seller creates request -> chat/proposals -> either party cancels -> open
 order.status = disputed
 ```
 
 #### Correct
 
 ```text
-create -> open, next_actor=respondent, due_at=opened_at+48h
-response -> open, next_actor=admin, due_at=NULL
+buyer creates -> pending_seller_response, next_actor=respondent, due_at=opened_at+24h
+seller accepts -> voluntary remedy -> seller claim -> buyer confirm or intervene
+seller rejects -> pending_applicant_decision -> buyer withdraws or intervenes within 3d
+seller timeout -> buyer may intervene; seller may still answer until intervention commits
+intervention -> open, next_actor=admin, due_at=NULL
 request info -> waiting_info, targeted participant, due_at=now+48h
 supplement -> open, next_actor=admin, due_at=NULL
 order.status remains the payment/delivery lifecycle status
@@ -306,7 +326,7 @@ evidenceAssetIds: 0..3 distinct UUIDs bound by the owning business action
 - JPEG, PNG, and WebP inputs are decoded only after their header dimensions pass the `1..4096` check. QR-bearing images are rejected. Accepted inputs are re-encoded by the server as JPEG or PNG, and stored with the hash and dimensions of that output.
 - Only the linked API-order buyer or seller may upload. A successful upload creates private, unbound assets with a 24-hour expiry. Upload does not create a dispute event or reveal an object-store key.
 - A business mutation binds each asset atomically and at most once. The uploader, API order, allowed usage, source type, source ID, and dispute ownership must all match the action. A failed mutation leaves every asset unbound and reusable until expiry.
-- Initial dispute and formal-response evidence is visible to both order participants and administrators. Directed supplement evidence is visible only to its submitter and administrators. Appeal evidence is visible only to the appellant and administrators. Evidence already bound to legacy messages or escalation remains readable under its original visibility.
+- Initial request and seller-decision evidence is visible to both order participants and administrators. Directed supplement evidence is visible only to its submitter and administrators. Appeal evidence is visible only to the appellant and administrators. Evidence already bound to legacy messages or escalation remains readable under its original visibility.
 - Participant content reads use the `/me` route; administrator DTOs use the `/admin` content route. Every content response is authorized from current binding visibility, uses `private, no-store` plus `nosniff`, and never returns quarantined or deletion-pending content.
 - Administrator quarantine requires current version, CSRF, idempotency, and a credential-free reason of 2..800 characters. Quarantine makes content unreadable immediately and schedules destruction after seven days.
 - Unbound uploads are eligible for cleanup after 24 hours. Bound evidence for a terminal dispute is eligible after 90 days only when no active remedy or submitted appeal still requires it. Cleanup first claims durable deletion state, then removes the object and finalizes the database fact idempotently.
@@ -330,14 +350,14 @@ evidenceAssetIds: 0..3 distinct UUIDs bound by the owning business action
 - Base: an upload is never attached; after 24 hours cleanup claims and destroys it without affecting an order or dispute.
 - Good: an administrator quarantines one bound image; it becomes unreadable immediately and is physically destroyed after the seven-day quarantine period.
 - Bad: the server fully decodes a compressed image before checking declared dimensions, or returns a participant content URL in an administrator DTO.
-- Bad: a formal response commits and evidence binding then fails, leaving the response without the evidence the request claimed to attach.
+- Bad: a seller decision commits and evidence binding then fails, leaving the decision without the evidence the request claimed to attach.
 
 ### 6. Tests Required
 
 - Image unit tests cover JPEG/PNG/WebP normalization, QR rejection, byte limits, and oversized declared dimensions rejected before full pixel decode.
 - Service/handler tests cover session, CSRF, strict multipart fields, exact redaction confirmation, participant ownership, no-store content, administrator route projection, quarantine version/idempotency, and unavailable object-storage capability.
 - PostgreSQL integration tests cover one-time atomic binding for every usage, source/dispute ownership, visibility classes, immediate quarantine denial, lifecycle claims, object-key non-disclosure, and rollback after a rejected business action.
-- Migration tests cover up/down/up for evidence assets and bindings, typed-source constraints, cleanup indexes, and current expected version 107.
+- Migration tests cover up/down/up for evidence assets and bindings, typed-source constraints, cleanup indexes, and current expected version 108.
 - OpenAPI generation and route checks must keep upload fields, `2..800` quarantine reason, response paths, generated requiredness, and registered routes aligned.
 
 ### 7. Wrong vs Correct
@@ -345,7 +365,7 @@ evidenceAssetIds: 0..3 distinct UUIDs bound by the owning business action
 #### Wrong
 
 ```text
-decode pixels -> check dimensions -> write formal response -> bind evidence
+decode pixels -> check dimensions -> write seller decision -> bind evidence
 admin DTO -> /api/v1/me/dispute-evidence/{id}/content
 quarantine -> content remains readable until cleanup
 ```
@@ -513,7 +533,7 @@ reputation.RecommendedAPIOrderSanctionDays(count int) int
 
 ### 6. Tests Required
 
-- Migration tests: current expected version 107, `ON DELETE RESTRICT`, remedy-source partial uniqueness, the unreversed `late_confirmed` lookup index, reversal fields, and executable down/up migration paths.
+- Migration tests: current expected version 108, `ON DELETE RESTRICT`, remedy-source partial uniqueness, the unreversed `late_confirmed` lookup index, reversal fields, and executable down/up migration paths.
 - Service tests: every ineligible reason, exact 180-day boundary, outside-window exclusion, `0/1/2/3+` tier mapping, historical-fact counting, subject/seller parity, duplicate remedy application, and in-memory/PostgreSQL parity.
 - Store tests: repeatable-read recommendation snapshot, apply lock/revalidation order, unique conflict, and atomic restriction/event/notification/idempotency writes.
 - Order tests: both normal and limited-quota restriction gates precede contact, inventory, intent, and order side effects; existing-order mutations have no added gate.

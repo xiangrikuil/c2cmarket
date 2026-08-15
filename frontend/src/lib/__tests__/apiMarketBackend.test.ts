@@ -390,11 +390,10 @@ test('matches mock owner sales views with the backend filter contract', async ()
   assert.equal(api.matchesApiServiceSalesView('archived', 'all'), true)
 })
 
-test('builds buyer and merchant API order dispute paths', async () => {
+test('builds only the buyer API order dispute path', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
 
-  assert.equal(apiMarketBackend.apiOrderDisputePath('order/with space', 'buyer'), '/api/v1/me/api-orders/order%2Fwith%20space/dispute')
-  assert.equal(apiMarketBackend.apiOrderDisputePath('order-123', 'merchant'), '/api/v1/owner/api-orders/order-123/dispute')
+  assert.equal(apiMarketBackend.apiOrderDisputePath('order/with space'), '/api/v1/me/api-orders/order%2Fwith%20space/dispute')
 })
 
 test('disables applications to a backend carpool owned by the current user', async () => {

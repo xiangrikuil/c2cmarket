@@ -21,6 +21,8 @@ describe('API order dispute projection', () => {
     expect([
       'none',
       'negotiating',
+      'pending_seller_response',
+      'pending_applicant_decision',
       'open',
       'awaiting_fulfillment',
       'fulfillment_confirmation',
@@ -28,6 +30,8 @@ describe('API order dispute projection', () => {
     ].map(getApiOrderDisputeStatusLabel)).toEqual([
       '无纠纷',
       '协商中',
+      '等待卖家处理',
+      '等待买家决定',
       '平台审核中',
       '已裁决待履行',
       '履行待确认',
@@ -39,6 +43,8 @@ describe('API order dispute projection', () => {
     expect(canOpenApiOrderDispute('none')).toBe(true)
     expect(canOpenApiOrderDispute('closed')).toBe(false)
     expect(isApiOrderDisputeActive('negotiating')).toBe(true)
+    expect(isApiOrderDisputeActive('pending_seller_response')).toBe(true)
+    expect(isApiOrderDisputeActive('pending_applicant_decision')).toBe(true)
     expect(isApiOrderDisputeActive('open')).toBe(true)
     expect(isApiOrderDisputeActive('awaiting_fulfillment')).toBe(true)
     expect(isApiOrderDisputeActive('fulfillment_confirmation')).toBe(true)
@@ -52,6 +58,9 @@ describe('API order dispute projection', () => {
 
   test('maps every dispute-case status and uses the case helper in the participant panel', () => {
     expect(([
+      'pending_seller_response',
+      'pending_applicant_decision',
+      'voluntary_fulfillment',
       'open',
       'waiting_info',
       'resolved',
@@ -59,6 +68,9 @@ describe('API order dispute projection', () => {
       'withdrawn',
       'self_resolved',
     ] as const).map(getDisputeCaseStatusLabel)).toEqual([
+      '等待卖家处理',
+      '等待买家决定',
+      '卖家处理中',
       '处理中',
       '需要补充信息',
       '已处理',
@@ -69,21 +81,24 @@ describe('API order dispute projection', () => {
     expect(disputePanelSource).toContain('getDisputeCaseStatusLabel(dispute.status)')
   })
 
-  test('opens platform handling directly and exposes only formal participant actions', () => {
+  test('uses seller-first after-sales actions from the backend command projection', () => {
     expect(orderDetailSource).toContain('v-model="disputeIssueCode"')
     expect(orderDetailSource).toContain('v-model="disputeRequestedResolution"')
     expect(orderDetailSource).toContain('evidenceAssetIds: disputeEvidence.value.map(item => item.id)')
-    expect(orderDetailSource).toContain('提交后直接进入平台处理。被申请方可提交一次正式答复')
+    expect(orderDetailSource).toContain('提交后卖家有 24 小时同意或拒绝')
 
-    expect(disputePanelSource).toContain("const canRespond = computed(() => dispute.value?.active")
-    expect(disputePanelSource).toContain("dispute.value.status === 'open'")
-    expect(disputePanelSource).toContain('正式答复只能提交一次，提交后不可修改。')
-    expect(disputePanelSource).toContain('responseEvidence')
-    expect(disputePanelSource).toContain('const canApplicantFinish = computed')
+    expect(disputePanelSource).toContain("availableActions.value.has('seller_decision')")
+    expect(disputePanelSource).toContain("availableActions.value.has('request_platform_intervention')")
+    expect(disputePanelSource).toContain("availableActions.value.has('withdraw')")
+    expect(disputePanelSource).toContain('同意申请')
+    expect(disputePanelSource).toContain('拒绝申请')
+    expect(disputePanelSource).toContain('sellerDecisionEvidence')
     expect(disputePanelSource).toContain('撤回申请')
-    expect(disputePanelSource).toContain('确认线下解决')
+    expect(disputePanelSource).toContain('申请平台介入')
     expect(disputePanelSource).toContain('平台定向补件')
     expect(disputePanelSource).toContain('不会开启双方站内协商')
+    expect(disputePanelSource).not.toContain('确认线下解决')
+    expect(disputePanelSource).not.toContain('selfResolve')
     expect(disputePanelSource).not.toContain('pendingFromMe')
     expect(disputePanelSource).not.toContain('结束协商并申请平台介入')
     expect(disputePanelSource).not.toContain('const canMessage')

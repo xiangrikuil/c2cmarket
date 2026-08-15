@@ -553,6 +553,15 @@ the current actor and deadline, adds applicant withdrawal and offline-resolution
 outcomes, and preserves old messages and settlement proposals as read-only
 history. Its down migration refuses to discard data written by the new flow.
 
+Version 108 (`000108_api_order_refund_style_disputes`) changes new API-order
+cases to a seller-first after-sales flow. The seller has 24 hours to accept or
+reject; rejection gives the buyer three days to request platform intervention,
+while acceptance creates a neutral voluntary remedy with separate fulfillment
+and confirmation deadlines. It also permits API-order platform intervention
+without recording off-site communication channels and allows voluntary closure
+without adverse facts or appeal eligibility. Its down migration refuses to
+discard seller decisions, applicant-decision deadlines, or voluntary remedies.
+
 ## Docker Compose
 
 The repository root `compose.yaml` provides a PostgreSQL service and a one-shot

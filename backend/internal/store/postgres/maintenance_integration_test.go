@@ -273,7 +273,7 @@ func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testin
 	}
 	if remedyStatus != report.RemedyStatusConfirmationExpired || responseNote != report.RemedyConfirmationExpiredNote ||
 		disputeStatus != report.DisputeStatusClosed || publicResult != report.RemedyConfirmationExpiredPublicResult ||
-		orderDisputeStatus != apiorder.DisputeStatusClosed {
+		orderDisputeStatus != apiorder.DisputeStatusNone {
 		t.Fatalf("unexpected neutral timeout state remedy=%q note=%q dispute=%q result=%q order=%q", remedyStatus, responseNote, disputeStatus, publicResult, orderDisputeStatus)
 	}
 	var notificationCount int
@@ -1061,6 +1061,7 @@ func cleanupLifecycleCredentialFixtures(t *testing.T, ctx context.Context, store
 		args  []any
 	}{
 		{`DELETE FROM appeals WHERE appellant_user_id = $1`, []any{buyerID}},
+		{`UPDATE api_orders SET dispute_case_id = NULL, latest_dispute_case_id = NULL, dispute_status = 'none', active_remedy_action = '' WHERE buyer_user_id = $1 AND seller_user_id = $2`, []any{buyerID, sellerID}},
 		{`DELETE FROM dispute_cases WHERE primary_user_id = $1 AND counterparty_user_id = $2`, []any{buyerID, sellerID}},
 		{`DELETE FROM moderation_audit_logs WHERE actor_admin_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM reports WHERE reporter_user_id = $1`, []any{buyerID}},

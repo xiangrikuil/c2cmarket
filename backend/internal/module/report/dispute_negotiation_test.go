@@ -29,7 +29,7 @@ func (p *negotiationProjection) ValidateDisputeProposalAmount(_ context.Context,
 	return apiorder.ValidateRequestedDisputeAmount(resolution, amount, "100.00")
 }
 
-func TestNewAPIOrderDisputeStartsInPlatformHandling(t *testing.T) {
+func TestNewAPIOrderDisputeWaitsForSellerFor24Hours(t *testing.T) {
 	now := time.Date(2026, 8, 15, 8, 0, 0, 0, time.UTC)
 	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
 	disputeID := registerNegotiationDispute(t, service, now)
@@ -38,58 +38,64 @@ func TestNewAPIOrderDisputeStartsInPlatformHandling(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("read dispute: %+v", appErr)
 	}
-	if item.Status != DisputeStatusOpen || item.NextActor != DisputeNextActorRespondent || item.DueAt == nil {
-		t.Fatalf("new dispute must wait for respondent directly: %+v", item)
+	if item.Status != DisputeStatusPendingSellerResponse || item.NextActor != DisputeNextActorRespondent || item.DueAt == nil || !item.DueAt.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("new application must wait for the seller for 24 hours: %+v", item)
 	}
 	if item.ApplicantStatement != "付款后尚未收到交付信息。" || len(item.Messages) != 0 || len(item.SettlementProposals) != 0 {
 		t.Fatalf("new dispute must store the application without creating negotiation records: %+v", item)
 	}
 }
 
-func TestRespondentFormalAnswerIsSingleAndImmutable(t *testing.T) {
+func TestSellerRejectsOnceAndBuyerMayRequestPlatformIntervention(t *testing.T) {
 	now := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
 	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
 	disputeID := registerNegotiationDispute(t, service, now)
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	seller := auth.User{ID: "seller-1", Status: auth.AccountStatusActive}
 
-	_, appErr := service.DisputeParticipantActionWithIdempotency(context.Background(), buyer, "buyer-answer", "buyer-answer", "buyer-answer", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeActionRespond, Body: "申请人不能代替被申请方答复。",
+	_, appErr := service.DisputeParticipantActionWithIdempotency(context.Background(), buyer, "buyer-decision", "buyer-decision", "buyer-decision", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeActionSellerDecision, Decision: SellerDecisionRejected, Reason: "申请人不能代替卖家决定。",
 	}, negotiationCompletion)
 	if appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
-		t.Fatalf("applicant answer must be rejected, got %+v", appErr)
+		t.Fatalf("applicant seller decision must be rejected, got %+v", appErr)
 	}
 
-	answered := runNegotiationAction(t, service, seller, "seller-answer", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeActionRespond, Body: "交付延迟属实，已提交相关事实材料。",
+	answered := runNegotiationAction(t, service, seller, "seller-reject", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeActionSellerDecision, Decision: SellerDecisionRejected, Reason: "现有交付符合订单约定。",
 	})
-	if answered.RespondentResponse == "" || answered.RespondedAt == nil || answered.NextActor != DisputeNextActorAdmin || answered.DueAt != nil {
-		t.Fatalf("formal answer must move the case to administrator review: %+v", answered)
+	if answered.Status != DisputeStatusPendingApplicantDecision || answered.SellerDecision != SellerDecisionRejected || answered.ApplicantDecisionDueAt == nil || answered.NextActor != DisputeNextActorApplicant {
+		t.Fatalf("seller rejection must wait for applicant decision: %+v", answered)
 	}
 
-	_, appErr = service.DisputeParticipantActionWithIdempotency(context.Background(), seller, "seller-answer-again", "seller-answer-again", "seller-answer-again", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeActionRespond, Body: "不能覆盖第一次正式答复。",
+	_, appErr = service.DisputeParticipantActionWithIdempotency(context.Background(), seller, "seller-decision-again", "seller-decision-again", "seller-decision-again", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeActionSellerDecision, Decision: SellerDecisionAccepted, Reason: "不能覆盖第一次决定。",
 	}, negotiationCompletion)
 	if appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
-		t.Fatalf("second formal answer must be rejected, got %+v", appErr)
+		t.Fatalf("second seller decision must be rejected, got %+v", appErr)
+	}
+
+	escalated := runNegotiationAction(t, service, buyer, "buyer-intervention", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeActionRequestPlatformIntervention, Reason: "无法接受卖家的拒绝理由，请平台审核。",
+	})
+	if escalated.Status != DisputeStatusOpen || escalated.NextActor != DisputeNextActorAdmin || escalated.EscalatedAt == nil {
+		t.Fatalf("buyer intervention must enter platform review: %+v", escalated)
 	}
 }
 
-func TestRespondentFormalAnswerExpiresAtDeadline(t *testing.T) {
+func TestSellerMayRespondLateUntilBuyerActionCommits(t *testing.T) {
 	now := time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
 	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
 	disputeID := registerNegotiationDispute(t, service, now)
 	now = now.Add(DisputeResponseWindow)
 
-	_, _, _, appErr := service.updateDisputeParticipantMemory(DisputeParticipantActionInput{
-		DisputeID: disputeID, ActorUserID: "seller-1", Action: DisputeActionRespond, Body: "截止时间后的答复。",
+	late, _, _, appErr := service.updateDisputeParticipantMemory(DisputeParticipantActionInput{
+		DisputeID: disputeID, ActorUserID: "seller-1", Action: DisputeActionSellerDecision, Decision: SellerDecisionRejected, Reason: "截止时间后的正式拒绝。",
 	})
-	if appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
-		t.Fatalf("expected response deadline conflict, got %v", appErr)
+	if appErr != nil {
+		t.Fatalf("late seller decision should remain available: %v", appErr)
 	}
-	item := service.disputes[disputeID]
-	if item.RespondedAt != nil || item.NextActor != DisputeNextActorRespondent {
-		t.Fatalf("expired response changed the case: %+v", item)
+	if !late.SellerResponseLate || late.Status != DisputeStatusPendingApplicantDecision {
+		t.Fatalf("late decision must be recorded objectively: %+v", late)
 	}
 }
 
@@ -118,32 +124,37 @@ func TestApplicantCannotWithdrawAfterPlatformRemedy(t *testing.T) {
 	}
 }
 
-func TestApplicantCanWithdrawOrConfirmOfflineResolution(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		action     string
-		wantStatus string
-	}{
-		{name: "withdraw", action: DisputeActionWithdraw, wantStatus: DisputeStatusWithdrawn},
-		{name: "self resolve", action: DisputeActionSelfResolve, wantStatus: DisputeStatusSelfResolved},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			now := time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC)
-			service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
-			projection := &negotiationProjection{}
-			service.SetDisputeProjectionCloser(projection)
-			disputeID := registerNegotiationDispute(t, service, now)
-			closed := runNegotiationAction(t, service, auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}, test.name, DisputeParticipantActionInput{
-				DisputeID: disputeID, Action: test.action, Reason: "双方已经在线下处理。",
-			})
-			if closed.Status != test.wantStatus || closed.Active || closed.NextActor != DisputeNextActorNone || closed.ClosedAt == nil {
-				t.Fatalf("unexpected applicant terminal state: %+v", closed)
-			}
-			if len(projection.statuses) != 1 || projection.statuses[0] != apiorder.DisputeStatusClosed {
-				t.Fatalf("order projection must close: %+v", projection.statuses)
-			}
-		})
+func TestOnlyApplicantMayWithdrawAndSelfResolveWriteIsRemoved(t *testing.T) {
+	now := time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC)
+	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
+	projection := &negotiationProjection{}
+	service.SetDisputeProjectionCloser(projection)
+	disputeID := registerNegotiationDispute(t, service, now)
+	closed := runNegotiationAction(t, service, auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}, "withdraw", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeActionWithdraw, Reason: "不再继续本次申请。",
+	})
+	if closed.Status != DisputeStatusWithdrawn || closed.Active || closed.NextActor != DisputeNextActorNone || closed.ClosedAt == nil {
+		t.Fatalf("unexpected applicant terminal state: %+v", closed)
 	}
+	if len(projection.statuses) != 1 || projection.statuses[0] != apiorder.DisputeStatusClosed {
+		t.Fatalf("order projection must close: %+v", projection.statuses)
+	}
+
+	disputeID = registerNegotiationDispute(t, service, now)
+	_, appErr := service.DisputeParticipantActionWithIdempotency(context.Background(), auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}, "self-resolve", "self-resolve", "self-resolve", DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: DisputeActionSelfResolve, Reason: "旧动作不可继续写入。",
+	}, negotiationCompletion)
+	if appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("self resolve write must be removed, got %+v", appErr)
+	}
+}
+
+func moveDisputeToPlatformReviewForTest(service *Service, disputeID string) {
+	item := service.disputes[disputeID]
+	item.Status = DisputeStatusOpen
+	item.NextActor = DisputeNextActorAdmin
+	item.DueAt = nil
+	service.disputes[disputeID] = item
 }
 
 func TestNewFlowRejectsLegacyNegotiationWrites(t *testing.T) {

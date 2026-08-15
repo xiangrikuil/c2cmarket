@@ -12,6 +12,7 @@ import (
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/report"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -76,7 +77,10 @@ type apiOrderResponse struct {
 	DisputeNextActor              string                              `json:"disputeNextActor"`
 	DisputeDueAt                  *string                             `json:"disputeDueAt,omitempty"`
 	DisputeNeedsAction            bool                                `json:"disputeNeedsAction"`
+	DisputeResponseOverdue        bool                                `json:"disputeResponseOverdue"`
+	DisputeAvailableActions       []string                            `json:"disputeAvailableActions"`
 	ActiveRemedyAction            string                              `json:"activeRemedyAction,omitempty"`
+	ActiveRemedySource            string                              `json:"activeRemedySource,omitempty"`
 	ServiceTitleSnapshot          string                              `json:"serviceTitleSnapshot"`
 	ServiceVersionSnapshot        int64                               `json:"serviceVersionSnapshot"`
 	BillingModeSnapshot           string                              `json:"billingModeSnapshot"`
@@ -572,12 +576,6 @@ func (s *Server) handleSubmitAPIOrderDelivery(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
-	s.handleContinuousAPIOrderAction(w, r, "seller", "dispute", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.apiOrderContinuity.OpenAPIOrderDisputeForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
-	})
-}
-
 func (s *Server) handleResolveLateAPIOrderPayment(w http.ResponseWriter, r *http.Request) {
 	s.handleOwnerAPIOrderAction(w, r, "resolve-late-payment", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
 		return s.app.ResolveLateAPIOrderPaymentWithIdempotency(ctx, user, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
@@ -680,6 +678,8 @@ func toAdminAPIOrderResponse(order apiorder.Order) apiOrderResponse {
 	response.BuyerUserID = order.BuyerUserID
 	response.SellerUserID = order.SellerUserID
 	response.DeliveryCredential = nil
+	response.DisputeNeedsAction = false
+	response.DisputeAvailableActions = []string{}
 	return response
 }
 
@@ -688,6 +688,7 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 	if ownerView {
 		viewerUserID = order.SellerUserID
 	}
+	disputeActions := apiOrderAvailableActions(order, viewerUserID, time.Now())
 	response := apiOrderResponse{
 		ID:                            order.ID,
 		OrderNo:                       order.OrderNo,
@@ -703,8 +704,11 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		HasDisputeHistory:             order.HasDisputeHistory,
 		DisputeNextActor:              order.DisputeNextActor,
 		DisputeDueAt:                  formatOptionalTime(order.DisputeDueAt),
-		DisputeNeedsAction:            order.DisputeNextUserID != "" && order.DisputeNextUserID == viewerUserID,
+		DisputeNeedsAction:            len(disputeActions) > 0,
+		DisputeResponseOverdue:        order.DisputeStatus == apiorder.DisputeStatusPendingSellerResponse && order.DisputeDueAt != nil && !time.Now().Before(*order.DisputeDueAt),
+		DisputeAvailableActions:       disputeActions,
 		ActiveRemedyAction:            order.ActiveRemedyAction,
+		ActiveRemedySource:            order.ActiveRemedySource,
 		ServiceTitleSnapshot:          order.ServiceTitleSnapshot,
 		ServiceVersionSnapshot:        order.ServiceVersionSnapshot,
 		BillingModeSnapshot:           order.BillingModeSnapshot,
@@ -799,6 +803,45 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		}
 	}
 	return response
+}
+
+func apiOrderAvailableActions(order apiorder.Order, viewerUserID string, now time.Time) []string {
+	actions := make([]string, 0, 3)
+	isBuyer := viewerUserID == order.BuyerUserID
+	isSeller := viewerUserID == order.SellerUserID
+	switch order.DisputeStatus {
+	case apiorder.DisputeStatusPendingSellerResponse:
+		if isSeller {
+			actions = append(actions, report.DisputeActionSellerDecision)
+		}
+		if isBuyer {
+			actions = append(actions, report.DisputeActionWithdraw)
+			if order.DisputeDueAt != nil && !now.Before(*order.DisputeDueAt) {
+				actions = append(actions, report.DisputeActionRequestPlatformIntervention)
+			}
+		}
+	case apiorder.DisputeStatusPendingApplicantDecision:
+		if isBuyer {
+			actions = append(actions, report.DisputeActionWithdraw, report.DisputeActionRequestPlatformIntervention)
+		}
+	case apiorder.DisputeStatusAwaitingFulfillment:
+		if order.DisputeNextUserID == viewerUserID {
+			actions = append(actions, report.DisputeRemedyActionClaim)
+		}
+		if isBuyer && order.ActiveRemedySource == report.RemedySourceSellerAcceptance && order.DisputeDueAt != nil && !now.Before(*order.DisputeDueAt) {
+			actions = append(actions, report.DisputeActionRequestPlatformIntervention)
+		}
+	case apiorder.DisputeStatusFulfillmentConfirmation:
+		if order.DisputeNextUserID == viewerUserID {
+			actions = append(actions, report.DisputeRemedyActionConfirm)
+			if order.ActiveRemedySource == report.RemedySourceSellerAcceptance {
+				actions = append(actions, report.DisputeActionRequestPlatformIntervention)
+			} else {
+				actions = append(actions, report.DisputeRemedyActionContest)
+			}
+		}
+	}
+	return actions
 }
 
 func toAPIOrderDeliveryCredentialResponse(credential apiorder.DeliveryCredential) *apiOrderDeliveryCredentialResponse {

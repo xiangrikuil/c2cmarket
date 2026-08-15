@@ -2803,7 +2803,7 @@ export type ApiOrder = {
     /**
      * Order projection of the linked dispute phase. The order fulfillment status remains independent.
      */
-    disputeStatus: 'none' | 'negotiating' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
+    disputeStatus: 'none' | 'negotiating' | 'pending_seller_response' | 'pending_applicant_decision' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
     /**
      * Current active dispute only. Omitted after the case closes.
      */
@@ -2818,11 +2818,17 @@ export type ApiOrder = {
     /**
      * Server-derived viewer-specific pending action flag.
      */
-    disputeNeedsAction?: boolean;
+    disputeNeedsAction: boolean;
+    /**
+     * True when the seller's 24-hour response deadline has passed while a late seller decision remains possible.
+     */
+    disputeResponseOverdue: boolean;
+    disputeAvailableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     /**
      * Current remedy projection only; it does not mean the action has been fulfilled.
      */
     activeRemedyAction?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    activeRemedySource?: 'admin_decision' | 'mutual_agreement' | 'seller_acceptance';
     /**
      * Frozen validity expiry plus the 24-hour reporting grace period. This does not extend service validity.
      */
@@ -3593,11 +3599,17 @@ export type DisputeEvidenceQuarantineResult = {
     version: number;
 };
 
-export type DisputeFormalResponseRequest = {
+export type DisputeSellerDecisionRequest = {
+    decision: 'accepted' | 'rejected';
     /**
-     * Immutable credential-free plain text.
+     * Immutable credential-free seller decision reason.
      */
-    body: string;
+    reason: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
+};
+
+export type DisputePlatformInterventionRequest = {
+    reason: string;
     evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
@@ -3696,7 +3708,7 @@ export type DisputeRemedy = {
     latenessDecidedAt?: string | null;
     latenessReason?: string;
     claimedLate: boolean;
-    source: 'admin_decision' | 'mutual_agreement';
+    source: 'admin_decision' | 'mutual_agreement' | 'seller_acceptance';
     settlementProposalId?: string;
     claimNote?: string;
     responseNote?: string;
@@ -3743,7 +3755,7 @@ export type DisputeCase = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -3787,6 +3799,14 @@ export type DisputeCase = {
     respondentResponse?: string;
     respondedByUserId?: string;
     respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     /**
      * Present on current-user dispute responses. True only when the case is resolved or closed and the current user is eligible to appeal; when a subject is assigned, only that subject is eligible.
      */
@@ -4286,7 +4306,7 @@ export type SelfDispute = {
     /**
      * True only while this is the current active case for its API order.
      */
-    active?: boolean;
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -4303,7 +4323,7 @@ export type SelfDispute = {
      * Present on authorized detail and mutation responses for message attribution.
      */
     counterpartyUserId?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -4331,6 +4351,14 @@ export type SelfDispute = {
     respondentResponse?: string;
     respondedByUserId?: string;
     respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -4949,7 +4977,7 @@ export type DisputeCaseWritable = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -4993,6 +5021,14 @@ export type DisputeCaseWritable = {
     respondentResponse?: string;
     respondedByUserId?: string;
     respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -5053,7 +5089,7 @@ export type SelfDisputeWritable = {
     /**
      * True only while this is the current active case for its API order.
      */
-    active?: boolean;
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -5070,7 +5106,7 @@ export type SelfDisputeWritable = {
      * Present on authorized detail and mutation responses for message attribution.
      */
     counterpartyUserId?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -5098,6 +5134,14 @@ export type SelfDisputeWritable = {
     respondentResponse?: string;
     respondedByUserId?: string;
     respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -7919,8 +7963,8 @@ export type GetMyDisputeEvidenceContentResponses = {
 
 export type GetMyDisputeEvidenceContentResponse = GetMyDisputeEvidenceContentResponses[keyof GetMyDisputeEvidenceContentResponses];
 
-export type RespondMyDisputeData = {
-    body: DisputeFormalResponseRequest;
+export type DecideMyDisputeAsSellerData = {
+    body: DisputeSellerDecisionRequest;
     headers: {
         'Idempotency-Key': string;
     };
@@ -7928,10 +7972,10 @@ export type RespondMyDisputeData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/me/disputes/{id}/response';
+    url: '/api/v1/me/disputes/{id}/seller-decision';
 };
 
-export type RespondMyDisputeErrors = {
+export type DecideMyDisputeAsSellerErrors = {
     /**
      * Problem Details error.
      */
@@ -7950,16 +7994,58 @@ export type RespondMyDisputeErrors = {
     422: ProblemDetails;
 };
 
-export type RespondMyDisputeError = RespondMyDisputeErrors[keyof RespondMyDisputeErrors];
+export type DecideMyDisputeAsSellerError = DecideMyDisputeAsSellerErrors[keyof DecideMyDisputeAsSellerErrors];
 
-export type RespondMyDisputeResponses = {
+export type DecideMyDisputeAsSellerResponses = {
     /**
      * Updated dispute detail.
      */
     200: SelfDispute;
 };
 
-export type RespondMyDisputeResponse = RespondMyDisputeResponses[keyof RespondMyDisputeResponses];
+export type DecideMyDisputeAsSellerResponse = DecideMyDisputeAsSellerResponses[keyof DecideMyDisputeAsSellerResponses];
+
+export type RequestMyDisputePlatformInterventionData = {
+    body: DisputePlatformInterventionRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/platform-intervention';
+};
+
+export type RequestMyDisputePlatformInterventionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type RequestMyDisputePlatformInterventionError = RequestMyDisputePlatformInterventionErrors[keyof RequestMyDisputePlatformInterventionErrors];
+
+export type RequestMyDisputePlatformInterventionResponses = {
+    /**
+     * Updated dispute detail in platform review.
+     */
+    200: SelfDispute;
+};
+
+export type RequestMyDisputePlatformInterventionResponse = RequestMyDisputePlatformInterventionResponses[keyof RequestMyDisputePlatformInterventionResponses];
 
 export type WithdrawMyDisputeData = {
     body: DisputeParticipantReasonRequest;
@@ -8002,44 +8088,6 @@ export type WithdrawMyDisputeResponses = {
 };
 
 export type WithdrawMyDisputeResponse = WithdrawMyDisputeResponses[keyof WithdrawMyDisputeResponses];
-
-export type SelfResolveMyDisputeData = {
-    body: DisputeParticipantReasonRequest;
-    headers: {
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/me/disputes/{id}/self-resolve';
-};
-
-export type SelfResolveMyDisputeErrors = {
-    /**
-     * Problem Details error.
-     */
-    401: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-};
-
-export type SelfResolveMyDisputeError = SelfResolveMyDisputeErrors[keyof SelfResolveMyDisputeErrors];
-
-export type SelfResolveMyDisputeResponses = {
-    /**
-     * Dispute closed as resolved offline without a platform responsibility finding.
-     */
-    200: SelfDispute;
-};
-
-export type SelfResolveMyDisputeResponse = SelfResolveMyDisputeResponses[keyof SelfResolveMyDisputeResponses];
 
 export type ClaimMyDisputeRemedyFulfilledData = {
     body: DisputeRemedyClaimRequest;
@@ -11333,49 +11381,6 @@ export type SubmitOwnerApiOrderDeliveryResponses = {
 };
 
 export type SubmitOwnerApiOrderDeliveryResponse = SubmitOwnerApiOrderDeliveryResponses[keyof SubmitOwnerApiOrderDeliveryResponses];
-
-export type OpenOwnerApiOrderDisputeData = {
-    body: ApiOrderDisputeRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/api-orders/{id}/dispute';
-};
-
-export type OpenOwnerApiOrderDisputeErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type OpenOwnerApiOrderDisputeError = OpenOwnerApiOrderDisputeErrors[keyof OpenOwnerApiOrderDisputeErrors];
-
-export type OpenOwnerApiOrderDisputeResponses = {
-    /**
-     * API order dispute case opened by the service owner and linked to the order.
-     */
-    200: ApiOrder;
-};
-
-export type OpenOwnerApiOrderDisputeResponse = OpenOwnerApiOrderDisputeResponses[keyof OpenOwnerApiOrderDisputeResponses];
 
 export type ResolveOwnerApiOrderLatePaymentData = {
     body: ApiOrderLatePaymentRequest;

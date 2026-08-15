@@ -206,7 +206,7 @@ test('routes a payment mismatch back to the buyer and accepts a supplemented res
   assert.equal(resubmitted.paymentIssueReportedAt, undefined)
 })
 
-test('lets both order participants open one structured negotiation', async () => {
+test('lets only the buyer open one structured after-sales application', async () => {
   const buyerApi = await loadApiWithOrder('payment_submitted')
   const order = orderWithStatus('payment_submitted')
 
@@ -217,7 +217,7 @@ test('lets both order participants open one structured negotiation', async () =>
     reason: '付款后商户未继续处理。',
   }
   const buyerDispute = await buyerApi.openApiOrderDispute(order.id, buyerRequest, order.version, 'buyer')
-  assert.equal(buyerDispute.disputeStatus, 'negotiating')
+  assert.equal(buyerDispute.disputeStatus, 'pending_seller_response')
   assert.equal(buyerDispute.version, order.version + 1)
   await assert.rejects(
     buyerApi.openApiOrderDispute(order.id, { ...buyerRequest, reason: '重复提交。' }, buyerDispute.version, 'buyer'),
@@ -225,11 +225,13 @@ test('lets both order participants open one structured negotiation', async () =>
   )
 
   const merchantApi = await loadApiWithOrder('payment_submitted')
-  const merchantDispute = await merchantApi.openApiOrderDispute(order.id, {
-    issueCode: 'payment_dispute',
-    requestedResolution: 'other',
-    requestedAmountCny: null,
-    reason: '收款记录与买家说明不一致。',
-  }, order.version, 'merchant')
-  assert.equal(merchantDispute.disputeStatus, 'negotiating')
+  await assert.rejects(
+    merchantApi.openApiOrderDispute(order.id, {
+      issueCode: 'payment_dispute',
+      requestedResolution: 'other',
+      requestedAmountCny: null,
+      reason: '收款记录与买家说明不一致。',
+    }, order.version, 'merchant'),
+    /只有买家可以发起订单售后申请/,
+  )
 })

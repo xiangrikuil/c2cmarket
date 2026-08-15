@@ -1,6 +1,8 @@
 export type ApiOrderDisputeStatus =
   | 'none'
   | 'negotiating'
+  | 'pending_seller_response'
+  | 'pending_applicant_decision'
   | 'open'
   | 'awaiting_fulfillment'
   | 'fulfillment_confirmation'
@@ -17,9 +19,10 @@ export type ApiOrderDisputeIssueCode =
   | 'other'
 
 export type ApiOrderDisputeResolution = 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other'
+export type ApiOrderDisputeAction = 'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'
 export type ApiOrderDisputeRemedyStatus = 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'cancelled'
 export type ApiOrderDisputeRemedyLateness = 'not_due' | 'on_time' | 'late_unreviewed' | 'late_confirmed' | 'late_excused'
-export type ApiOrderDisputeRemedySource = 'admin_decision' | 'mutual_agreement'
+export type ApiOrderDisputeRemedySource = 'admin_decision' | 'mutual_agreement' | 'seller_acceptance'
 export type ApiOrderCommercialOutcome = 'pending' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'cancelled_unpaid' | 'closed_unverified'
 
 export const apiMerchantRefundPolicyVersion = 'api-merchant-refund-v1'
@@ -73,7 +76,8 @@ export const apiOrderDisputeRemedyLatenessLabels: Record<ApiOrderDisputeRemedyLa
 
 export const apiOrderDisputeRemedySourceLabels: Record<ApiOrderDisputeRemedySource, string> = {
   admin_decision: '平台裁决',
-  mutual_agreement: '双方协商',
+  mutual_agreement: '历史协商方案',
+  seller_acceptance: '卖家主动同意',
 }
 
 export const apiOrderCommercialOutcomeLabels: Record<ApiOrderCommercialOutcome, string> = {
@@ -92,6 +96,8 @@ export function normalizeApiOrderDisputeStatus(value: unknown): ApiOrderDisputeS
   switch (value) {
     case 'none':
     case 'negotiating':
+    case 'pending_seller_response':
+    case 'pending_applicant_decision':
     case 'open':
     case 'awaiting_fulfillment':
     case 'fulfillment_confirmation':
@@ -115,6 +121,8 @@ export function getApiOrderDisputeStatusLabel(value: unknown): string {
   const labels: Record<ApiOrderDisputeStatus, string> = {
     none: '无纠纷',
     negotiating: '协商中',
+    pending_seller_response: '等待卖家处理',
+    pending_applicant_decision: '等待买家决定',
     open: '平台审核中',
     awaiting_fulfillment: '已裁决待履行',
     fulfillment_confirmation: '履行待确认',
@@ -126,7 +134,9 @@ export function getApiOrderDisputeStatusLabel(value: unknown): string {
 export function getApiOrderDisputeStatusDescription(value: unknown): string {
   const descriptions: Record<ApiOrderDisputeStatus, string> = {
     none: '',
-	negotiating: '双方正在订单内协商处理。订单的付款、取消、核款、交付、完成和自动超时流程已暂停，请围绕同一诉求补充脱敏事实。',
+	negotiating: '该历史案件仍使用旧版协商状态，订单普通交易流程已暂停。',
+	pending_seller_response: '售后申请已提交，等待卖家在 24 小时内同意或拒绝；订单普通交易流程已暂停。',
+	pending_applicant_decision: '卖家已拒绝申请，等待买家撤回申请或在期限内申请平台介入。',
 	open: '纠纷已提交平台审核，订单普通交易流程已暂停。平台由管理员非实时处理，请勿重复提交。',
 	awaiting_fulfillment: '平台已经作出裁决，订单普通交易流程保持暂停，正在等待责任方按裁决要求履行。',
 	fulfillment_confirmation: '责任方已提交履行结果，订单普通交易流程保持暂停，正在等待整改受益方反馈。',

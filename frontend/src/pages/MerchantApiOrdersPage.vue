@@ -136,10 +136,12 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
 }
 
 function disputeActionLabel(item: ApiOrder) {
-  if (item.disputeNeedsAction) return '纠纷待你处理'
+	if (item.disputeAvailableActions?.includes('seller_decision')) return item.disputeResponseOverdue ? '售后申请已超时，请尽快处理' : '同意或拒绝售后申请'
+	if (item.disputeAvailableActions?.includes('claim_remedy')) return '提交处理结果'
+  if (item.disputeNeedsAction) return '售后待你处理'
   if (item.disputeNextActor === 'admin') return '等待平台处理'
-  if (item.disputeNextActor === 'respondent') return '等待被申请方答复'
-  if (item.disputeNextActor === 'responsible_party') return '等待责任方履行'
+  if (item.disputeNextActor === 'respondent') return '等待卖家处理'
+  if (item.disputeNextActor === 'responsible_party') return '等待卖家或责任方履行'
   if (item.disputeNextActor === 'counterparty') return '等待对方确认'
   return '纠纷处理中'
 }
@@ -180,7 +182,7 @@ function disputeActionLabel(item: ApiOrder) {
         <td>
           <div class="flex flex-col items-start gap-1">
             <StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'merchant')" />
-            <StatusBadge v-if="item.disputeCaseId" status="open" label="纠纷中" />
+            <StatusBadge v-if="item.disputeCaseId" status="open" label="售后处理中" />
             <span v-if="item.disputeCaseId" class="text-xs text-muted-foreground">{{ disputeActionLabel(item) }}</span>
           </div>
         </td>
