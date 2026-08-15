@@ -1769,3 +1769,25 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 58: 简化 API 订单纠纷平台处理流程
+
+**Date**: 2026-08-15
+**Task**: 简化 API 订单纠纷平台处理流程
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+删除重复的站内协商写入，纠纷直接进入平台处理；新增一次正式答复、申请人撤回或线下解决、买卖订单纠纷投影与筛选，并完成 migration 107、全量测试和浏览器验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `348c977` | (see git log) |
+
+### Status
+
+[OK] **Completed**
