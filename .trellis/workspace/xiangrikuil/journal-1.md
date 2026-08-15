@@ -1747,3 +1747,25 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 57: 完成 API 订单售后合并
+
+**Date**: 2026-08-15
+**Task**: 完成 API 订单售后合并
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+完成 staging 基线上的 API 订单售后语义合并，覆盖纠纷历史、整改与申诉、商业结果、私有图片证据、平台介入、独立纠纷页及相关前端修复；全量代码测试与最终 PostgreSQL 18 隔离迁移门禁通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `966373e` | (see git log) |
+
+### Status
+
+[OK] **Completed**

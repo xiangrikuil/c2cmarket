@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 56
-- **Last Active**: 2026-08-14
+- **Total Sessions**: 57
+- **Last Active**: 2026-08-15
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1749 | Active |
+| `journal-1.md` | ~1771 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 57 | 2026-08-15 | 完成 API 订单售后合并 | `966373e` | `codex/api-after-sales-selected` |
 | 56 | 2026-08-14 | 修复 PR 36 CI 并中文化摘要 | `2c9afc0` | `codex/login-student-registration-redesign` |
 | 55 | 2026-08-14 | Login and student registration redesign | `afc96ff`, `23565ed` | `codex/login-student-registration-redesign` |
 | 54 | 2026-08-14 | API order and rush-sale launch hardening | `38333b6` | `codex/transaction-review-dialog` |
