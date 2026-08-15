@@ -34,11 +34,20 @@ const (
 	ReportStatusDisputeOpened = "dispute_opened"
 	ReportStatusClosed        = "closed"
 
-	DisputeStatusNegotiating = "negotiating"
-	DisputeStatusOpen        = "open"
-	DisputeStatusWaitingInfo = "waiting_info"
-	DisputeStatusResolved    = "resolved"
-	DisputeStatusClosed      = "closed"
+	DisputeStatusNegotiating  = "negotiating"
+	DisputeStatusOpen         = "open"
+	DisputeStatusWaitingInfo  = "waiting_info"
+	DisputeStatusResolved     = "resolved"
+	DisputeStatusClosed       = "closed"
+	DisputeStatusWithdrawn    = "withdrawn"
+	DisputeStatusSelfResolved = "self_resolved"
+
+	DisputeNextActorApplicant        = "applicant"
+	DisputeNextActorRespondent       = "respondent"
+	DisputeNextActorAdmin            = "admin"
+	DisputeNextActorResponsibleParty = "responsible_party"
+	DisputeNextActorCounterparty     = "counterparty"
+	DisputeNextActorNone             = "none"
 
 	PublicResultNoAction               = "no_action"
 	PublicResultContactInvalid         = "contact_invalid"
@@ -58,25 +67,17 @@ const (
 	InfoRequestStatusAnswered = "answered"
 	InfoRequestStatusCanceled = "cancelled"
 
-	DisputeMessageActionAppend   = "append_message"
-	DisputeMessageActionPropose  = "create_proposal"
-	DisputeMessageActionConfirm  = "confirm_proposal"
-	DisputeMessageActionReject   = "reject_proposal"
-	DisputeMessageActionEscalate = "escalate"
-	DisputeRemedyActionClaim     = "claim_remedy"
-	DisputeRemedyActionConfirm   = "confirm_remedy"
-	DisputeRemedyActionContest   = "contest_remedy"
+	DisputeActionRespond       = "respond"
+	DisputeActionWithdraw      = "withdraw"
+	DisputeActionSelfResolve   = "self_resolve"
+	DisputeRemedyActionClaim   = "claim_remedy"
+	DisputeRemedyActionConfirm = "confirm_remedy"
+	DisputeRemedyActionContest = "contest_remedy"
 
 	SettlementStatusPending    = "pending"
 	SettlementStatusAccepted   = "accepted"
 	SettlementStatusRejected   = "rejected"
 	SettlementStatusSuperseded = "superseded"
-
-	NegotiationChannelWeChat  = "wechat"
-	NegotiationChannelEmail   = "email"
-	NegotiationChannelLinuxDO = "linux_do"
-	NegotiationChannelInSite  = "in_site"
-	NegotiationChannelOther   = "other"
 
 	RemedyStatusPending             = "pending"
 	RemedyStatusClaimedFulfilled    = "claimed_fulfilled"
@@ -94,6 +95,8 @@ const (
 	RemedyLatenessLateExcused    = "late_excused"
 
 	RemedyConfirmationWindow = 48 * time.Hour
+	DisputeResponseWindow    = 48 * time.Hour
+	DisputeInfoRequestWindow = 48 * time.Hour
 	DisputeAppealWindow      = 30 * 24 * time.Hour
 
 	RemedyConfirmationExpiredPublicResult = "对方未在期限内反馈，平台未核验到账或履约事实"
@@ -167,6 +170,13 @@ type DisputeCase struct {
 	RequestedPlatformAction   string
 	EscalatedByUserID         string
 	EscalatedAt               *time.Time
+	NextActor                 string
+	DueAt                     *time.Time
+	FactSnapshotJSON          string
+	ApplicantStatement        string
+	RespondentResponse        string
+	RespondedByUserID         string
+	RespondedAt               *time.Time
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
 	Version                   int64
@@ -389,30 +399,18 @@ type SupplementInput struct {
 }
 
 type DisputeParticipantActionInput struct {
-	DisputeID                 string
-	ActorUserID               string
-	Action                    string
-	Body                      string
-	Resolution                string
-	AmountCNY                 string
-	Terms                     string
-	FulfillmentRequired       bool
-	ResponsibleUserID         string
-	BeneficiaryUserID         string
-	DueAt                     time.Time
-	ProposalID                string
-	Note                      string
-	Reason                    string
-	NegotiationChannels       []string
-	NegotiationEndedConfirmed bool
-	NegotiationSummary        string
-	RequestedPlatformAction   string
-	RequestID                 string
-	ActorAudience             string
-	GovernanceActionID        string
-	GovernanceVersion         int64
-	RestrictionEffectiveAt    time.Time
-	EvidenceAssetIDs          []string
+	DisputeID              string
+	ActorUserID            string
+	Action                 string
+	Body                   string
+	Note                   string
+	Reason                 string
+	RequestID              string
+	ActorAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	EvidenceAssetIDs       []string
 }
 
 func WithBusinessActor(input DisputeParticipantActionInput, actor auth.BusinessActor) DisputeParticipantActionInput {

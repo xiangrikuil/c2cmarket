@@ -342,7 +342,7 @@ const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
 	if (order.value.catalogRiskHold?.status === 'active') return '关联模型目录被紧急阻断，付款、核款、交付、确认完成及自动超时均已暂停；仍可查看订单证据或发起纠纷。'
-	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请在下方纠纷区继续协商或等待处理。'
+	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请进入独立纠纷页面查看当前处理进度。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
@@ -494,7 +494,7 @@ async function submitOrderDispute() {
     disputeReason.value = ''
     disputeEvidence.value = []
     await refresh(order.value.id)
-    toast.success('订单纠纷已发起，双方可先协商处理。')
+    toast.success('订单纠纷已发起，已进入平台处理。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交订单问题失败。')
   }
@@ -851,7 +851,7 @@ onBeforeUnmount(() => {
       <Clock3 />
       <AlertTitle>商户处理已超时，订单不会自动取消</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
-        <span>你已提交付款状态，请勿重复付款。可发起订单纠纷，与商户在订单内协商处理。</span>
+        <span>你已提交付款状态，请勿重复付款。如需平台处理，可直接发起订单纠纷。</span>
         <Button v-if="canOpenDispute" size="sm" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       </AlertDescription>
     </Alert>
@@ -1081,7 +1081,7 @@ onBeforeUnmount(() => {
     </Collapsible>
 
     <div class="flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-4">
-      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">发起后先由双方协商；无法达成一致时再申请平台审核。</div></div>
+      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">发起后直接进入平台处理，被申请方可提交一次正式答复。</div></div>
       <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       <Badge v-else-if="showDisputeStatus" variant="status">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</Badge>
     </div>
@@ -1171,7 +1171,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>发起订单纠纷</DialogTitle>
-          <DialogDescription>提交后进入双方协商；任一方可在无法达成一致时申请平台审核。</DialogDescription>
+          <DialogDescription>提交后直接进入平台处理。被申请方可提交一次正式答复，双方后续按平台要求补充材料。</DialogDescription>
         </DialogHeader>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="block space-y-2">
@@ -1380,7 +1380,7 @@ onBeforeUnmount(() => {
             <Alert variant="destructive">
               <ShieldAlert />
               <AlertTitle>请确认尚未付款</AlertTitle>
-              <AlertDescription>如果已经付款，请不要取消订单。先通过微信或 linux.do 私信联系商户；双方沟通后仍未解决再申请平台介入。</AlertDescription>
+              <AlertDescription>如果已经付款，请不要取消订单。你可以通过微信或 linux.do 私信联系商户，也可以直接发起纠纷申请平台处理。</AlertDescription>
             </Alert>
 
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">

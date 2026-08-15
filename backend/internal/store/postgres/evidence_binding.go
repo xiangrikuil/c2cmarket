@@ -128,7 +128,7 @@ func validateEvidenceBindingSourceInTx(ctx context.Context, tx pgx.Tx, input evi
 	var sourceMatches bool
 	switch input.SourceType {
 	case evidence.SourceDisputeCase:
-		validShape = (input.Usage == evidence.UsageDisputeInitial || input.Usage == evidence.UsagePlatformEscalation) && input.Visibility == evidence.VisibilityParticipantsAdmin
+		validShape = (input.Usage == evidence.UsageDisputeInitial || input.Usage == evidence.UsagePlatformEscalation || input.Usage == evidence.UsageFormalResponse) && input.Visibility == evidence.VisibilityParticipantsAdmin
 		sourceMatches = input.SourceID == input.DisputeCaseID
 	case evidence.SourceDisputeMessage:
 		validShape = input.Usage == evidence.UsageMessage && input.Visibility == evidence.VisibilityParticipantsAdmin

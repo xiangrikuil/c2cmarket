@@ -2,13 +2,11 @@ import type { AdminRow } from '@/lib/api'
 import type {
   Appeal,
   DisputeCase,
+  DisputeFormalResponseRequest,
   DisputeRemedyRequest,
-  DisputeEscalationRequest,
-  DisputeMessageRequest,
   DisputeRemedyClaimRequest,
   DisputeRemedyContestRequest,
   SelfDispute,
-  DisputeSettlementProposalRequest,
   SelfModerationSupplementMutation,
   SelfReport,
 } from '@/api/generated/openapi'
@@ -137,7 +135,6 @@ export type CreateManualInterventionReportRequest = {
 
 export type MyReport = SelfReport
 export type MyDispute = SelfDispute
-export type CreateDisputeSettlementProposalRequest = DisputeSettlementProposalRequest
 export type MyAppeal = Appeal
 export type SubmitInfoSupplementRequest = {
   entityType: 'report' | 'dispute'
@@ -446,38 +443,24 @@ export async function backendMyDispute(id: string) {
   return backendRequest<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(id)}`)
 }
 
-export async function backendAppendDisputeMessage(disputeId: string, input: DisputeMessageRequest) {
+export async function backendRespondDispute(disputeId: string, input: DisputeFormalResponseRequest) {
   await ensureBackendSession('buyer', false)
-  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/messages`, input, {
-    idempotencyPrefix: 'dispute-message',
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/response`, input, {
+    idempotencyPrefix: 'dispute-response',
   })
 }
 
-export async function backendCreateDisputeSettlementProposal(disputeId: string, input: CreateDisputeSettlementProposalRequest) {
+export async function backendWithdrawDispute(disputeId: string, reason: string) {
   await ensureBackendSession('buyer', false)
-  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/settlement-proposals`, input, {
-    idempotencyPrefix: 'dispute-settlement-proposal',
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/withdraw`, { reason }, {
+    idempotencyPrefix: 'dispute-withdraw',
   })
 }
 
-export async function backendConfirmDisputeSettlementProposal(disputeId: string, proposalId: string) {
+export async function backendSelfResolveDispute(disputeId: string, reason: string) {
   await ensureBackendSession('buyer', false)
-  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/settlement-proposals/${encodeURIComponent(proposalId)}/confirm`, {}, {
-    idempotencyPrefix: 'dispute-settlement-confirm',
-  })
-}
-
-export async function backendRejectDisputeSettlementProposal(disputeId: string, proposalId: string, reason: string) {
-  await ensureBackendSession('buyer', false)
-  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/settlement-proposals/${encodeURIComponent(proposalId)}/reject`, { reason }, {
-    idempotencyPrefix: 'dispute-settlement-reject',
-  })
-}
-
-export async function backendEscalateDispute(disputeId: string, input: DisputeEscalationRequest) {
-  await ensureBackendSession('buyer', false)
-  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/escalate`, input, {
-    idempotencyPrefix: 'dispute-escalate',
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/self-resolve`, { reason }, {
+    idempotencyPrefix: 'dispute-self-resolve',
   })
 }
 

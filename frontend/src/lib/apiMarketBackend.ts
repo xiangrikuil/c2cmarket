@@ -274,6 +274,9 @@ export type BackendAPIOrder = {
   disputeCaseId?: string
   latestDisputeCaseId?: string
   hasDisputeHistory: boolean
+  disputeNextActor?: ApiOrder['disputeNextActor']
+  disputeDueAt?: string | null
+  disputeNeedsAction?: boolean
   activeRemedyAction?: ApiOrderDisputeResolution
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
@@ -1476,6 +1479,9 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
 	    disputeCaseId: order.disputeCaseId,
 	    latestDisputeCaseId: order.latestDisputeCaseId,
 	    hasDisputeHistory: order.hasDisputeHistory,
+	    disputeNextActor: order.disputeNextActor,
+	    disputeDueAt: order.disputeDueAt ?? undefined,
+	    disputeNeedsAction: order.disputeNeedsAction,
 	    activeRemedyAction: order.activeRemedyAction,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitleSnapshot,
@@ -1821,6 +1827,9 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
 	    disputeCaseId: order.disputeCaseId,
 	    latestDisputeCaseId: order.latestDisputeCaseId,
 	    hasDisputeHistory: order.hasDisputeHistory,
+	    disputeNextActor: order.disputeNextActor,
+	    disputeDueAt: order.disputeDueAt ?? undefined,
+	    disputeNeedsAction: order.disputeNeedsAction,
 	    activeRemedyAction: order.activeRemedyAction,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,

@@ -73,6 +73,9 @@ type apiOrderResponse struct {
 	DisputeCaseID                 string                              `json:"disputeCaseId,omitempty"`
 	LatestDisputeCaseID           string                              `json:"latestDisputeCaseId,omitempty"`
 	HasDisputeHistory             bool                                `json:"hasDisputeHistory"`
+	DisputeNextActor              string                              `json:"disputeNextActor"`
+	DisputeDueAt                  *string                             `json:"disputeDueAt,omitempty"`
+	DisputeNeedsAction            bool                                `json:"disputeNeedsAction"`
 	ActiveRemedyAction            string                              `json:"activeRemedyAction,omitempty"`
 	ServiceTitleSnapshot          string                              `json:"serviceTitleSnapshot"`
 	ServiceVersionSnapshot        int64                               `json:"serviceVersionSnapshot"`
@@ -231,6 +234,10 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
 	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if appErr := validateAPIOrderListQuery(r); appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
@@ -516,6 +523,10 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 	if actor.Audience == auth.SessionAudienceNormal && !requireActorCapability(w, r, actor, auth.CapabilityAPIServicePublish) {
 		return
 	}
+	if appErr := validateAPIOrderListQuery(r); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 	orders, appErr := s.apiOrderContinuity.APIOrdersForActor(r.Context(), actor, "seller")
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -673,6 +684,10 @@ func toAdminAPIOrderResponse(order apiorder.Order) apiOrderResponse {
 }
 
 func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential bool) apiOrderResponse {
+	viewerUserID := order.BuyerUserID
+	if ownerView {
+		viewerUserID = order.SellerUserID
+	}
 	response := apiOrderResponse{
 		ID:                            order.ID,
 		OrderNo:                       order.OrderNo,
@@ -686,6 +701,9 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		DisputeCaseID:                 order.DisputeCaseID,
 		LatestDisputeCaseID:           order.LatestDisputeCaseID,
 		HasDisputeHistory:             order.HasDisputeHistory,
+		DisputeNextActor:              order.DisputeNextActor,
+		DisputeDueAt:                  formatOptionalTime(order.DisputeDueAt),
+		DisputeNeedsAction:            order.DisputeNextUserID != "" && order.DisputeNextUserID == viewerUserID,
 		ActiveRemedyAction:            order.ActiveRemedyAction,
 		ServiceTitleSnapshot:          order.ServiceTitleSnapshot,
 		ServiceVersionSnapshot:        order.ServiceVersionSnapshot,

@@ -58,32 +58,14 @@ type infoSupplementRequest struct {
 	EvidenceAssetIDs  []string `json:"evidenceAssetIds"`
 }
 
-type disputeMessageRequest struct {
+type disputeFormalResponseRequest struct {
 	Body             string   `json:"body"`
 	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
-}
-
-type disputeSettlementProposalRequest struct {
-	Resolution          string `json:"resolution"`
-	AmountCNY           string `json:"amountCny"`
-	Terms               string `json:"terms"`
-	FulfillmentRequired bool   `json:"fulfillmentRequired"`
-	ResponsibleUserID   string `json:"responsibleUserId"`
-	BeneficiaryUserID   string `json:"beneficiaryUserId"`
-	DueAt               string `json:"dueAt"`
 }
 
 type disputeParticipantReasonRequest struct {
 	Reason           string   `json:"reason"`
 	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
-}
-
-type disputeEscalationRequest struct {
-	NegotiationChannels       []string `json:"negotiationChannels"`
-	NegotiationEndedConfirmed bool     `json:"negotiationEndedConfirmed"`
-	NegotiationSummary        string   `json:"negotiationSummary"`
-	RequestedPlatformAction   string   `json:"requestedPlatformAction"`
-	EvidenceAssetIDs          []string `json:"evidenceAssetIds"`
 }
 
 type disputeRemedyClaimRequest struct {
@@ -169,6 +151,13 @@ type disputeResponse struct {
 	RequestedPlatformAction   string                       `json:"requestedPlatformAction,omitempty"`
 	EscalatedByUserID         string                       `json:"escalatedByUserId,omitempty"`
 	EscalatedAt               *string                      `json:"escalatedAt,omitempty"`
+	NextActor                 string                       `json:"nextActor"`
+	DueAt                     *string                      `json:"dueAt,omitempty"`
+	FactSnapshotJSON          string                       `json:"factSnapshotJson,omitempty"`
+	ApplicantStatement        string                       `json:"applicantStatement,omitempty"`
+	RespondentResponse        string                       `json:"respondentResponse,omitempty"`
+	RespondedByUserID         string                       `json:"respondedByUserId,omitempty"`
+	RespondedAt               *string                      `json:"respondedAt,omitempty"`
 	CreatedAt                 string                       `json:"createdAt"`
 	UpdatedAt                 string                       `json:"updatedAt"`
 	Version                   int64                        `json:"version"`
@@ -462,73 +451,32 @@ func (s *Server) handleMyDispute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toMyDisputeDetailResponse(item, actor.UserID))
 }
 
-func (s *Server) handleAppendDisputeMessage(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRespondDispute(w http.ResponseWriter, r *http.Request) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	body, req, appErr := decodeStrictJSON[disputeMessageRequest](r)
+	body, req, appErr := decodeStrictJSON[disputeFormalResponseRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:           report.DisputeMessageActionAppend,
-		Body:             req.Body,
+		Action: report.DisputeActionRespond, Body: req.Body,
 		EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 	})
 }
 
-func (s *Server) handleCreateDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
-	actor, appErr := s.requireBusinessActor(r, true, true)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	body, req, appErr := decodeStrictJSON[disputeSettlementProposalRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	var dueAt time.Time
-	if req.FulfillmentRequired {
-		dueAt, appErr = parseRequiredTime(req.DueAt, "dueAt")
-		if appErr != nil {
-			writeProblem(w, r, appErr)
-			return
-		}
-	}
-	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:              report.DisputeMessageActionPropose,
-		Resolution:          req.Resolution,
-		AmountCNY:           req.AmountCNY,
-		Terms:               req.Terms,
-		FulfillmentRequired: req.FulfillmentRequired,
-		ResponsibleUserID:   req.ResponsibleUserID,
-		BeneficiaryUserID:   req.BeneficiaryUserID,
-		DueAt:               dueAt,
-	})
+func (s *Server) handleWithdrawDispute(w http.ResponseWriter, r *http.Request) {
+	s.handleFinishDisputeByApplicant(w, r, report.DisputeActionWithdraw)
 }
 
-func (s *Server) handleConfirmDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
-	actor, appErr := s.requireBusinessActor(r, true, true)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	body, _, appErr := decodeStrictJSON[emptyRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:     report.DisputeMessageActionConfirm,
-		ProposalID: chi.URLParam(r, "proposalId"),
-	})
+func (s *Server) handleSelfResolveDispute(w http.ResponseWriter, r *http.Request) {
+	s.handleFinishDisputeByApplicant(w, r, report.DisputeActionSelfResolve)
 }
 
-func (s *Server) handleRejectDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFinishDisputeByApplicant(w http.ResponseWriter, r *http.Request, action string) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -540,30 +488,7 @@ func (s *Server) handleRejectDisputeSettlementProposal(w http.ResponseWriter, r 
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:     report.DisputeMessageActionReject,
-		ProposalID: chi.URLParam(r, "proposalId"),
-		Reason:     req.Reason,
-	})
-}
-
-func (s *Server) handleEscalateDispute(w http.ResponseWriter, r *http.Request) {
-	actor, appErr := s.requireBusinessActor(r, true, true)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	body, req, appErr := decodeStrictJSON[disputeEscalationRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:                    report.DisputeMessageActionEscalate,
-		NegotiationChannels:       append([]string(nil), req.NegotiationChannels...),
-		NegotiationEndedConfirmed: req.NegotiationEndedConfirmed,
-		NegotiationSummary:        req.NegotiationSummary,
-		RequestedPlatformAction:   req.RequestedPlatformAction,
-		EvidenceAssetIDs:          append([]string(nil), req.EvidenceAssetIDs...),
+		Action: action, Reason: req.Reason,
 	})
 }
 
@@ -626,7 +551,7 @@ func (s *Server) handleDisputeParticipantAction(w http.ResponseWriter, r *http.R
 	routeKey := r.Method + " /api/v1/me/disputes/{id}/" + input.Action
 	completion, appErr := s.disputeContinuity.DisputeParticipantActionForActorWithIdempotency(
 		r.Context(), actor, routeKey, r.Header.Get("Idempotency-Key"),
-		requestHash(r.Method, routeKey+":"+input.DisputeID+":"+input.ProposalID, body),
+		requestHash(r.Method, routeKey+":"+input.DisputeID, body),
 		input, disputeParticipantCompletionBuilder(actor.UserID),
 	)
 	if appErr != nil {
@@ -1162,6 +1087,12 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		RequestedPlatformAction:   item.RequestedPlatformAction,
 		EscalatedByUserID:         item.EscalatedByUserID,
 		EscalatedAt:               formatOptionalTime(item.EscalatedAt),
+		NextActor:                 item.NextActor,
+		DueAt:                     formatOptionalTime(item.DueAt),
+		ApplicantStatement:        item.ApplicantStatement,
+		RespondentResponse:        item.RespondentResponse,
+		RespondedByUserID:         item.RespondedByUserID,
+		RespondedAt:               formatOptionalTime(item.RespondedAt),
 		CreatedAt:                 item.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                 item.UpdatedAt.UTC().Format(time.RFC3339),
 		Version:                   item.Version,
@@ -1171,6 +1102,7 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		Evidence:                  toEvidenceReferenceResponses(item.Evidence, includeAdmin),
 	}
 	if includeAdmin {
+		response.FactSnapshotJSON = item.FactSnapshotJSON
 		response.PrimaryUserID = item.PrimaryUserID
 		response.CounterpartyUserID = item.CounterpartyUserID
 		response.SubjectUserID = item.SubjectUserID

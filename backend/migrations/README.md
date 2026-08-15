@@ -546,6 +546,13 @@ has ended, freezes the final disagreement and requested platform action, and
 marks pending settlement proposals as superseded when platform intervention
 starts.
 
+Version 107 (`000107_api_order_platform_handling_simplification`) moves new API
+order disputes directly into platform handling. It freezes the applicant's
+statement and fact snapshot, permits one immutable respondent answer, records
+the current actor and deadline, adds applicant withdrawal and offline-resolution
+outcomes, and preserves old messages and settlement proposals as read-only
+history. Its down migration refuses to discard data written by the new flow.
+
 ## Docker Compose
 
 The repository root `compose.yaml` provides a PostgreSQL service and a one-shot

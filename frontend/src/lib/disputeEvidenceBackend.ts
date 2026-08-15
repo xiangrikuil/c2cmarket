@@ -18,6 +18,7 @@ export const disputeEvidenceKindLabels: Record<DisputeEvidenceKind, string> = {
 export const disputeEvidenceUsageLabels: Record<DisputeEvidenceReference['usage'], string> = {
   dispute_initial: '发起纠纷',
   platform_escalation: '申请平台介入',
+  formal_response: '正式答复',
   message: '沟通补充',
   info_supplement: '定向补件',
   remedy_claim: '履行声明',

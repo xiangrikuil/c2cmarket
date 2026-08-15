@@ -231,6 +231,7 @@ func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
 	query := r.URL.Query().Get("q")
 	dateRange := r.URL.Query().Get("dateRange")
 	risk := r.URL.Query().Get("risk")
+	dispute := r.URL.Query().Get("dispute")
 	now := time.Now()
 	filtered := make([]apiorder.Order, 0, len(items))
 	for _, item := range items {
@@ -239,6 +240,9 @@ func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
 		}
 		hasRiskNote := apiorder.IsDisputeActive(item.DisputeStatus) || strings.TrimSpace(item.CancelReason) != ""
 		if risk == "high" && !apiorder.IsDisputeActive(item.DisputeStatus) || risk == "has_note" && !hasRiskNote {
+			continue
+		}
+		if dispute == "active" && !apiorder.IsDisputeActive(item.DisputeStatus) || dispute == "none" && apiorder.IsDisputeActive(item.DisputeStatus) {
 			continue
 		}
 		if !containsFold(query, item.ID, item.OrderNo, item.APIServiceID, item.ServiceTitleSnapshot, item.BuyerUserID, item.SellerUserID) {
@@ -271,6 +275,15 @@ func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
 		sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt) })
 	}
 	return filtered
+}
+
+func validateAPIOrderListQuery(r *http.Request) *domain.AppError {
+	dispute := strings.TrimSpace(r.URL.Query().Get("dispute"))
+	if apiorder.IsAdminOrderDispute(dispute) {
+		return nil
+	}
+	detail := "纠纷筛选无效。"
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "List query invalid", detail, "dispute", "invalid", detail)
 }
 
 func apiOrderActionRequired(status, sortMode string) bool {

@@ -308,11 +308,12 @@ function targetTypeLabel(value?: string) {
 }
 
 function statusLabel(value?: AdminDisputeDetail['status']) {
-	if (value === 'negotiating') return '协商中'
   if (value === 'open') return '待裁决'
   if (value === 'waiting_info') return '等待补充'
   if (value === 'resolved') return '已裁决'
   if (value === 'closed') return '已关闭'
+  if (value === 'withdrawn') return '已撤回'
+  if (value === 'self_resolved') return '线下已解决'
   return '加载中'
 }
 

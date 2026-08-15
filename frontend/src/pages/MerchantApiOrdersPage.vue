@@ -66,6 +66,8 @@ const confirmedReceiptAmount = computed(() => baseFilteredRows.value
   ))
 
 const stats = computed(() => [
+	{ label: '纠纷中', value: baseFilteredRows.value.filter(item => item.disputeCaseId).length },
+	{ label: '纠纷待我处理', value: baseFilteredRows.value.filter(item => item.disputeNeedsAction).length },
   { label: '待买家付款', value: baseFilteredRows.value.filter(item => item.status === 'pending_payment').length },
   { label: '待确认收款', value: baseFilteredRows.value.filter(item => item.status === 'payment_submitted').length },
   { label: '等待买家补充', value: baseFilteredRows.value.filter(item => item.status === 'payment_issue').length },
@@ -85,6 +87,7 @@ const statusByTab: Partial<Record<string, ApiOrderStatus | ApiOrderStatus[]>> = 
 }
 const pageFilters = computed(() => ({
   status: statusByTab[activeTab.value],
+  dispute: activeTab.value === '纠纷中' ? 'active' as const : undefined,
   serviceId: serviceFilter.value === 'all' ? undefined : serviceFilter.value,
   search: keyword.value.trim() || undefined,
   dateRange: timeRange.value,
@@ -131,6 +134,15 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
   if (event.target instanceof Element && event.target.closest('a,button')) return
   router.push(`/merchant/api-orders/${id}`)
 }
+
+function disputeActionLabel(item: ApiOrder) {
+  if (item.disputeNeedsAction) return '纠纷待你处理'
+  if (item.disputeNextActor === 'admin') return '等待平台处理'
+  if (item.disputeNextActor === 'respondent') return '等待被申请方答复'
+  if (item.disputeNextActor === 'responsible_party') return '等待责任方履行'
+  if (item.disputeNextActor === 'counterparty') return '等待对方确认'
+  return '纠纷处理中'
+}
 </script>
 
 <template>
@@ -139,7 +151,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
 
     <CompactStats :items="stats" :loading="isLoading" />
 
-    <StatusTabs v-model="activeTab" :items="['全部', '待买家付款', '待确认收款', '等待买家补充', '待交付', '已完成交付', '已取消']" />
+    <StatusTabs v-model="activeTab" :items="['全部', '纠纷中', '待买家付款', '待确认收款', '等待买家补充', '待交付', '已完成交付', '已取消']" />
 
     <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-[1fr_160px_180px_180px]">
       <Input v-model="keyword" placeholder="搜索订单编号、买家、服务" />
@@ -165,7 +177,13 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
             {{ apiPaymentMethodLabels[item.selectedPaymentMethod] }} · {{ formatDecimal(item.requestedUsdAllowanceDecimal ?? String(item.requestedUsdAllowance), 2, 6) }} 美元额度
           </div>
         </td>
-        <td><StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'merchant')" /></td>
+        <td>
+          <div class="flex flex-col items-start gap-1">
+            <StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'merchant')" />
+            <StatusBadge v-if="item.disputeCaseId" status="open" label="纠纷中" />
+            <span v-if="item.disputeCaseId" class="text-xs text-muted-foreground">{{ disputeActionLabel(item) }}</span>
+          </div>
+        </td>
         <td class="text-xs text-muted-foreground"><LocalTime :value="item.updatedAt" /></td>
         <td>
           <div class="flex flex-wrap gap-1">
@@ -175,6 +193,9 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
                 <Eye v-else class="h-4 w-4" />
                 {{ item.status === 'paid_confirmed' ? '填写交付' : '查看详情' }}
               </Button>
+            </RouterLink>
+            <RouterLink v-if="item.disputeCaseId" :to="`/my/disputes/${item.disputeCaseId}?orderId=${item.id}&from=merchant`">
+              <Button size="sm" variant="outline">查看案件</Button>
             </RouterLink>
             <Button v-if="item.status === 'payment_submitted'" size="sm" :disabled="busyId === item.id" @click="runAction(item, () => confirmApiOrderPayment(item.id, item.version), '已确认收款。')">
               <CheckCircle2 class="h-4 w-4" />确认已收款

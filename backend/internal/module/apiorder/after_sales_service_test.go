@@ -12,9 +12,10 @@ type afterSalesDisputeRecorder struct {
 	input DisputeCaseInput
 }
 
-func (r *afterSalesDisputeRecorder) RegisterAPIOrderDispute(_ context.Context, input DisputeCaseInput) (string, *domain.AppError) {
+func (r *afterSalesDisputeRecorder) RegisterAPIOrderDispute(_ context.Context, input DisputeCaseInput) (DisputeProjection, *domain.AppError) {
 	r.input = input
-	return "dispute-after-sales", nil
+	dueAt := input.Now.Add(48 * time.Hour)
+	return DisputeProjection{CaseID: "dispute-after-sales", Status: DisputeStatusOpen, NextActor: "respondent", NextUserID: input.SellerUserID, DueAt: &dueAt}, nil
 }
 
 func TestCompletedDisputeUsesAuthoritativeMutationTimeAndReturnsUpdatedProjection(t *testing.T) {

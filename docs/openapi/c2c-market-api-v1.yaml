@@ -2290,14 +2290,14 @@ paths:
               schema: { type: string, format: binary }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/messages:
+  /api/v1/me/disputes/{id}/response:
     post:
-      operationId: appendMyDisputeMessage
+      operationId: respondMyDispute
       tags: [Reports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Append an immutable credential-free plain-text message.
+      summary: Submit the respondent's single immutable formal answer.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2306,7 +2306,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DisputeMessageRequest"
+              $ref: "#/components/schemas/DisputeFormalResponseRequest"
       responses:
         "200":
           description: Updated dispute detail.
@@ -2318,14 +2318,14 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/settlement-proposals:
+  /api/v1/me/disputes/{id}/withdraw:
     post:
-      operationId: createMyDisputeSettlementProposal
+      operationId: withdrawMyDispute
       tags: [Reports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Propose a bilateral settlement; the creator counts as the first confirmation.
+      summary: Let the applicant withdraw before a platform ruling.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2334,7 +2334,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DisputeSettlementProposalRequest"
+              $ref: "#/components/schemas/DisputeParticipantReasonRequest"
       responses:
         "200":
           description: Updated dispute detail.
@@ -2346,49 +2346,16 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/confirm:
+  /api/v1/me/disputes/{id}/self-resolve:
     post:
-      operationId: confirmMyDisputeSettlementProposal
+      operationId: selfResolveMyDispute
       tags: [Reports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Confirm the counterparty's pending proposal and close the dispute atomically.
+      summary: Let the applicant confirm that the parties resolved the issue offline.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
-        - name: proposalId
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/EmptyRequest" }
-      responses:
-        "200":
-          description: Dispute closed after bilateral confirmation.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SelfDispute" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/reject:
-    post:
-      operationId: rejectMyDisputeSettlementProposal
-      tags: [Reports]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: Reject the counterparty's proposal without deciding that the original claim is invalid.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - name: proposalId
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -2397,40 +2364,13 @@ paths:
             schema: { $ref: "#/components/schemas/DisputeParticipantReasonRequest" }
       responses:
         "200":
-          description: Proposal rejected; dispute remains negotiating.
+          description: Dispute closed as resolved offline without a platform responsibility finding.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SelfDispute" }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
-        "422": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/escalate:
-    post:
-      operationId: escalateMyDispute
-      tags: [Reports]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: End participant negotiation and request platform review.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/DisputeEscalationRequest" }
-      responses:
-        "200":
-          description: Dispute moved to platform review.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SelfDispute" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
-        "422": { $ref: "#/components/responses/Problem" }
   /api/v1/me/disputes/{id}/remedy/claim:
     post:
       operationId: claimMyDisputeRemedyFulfilled
@@ -2931,6 +2871,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: dispute
+          in: query
+          schema:
+            type: string
+            enum: [all, active, none]
+          description: Filter by whether the order currently has an active dispute.
       responses:
         "200":
           description: Current user's API orders as buyer.
@@ -2938,6 +2884,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIOrderList"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/api-orders/{id}:
     get:
       operationId: getMyAPIOrder
@@ -4804,6 +4752,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: dispute
+          in: query
+          schema:
+            type: string
+            enum: [all, active, none]
+          description: Filter by whether the order currently has an active dispute.
       responses:
         "200":
           description: API orders for services owned by the current user.
@@ -4811,6 +4765,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIOrderList"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/api-orders/{id}:
     get:
       operationId: getOwnerAPIOrder
@@ -15074,6 +15030,15 @@ components:
           description: Latest historical dispute, including a closed case when there is no active dispute.
         hasDisputeHistory:
           type: boolean
+        disputeNextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        disputeDueAt:
+          type: [string, "null"]
+          format: date-time
+        disputeNeedsAction:
+          type: boolean
+          description: Server-derived viewer-specific pending action flag.
         activeRemedyAction:
           type: string
           enum: [full_refund, partial_refund, continue_fulfillment, other]
@@ -16555,7 +16520,7 @@ components:
               enum: [participants_admin, submitter_admin, appellant_admin]
             usage:
               type: string
-              enum: [dispute_initial, platform_escalation, message, info_supplement, remedy_claim, remedy_contest, appeal]
+              enum: [dispute_initial, platform_escalation, formal_response, message, info_supplement, remedy_claim, remedy_contest, appeal]
             sourceType:
               type: string
               enum: [dispute_case, dispute_message, info_supplement, dispute_remedy, appeal]
@@ -16588,48 +16553,18 @@ components:
           enum: [quarantined]
         quarantinedExpiresAt: { type: string, format: date-time }
         version: { type: integer, format: int64 }
-    DisputeMessageRequest:
+    DisputeFormalResponseRequest:
       type: object
       additionalProperties: false
       required: [body]
       properties:
         body:
           type: string
-          minLength: 1
+          minLength: 2
           maxLength: 2000
           description: Immutable credential-free plain text.
         evidenceAssetIds:
           $ref: "#/components/schemas/DisputeEvidenceAssetIds"
-    DisputeSettlementProposalRequest:
-      type: object
-      additionalProperties: false
-      required: [resolution, terms, fulfillmentRequired]
-      properties:
-        resolution:
-          type: string
-          enum: [full_refund, partial_refund, continue_fulfillment, other]
-        amountCny:
-          type: [string, "null"]
-          pattern: '^[0-9]+(?:\.[0-9]{1,2})?$'
-          description: Required only for partial_refund and must not exceed the API order amount.
-        terms:
-          type: string
-          minLength: 1
-          maxLength: 2000
-          description: Exact credential-free terms that the counterparty will confirm or reject.
-        fulfillmentRequired:
-          type: boolean
-          description: Must be true for full refund, partial refund, and continue fulfillment.
-        responsibleUserId:
-          type: string
-          format: uuid
-        beneficiaryUserId:
-          type: string
-          format: uuid
-        dueAt:
-          type: string
-          format: date-time
-          description: Required when fulfillmentRequired is true and must be later than submission time.
     DisputeParticipantReasonRequest:
       type: object
       additionalProperties: false
@@ -16638,35 +16573,6 @@ components:
         reason:
           type: string
           maxLength: 500
-    DisputeEscalationRequest:
-      type: object
-      additionalProperties: false
-      required: [negotiationChannels, negotiationEndedConfirmed, negotiationSummary, requestedPlatformAction]
-      properties:
-        negotiationChannels:
-          type: array
-          minItems: 1
-          maxItems: 5
-          uniqueItems: true
-          items:
-            type: string
-            enum: [wechat, email, linux_do, in_site, other]
-        negotiationEndedConfirmed:
-          type: boolean
-          const: true
-          description: Confirms that bilateral negotiation has ended before platform intervention starts.
-        negotiationSummary:
-          type: string
-          minLength: 2
-          maxLength: 2000
-          description: Credential-free summary of the final unresolved disagreement.
-        requestedPlatformAction:
-          type: string
-          minLength: 2
-          maxLength: 1000
-          description: Credential-free description of the decision or direction requested from the platform.
-        evidenceAssetIds:
-          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeRemedyRequest:
       type: object
       additionalProperties: false
@@ -16856,7 +16762,7 @@ components:
           description: Admin response only.
         status:
           type: string
-          enum: [negotiating, open, waiting_info, resolved, closed]
+          enum: [open, waiting_info, resolved, closed, withdrawn, self_resolved]
         issueCode:
           type: string
           enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
@@ -16916,6 +16822,25 @@ components:
           type: string
           format: uuid
         escalatedAt:
+          type: [string, "null"]
+          format: date-time
+        nextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        factSnapshotJson:
+          type: string
+          description: Admin-only immutable credential-free order fact snapshot.
+        applicantStatement:
+          type: string
+        respondentResponse:
+          type: string
+        respondedByUserId:
+          type: string
+          format: uuid
+        respondedAt:
           type: [string, "null"]
           format: date-time
         canAppeal:
@@ -17962,7 +17887,7 @@ components:
           description: Present on authorized detail and mutation responses for message attribution.
         status:
           type: string
-          enum: [negotiating, open, waiting_info, resolved, closed]
+          enum: [open, waiting_info, resolved, closed, withdrawn, self_resolved]
         issueCode:
           type: string
           enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
@@ -18011,6 +17936,22 @@ components:
           type: string
           format: uuid
         escalatedAt:
+          type: [string, "null"]
+          format: date-time
+        nextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        applicantStatement:
+          type: string
+        respondentResponse:
+          type: string
+        respondedByUserId:
+          type: string
+          format: uuid
+        respondedAt:
           type: [string, "null"]
           format: date-time
         createdAt:

@@ -52,49 +52,54 @@ describe('API order dispute projection', () => {
 
   test('maps every dispute-case status and uses the case helper in the participant panel', () => {
     expect(([
-      'negotiating',
       'open',
       'waiting_info',
       'resolved',
       'closed',
+      'withdrawn',
+      'self_resolved',
     ] as const).map(getDisputeCaseStatusLabel)).toEqual([
-      '协商中',
       '处理中',
       '需要补充信息',
       '已处理',
       '已关闭',
+      '已撤回',
+      '线下已解决',
     ])
     expect(disputePanelSource).toContain('getDisputeCaseStatusLabel(dispute.status)')
   })
 
-  test('requires bilateral settlement and ends negotiation before platform intervention', () => {
+  test('opens platform handling directly and exposes only formal participant actions', () => {
     expect(orderDetailSource).toContain('v-model="disputeIssueCode"')
     expect(orderDetailSource).toContain('v-model="disputeRequestedResolution"')
     expect(orderDetailSource).toContain('evidenceAssetIds: disputeEvidence.value.map(item => item.id)')
-    expect(orderDetailSource).toContain('提交后进入双方协商；任一方可在无法达成一致时申请平台审核。')
+    expect(orderDetailSource).toContain('提交后直接进入平台处理。被申请方可提交一次正式答复')
 
-    expect(disputePanelSource).toContain('pendingFromMe')
-    expect(disputePanelSource).toContain('等待对方确认或拒绝。')
-    expect(disputePanelSource).toContain('确认方案并结案')
-    expect(disputePanelSource).toContain('确认方案并等待履行')
-    expect(disputePanelSource).toContain('fulfillmentRequired')
-    expect(disputePanelSource).toContain('proposalResponsibleUserId')
-    expect(disputePanelSource).toContain('拒绝方案')
-    expect(disputePanelSource).toContain('结束协商并申请平台介入')
-    expect(disputePanelSource).toContain("const canNegotiate = computed(() => dispute.value?.status === 'negotiating')")
-    expect(disputePanelSource).toContain("const canMessage = computed(() => dispute.value?.status === 'negotiating')")
-    expect(disputePanelSource).toContain('双方协商已结束，平台处理中')
+    expect(disputePanelSource).toContain("const canRespond = computed(() => dispute.value?.active")
+    expect(disputePanelSource).toContain("dispute.value.status === 'open'")
+    expect(disputePanelSource).toContain('正式答复只能提交一次，提交后不可修改。')
+    expect(disputePanelSource).toContain('responseEvidence')
+    expect(disputePanelSource).toContain('const canApplicantFinish = computed')
+    expect(disputePanelSource).toContain('撤回申请')
+    expect(disputePanelSource).toContain('确认线下解决')
+    expect(disputePanelSource).toContain('平台定向补件')
+    expect(disputePanelSource).toContain('不会开启双方站内协商')
+    expect(disputePanelSource).not.toContain('pendingFromMe')
+    expect(disputePanelSource).not.toContain('结束协商并申请平台介入')
+    expect(disputePanelSource).not.toContain('const canMessage')
     expect(disputePanelSource).not.toMatch(/诉求不成立|关闭纠纷|单方面关闭/)
   })
 
-  test('uses a standalone dispute page and backend viewer identity for message ownership', () => {
+  test('uses a standalone dispute page and keeps legacy negotiation records read-only', () => {
     expect(routerSource).toContain("path: '/my/disputes/:id'")
     expect(disputePageSource).toContain('<ApiOrderDisputePanel :dispute-id="disputeId" />')
     expect(orderDetailSource).toContain('进入纠纷处理')
     expect(orderDetailSource).toContain('`/my/disputes/${disputePanelId}`')
     expect(orderDetailSource).not.toContain('<ApiOrderDisputePanel')
-    expect(disputePanelSource).toContain("const viewerUserId = computed(() => dispute.value?.viewerUserId ?? '')")
-    expect(disputePanelSource).toContain("return senderUserId === viewerUserId.value ? '我' : '对方'")
+    expect(disputePanelSource).toContain('旧流程历史记录')
+    expect(disputePanelSource).toContain('仅供查看，不能继续留言或处理方案')
+    expect(disputePanelSource).toContain('historicalMessages')
+    expect(disputePanelSource).toContain('historicalProposals')
   })
 
   test('renders every remedy state and keeps claim separate from closure', () => {
@@ -114,10 +119,10 @@ describe('API order dispute projection', () => {
       '平台已豁免迟到',
     ])
     expect(disputePanelSource).toContain('声明已履行')
-    expect(disputePanelSource).toContain('等待对方确认。')
-    expect(disputePanelSource).toContain('确认已收到或已完成')
-    expect(disputePanelSource).toContain('未收到或未完成')
-    expect(disputePanelSource).toContain('平台未核验退款到账或履约事实')
+    expect(disputePanelSource).toContain('canConfirmRemedy')
+    expect(disputePanelSource).toContain('确认完成')
+    expect(disputePanelSource).toContain('申请复核')
+    expect(disputePanelSource).toContain('remedyContestEvidence')
     expect(disputePanelSource).not.toMatch(/声明已履行并结案|平台已确认退款到账|自动确认退款成功/)
   })
 

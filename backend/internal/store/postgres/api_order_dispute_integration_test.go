@@ -64,8 +64,8 @@ func TestPostgresOpenAPIOrderDisputePersistsTypedOrderReference(t *testing.T) {
 	if item.APIOrderID != fixture.OrderID || item.TargetID != fixture.OrderID || !item.Active {
 		t.Fatalf("unexpected API order dispute reference: %+v", item)
 	}
-	if item.Status != report.DisputeStatusNegotiating {
-		t.Fatalf("unexpected API order dispute status: %q", item.Status)
+	if item.Status != report.DisputeStatusOpen || item.NextActor != report.DisputeNextActorRespondent || item.DueAt == nil || item.ApplicantStatement != "服务有效期内无法使用。" || item.FactSnapshotJSON == "" {
+		t.Fatalf("unexpected direct platform-handling dispute: %+v", item)
 	}
 	var messageCount int
 	if err := tx.QueryRow(ctx, `
@@ -75,12 +75,12 @@ func TestPostgresOpenAPIOrderDisputePersistsTypedOrderReference(t *testing.T) {
 	`, item.ID).Scan(&messageCount); err != nil {
 		t.Fatalf("count opening dispute messages: %v", err)
 	}
-	if messageCount != 1 {
-		t.Fatalf("expected one opening dispute message, got %d", messageCount)
+	if messageCount != 0 {
+		t.Fatalf("direct platform handling must not create an opening chat message, got %d", messageCount)
 	}
 }
 
-func TestPostgresDisputeEscalationAndRemedyEvidenceBindingsAreAtomic(t *testing.T) {
+func TestPostgresFormalResponseAndRemedyEvidenceBindingsAreAtomic(t *testing.T) {
 	store := connectLifecycleTestStore(t)
 	ctx := context.Background()
 	now := time.Date(2026, 8, 15, 13, 0, 0, 0, time.UTC)
@@ -121,23 +121,13 @@ func TestPostgresDisputeEscalationAndRemedyEvidenceBindingsAreAtomic(t *testing.
 	}
 	if _, err := setupTx.Exec(ctx, `
 		UPDATE api_orders
-		SET dispute_case_id = $2, latest_dispute_case_id = $2, dispute_status = 'negotiating', version = version + 1
+		SET dispute_case_id = $2, latest_dispute_case_id = $2, dispute_status = 'open', version = version + 1
 		WHERE id = $1
 	`, fixture.OrderID, dispute.ID); err != nil {
 		_ = setupTx.Rollback(ctx)
 		t.Fatal(err)
 	}
-	proposalID := uuid.NewString()
-	if _, err := setupTx.Exec(ctx, `
-		INSERT INTO api_order_dispute_settlement_proposals (
-			id, dispute_case_id, proposed_by_user_id, resolution, terms,
-			fulfillment_required, status, request_id, created_at, updated_at, version
-		) VALUES ($1, $2, $3, 'other', '双方未达成一致。', false, 'pending', $4, $5, $5, 1)
-	`, proposalID, dispute.ID, buyerID, "proposal-before-platform-escalation", now); err != nil {
-		_ = setupTx.Rollback(ctx)
-		t.Fatal(err)
-	}
-	escalationAssetID := insertReadyEvidenceAsset(t, setupTx, fixture.OrderID, sellerID, now, now.Add(time.Hour))
+	formalResponseAssetID := insertReadyEvidenceAsset(t, setupTx, fixture.OrderID, sellerID, now, now.Add(time.Hour))
 	claimAssetID := insertReadyEvidenceAsset(t, setupTx, fixture.OrderID, sellerID, now, now.Add(time.Hour))
 	contestAssetID := insertReadyEvidenceAsset(t, setupTx, fixture.OrderID, buyerID, now, now.Add(time.Hour))
 	if err := setupTx.Commit(ctx); err != nil {
@@ -147,24 +137,22 @@ func TestPostgresDisputeEscalationAndRemedyEvidenceBindingsAreAtomic(t *testing.
 		cleanupDisputeParticipantEvidenceFixture(t, store, fixture.OrderID, dispute.ID, sellerID, buyerID)
 	})
 
-	escalated, _, appErr := store.UpdateDisputeParticipantWithIdempotency(ctx,
-		beginDisputeParticipantIdempotency(t, store, sellerID, "escalate", now),
+	responded, _, appErr := store.UpdateDisputeParticipantWithIdempotency(ctx,
+		beginDisputeParticipantIdempotency(t, store, sellerID, "response", now),
 		report.DisputeParticipantActionInput{
-			DisputeID: dispute.ID, ActorUserID: sellerID, Action: report.DisputeMessageActionEscalate,
-			NegotiationChannels:       []string{report.NegotiationChannelWeChat, report.NegotiationChannelEmail},
-			NegotiationEndedConfirmed: true, NegotiationSummary: "双方对退款责任无法达成一致。",
-			RequestedPlatformAction: "请平台判断退款责任。", RequestID: "postgres-dispute-escalate",
-			EvidenceAssetIDs: []string{escalationAssetID},
+			DisputeID: dispute.ID, ActorUserID: sellerID, Action: report.DisputeActionRespond,
+			Body: "已核对订单事实，请平台审核。", RequestID: "postgres-dispute-response",
+			EvidenceAssetIDs: []string{formalResponseAssetID},
 		}, now, disputeParticipantIntegrationCompletion)
 	if appErr != nil {
-		t.Fatalf("escalate dispute: %v", appErr)
+		t.Fatalf("respond to dispute: %v", appErr)
 	}
-	if escalated.Status != report.DisputeStatusOpen || !escalated.NegotiationEndedConfirmed ||
-		escalated.EscalatedByUserID != sellerID || escalated.EscalatedAt == nil ||
-		len(escalated.NegotiationChannels) != 2 || escalated.SettlementProposals[0].SupersededReason != "platform_escalation" {
-		t.Fatalf("unexpected persisted escalation: %+v", escalated)
+	if responded.Status != report.DisputeStatusOpen || responded.RespondentResponse != "已核对订单事实，请平台审核。" ||
+		responded.RespondedByUserID != sellerID || responded.RespondedAt == nil ||
+		responded.NextActor != report.DisputeNextActorAdmin || responded.DueAt != nil {
+		t.Fatalf("unexpected persisted formal response: %+v", responded)
 	}
-	assertDisputeEvidenceBinding(t, store, escalationAssetID, dispute.ID, evidence.UsagePlatformEscalation, evidence.SourceDisputeCase, dispute.ID)
+	assertDisputeEvidenceBinding(t, store, formalResponseAssetID, dispute.ID, evidence.UsageFormalResponse, evidence.SourceDisputeCase, dispute.ID)
 
 	remedyID := uuid.NewString()
 	remedySetupAt := now.Add(time.Minute)

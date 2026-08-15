@@ -650,6 +650,9 @@ export type ApiOrder = {
   disputeCaseId?: string
   latestDisputeCaseId?: string
   hasDisputeHistory: boolean
+  disputeNextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none'
+  disputeDueAt?: string
+  disputeNeedsAction?: boolean
   activeRemedyAction?: ApiOrderDisputeResolution
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitle: string
@@ -736,6 +739,9 @@ export type AdminApiOrderDetail = {
   disputeCaseId?: string
   latestDisputeCaseId?: string
   hasDisputeHistory: boolean
+  disputeNextActor?: ApiOrder['disputeNextActor']
+  disputeDueAt?: string
+  disputeNeedsAction?: boolean
   activeRemedyAction?: ApiOrderDisputeResolution
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string

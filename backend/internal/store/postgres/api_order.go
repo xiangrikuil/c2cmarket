@@ -1359,6 +1359,25 @@ const apiOrderColumns = `
 	id::text, purchase_kind, api_purchase_intent_id::text, api_service_id::text,
 	buyer_user_id::text, seller_user_id::text, status, dispute_status,
 	COALESCE(dispute_case_id::text, ''), COALESCE(latest_dispute_case_id::text, ''),
+	COALESCE((SELECT next_actor FROM dispute_cases WHERE id = dispute_case_id), 'none'),
+	COALESCE((
+		SELECT CASE dispute.next_actor
+			WHEN 'applicant' THEN dispute.primary_user_id
+			WHEN 'respondent' THEN dispute.counterparty_user_id
+			WHEN 'responsible_party' THEN (
+				SELECT remedy.responsible_user_id FROM api_order_dispute_remedies remedy
+				WHERE remedy.dispute_case_id = dispute.id AND remedy.status IN ('pending', 'claimed_fulfilled')
+				ORDER BY remedy.created_at DESC LIMIT 1
+			)
+			WHEN 'counterparty' THEN (
+				SELECT remedy.beneficiary_user_id FROM api_order_dispute_remedies remedy
+				WHERE remedy.dispute_case_id = dispute.id AND remedy.status IN ('pending', 'claimed_fulfilled')
+				ORDER BY remedy.created_at DESC LIMIT 1
+			)
+		END::text
+		FROM dispute_cases dispute WHERE dispute.id = dispute_case_id
+	), ''),
+	(SELECT due_at FROM dispute_cases WHERE id = dispute_case_id),
 	COALESCE(active_remedy_action, ''), service_title_snapshot,
 	service_version_snapshot, billing_mode_snapshot, COALESCE(selected_package_id::text, ''),
 	COALESCE(selected_package_snapshot::text, ''), COALESCE(quote_version_snapshot, 0),
@@ -1662,6 +1681,9 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.DisputeStatus,
 		&order.DisputeCaseID,
 		&order.LatestDisputeCaseID,
+		&order.DisputeNextActor,
+		&order.DisputeNextUserID,
+		&order.DisputeDueAt,
 		&order.ActiveRemedyAction,
 		&order.ServiceTitleSnapshot,
 		&order.ServiceVersionSnapshot,
@@ -2142,28 +2164,39 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 	if input.ActorUserID == order.SellerUserID {
 		counterpartyID = order.BuyerUserID
 	}
+	responseDueAt := now.Add(report.DisputeResponseWindow)
+	factSnapshot, err := json.Marshal(map[string]any{
+		"orderId":             order.ID,
+		"orderNo":             order.OrderNo,
+		"status":              order.Status,
+		"serviceTitle":        order.ServiceTitleSnapshot,
+		"billingMode":         order.BillingModeSnapshot,
+		"selectedPackage":     order.SelectedPackageSnapshot,
+		"amount":              order.Amount,
+		"currency":            order.Currency,
+		"paymentSubmittedAt":  order.PaymentSubmittedAt,
+		"paidConfirmedAt":     order.PaidConfirmedAt,
+		"deliverySubmittedAt": order.DeliverySubmittedAt,
+		"createdAt":           order.CreatedAt,
+	})
+	if err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
 	item, err := scanDispute(ctx, tx, `
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, api_order_id, active, target_label, primary_user_id, counterparty_user_id,
 			subject_user_id,
 			status, issue_code, requested_resolution, requested_amount_cny, issue_occurred_at,
 			public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
+			next_actor, due_at, fact_snapshot, applicant_statement,
 			created_at, updated_at, version
 		)
-		VALUES (NULL, $1, $2::text, $2::text::uuid, true, $3, $4, $5, $5, 'negotiating', $6, $7, $8, $9, $10, $11, $12, $13, $4, $14, $14, $14, 1)
+		VALUES (NULL, $1, $2::text, $2::text::uuid, true, $3, $4, $5, $5, 'open', $6, $7, $8, $9, $10, $11, $12, $13, $4, $14, 'respondent', $15, $16::jsonb, $17, $14, $14, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, report.TargetAPIOrder, order.ID, strings.TrimSpace(order.ServiceTitleSnapshot), input.ActorUserID, counterpartyID,
 		strings.TrimSpace(input.IssueCode), strings.TrimSpace(input.RequestedResolution), nullNumeric(input.RequestedAmountCNY), issueOccurredAt,
-		"API 订单纠纷", report.PublicResultNoAction, "双方协商中", "", now)
+		"API 订单纠纷", report.PublicResultNoAction, "等待被申请方正式答复", "", now, responseDueAt, string(factSnapshot), strings.TrimSpace(input.Reason))
 	if err != nil {
-		return report.DisputeCase{}, internalStoreError()
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO api_order_dispute_messages (
-			id, dispute_case_id, sender_user_id, body, request_id, created_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, uuid.NewString(), item.ID, input.ActorUserID, strings.TrimSpace(input.Reason), strings.TrimSpace(input.RequestID), now); err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}
 	return item, nil
@@ -2317,7 +2350,7 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.CommercialOutcome = apiorder.CommercialOutcomeNormalFulfillment
 		order.CommercialOutcomeUpdatedAt = &now
 	case "open_dispute":
-		order.DisputeStatus = apiorder.DisputeStatusNegotiating
+		order.DisputeStatus = apiorder.DisputeStatusOpen
 	case "report_late_payment":
 		order.LatePaymentStatus = apiorder.LatePaymentStatusReported
 		order.LatePaymentReportedAt = &now

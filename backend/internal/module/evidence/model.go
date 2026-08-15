@@ -29,6 +29,7 @@ const (
 
 	UsageDisputeInitial     = "dispute_initial"
 	UsagePlatformEscalation = "platform_escalation"
+	UsageFormalResponse     = "formal_response"
 	UsageMessage            = "message"
 	UsageInfoSupplement     = "info_supplement"
 	UsageRemedyClaim        = "remedy_claim"

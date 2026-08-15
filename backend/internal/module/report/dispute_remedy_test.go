@@ -24,14 +24,10 @@ func TestDisputeRemedyRequiresResponsibleClaimAndBeneficiaryConfirmation(t *test
 	seller := auth.User{ID: "seller-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
 
-	escalated := runNegotiationAction(t, service, buyer, "remedy-escalate", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
-		NegotiationChannels: []string{NegotiationChannelEmail}, NegotiationEndedConfirmed: true,
-		NegotiationSummary: "双方无法就继续履行达成一致。", RequestedPlatformAction: "请平台裁决继续履行事项。",
-	})
+	opened := disputeForTest(t, service, buyer, disputeID)
 	projection.statuses = nil
 	resolved := runRemedyAdminAction(t, service, admin, "remedy-resolve", AdminActionInput{
-		ID: disputeID, Action: "resolve", ExpectedVersion: escalated.Version,
+		ID: disputeID, Action: "resolve", ExpectedVersion: opened.Version,
 		Reason: "平台认定卖家需要继续履行。", PublicResultCode: PublicResultAPIDeliveryIssue,
 		PublicResult: "卖家应按裁决继续履行",
 		Remedy: &DisputeRemedyInput{
@@ -161,14 +157,10 @@ func TestActiveDisputeRemedyLatenessDecisionPreservesFulfillmentProgress(t *test
 	disputeID := registerNegotiationDispute(t, service, now)
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
-	escalated := runNegotiationAction(t, service, buyer, "overdue-escalate", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
-		NegotiationChannels: []string{NegotiationChannelInSite}, NegotiationEndedConfirmed: true,
-		NegotiationSummary: "双方无法就整改期限达成一致。", RequestedPlatformAction: "请平台确认整改期限。",
-	})
+	opened := disputeForTest(t, service, buyer, disputeID)
 	dueAt := now.Add(2 * time.Hour)
 	resolved := runRemedyAdminAction(t, service, admin, "overdue-resolve", AdminActionInput{
-		ID: disputeID, Action: "resolve", ExpectedVersion: escalated.Version,
+		ID: disputeID, Action: "resolve", ExpectedVersion: opened.Version,
 		Reason: "平台裁决卖家退款。", PublicResultCode: PublicResultAPIDeliveryIssue,
 		PublicResult: "卖家应按裁决退款",
 		Remedy: &DisputeRemedyInput{
@@ -212,14 +204,10 @@ func TestActiveDisputeRemedyLatenessExcusePreservesPendingProgress(t *testing.T)
 	disputeID := registerNegotiationDispute(t, service, now)
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
-	escalated := runNegotiationAction(t, service, buyer, "excuse-escalate", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
-		NegotiationChannels: []string{NegotiationChannelLinuxDO}, NegotiationEndedConfirmed: true,
-		NegotiationSummary: "双方无法就整改期限达成一致。", RequestedPlatformAction: "请平台确认整改期限。",
-	})
+	opened := disputeForTest(t, service, buyer, disputeID)
 	dueAt := now.Add(time.Hour)
 	resolved := runRemedyAdminAction(t, service, admin, "excuse-resolve", AdminActionInput{
-		ID: disputeID, Action: "resolve", ExpectedVersion: escalated.Version,
+		ID: disputeID, Action: "resolve", ExpectedVersion: opened.Version,
 		Reason: "平台裁决卖家退款。", PublicResultCode: PublicResultAPIDeliveryIssue,
 		PublicResult: "卖家应按裁决退款",
 		Remedy: &DisputeRemedyInput{
@@ -246,13 +234,9 @@ func setupClaimedRemedy(t *testing.T, now *time.Time) (*Service, *negotiationPro
 	buyer := auth.User{ID: "buyer-1", Status: auth.AccountStatusActive}
 	seller := auth.User{ID: "seller-1", Status: auth.AccountStatusActive}
 	admin := auth.User{ID: "admin-1", IsAdmin: true, Status: auth.AccountStatusActive}
-	escalated := runNegotiationAction(t, service, buyer, "setup-remedy-escalate", DisputeParticipantActionInput{
-		DisputeID: disputeID, Action: DisputeMessageActionEscalate,
-		NegotiationChannels: []string{NegotiationChannelWeChat, NegotiationChannelEmail}, NegotiationEndedConfirmed: true,
-		NegotiationSummary: "双方无法自行解决履行争议。", RequestedPlatformAction: "请平台裁决。",
-	})
+	opened := disputeForTest(t, service, buyer, disputeID)
 	runRemedyAdminAction(t, service, admin, "setup-remedy-resolve", AdminActionInput{
-		ID: disputeID, Action: "resolve", ExpectedVersion: escalated.Version,
+		ID: disputeID, Action: "resolve", ExpectedVersion: opened.Version,
 		Reason: "平台认定卖家需要继续履行。", PublicResultCode: PublicResultAPIDeliveryIssue,
 		PublicResult: "卖家应按裁决继续履行",
 		Remedy: &DisputeRemedyInput{
@@ -264,6 +248,15 @@ func setupClaimedRemedy(t *testing.T, now *time.Time) (*Service, *negotiationPro
 		DisputeID: disputeID, Action: DisputeRemedyActionClaim, Note: "已继续履行，请买家确认。",
 	})
 	return service, projection, disputeID, buyer, seller, admin
+}
+
+func disputeForTest(t *testing.T, service *Service, user auth.User, disputeID string) DisputeCase {
+	t.Helper()
+	item, appErr := service.MyDispute(context.Background(), user, disputeID)
+	if appErr != nil {
+		t.Fatalf("read dispute: %+v", appErr)
+	}
+	return item
 }
 
 func runRemedyAdminAction(t *testing.T, service *Service, user auth.User, key string, input AdminActionInput) DisputeCase {

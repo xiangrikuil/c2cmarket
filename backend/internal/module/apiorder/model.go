@@ -153,6 +153,15 @@ func DisputeResolutionRequiresFulfillment(value string) bool {
 	}
 }
 
+type DisputeProjection struct {
+	CaseID             string
+	Status             string
+	NextActor          string
+	NextUserID         string
+	DueAt              *time.Time
+	ActiveRemedyAction string
+}
+
 type Order struct {
 	ID                            string
 	OrderNo                       string
@@ -166,6 +175,9 @@ type Order struct {
 	DisputeCaseID                 string
 	LatestDisputeCaseID           string
 	HasDisputeHistory             bool
+	DisputeNextActor              string
+	DisputeNextUserID             string
+	DisputeDueAt                  *time.Time
 	ActiveRemedyAction            string
 	ServiceTitleSnapshot          string
 	ServiceVersionSnapshot        int64
