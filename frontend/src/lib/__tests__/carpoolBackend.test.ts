@@ -116,6 +116,13 @@ afterEach(() => {
   vi.resetModules()
 })
 
+test('risk acknowledgement participates in the visible publish checklist', () => {
+  assert.match(publishSource, /key: 'riskAcknowledgement' as const,[\s\S]*?complete: taskComplete\('riskAcknowledgement'\)/)
+  assert.match(publishSource, /riskAcknowledgement: 'carpool-task-riskAcknowledgement'/)
+  assert.match(publishSource, /id="carpool-task-riskAcknowledgement"/)
+  assert.match(publishSource, /key === 'accessArrangement'[\s\S]*?\? 'riskAcknowledgement'/)
+})
+
 test('real carpool adapter leaves unavailable owner reputation facts null', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
     id: '22222222-2222-4222-8222-222222222222',

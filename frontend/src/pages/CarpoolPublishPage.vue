@@ -303,6 +303,7 @@ const publishTaskFieldIds: Record<PublishTaskKey, string> = {
   openingChannel: 'carpool-task-openingChannel',
   paymentMethods: 'carpool-task-paymentMethods',
   distribution: 'carpool-task-distribution',
+  riskAcknowledgement: 'carpool-task-riskAcknowledgement',
   rulesNote: 'carpool-task-rulesNote',
 }
 
@@ -318,6 +319,7 @@ function fieldErrorForTask(key: PublishTaskKey) {
   if (key === 'openingChannel') return errors.openingChannelCode ?? ''
   if (key === 'paymentMethods') return errors.paymentMethodCode ?? ''
   if (key === 'distribution') return errors.distribution ?? ''
+  if (key === 'riskAcknowledgement') return errors.accessArrangement ?? ''
   if (key === 'rulesNote') return errors.rulesNote ?? ''
   return ''
 }
@@ -333,6 +335,7 @@ function taskComplete(key: PublishTaskKey) {
   if (key === 'openingChannel') return Boolean(form.openingChannelCode && (form.openingChannelCode !== 'other' || form.customOpeningChannel.trim()))
   if (key === 'paymentMethods') return Boolean(form.paymentMethodCode && (form.paymentMethodCode !== 'other' || form.customPaymentMethod.trim()))
   if (key === 'distribution') return distributionFieldsComplete(form)
+  if (key === 'riskAcknowledgement') return form.riskAcknowledged
   if (key === 'rulesNote') return Boolean(form.rulesNote.trim())
   return false
 }
@@ -438,6 +441,16 @@ const publishTasks = computed<PublishTask[]>(() => [
     complete: taskComplete('distribution'),
     error: fieldErrorForTask('distribution'),
   },
+  ...(requiresSubscriptionRiskAck(selectedProductForValidation.value, form) ? [{
+    key: 'riskAcknowledgement' as const,
+    label: '确认发布边界',
+    shortLabel: '发布边界确认',
+    section: 'basic' as const,
+    fieldId: publishTaskFieldIds.riskAcknowledgement,
+    description: '确认平台不处理或交付账号凭据',
+    complete: taskComplete('riskAcknowledgement'),
+    error: fieldErrorForTask('riskAcknowledgement'),
+  }] : []),
   {
     key: 'rulesNote',
     label: '补充买家须知',
@@ -541,7 +554,11 @@ function taskFromErrorKey(key: Field): PublishTaskKey | null {
   if (key === 'distribution') return 'distribution'
   if (key === 'rulesNote') return 'rulesNote'
   if (key === 'seats') return 'monthlyPrice'
-  if (key === 'accessArrangement') return 'product'
+  if (key === 'accessArrangement') {
+    return requiresSubscriptionRiskAck(selectedProductForValidation.value, form)
+      ? 'riskAcknowledgement'
+      : 'product'
+  }
   if (key === 'warranty') return 'rulesNote'
   if (key === 'sensitive') return 'rulesNote'
   return null
@@ -1045,6 +1062,7 @@ async function copyShareText() {
           />
           <Card
             v-if="requiresSubscriptionRiskAck(selectedProductForValidation, form)"
+            id="carpool-task-riskAcknowledgement"
             class="border-warning/25 bg-warning/10 p-4 text-warning"
             :class="errors.accessArrangement ? 'ring-2 ring-warning/50 ring-offset-2 ring-offset-background' : ''"
           >
