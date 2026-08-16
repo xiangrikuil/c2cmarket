@@ -1835,3 +1835,28 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 60: API 订单售后与纠纷合并并提交评审
+
+**Date**: 2026-08-16
+**Task**: API 订单售后与纠纷合并并提交评审
+**Package**: frontend
+**Branch**: `codex/api-order-after-sales`
+
+### Summary
+
+完成 stash 中 API 订单售后与纠纷能力的筛选合并、卖家先处理流程、管理员正式活动时间线与证据展示；完成本地全量验证，并创建以 staging 为目标的 Draft PR #39。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `966373e` | (see git log) |
+| `348c977` | (see git log) |
+| `fbcfe33` | (see git log) |
+| `56cb94c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
