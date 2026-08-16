@@ -2501,7 +2501,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		}
 	}
 	escalatedDispute := disputeParticipantAction(t, server, buyerSession, disputed.DisputeCaseID, "platform-intervention", "api-order-dispute-buyer-intervention", `{"reason":"无法接受卖家的拒绝理由，请平台审核订单与交付事实。"}`)
-	if escalatedDispute.Status != "open" || escalatedDispute.NextActor != "admin" || escalatedDispute.DueAt != nil || escalatedDispute.EscalatedByUserID != buyerSession.userID || escalatedDispute.EscalatedAt == nil {
+	if escalatedDispute.Status != "open" || escalatedDispute.NextActor != "admin" || escalatedDispute.DueAt != nil || escalatedDispute.EscalatedByUserID != buyerSession.userID || escalatedDispute.EscalatedAt == nil || escalatedDispute.PlatformInterventionReason != "无法接受卖家的拒绝理由，请平台审核订单与交付事实。" {
 		t.Fatalf("buyer intervention must move the case to administrator review: %+v", escalatedDispute)
 	}
 	respondedOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
@@ -3787,51 +3787,52 @@ type createdAPIOrderDeliveryCredential struct {
 }
 
 type createdDispute struct {
-	ID                        string                      `json:"id"`
-	ReportID                  string                      `json:"reportId"`
-	TargetType                string                      `json:"targetType"`
-	TargetID                  string                      `json:"targetId"`
-	TargetLabel               string                      `json:"targetLabel"`
-	PrimaryUserID             string                      `json:"primaryUserId"`
-	PrimaryUsername           string                      `json:"primaryUsername"`
-	PrimaryDisplayName        string                      `json:"primaryDisplayName"`
-	CounterpartyUserID        string                      `json:"counterpartyUserId"`
-	CounterpartyUsername      string                      `json:"counterpartyUsername"`
-	CounterpartyName          string                      `json:"counterpartyName"`
-	SubjectUserID             string                      `json:"subjectUserId"`
-	SubjectUsername           string                      `json:"subjectUsername"`
-	SubjectName               string                      `json:"subjectName"`
-	Status                    string                      `json:"status"`
-	NextActor                 string                      `json:"nextActor"`
-	DueAt                     *string                     `json:"dueAt"`
-	ApplicantStatement        string                      `json:"applicantStatement"`
-	RespondentResponse        string                      `json:"respondentResponse"`
-	RespondedByUserID         string                      `json:"respondedByUserId"`
-	RespondedAt               *string                     `json:"respondedAt"`
-	SellerDecision            string                      `json:"sellerDecision"`
-	SellerDecisionReason      string                      `json:"sellerDecisionReason"`
-	SellerDecidedAt           *string                     `json:"sellerDecidedAt"`
-	SellerResponseLate        bool                        `json:"sellerResponseLate"`
-	ResponseOverdue           bool                        `json:"responseOverdue"`
-	ApplicantDecisionDueAt    *string                     `json:"applicantDecisionDueAt"`
-	AvailableActions          []string                    `json:"availableActions"`
-	IssueCode                 string                      `json:"issueCode"`
-	RequestedResolution       string                      `json:"requestedResolution"`
-	RequestedAmountCNY        string                      `json:"requestedAmountCny"`
-	PublicSummary             string                      `json:"publicSummary"`
-	PublicResult              string                      `json:"publicResult"`
-	OpenedByAdminID           string                      `json:"openedByAdminId"`
-	Version                   int64                       `json:"version"`
-	CanAppeal                 bool                        `json:"canAppeal"`
-	ViewerUserID              string                      `json:"viewerUserId"`
-	NegotiationChannels       []string                    `json:"negotiationChannels"`
-	NegotiationEndedConfirmed bool                        `json:"negotiationEndedConfirmed"`
-	NegotiationSummary        string                      `json:"negotiationSummary"`
-	RequestedPlatformAction   string                      `json:"requestedPlatformAction"`
-	EscalatedByUserID         string                      `json:"escalatedByUserId"`
-	EscalatedAt               *string                     `json:"escalatedAt"`
-	Messages                  []createdDisputeMessage     `json:"messages"`
-	SettlementProposals       []createdSettlementProposal `json:"settlementProposals"`
+	ID                         string                      `json:"id"`
+	ReportID                   string                      `json:"reportId"`
+	TargetType                 string                      `json:"targetType"`
+	TargetID                   string                      `json:"targetId"`
+	TargetLabel                string                      `json:"targetLabel"`
+	PrimaryUserID              string                      `json:"primaryUserId"`
+	PrimaryUsername            string                      `json:"primaryUsername"`
+	PrimaryDisplayName         string                      `json:"primaryDisplayName"`
+	CounterpartyUserID         string                      `json:"counterpartyUserId"`
+	CounterpartyUsername       string                      `json:"counterpartyUsername"`
+	CounterpartyName           string                      `json:"counterpartyName"`
+	SubjectUserID              string                      `json:"subjectUserId"`
+	SubjectUsername            string                      `json:"subjectUsername"`
+	SubjectName                string                      `json:"subjectName"`
+	Status                     string                      `json:"status"`
+	NextActor                  string                      `json:"nextActor"`
+	DueAt                      *string                     `json:"dueAt"`
+	ApplicantStatement         string                      `json:"applicantStatement"`
+	RespondentResponse         string                      `json:"respondentResponse"`
+	RespondedByUserID          string                      `json:"respondedByUserId"`
+	RespondedAt                *string                     `json:"respondedAt"`
+	SellerDecision             string                      `json:"sellerDecision"`
+	SellerDecisionReason       string                      `json:"sellerDecisionReason"`
+	SellerDecidedAt            *string                     `json:"sellerDecidedAt"`
+	SellerResponseLate         bool                        `json:"sellerResponseLate"`
+	ResponseOverdue            bool                        `json:"responseOverdue"`
+	ApplicantDecisionDueAt     *string                     `json:"applicantDecisionDueAt"`
+	AvailableActions           []string                    `json:"availableActions"`
+	IssueCode                  string                      `json:"issueCode"`
+	RequestedResolution        string                      `json:"requestedResolution"`
+	RequestedAmountCNY         string                      `json:"requestedAmountCny"`
+	PublicSummary              string                      `json:"publicSummary"`
+	PublicResult               string                      `json:"publicResult"`
+	OpenedByAdminID            string                      `json:"openedByAdminId"`
+	Version                    int64                       `json:"version"`
+	CanAppeal                  bool                        `json:"canAppeal"`
+	ViewerUserID               string                      `json:"viewerUserId"`
+	NegotiationChannels        []string                    `json:"negotiationChannels"`
+	NegotiationEndedConfirmed  bool                        `json:"negotiationEndedConfirmed"`
+	NegotiationSummary         string                      `json:"negotiationSummary"`
+	RequestedPlatformAction    string                      `json:"requestedPlatformAction"`
+	PlatformInterventionReason string                      `json:"platformInterventionReason"`
+	EscalatedByUserID          string                      `json:"escalatedByUserId"`
+	EscalatedAt                *string                     `json:"escalatedAt"`
+	Messages                   []createdDisputeMessage     `json:"messages"`
+	SettlementProposals        []createdSettlementProposal `json:"settlementProposals"`
 }
 
 type createdDisputeMessage struct {

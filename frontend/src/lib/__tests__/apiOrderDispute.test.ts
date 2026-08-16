@@ -15,6 +15,7 @@ const disputePanelSource = readFileSync(new URL('../../components/api-order/ApiO
 const disputePageSource = readFileSync(new URL('../../pages/MyApiOrderDisputePage.vue', import.meta.url), 'utf8')
 const routerSource = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
 const adminDialogSource = readFileSync(new URL('../../components/admin/AdminDisputeResolutionDialog.vue', import.meta.url), 'utf8')
+const adminTimelineSource = readFileSync(new URL('../../components/admin/AdminDisputeActivityTimeline.vue', import.meta.url), 'utf8')
 
 describe('API order dispute projection', () => {
   test('maps every V1 projection to stable copy', () => {
@@ -115,6 +116,9 @@ describe('API order dispute projection', () => {
     expect(disputePanelSource).toContain('仅供查看，不能继续留言或处理方案')
     expect(disputePanelSource).toContain('historicalMessages')
     expect(disputePanelSource).toContain('historicalProposals')
+    expect(adminTimelineSource).toContain('旧流程历史记录')
+    expect(adminTimelineSource).toContain('platformInterventionReason')
+    expect(adminTimelineSource).toContain('其他案件图片材料')
   })
 
   test('renders every remedy state and keeps claim separate from closure', () => {

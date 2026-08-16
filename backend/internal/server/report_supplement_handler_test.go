@@ -37,7 +37,8 @@ func TestSelfSupplementProjectionExposesCapabilityWithoutInternalModerationData(
 func TestAdminDetailProjectionIncludesSubmittedSupplements(t *testing.T) {
 	now := time.Date(2026, 8, 3, 9, 30, 0, 0, time.UTC)
 	item := report.DisputeCase{
-		ID: "40000000-0000-4000-8000-000000000001",
+		ID:                         "40000000-0000-4000-8000-000000000001",
+		PlatformInterventionReason: "卖家拒绝申请，请平台核对交付事实。",
 		Supplements: []report.InfoSupplement{{
 			ID: "60000000-0000-4000-8000-000000000001", InfoRequestID: "50000000-0000-4000-8000-000000000001",
 			SubmittedByUserID: "30000000-0000-4000-8000-000000000001", SubmittedByUsername: "buyer", SubmittedByName: "Buyer",
@@ -47,6 +48,9 @@ func TestAdminDetailProjectionIncludesSubmittedSupplements(t *testing.T) {
 	response := toDisputeResponse(item, true)
 	if len(response.Supplements) != 1 {
 		t.Fatalf("admin supplement projection missing: %+v", response)
+	}
+	if response.PlatformInterventionReason != item.PlatformInterventionReason {
+		t.Fatalf("admin platform intervention reason missing: %+v", response)
 	}
 	supplement := response.Supplements[0]
 	if supplement.Body != item.Supplements[0].Body || supplement.SubmittedByUserID != item.Supplements[0].SubmittedByUserID || supplement.CreatedAt != now.Format(time.RFC3339) {

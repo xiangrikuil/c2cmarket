@@ -221,8 +221,16 @@ func TestPostgresSellerRejectionAllowsBuyerPlatformIntervention(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("request platform intervention: %v", appErr)
 	}
-	if escalated.Status != report.DisputeStatusOpen || escalated.NextActor != report.DisputeNextActorAdmin || escalated.DueAt != nil || escalated.EscalatedAt == nil {
+	if escalated.Status != report.DisputeStatusOpen || escalated.NextActor != report.DisputeNextActorAdmin || escalated.DueAt != nil || escalated.EscalatedAt == nil ||
+		escalated.PlatformInterventionReason != "不接受卖家的拒绝理由。" {
 		t.Fatalf("unexpected platform intervention: %+v", escalated)
+	}
+	adminDetail, appErr := store.GetAdminDispute(context.Background(), dispute.ID)
+	if appErr != nil {
+		t.Fatalf("read administrator dispute detail: %v", appErr)
+	}
+	if adminDetail.PlatformInterventionReason != "不接受卖家的拒绝理由。" {
+		t.Fatalf("persisted platform intervention reason missing: %+v", adminDetail)
 	}
 	var orderDisputeStatus string
 	if err := store.pool.QueryRow(context.Background(), `SELECT dispute_status FROM api_orders WHERE id = $1`, orderID).Scan(&orderDisputeStatus); err != nil {

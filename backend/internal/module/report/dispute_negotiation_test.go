@@ -77,7 +77,8 @@ func TestSellerRejectsOnceAndBuyerMayRequestPlatformIntervention(t *testing.T) {
 	escalated := runNegotiationAction(t, service, buyer, "buyer-intervention", DisputeParticipantActionInput{
 		DisputeID: disputeID, Action: DisputeActionRequestPlatformIntervention, Reason: "无法接受卖家的拒绝理由，请平台审核。",
 	})
-	if escalated.Status != DisputeStatusOpen || escalated.NextActor != DisputeNextActorAdmin || escalated.EscalatedAt == nil {
+	if escalated.Status != DisputeStatusOpen || escalated.NextActor != DisputeNextActorAdmin || escalated.EscalatedAt == nil ||
+		escalated.PlatformInterventionReason != "无法接受卖家的拒绝理由，请平台审核。" {
 		t.Fatalf("buyer intervention must enter platform review: %+v", escalated)
 	}
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const adminSectionSource = readFileSync(new URL('../../pages/AdminSectionPage.vue', import.meta.url), 'utf8')
 const disputeDialogSource = readFileSync(new URL('../../components/admin/AdminDisputeResolutionDialog.vue', import.meta.url), 'utf8')
+const disputeTimelineSource = readFileSync(new URL('../../components/admin/AdminDisputeActivityTimeline.vue', import.meta.url), 'utf8')
 const reportBackendSource = readFileSync(new URL('../reportBackend.ts', import.meta.url), 'utf8')
 
 describe('管理列表数据状态', () => {
@@ -44,6 +45,21 @@ describe('管理列表数据状态', () => {
     expect(adminSectionSource).toContain('用户补充材料')
     expect(disputeDialogSource).toContain('dispute.supplements?.length || report?.supplements?.length')
     expect(reportBackendSource).toContain('backendAdminModerationDetailRow')
+  })
+
+  it('管理员纠纷详情按正式动作展示双方文字和图片材料', () => {
+    expect(disputeDialogSource).toContain('AdminDisputeActivityTimeline')
+    expect(disputeDialogSource).not.toContain('暂无订单内留言')
+    expect(disputeTimelineSource).toContain('售后处理记录')
+    expect(disputeTimelineSource).toContain('买家提交售后申请')
+    expect(disputeTimelineSource).toContain('卖家同意申请')
+    expect(disputeTimelineSource).toContain('卖家拒绝申请')
+    expect(disputeTimelineSource).toContain('买家申请平台介入')
+    expect(disputeTimelineSource).toContain('platformInterventionReason')
+    expect(disputeTimelineSource).toContain('DisputeEvidenceGallery')
+    expect(disputeTimelineSource).toContain("evidenceFor('info_supplement', supplement.id)")
+    expect(disputeTimelineSource).toContain("evidenceFor('remedy_claim', remedy.id)")
+    expect(disputeTimelineSource).toContain('旧流程历史记录')
   })
 
   it('纠纷详情和主操作进入专用两步裁决面板', () => {

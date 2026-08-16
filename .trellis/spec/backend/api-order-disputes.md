@@ -295,6 +295,93 @@ supplement -> open, next_actor=admin, due_at=NULL
 order.status remains the payment/delivery lifecycle status
 ```
 
+## Scenario: Administrator Detail Replays Formal After-Sales Activity
+
+### 1. Scope / Trigger
+
+- Trigger: changing administrator or participant dispute detail DTOs, platform-intervention events, evidence bindings, directed supplements, remedies, or the administrator dispute timeline.
+- Administrator review must receive the complete formal after-sales record without restoring the removed participant chat workflow.
+
+### 2. Signatures
+
+```text
+GET /api/v1/admin/disputes/{id}
+GET /api/v1/me/disputes/{id}
+
+AdminDispute.platformInterventionReason?: string
+MyDisputeDetail.platformInterventionReason?: string
+
+dispute_events:
+  entity_type = dispute
+  entity_id = dispute case id
+  action = platform_intervention_requested
+  reason = immutable applicant reason
+
+evidence grouping:
+  dispute_initial     + source_id=dispute id
+  formal_response     + source_id=dispute id
+  platform_escalation + source_id=dispute id
+  info_supplement     + source_id=supplement id
+  remedy_claim        + source_id=remedy id
+  remedy_contest      + source_id=remedy id
+```
+
+### 3. Contracts
+
+- Administrator detail exposes the buyer application, seller accept/reject decision and reason, applicant platform-intervention reason, directed supplements, remedies, and their private evidence. The UI orders these formal facts by their business timestamps.
+- `platformInterventionReason` is a read projection of the latest immutable `platform_intervention_requested` event for the case. PostgreSQL reads recover it from `dispute_events`; in-memory intervention writes set the same response projection immediately. Do not add a duplicate mutable column.
+- Evidence is grouped under its formal action by both `usage` and `sourceId`. Evidence already assigned to an action renders once. Unmatched evidence remains visible under an explicit fallback section rather than being discarded.
+- Participant identity labels derive from stable user IDs and the case's buyer/seller fields. They must not depend on the current administrator viewer or array position.
+- Historical `messages` and `settlementProposals` render only in a separate read-only legacy section. No current participant message, proposal, or chat-image write control may be introduced.
+- OpenAPI is the source of generated frontend DTO types. Update both administrator and participant schemas, regenerate, and run the drift guard.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| No platform-intervention event exists | Omit or return an empty `platformInterventionReason`; detail remains readable |
+| Several intervention events exist in historical data | Project the latest by `created_at DESC, id DESC` |
+| Evidence `usage` and `sourceId` match a formal action | Render it beneath that action exactly once |
+| Evidence cannot be matched to a known action | Render it in the fallback evidence section |
+| Legacy message/proposal exists | Render read-only under legacy history; expose no mutation control |
+| Private evidence content is unavailable or quarantined | Existing authorized content endpoint returns its stable error; the detail timeline still renders |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a seller rejects with images, the buyer requests intervention with a reason and images, and the administrator sees both actions, actors, times, text, and correctly grouped media.
+- Good: the administrator requests a supplement and later creates a remedy; submission, claim, contest, confirmation, and their evidence appear in chronological context.
+- Base: a pre-event historical dispute has no intervention reason but remains fully administrable with its available formal fields and legacy history.
+- Bad: the administrator sees only the latest status and cannot inspect why the seller rejected or why the buyer escalated.
+- Bad: the frontend merges old free-form messages into the current formal timeline or restores a participant chat composer.
+- Bad: unmatched evidence is silently omitted because its source type is unfamiliar.
+
+### 6. Tests Required
+
+- Report service test asserts in-memory intervention returns the submitted immutable reason.
+- Handler/router tests assert administrator and participant DTOs include `platformInterventionReason` without changing existing dispute state or order status.
+- PostgreSQL integration writes an intervention event, reloads administrator detail, and asserts the reason is recovered from event history.
+- Frontend regression asserts the administrator detail includes application, seller decision, intervention, supplement, remedy, grouped evidence, fallback evidence, and read-only legacy sections.
+- Gates: full Go test/vet, full Vitest, Nuxt typecheck and real-mode production build, OpenAPI route/type drift checks, browser desktop/mobile smoke checks, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+admin detail = current status + generic evidence gallery
+platform intervention reason = new mutable dispute_cases column
+legacy messages = current chat timeline with reply controls
+```
+
+#### Correct
+
+```text
+immutable formal facts + typed evidence bindings -> chronological admin timeline
+latest platform_intervention_requested event -> platformInterventionReason projection
+legacy messages/proposals -> separate read-only history
+unmatched evidence -> explicit fallback gallery
+```
+
 ## Scenario: API-Order Dispute Image Evidence Is Private, Bound Once, And Retained For A Bounded Period
 
 ### 1. Scope / Trigger

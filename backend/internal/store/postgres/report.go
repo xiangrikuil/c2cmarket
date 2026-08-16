@@ -767,6 +767,7 @@ func (s *Store) applyDisputeParticipantActionInTx(ctx context.Context, tx pgx.Tx
 		); err != nil {
 			return internalStoreError()
 		}
+		item.PlatformInterventionReason = strings.TrimSpace(input.Reason)
 		order.ActiveRemedyAction = ""
 		if appErr := setLockedAPIOrderDisputeProjectionInTx(ctx, tx, order, apiorder.DisputeStatusOpen, input.ActorUserID, apiorder.EventDisputeOpened, "买家已申请平台介入", input.RequestID, now); appErr != nil {
 			return appErr
@@ -1231,6 +1232,17 @@ func loadAPIOrderDisputeNegotiation(ctx context.Context, q queryer, item *report
 		return internalStoreError()
 	}
 	item.Evidence = references
+	if err := q.QueryRow(ctx, `
+		SELECT reason
+		FROM dispute_events
+		WHERE entity_type = 'dispute'
+		  AND entity_id = $1
+		  AND action = 'platform_intervention_requested'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, item.ID).Scan(&item.PlatformInterventionReason); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return internalStoreError()
+	}
 	return nil
 }
 

@@ -3787,6 +3787,10 @@ export type DisputeCase = {
     negotiationEndedConfirmed?: boolean;
     negotiationSummary?: string;
     requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
     escalatedByUserId?: string;
     escalatedAt?: string | null;
     nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
@@ -4343,6 +4347,10 @@ export type SelfDispute = {
     negotiationEndedConfirmed: boolean;
     negotiationSummary?: string;
     requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
     escalatedByUserId?: string;
     escalatedAt?: string | null;
     nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
@@ -5009,6 +5017,10 @@ export type DisputeCaseWritable = {
     negotiationEndedConfirmed?: boolean;
     negotiationSummary?: string;
     requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
     escalatedByUserId?: string;
     escalatedAt?: string | null;
     nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
@@ -5126,6 +5138,10 @@ export type SelfDisputeWritable = {
     negotiationEndedConfirmed: boolean;
     negotiationSummary?: string;
     requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
     escalatedByUserId?: string;
     escalatedAt?: string | null;
     nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';

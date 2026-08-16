@@ -118,71 +118,72 @@ type reportResponse struct {
 }
 
 type disputeResponse struct {
-	ViewerUserID              string                       `json:"viewerUserId,omitempty"`
-	ID                        string                       `json:"id"`
-	APIOrderID                string                       `json:"apiOrderId,omitempty"`
-	Active                    bool                         `json:"active"`
-	ReportID                  string                       `json:"reportId,omitempty"`
-	TargetType                string                       `json:"targetType"`
-	TargetID                  string                       `json:"targetId"`
-	TargetLabel               string                       `json:"targetLabel"`
-	PrimaryUserID             string                       `json:"primaryUserId,omitempty"`
-	PrimaryUsername           string                       `json:"primaryUsername"`
-	PrimaryDisplayName        string                       `json:"primaryDisplayName"`
-	CounterpartyUserID        string                       `json:"counterpartyUserId,omitempty"`
-	CounterpartyUsername      string                       `json:"counterpartyUsername"`
-	CounterpartyName          string                       `json:"counterpartyName"`
-	SubjectUserID             string                       `json:"subjectUserId,omitempty"`
-	SubjectUsername           string                       `json:"subjectUsername,omitempty"`
-	SubjectName               string                       `json:"subjectName,omitempty"`
-	Status                    string                       `json:"status"`
-	IssueCode                 string                       `json:"issueCode,omitempty"`
-	RequestedResolution       string                       `json:"requestedResolution,omitempty"`
-	RequestedAmountCNY        string                       `json:"requestedAmountCny,omitempty"`
-	IssueOccurredAt           *string                      `json:"issueOccurredAt,omitempty"`
-	PublicSummary             string                       `json:"publicSummary"`
-	PublicResultCode          string                       `json:"publicResultCode"`
-	PublicResult              string                       `json:"publicResult"`
-	AdminReason               string                       `json:"adminReason,omitempty"`
-	OpenedByAdminID           string                       `json:"openedByAdminId,omitempty"`
-	OpenedAt                  string                       `json:"openedAt"`
-	ResolvedAt                *string                      `json:"resolvedAt,omitempty"`
-	ClosedAt                  *string                      `json:"closedAt,omitempty"`
-	FinalReason               string                       `json:"finalReason,omitempty"`
-	AppealExpiresAt           *string                      `json:"appealExpiresAt,omitempty"`
-	AdverselyAffectedIDs      []string                     `json:"adverselyAffectedUserIds,omitempty"`
-	NegotiationChannels       []string                     `json:"negotiationChannels,omitempty"`
-	NegotiationEndedConfirmed bool                         `json:"negotiationEndedConfirmed"`
-	NegotiationSummary        string                       `json:"negotiationSummary,omitempty"`
-	RequestedPlatformAction   string                       `json:"requestedPlatformAction,omitempty"`
-	EscalatedByUserID         string                       `json:"escalatedByUserId,omitempty"`
-	EscalatedAt               *string                      `json:"escalatedAt,omitempty"`
-	NextActor                 string                       `json:"nextActor"`
-	DueAt                     *string                      `json:"dueAt,omitempty"`
-	FactSnapshotJSON          string                       `json:"factSnapshotJson,omitempty"`
-	ApplicantStatement        string                       `json:"applicantStatement,omitempty"`
-	RespondentResponse        string                       `json:"respondentResponse,omitempty"`
-	RespondedByUserID         string                       `json:"respondedByUserId,omitempty"`
-	RespondedAt               *string                      `json:"respondedAt,omitempty"`
-	SellerDecision            string                       `json:"sellerDecision,omitempty"`
-	SellerDecisionReason      string                       `json:"sellerDecisionReason,omitempty"`
-	SellerDecidedByUserID     string                       `json:"sellerDecidedByUserId,omitempty"`
-	SellerDecidedAt           *string                      `json:"sellerDecidedAt,omitempty"`
-	SellerResponseLate        bool                         `json:"sellerResponseLate"`
-	ResponseOverdue           bool                         `json:"responseOverdue"`
-	ApplicantDecisionDueAt    *string                      `json:"applicantDecisionDueAt,omitempty"`
-	AvailableActions          []string                     `json:"availableActions"`
-	CreatedAt                 string                       `json:"createdAt"`
-	UpdatedAt                 string                       `json:"updatedAt"`
-	Version                   int64                        `json:"version"`
-	CanAppeal                 *bool                        `json:"canAppeal,omitempty"`
-	CanSupplement             *bool                        `json:"canSupplement,omitempty"`
-	OpenInfoRequestID         string                       `json:"openInfoRequestId,omitempty"`
-	Supplements               []infoSupplementResponse     `json:"supplements,omitempty"`
-	Messages                  []disputeMessageResponse     `json:"messages,omitempty"`
-	SettlementProposals       []settlementProposalResponse `json:"settlementProposals,omitempty"`
-	Remedies                  []disputeRemedyResponse      `json:"remedies,omitempty"`
-	Evidence                  []evidenceReferenceResponse  `json:"evidence,omitempty"`
+	ViewerUserID               string                       `json:"viewerUserId,omitempty"`
+	ID                         string                       `json:"id"`
+	APIOrderID                 string                       `json:"apiOrderId,omitempty"`
+	Active                     bool                         `json:"active"`
+	ReportID                   string                       `json:"reportId,omitempty"`
+	TargetType                 string                       `json:"targetType"`
+	TargetID                   string                       `json:"targetId"`
+	TargetLabel                string                       `json:"targetLabel"`
+	PrimaryUserID              string                       `json:"primaryUserId,omitempty"`
+	PrimaryUsername            string                       `json:"primaryUsername"`
+	PrimaryDisplayName         string                       `json:"primaryDisplayName"`
+	CounterpartyUserID         string                       `json:"counterpartyUserId,omitempty"`
+	CounterpartyUsername       string                       `json:"counterpartyUsername"`
+	CounterpartyName           string                       `json:"counterpartyName"`
+	SubjectUserID              string                       `json:"subjectUserId,omitempty"`
+	SubjectUsername            string                       `json:"subjectUsername,omitempty"`
+	SubjectName                string                       `json:"subjectName,omitempty"`
+	Status                     string                       `json:"status"`
+	IssueCode                  string                       `json:"issueCode,omitempty"`
+	RequestedResolution        string                       `json:"requestedResolution,omitempty"`
+	RequestedAmountCNY         string                       `json:"requestedAmountCny,omitempty"`
+	IssueOccurredAt            *string                      `json:"issueOccurredAt,omitempty"`
+	PublicSummary              string                       `json:"publicSummary"`
+	PublicResultCode           string                       `json:"publicResultCode"`
+	PublicResult               string                       `json:"publicResult"`
+	AdminReason                string                       `json:"adminReason,omitempty"`
+	OpenedByAdminID            string                       `json:"openedByAdminId,omitempty"`
+	OpenedAt                   string                       `json:"openedAt"`
+	ResolvedAt                 *string                      `json:"resolvedAt,omitempty"`
+	ClosedAt                   *string                      `json:"closedAt,omitempty"`
+	FinalReason                string                       `json:"finalReason,omitempty"`
+	AppealExpiresAt            *string                      `json:"appealExpiresAt,omitempty"`
+	AdverselyAffectedIDs       []string                     `json:"adverselyAffectedUserIds,omitempty"`
+	NegotiationChannels        []string                     `json:"negotiationChannels,omitempty"`
+	NegotiationEndedConfirmed  bool                         `json:"negotiationEndedConfirmed"`
+	NegotiationSummary         string                       `json:"negotiationSummary,omitempty"`
+	RequestedPlatformAction    string                       `json:"requestedPlatformAction,omitempty"`
+	PlatformInterventionReason string                       `json:"platformInterventionReason,omitempty"`
+	EscalatedByUserID          string                       `json:"escalatedByUserId,omitempty"`
+	EscalatedAt                *string                      `json:"escalatedAt,omitempty"`
+	NextActor                  string                       `json:"nextActor"`
+	DueAt                      *string                      `json:"dueAt,omitempty"`
+	FactSnapshotJSON           string                       `json:"factSnapshotJson,omitempty"`
+	ApplicantStatement         string                       `json:"applicantStatement,omitempty"`
+	RespondentResponse         string                       `json:"respondentResponse,omitempty"`
+	RespondedByUserID          string                       `json:"respondedByUserId,omitempty"`
+	RespondedAt                *string                      `json:"respondedAt,omitempty"`
+	SellerDecision             string                       `json:"sellerDecision,omitempty"`
+	SellerDecisionReason       string                       `json:"sellerDecisionReason,omitempty"`
+	SellerDecidedByUserID      string                       `json:"sellerDecidedByUserId,omitempty"`
+	SellerDecidedAt            *string                      `json:"sellerDecidedAt,omitempty"`
+	SellerResponseLate         bool                         `json:"sellerResponseLate"`
+	ResponseOverdue            bool                         `json:"responseOverdue"`
+	ApplicantDecisionDueAt     *string                      `json:"applicantDecisionDueAt,omitempty"`
+	AvailableActions           []string                     `json:"availableActions"`
+	CreatedAt                  string                       `json:"createdAt"`
+	UpdatedAt                  string                       `json:"updatedAt"`
+	Version                    int64                        `json:"version"`
+	CanAppeal                  *bool                        `json:"canAppeal,omitempty"`
+	CanSupplement              *bool                        `json:"canSupplement,omitempty"`
+	OpenInfoRequestID          string                       `json:"openInfoRequestId,omitempty"`
+	Supplements                []infoSupplementResponse     `json:"supplements,omitempty"`
+	Messages                   []disputeMessageResponse     `json:"messages,omitempty"`
+	SettlementProposals        []settlementProposalResponse `json:"settlementProposals,omitempty"`
+	Remedies                   []disputeRemedyResponse      `json:"remedies,omitempty"`
+	Evidence                   []evidenceReferenceResponse  `json:"evidence,omitempty"`
 }
 
 type disputeMessageResponse struct {
@@ -1086,57 +1087,58 @@ func toMyDisputeDetailResponse(item report.DisputeCase, userID string) disputeRe
 
 func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeResponse {
 	response := disputeResponse{
-		ID:                        item.ID,
-		APIOrderID:                item.APIOrderID,
-		Active:                    item.Active,
-		ReportID:                  item.ReportID,
-		TargetType:                item.TargetType,
-		TargetID:                  item.TargetID,
-		TargetLabel:               item.TargetLabel,
-		PrimaryUsername:           item.PrimaryUsername,
-		PrimaryDisplayName:        item.PrimaryDisplayName,
-		CounterpartyUsername:      item.CounterpartyUsername,
-		CounterpartyName:          item.CounterpartyName,
-		Status:                    item.Status,
-		IssueCode:                 item.IssueCode,
-		RequestedResolution:       item.RequestedResolution,
-		RequestedAmountCNY:        item.RequestedAmountCNY,
-		IssueOccurredAt:           formatOptionalTime(item.IssueOccurredAt),
-		PublicSummary:             item.PublicSummary,
-		PublicResultCode:          item.PublicResultCode,
-		PublicResult:              item.PublicResult,
-		OpenedAt:                  item.OpenedAt.UTC().Format(time.RFC3339),
-		ResolvedAt:                formatOptionalTime(item.ResolvedAt),
-		ClosedAt:                  formatOptionalTime(item.ClosedAt),
-		FinalReason:               item.FinalReason,
-		AppealExpiresAt:           formatOptionalTime(item.AppealExpiresAt),
-		AdverselyAffectedIDs:      append([]string(nil), item.AdverselyAffectedIDs...),
-		NegotiationChannels:       append([]string(nil), item.NegotiationChannels...),
-		NegotiationEndedConfirmed: item.NegotiationEndedConfirmed,
-		NegotiationSummary:        item.NegotiationSummary,
-		RequestedPlatformAction:   item.RequestedPlatformAction,
-		EscalatedByUserID:         item.EscalatedByUserID,
-		EscalatedAt:               formatOptionalTime(item.EscalatedAt),
-		NextActor:                 item.NextActor,
-		DueAt:                     formatOptionalTime(item.DueAt),
-		ApplicantStatement:        item.ApplicantStatement,
-		RespondentResponse:        item.RespondentResponse,
-		RespondedByUserID:         item.RespondedByUserID,
-		RespondedAt:               formatOptionalTime(item.RespondedAt),
-		SellerDecision:            item.SellerDecision,
-		SellerDecisionReason:      item.SellerDecisionReason,
-		SellerDecidedByUserID:     item.SellerDecidedByUserID,
-		SellerDecidedAt:           formatOptionalTime(item.SellerDecidedAt),
-		SellerResponseLate:        item.SellerResponseLate,
-		ApplicantDecisionDueAt:    formatOptionalTime(item.ApplicantDecisionDueAt),
-		AvailableActions:          []string{},
-		CreatedAt:                 item.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:                 item.UpdatedAt.UTC().Format(time.RFC3339),
-		Version:                   item.Version,
-		Messages:                  toDisputeMessageResponses(item.Messages),
-		SettlementProposals:       toSettlementProposalResponses(item.SettlementProposals),
-		Remedies:                  toDisputeRemedyResponses(item.Remedies),
-		Evidence:                  toEvidenceReferenceResponses(item.Evidence, includeAdmin),
+		ID:                         item.ID,
+		APIOrderID:                 item.APIOrderID,
+		Active:                     item.Active,
+		ReportID:                   item.ReportID,
+		TargetType:                 item.TargetType,
+		TargetID:                   item.TargetID,
+		TargetLabel:                item.TargetLabel,
+		PrimaryUsername:            item.PrimaryUsername,
+		PrimaryDisplayName:         item.PrimaryDisplayName,
+		CounterpartyUsername:       item.CounterpartyUsername,
+		CounterpartyName:           item.CounterpartyName,
+		Status:                     item.Status,
+		IssueCode:                  item.IssueCode,
+		RequestedResolution:        item.RequestedResolution,
+		RequestedAmountCNY:         item.RequestedAmountCNY,
+		IssueOccurredAt:            formatOptionalTime(item.IssueOccurredAt),
+		PublicSummary:              item.PublicSummary,
+		PublicResultCode:           item.PublicResultCode,
+		PublicResult:               item.PublicResult,
+		OpenedAt:                   item.OpenedAt.UTC().Format(time.RFC3339),
+		ResolvedAt:                 formatOptionalTime(item.ResolvedAt),
+		ClosedAt:                   formatOptionalTime(item.ClosedAt),
+		FinalReason:                item.FinalReason,
+		AppealExpiresAt:            formatOptionalTime(item.AppealExpiresAt),
+		AdverselyAffectedIDs:       append([]string(nil), item.AdverselyAffectedIDs...),
+		NegotiationChannels:        append([]string(nil), item.NegotiationChannels...),
+		NegotiationEndedConfirmed:  item.NegotiationEndedConfirmed,
+		NegotiationSummary:         item.NegotiationSummary,
+		RequestedPlatformAction:    item.RequestedPlatformAction,
+		PlatformInterventionReason: item.PlatformInterventionReason,
+		EscalatedByUserID:          item.EscalatedByUserID,
+		EscalatedAt:                formatOptionalTime(item.EscalatedAt),
+		NextActor:                  item.NextActor,
+		DueAt:                      formatOptionalTime(item.DueAt),
+		ApplicantStatement:         item.ApplicantStatement,
+		RespondentResponse:         item.RespondentResponse,
+		RespondedByUserID:          item.RespondedByUserID,
+		RespondedAt:                formatOptionalTime(item.RespondedAt),
+		SellerDecision:             item.SellerDecision,
+		SellerDecisionReason:       item.SellerDecisionReason,
+		SellerDecidedByUserID:      item.SellerDecidedByUserID,
+		SellerDecidedAt:            formatOptionalTime(item.SellerDecidedAt),
+		SellerResponseLate:         item.SellerResponseLate,
+		ApplicantDecisionDueAt:     formatOptionalTime(item.ApplicantDecisionDueAt),
+		AvailableActions:           []string{},
+		CreatedAt:                  item.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:                  item.UpdatedAt.UTC().Format(time.RFC3339),
+		Version:                    item.Version,
+		Messages:                   toDisputeMessageResponses(item.Messages),
+		SettlementProposals:        toSettlementProposalResponses(item.SettlementProposals),
+		Remedies:                   toDisputeRemedyResponses(item.Remedies),
+		Evidence:                   toEvidenceReferenceResponses(item.Evidence, includeAdmin),
 	}
 	if includeAdmin {
 		response.FactSnapshotJSON = item.FactSnapshotJSON

@@ -439,6 +439,7 @@ func (s *Service) updateDisputeParticipantMemory(input DisputeParticipantActionI
 		item.Status = DisputeStatusOpen
 		item.NextActor = DisputeNextActorAdmin
 		item.DueAt = nil
+		item.PlatformInterventionReason = strings.TrimSpace(input.Reason)
 		item.EscalatedByUserID = input.ActorUserID
 		item.EscalatedAt = &now
 		item.PublicResult = "买家已申请平台介入"

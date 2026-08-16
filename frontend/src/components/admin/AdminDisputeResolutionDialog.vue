@@ -2,7 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useNow } from '@vueuse/core'
-import { CheckCircle2, Clock3, FileText, Gavel, MessageSquareText, RefreshCw, Scale, ShieldAlert, TriangleAlert, Users } from 'lucide-vue-next'
+import { CheckCircle2, Clock3, FileText, Gavel, RefreshCw, Scale, ShieldAlert, TriangleAlert, Users } from 'lucide-vue-next'
+import AdminDisputeActivityTimeline from '@/components/admin/AdminDisputeActivityTimeline.vue'
 import { toast } from 'vue-sonner'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -58,7 +59,6 @@ import type { AdminRow } from '@/lib/api'
 import type { DisputeRemedyRequest } from '@/api/generated/openapi'
 import type { DisputeReputationOutcome } from '@/types/reputation'
 import {
-  apiOrderDisputeIssueLabels,
   apiOrderDisputeRemedyLatenessLabels,
   apiOrderDisputeRemedySourceLabels,
   apiOrderDisputeRemedyStatusLabels,
@@ -615,45 +615,10 @@ async function applySanction() {
             </div>
           </section>
 
-          <section v-if="dispute.targetType === 'api_order'" class="space-y-5 border-b border-border py-5">
-            <div class="flex items-center gap-2">
-              <MessageSquareText class="h-4 w-4" />
-              <h2 class="text-sm font-semibold">订单协商记录</h2>
-            </div>
-            <dl class="grid gap-3 sm:grid-cols-3">
-              <div>
-                <dt class="text-xs text-muted-foreground">问题类型</dt>
-                <dd class="mt-1 text-sm font-medium">{{ dispute.issueCode ? apiOrderDisputeIssueLabels[dispute.issueCode] : '历史纠纷' }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">诉求</dt>
-                <dd class="mt-1 text-sm font-medium">{{ dispute.requestedResolution ? apiOrderDisputeResolutionLabels[dispute.requestedResolution] : '未结构化记录' }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">诉求金额</dt>
-                <dd class="mt-1 text-sm font-medium">{{ dispute.requestedAmountCny ? `¥${dispute.requestedAmountCny}` : '不涉及' }}</dd>
-              </div>
-            </dl>
-            <div v-if="dispute.messages?.length" class="space-y-3">
-              <article v-for="message in dispute.messages" :key="message.id" class="border-l-2 border-border pl-3">
-                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span>{{ negotiationParticipantLabel(message.senderUserId) }}</span>
-                  <LocalTime :value="message.createdAt" />
-                </div>
-                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ message.body }}</p>
-              </article>
-            </div>
-            <p v-else class="text-sm text-muted-foreground">暂无订单内留言。</p>
-            <div v-if="dispute.settlementProposals?.length" class="space-y-3">
-              <article v-for="proposal in dispute.settlementProposals" :key="proposal.id" class="border-l-2 border-warning pl-3">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <span class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[proposal.resolution] }}<span v-if="proposal.amountCny"> · ¥{{ proposal.amountCny }}</span></span>
-                  <Badge variant="secondary">{{ proposal.status }}</Badge>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ proposal.terms }}</p>
-              </article>
-            </div>
-            <div v-if="currentRemedy" class="space-y-3 border-t border-border pt-4">
+          <AdminDisputeActivityTimeline v-if="dispute.targetType === 'api_order'" :dispute="dispute" />
+
+          <section v-if="dispute.targetType === 'api_order' && currentRemedy" class="space-y-5 border-b border-border py-5">
+            <div class="space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="text-sm font-semibold">当前整改要求</h3>
                 <Badge variant="status">{{ apiOrderDisputeRemedyStatusLabels[currentRemedy.status] }}</Badge>
@@ -698,7 +663,7 @@ async function applySanction() {
           <section class="space-y-4 border-b border-border py-5">
             <div class="flex items-center gap-2">
               <FileText class="h-4 w-4" />
-              <h2 class="text-sm font-semibold">现有证据</h2>
+              <h2 class="text-sm font-semibold">关联举报与目标快照</h2>
             </div>
             <p v-if="!reportId" class="text-sm text-muted-foreground">参与方从关联业务对象直接申请平台介入，无关联举报记录。</p>
             <SkeletonBlock v-else-if="reportQuery.isPending.value" :lines="4" />

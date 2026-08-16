@@ -16809,6 +16809,9 @@ components:
           type: string
         requestedPlatformAction:
           type: string
+        platformInterventionReason:
+          type: string
+          description: Immutable credential-free applicant reason for requesting platform intervention.
         escalatedByUserId:
           type: string
           format: uuid
@@ -17946,6 +17949,9 @@ components:
           type: string
         requestedPlatformAction:
           type: string
+        platformInterventionReason:
+          type: string
+          description: Immutable credential-free applicant reason for requesting platform intervention.
         escalatedByUserId:
           type: string
           format: uuid
