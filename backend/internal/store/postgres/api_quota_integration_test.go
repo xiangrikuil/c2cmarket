@@ -376,6 +376,13 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
 	seedLimitedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, currentTime)
+	if _, err := pool.Exec(ctx, `
+		UPDATE api_services
+		SET declared_ttft_band = NULL, performance_confirmed_at = NULL
+		WHERE id = $1
+	`, serviceID); err != nil {
+		t.Fatalf("retire legacy performance declaration: %v", err)
+	}
 	t.Cleanup(func() {
 		cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
 	})
@@ -426,6 +433,9 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 	}
 	if publication.Batch.Status != apiquota.BatchStatusPublished {
 		t.Fatalf("unexpected system rush publication: %+v", publication)
+	}
+	if publication.Batch.DeclaredTTFTBand != "" || publication.Batch.PerformanceConfirmedAt != nil || publication.Batch.DeclaredMaxConcurrency != 20 || publication.Batch.PromptAuditEnabled == nil || *publication.Batch.PromptAuditEnabled {
+		t.Fatalf("rush publication did not preserve the current merchant declaration contract: %+v", publication.Batch)
 	}
 	markAPIQuotaOfferAsLegacyPreimportedForTest(t, ctx, pool, publication.Offer.ID)
 	credentialSummary, appErr := manager.ImportCredentials(ctx, user, apiquota.CredentialImportInput{
