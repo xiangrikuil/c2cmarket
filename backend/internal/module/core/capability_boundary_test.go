@@ -115,27 +115,6 @@ func TestCapabilityProtectedFacadeMethodsRejectBeforeIdempotency(t *testing.T) {
 			},
 		},
 		{
-			name: "owner carpool withdraw acceptance",
-			run: func() *domain.AppError {
-				_, appErr := service.WithdrawCarpoolAcceptanceWithIdempotency(ctx, studentOwner, "carpool-withdraw", "key", "hash", WithdrawCarpoolAcceptanceInput{}, nil)
-				return appErr
-			},
-		},
-		{
-			name: "owner carpool confirm join",
-			run: func() *domain.AppError {
-				_, appErr := service.ConfirmCarpoolApplicationJoinWithIdempotency(ctx, studentOwner, "carpool-confirm-join", "key", "hash", ConfirmCarpoolApplicationJoinInput{ActorRole: CarpoolJoinActorOwner}, nil)
-				return appErr
-			},
-		},
-		{
-			name: "owner carpool confirm complete",
-			run: func() *domain.AppError {
-				_, appErr := service.ConfirmCarpoolMembershipCompleteWithIdempotency(ctx, studentOwner, "carpool-confirm-complete", "key", "hash", ConfirmCarpoolMembershipCompleteInput{ActorRole: CarpoolJoinActorOwner}, nil)
-				return appErr
-			},
-		},
-		{
 			name: "owner carpool remove membership",
 			run: func() *domain.AppError {
 				_, appErr := service.EndCarpoolMembershipWithIdempotency(ctx, studentOwner, "carpool-remove", "key", "hash", EndCarpoolMembershipInput{ActorRole: CarpoolJoinActorOwner}, nil)

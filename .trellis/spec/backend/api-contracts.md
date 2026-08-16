@@ -2,7 +2,7 @@
 
 Date: 2026-06-21
 Author: Codex
-Updated: 2026-08-08
+Updated: 2026-08-17
 
 ## Scenario: Backend Contract Foundation And Current Real Business Slices
 
@@ -11,6 +11,7 @@ Updated: 2026-08-08
 - Trigger: backend work that adds or changes HTTP endpoints, request/response DTOs, sessions, CSRF, idempotency, contact windows, official price leads, carpool listings/applications, API services, API purchase intents, profiles, announcements, reports, disputes, appeals, OpenAPI, or PostgreSQL migrations.
 - Current implementation: Go `net/http` handlers routed by `github.com/go-chi/chi/v5` under `backend/internal/server`, dependency composition under `backend/internal/app`, migration-phase business behavior under `backend/internal/module/core`, shared error codes under `backend/internal/domain`, OpenAPI under `docs/openapi/c2c-market-api-v1.yaml`.
 - Runtime persistence can be in-memory only when the task explicitly says so. SQL migrations still define the database contract baseline.
+- The authoritative carpool lifecycle contract is [Carpool Lightweight Matching](./carpool-lightweight-matching.md). Pre-migration reservation, join-confirmation, completion-confirmation, and carpool-review references in older historical scenarios are not active contracts.
 
 ### 2. Signatures
 
@@ -63,12 +64,14 @@ POST /api/v1/official-price-leads
 GET  /api/v1/me/official-price-leads
 GET  /api/v1/me/official-price-leads/{id}
 GET  /api/v1/me/carpools
+GET  /api/v1/me/carpools/{id}
+POST /api/v1/me/carpools/{id}/stop-recruiting
+POST /api/v1/me/carpools/{id}/resume-recruiting
 GET  /api/v1/me/carpool-applications
 GET  /api/v1/me/carpool-applications/{id}
+POST /api/v1/me/carpool-applications/{id}/confirm-conditions
 POST /api/v1/me/carpool-applications/{id}/cancel
-POST /api/v1/me/carpool-applications/{id}/confirm-join
 GET  /api/v1/me/carpool-memberships
-POST /api/v1/me/carpool-memberships/{id}/confirm-complete
 POST /api/v1/me/carpool-memberships/{id}/leave
 GET  /api/v1/me/api-purchase-intents
 GET  /api/v1/me/api-purchase-intents/{id}
@@ -99,7 +102,6 @@ DELETE /api/v1/me/favorites/{targetType}/{targetId}
 GET  /api/v1/me/reviews
 POST /api/v1/me/transactions/{type}/{id}/review
 PUT  /api/v1/me/transactions/{type}/{id}/review
-PUT  /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET  /api/v1/users/{username}/reviews
 POST /api/v1/reports
 GET  /api/v1/me/reports
@@ -110,11 +112,8 @@ GET  /api/v1/users/{username}/disputes
 GET  /api/v1/owner/carpool-applications
 GET  /api/v1/owner/carpool-applications/{id}
 POST /api/v1/owner/carpool-applications/{id}/accept
-POST /api/v1/owner/carpool-applications/{id}/confirm-join
 POST /api/v1/owner/carpool-applications/{id}/reject
-POST /api/v1/owner/carpool-applications/{id}/withdraw-acceptance
 GET  /api/v1/owner/carpool-memberships
-POST /api/v1/owner/carpool-memberships/{id}/confirm-complete
 POST /api/v1/owner/carpool-memberships/{id}/remove
 GET  /api/v1/owner/api-services
 POST /api/v1/owner/api-services
@@ -232,7 +231,7 @@ If-Match: "<version>"                            # required for versioned admin 
 - `GET /readyz` is an unversioned operational endpoint. It returns process/database readiness, `schema_migrations` state, and the expected migration version when PostgreSQL is configured; business APIs must not depend on it for authorization or user-visible status.
 - State-changing endpoints must call session and CSRF validation before decoding business actions.
 - Create/action endpoints must reserve an idempotency entry before running the action and replay completed responses when method, route key, key, and request hash match.
-- Multi-row state-changing actions with durable side effects, such as admin official price record create/update/take-down, legacy official price approval, carpool application acceptance, carpool join/completion, and API purchase-intent creation/actions, must write the completed idempotency response cache in the same PostgreSQL transaction as the business rows/events/audit/notifications. Do not leave a committed business side effect with a still-processing idempotency row.
+- Multi-row state-changing actions with durable side effects, such as admin official price record create/update/take-down, legacy official price approval, direct carpool application acceptance and membership ending, and API purchase-intent creation/actions, must write the completed idempotency response cache in the same PostgreSQL transaction as the business rows/events/audit/notifications. Do not leave a committed business side effect with a still-processing idempotency row.
 - Versioned admin actions must require `If-Match`; missing preconditions return `428 PRECONDITION_REQUIRED`, stale versions return `412 VERSION_CONFLICT`. Do not accept a body-level `expectedVersion` in new endpoints.
 - Public `POST /api/v1/official-price-leads` is a disabled compatibility endpoint. It must not create leads or records and returns `403 OFFICIAL_PRICE_USER_SUBMIT_DISABLED`.
 - Admin official price record create/update computes normalized CNY price, fingerprint, and offer key server-side/admin-side. The PostgreSQL runtime writes the compatibility lead, price record, domain event, admin audit log, notification, and completed idempotency response cache in one transaction.
@@ -361,95 +360,9 @@ request.cycleTerm.billingPeriod = "monthly"
 request.accessArrangement = defaultAccessArrangementNote(selectedProduct)
 ```
 
-## Scenario: Carpool Cancel And Exit Lifecycle
+## Retired Scenario: Carpool Reservation Cancellation
 
-### 1. Scope / Trigger
-
-- Trigger: backend, OpenAPI, frontend adapter, or PostgreSQL work touching carpool application cancellation, owner acceptance withdrawal, membership leave/remove, or contact-window availability.
-- Boundary: application-stage cancellation ends a request/reservation. Joined applications are terminal; post-join exit/remove must use the membership lifecycle.
-
-### 2. Signatures
-
-```text
-POST /api/v1/me/carpool-applications/{id}/cancel
-POST /api/v1/owner/carpool-applications/{id}/withdraw-acceptance
-POST /api/v1/me/carpool-memberships/{id}/leave
-POST /api/v1/owner/carpool-memberships/{id}/remove
-
-Cancel/withdraw request body:
-  { "reason": string }
-
-Required headers:
-  Cookie: c2c_session=<session>
-  X-CSRF-Token: <session token>
-  Idempotency-Key: <key>
-  If-Match: "<application version>"
-```
-
-### 3. Contracts
-
-- Buyer cancel returns a single `CarpoolApplication` response and supports:
-  - `pending_owner -> cancelled_by_buyer`
-  - `accepted_reserved -> cancelled_by_buyer`
-- Owner withdraw acceptance returns a single `CarpoolApplication` response and supports:
-  - `accepted_reserved -> cancelled_by_owner`
-- `joined` applications cannot be cancelled through application endpoints. Buyer exit is `POST /api/v1/me/carpool-memberships/{id}/leave`; owner removal is `POST /api/v1/owner/carpool-memberships/{id}/remove`.
-- `contact_session_id` is historical association, not access permission. Do not clear it when cancelling or withdrawing. Close the related contact session instead.
-- Frontend real-backend actions must branch by status:
-  - buyer `pending_owner` / `accepted_reserved` / projected `joined_pending_confirmation` calls application cancel;
-  - buyer `active` / `pending_completion` calls membership leave;
-  - owner `accepted_reserved` / projected `joined_pending_confirmation` calls withdraw acceptance;
-  - owner `active` / `pending_completion` calls membership remove.
-
-### 4. Validation & Error Matrix
-
-| Condition | Result |
-| --- | --- |
-| Missing session or invalid CSRF | `401` / `403` Problem Details |
-| Missing `Idempotency-Key` | idempotency validation Problem Details |
-| Missing `If-Match` | `428 PRECONDITION_REQUIRED` |
-| Stale application version | `412 VERSION_CONFLICT` |
-| Buyer cancels another user's application | `404 OBJECT_NOT_FOUND` |
-| Owner withdraws another owner's application | `404 OBJECT_NOT_FOUND` |
-| Buyer cancels `joined`, `rejected`, `expired`, or cancelled application | `409 INVALID_STATE_TRANSITION` |
-| Owner withdraws `pending_owner` or any non-reserved state | `409 INVALID_STATE_TRANSITION`; use reject for pending applications |
-
-### 5. Good/Base/Bad Cases
-
-- Good: buyer cancels `accepted_reserved`, application stays linked to `contactSessionId`, status becomes `cancelled_by_buyer`, and contact read returns `CONTACT_WINDOW_EXPIRED`.
-- Base: buyer cancels `pending_owner`, status becomes `cancelled_by_buyer`, no contact session is required.
-- Bad: buyer tries to cancel a joined application; response is conflict and UI should guide them to exit membership.
-- Bad: owner tries withdraw on `pending_owner`; response is conflict and UI should use reject.
-
-### 6. Tests Required
-
-- Router/API tests for buyer pending cancel, buyer reserved cancel, owner withdraw, joined cancel conflict, and owner reject/withdraw invalid transition.
-- Contact-window regression tests must assert contact read fails after buyer cancel, owner withdraw, buyer leave, and owner remove.
-- OpenAPI route parity tests must include the new runtime routes.
-- Frontend type/build checks must cover real-backend action imports and application-detail button conditions.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```text
-Application accepted_reserved -> cancelled_by_buyer
-carpool_applications.contact_session_id = NULL
-contact_sessions.status remains open
-```
-
-This loses the historical association and can leave an accessible contact window.
-
-#### Correct
-
-```text
-Application accepted_reserved -> cancelled_by_buyer
-carpool_applications.contact_session_id unchanged
-contact_sessions.status = revoked
-contact_sessions.ends_at <= now()
-```
-
-The application history remains auditable while access permission is revoked.
+The reservation and acceptance-withdrawal contract was removed by migration 111. Current cancellation, leave/remove, contact revocation, and recruitment behavior is defined only in [Carpool Lightweight Matching](./carpool-lightweight-matching.md). Do not restore `accepted_reserved`, `expired`, `cancelled_by_owner`, `withdraw-acceptance`, or projected confirmation statuses.
 
 ## Scenario: Admin Product Plan Catalog CRUD
 
@@ -772,11 +685,9 @@ admin pause -> paused
 admin restore -> active
 legacy pending_review -> admin approve/request-changes/reject
 ```
-- Carpool owner acceptance requires `If-Match`, `Idempotency-Key`, owner authorization, pending application status, available seats, buyer contact method ownership, and listing owner contact method ownership. Acceptance opens a 30-minute contact window, freezes contact method versions from the application/listing stored selections, writes event/notification, and reserves one buyer seat until `reservationExpiresAt`.
-- Carpool join confirmation requires `If-Match`, `Idempotency-Key`, participant authorization, and an unexpired `joinConfirmationDeadline`. The first side confirmation keeps the application `accepted_reserved`; the second side confirmation changes it to `joined`, creates exactly one active `carpool_memberships` row, increments `activeBuyerMembers`, writes event/notification, and completes idempotency in the same PostgreSQL transaction.
-- Carpool membership completion requires `If-Match`, `Idempotency-Key`, participant authorization, and active membership status. The first side confirmation keeps the membership `active`; the second side confirmation changes it to `completed`, sets `endedAt`, decrements `activeBuyerMembers`, writes event/notification, and completes idempotency in the same PostgreSQL transaction.
-- Carpool buyer leave and owner remove require `If-Match`, `Idempotency-Key`, participant authorization, active membership status, and a non-empty reason. These actions move active membership to `left` or `removed`, set `endedAt`, decrement `activeBuyerMembers`, write event/notification, and do not imply platform payment, refund, compensation, or guarantee handling.
-- Expired `accepted_reserved` reservations must not consume capacity and should read as `expired` even before a scheduler materializes the row.
+- Carpool owner acceptance requires `If-Match`, `Idempotency-Key`, owner authorization, `pending_owner`, accepted current conditions, available capacity, and usable frozen buyer/owner contacts. It directly creates the `joined` application, active membership, membership-duration contact session, full condition snapshot, event/notification, and completed idempotency result in one transaction.
+- Carpool buyer leave and owner remove require `If-Match`, `Idempotency-Key`, participant authorization, active membership status, and an appropriate reason. They move the membership to `left` or `removed`, revoke contact access, release capacity, write event/notification, and never automatically resume recruitment.
+- Carpool does not have join confirmation, completion confirmation, completed membership, reservation expiry, or review eligibility. See [Carpool Lightweight Matching](./carpool-lightweight-matching.md).
 - API model catalog endpoints return active model catalog rows and current price snapshots.
 - API service creation and update store service root fields, access modes, supported model snapshots, and package rows. API service owner create/action POST endpoints require `Idempotency-Key`; update and state-changing owner/admin actions require `If-Match`.
 - The retained API service `submit-review` action requires a current linux.do binding and auto-approves `draft|changes_requested -> approved/offline`; it does not create new `pending_review` rows. Existing `pending_review` rows are legacy data and remain actionable through admin approve/request-changes/reject. Owner publication is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
@@ -881,15 +792,13 @@ legacy pending_review -> admin approve/request-changes/reject
 - Bad: submit `fxRate` in the public lead body; strict decoding returns `400 VALIDATION_FAILED`.
 - Bad: submit an evidence URL containing `access_token` or `password`; validation returns `422 SECRET_CONTENT_DETECTED`.
 - Bad: request contact values after `endsAt`; response returns a Problem Details body and never includes contact values.
-- Good: create a high-risk carpool listing with current risk acknowledgement, approve it, apply with current risk acknowledgement, then owner-accept it; response includes an `accepted_reserved` application with a contact session ID.
+- Good: create and publish a high-risk carpool listing with current risk acknowledgement, apply with current risk acknowledgement, then owner-accept it; response includes a `joined` application, active membership, and contact session ID.
 - Bad: create or apply to a high-risk carpool without matching risk acknowledgement; returns `422 RISK_ACK_REQUIRED`.
-- Good: buyer and owner both confirm join before the deadline; response includes a `joined` application and buyer/owner membership lists include the active membership.
-- Good: buyer and owner both confirm membership completion; response includes a `completed` membership with `endedAt`, and the listing active buyer-member cache is decremented.
 - Good: buyer leaves or owner removes an active membership with a reason; response status is `left` or `removed`, with no payment/refund platform semantics.
-- Bad: owner accepts a second pending application after the last seat has already been reserved; returns `409 SEAT_UNAVAILABLE`.
+- Good: accepting the final seat stops recruitment; a later leave releases capacity but the listing stays stopped until owner resume.
+- Bad: owner accepts a second pending application after the last seat has already been joined; returns `409 SEAT_UNAVAILABLE`.
 - Bad: a user who already has an active membership applies to the same listing again; returns `409 ACTIVE_MEMBERSHIP_EXISTS`.
-- Bad: buyer or owner confirms join after `joinConfirmationDeadline`; returns `409 JOIN_CONFIRMATION_EXPIRED`.
-- Bad: buyer tries to leave an already completed membership; returns `409 MEMBERSHIP_NOT_ACTIVE`.
+- Bad: buyer tries to leave an already ended membership; returns `409 MEMBERSHIP_NOT_ACTIVE`.
 - Good: a buyer submits an API purchase intent for an approved, online, clear API service; the `201` response includes status `open`, frozen pricing snapshots, and frozen `merchantContact.value`.
 - Base: replay the exact same API purchase-intent create request with the same `Idempotency-Key`; response is reconstructed from the same intent ID and frozen merchant contact, while the idempotency row does not cache plaintext contact values.
 - Good: the service owner marks the API purchase intent as contacted, then closes it with a reason; each action requires `If-Match` and `Idempotency-Key`.
@@ -942,8 +851,7 @@ Backend contract slices must include tests for:
 - Carpool admin approve with `If-Match`.
 - Carpool duplicate ongoing application rejection.
 - Carpool owner accept idempotent replay and no-seat rejection.
-- Carpool buyer/owner join confirmation, idempotent replay, active membership creation, and membership list reads.
-- Carpool buyer/owner completion confirmation, idempotent replay, completed membership, buyer leave, owner remove, and listing cache decrement.
+- Carpool direct acceptance, current-condition confirmation, idempotent replay, active membership/contact creation, full auto-stop, buyer leave, owner remove, no auto-resume, explicit resume, and membership list reads.
 - API service owner create/submit/approve/publish/pause/resume/suspend/restore/remove flow, including public visibility changes.
 - API service public DTO boundary, including absence of owner contact method IDs, owner user IDs, review internals, and merchant internal notes.
 - API service database integrity constraints, including positive merchant-declared model multipliers and owner-owned contact method selection.
@@ -1268,7 +1176,7 @@ if (shouldUseRealBackend()) return backendFavorites()
 ### 1. Scope / Trigger
 
 - Trigger: backend, OpenAPI, PostgreSQL, or frontend work that lists, creates, edits, publishes, removes, or displays transaction reviews.
-- Scope: completed `carpool_membership` and `api_order` transactions support one buyer-to-seller review and one seller-to-buyer review. Reviews are verified experience notes; they do not change transaction state, decide disputes, issue refunds, guarantee service quality, or deliver credentials.
+- Scope: completed `api_order` transactions support one buyer-to-seller review and one seller-to-buyer review. Carpool matching never produces review eligibility or public review/reputation projections. Reviews are verified experience notes; they do not change transaction state, decide disputes, issue refunds, guarantee service quality, or deliver credentials.
 
 ### 2. Signatures
 
@@ -1276,12 +1184,11 @@ if (shouldUseRealBackend()) return backendFavorites()
 GET /api/v1/me/reviews
 POST /api/v1/me/transactions/{type}/{id}/review
 PUT /api/v1/me/transactions/{type}/{id}/review
-PUT /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET /api/v1/users/{username}/reviews
 POST /api/v1/admin/reviews/{id}/remove
 
 type:
-  carpool_membership | api_order
+  api_order
 
 direction:
   pending | sent | received
@@ -1301,7 +1208,7 @@ If-Match: "<version>"                         # admin remove
 
 ### 3. Contracts
 
-- A review source is a platform-confirmed completed `carpool_membership` or `api_order`. Purchase intents, applications, payment submission, and delivery submission are not completed review sources.
+- A review source is a platform-confirmed completed `api_order`. Carpool applications/memberships, purchase intents, payment submission, and delivery submission are not review sources.
 - Only the transaction buyer and seller can review each other. The review window is `[completedAt, completedAt + 14 days)` and an active reputation transaction exclusion makes the transaction ineligible.
 - There is at most one review per `(transaction_type, transaction_id, reviewer_user_id)`. `POST` creates it; `PUT` edits the same review only while it is still sealed and before the deadline. A duplicate create and an edit without an existing sealed review fail explicitly.
 - The first submitted review is `sealed`. Its author can still read and edit their own content, but the counterparty receives only sealed metadata. `rating`, `tags`, and `note` are `null`/empty until publication and must not leak through review-center, public-profile, logs, errors, or idempotency responses.
@@ -1312,7 +1219,6 @@ If-Match: "<version>"                         # admin remove
 - `GET /users/{username}/reviews` returns only published, non-removed reviews for non-excluded transactions where that user is the reviewee. Public fields include transaction type and both role directions, but omit user IDs, contact values, private transaction internals, removal reasons, and administrator fields.
 - `POST /admin/reviews/{id}/remove` requires administrator permission, CSRF, idempotency, and `If-Match`. It may transition only a published review to `removed`; it increments the version and appends a removal revision without rewriting frozen rating, tags, or note.
 - `transaction_review_revisions` is append-only and records create, pre-publication edit, publication, migration, and removal events. Business mutations and their idempotency completion are committed together.
-- The retained carpool-membership `PUT` route writes through the unified service for compatibility. New clients use the generic `POST` create and `PUT` edit routes.
 
 ### 4. Validation & Error Matrix
 
@@ -1340,7 +1246,7 @@ If-Match: "<version>"                         # admin remove
 ### 5. Good/Base/Bad Cases
 
 - Good: an API-order buyer submits first and the seller sees only a sealed received row; the seller then submits and both reviews become public and frozen atomically.
-- Good: a carpool owner submits once, edits while sealed, and the revision history retains both versions. The buyer never sees either content version before publication.
+- Good: a carpool membership never appears in pending, sent, received, public review, or reputation projections.
 - Base: one participant submits and the deadline elapses. The next eligible read publishes the review at the deadline, while a late create/edit returns a conflict.
 - Base: replay the exact same idempotency key and body. The response is stable and no duplicate review or revision is created.
 - Bad: accept an API purchase intent as a source, let a non-participant review, expose a sealed rating in a public response, or let an administrator rewrite published content.
@@ -1348,10 +1254,10 @@ If-Match: "<version>"                         # admin remove
 
 ### 6. Tests Required
 
-- Migration verification must apply the complete chain through Version 57 and prove legacy `carpool_reviews` preserve ID, rating, tags, note, timestamps, and a `migrated` revision.
-- PostgreSQL integration must cover carpool/API, buyer/seller directions, sealed non-disclosure, second-submit atomic publication, deadline publication, late-submit rejection, active exclusion, append-only revisions, and audited administrator removal.
+- Migration verification must apply the complete chain through Version 111 and prove carpool review rows and review eligibility are removed.
+- PostgreSQL integration must cover API-order buyer/seller directions, carpool exclusion, sealed non-disclosure, second-submit atomic publication, deadline publication, late-submit rejection, active exclusion, append-only revisions, and audited administrator removal.
 - Router tests must cover generic create/edit, idempotent replay, sealed response redaction, publication/freeze, edit-after-publication rejection, and administrator `If-Match`.
-- OpenAPI must include generic create/edit, retained compatibility, public review, and administrator removal routes plus their schemas and parameters.
+- OpenAPI must include generic API-order create/edit, public review, and administrator removal routes plus their schemas and parameters, and must omit the carpool review compatibility route.
 - Frontend tests must prove real-mode adapters preserve sealed nulls, use backend preset tags, choose `POST` for create and `PUT` for edit, and never fall back to mock data after a real failure.
 - Run full Go tests and vet, frontend Vitest/typecheck/real-mode build, OpenAPI parsing, route parity, migration documentation checks, `git diff --check`, and desktop/mobile browser acceptance.
 
@@ -2629,7 +2535,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 110 (current repository target)
+  ExpectedMigrationVersion = 111 (current repository target)
 ```
 
 ### 3. Contracts
@@ -2896,7 +2802,7 @@ PublicProfileBundle(context.Context, username string) (profile.PublicUserProfile
 PublicUserProfileBundle collections:
   carpools:    PublicProfileCarpool[]      max 6
   services:    PublicProfileAPIService[]   max 6
-  completions: PublicProfileCompletion[]   max 10
+  completions: PublicProfileCompletion[]   max 10, API orders only
   reviews:     PublicReview[]              max 10
   disputes:    PublicDispute[]             max 10
 ```
@@ -2906,7 +2812,7 @@ PublicUserProfileBundle collections:
 - Public profile aggregation uses authoritative business queries and typed allowlist DTOs; it never returns `[]any`, `items: {}`, or hard-coded empty success for a failed dependency.
 - Carpools include active public listings only. API services use the existing public/orderable projection. Both collections use stable `updatedAt DESC, id DESC` ordering.
 - Completion records contain only kind, title, role, completion time, and a stable public projection ID. They omit counterpart IDs, amount/payment detail, contact data, order numbers, and credentials.
-- Completion records are sorted by `completedAt DESC, id DESC`. Carpool and API completion groups obey their corresponding profile privacy flags.
+- Completion records are sorted by `completedAt DESC, id DESC`, contain API orders only, and obey API completion privacy. Carpool memberships do not enter public completion projection.
 - Reviews and disputes reuse their existing public-safe projections, remain bounded, and preserve their own visibility/redaction rules.
 - Any authoritative aggregate dependency failure returns a problem response. A successful profile with no public activity returns non-null empty arrays.
 - The public merchant-profile endpoint returns the profile DTO directly. It does not promise empty `services`, `completions`, `reviews`, or `disputes` bundles when no consumer exists.
@@ -2917,20 +2823,19 @@ PublicUserProfileBundle collections:
 | --- | --- |
 | Public user or merchant slug does not exist | `404 OBJECT_NOT_FOUND`. |
 | User has no public activity | Typed empty arrays in the user bundle. |
-| Carpool completion privacy is disabled | Omit carpool completions; keep allowed API completions. |
-| API completion privacy is disabled | Omit API completions; keep allowed carpool completions. |
+| API completion privacy is disabled | Omit API completions. |
 | Aggregate repository/service fails | Return a problem response; do not replace the failed collection with fake emptiness. |
 | Merchant profile is found | Return `PublicMerchantProfile` directly. |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: one profile response contains an active carpool, an online API service, recent completions, published reviews, and sanitized disputes in their bounded order.
+- Good: one profile response contains an active carpool listing, an online API service, recent API-order completions, published API-order reviews, and sanitized disputes in their bounded order.
 - Base: a new user has no activity, so all five user collections are typed empty arrays.
 - Bad: the handler initializes `carpools: []any{}` or returns complete order/listing domain objects containing private fields.
 
 ### 6. Tests Required
 
-- Core/service tests for each collection, bounds, stable ordering, mixed completion kinds, privacy pruning, and dependency failures.
+- Core/service tests for each collection, bounds, stable ordering, API-only completions/reviews, privacy pruning, carpool exclusion, and dependency failures.
 - HTTP/OpenAPI tests for strong item schemas, non-null arrays, merchant response contraction, and sensitive-field absence.
 - PostgreSQL-backed tests for real public records and owner/public visibility predicates.
 - Frontend adapter/page tests for the single aggregate request, typed mapping, unified empty state, and linux.do link behavior.

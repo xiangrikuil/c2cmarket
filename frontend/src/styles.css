@@ -2776,8 +2776,6 @@ html[data-theme="minimal-modern"] .account-security-side {
 .ride-order-action-card { border-color: color-mix(in oklab, var(--ride-accent) 23%, var(--border)); background: linear-gradient(160deg, #ffffff, #f5f7ff); box-shadow: 0 20px 42px -34px rgb(79 70 229 / 0.52); }
 .ride-order-action-card > h2 { margin-top: 7px; color: #0f172a; font-size: 20px; font-weight: 700; line-height: 1.35; }
 .ride-order-action-card > p { margin-top: 8px; color: var(--muted-foreground); font-size: 11px; line-height: 1.6; }
-.ride-order-reservation { display: flex; align-items: center; gap: 10px; margin-top: 14px; border-radius: 9px; background: #eef2ff; padding: 10px 12px; color: #4338ca; font-size: 10px; line-height: 1.5; }
-.ride-order-reservation svg { width: 17px; height: 17px; }
 
 @media (min-width: 1120px) {
   .ride-order-detail-layout { grid-template-columns: minmax(0, 1fr) 300px; align-items: start; }

@@ -30,11 +30,9 @@ const actionId = ref('')
 
 const statusGroups: Record<string, CarpoolApplication['status'][]> = {
   待处理: ['pending_owner'],
-  待联系: ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation'],
-  服务中: ['active'],
-  待完成: ['pending_completion'],
-  已完成: ['completed'],
-  已拒绝取消: ['rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'],
+  有效成员: ['active'],
+  退出或移除: ['cancelled_by_buyer', 'cancelled_by_owner'],
+  已拒绝: ['rejected'],
   纠纷: ['disputed'],
 }
 
@@ -48,15 +46,11 @@ const pageQuery = useMerchantCarpoolApplicationsPage(pageFilters, pageRequest)
 const rows = computed(() => pageQuery.data.value?.items ?? [])
 const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
 const pendingCount = computed(() => (applications.value ?? []).filter(item => item.status === 'pending_owner').length)
-const urgentCount = computed(() => (applications.value ?? []).filter(item => {
-  if (!item.reservedUntil) return false
-  const remaining = new Date(item.reservedUntil).getTime() - Date.now()
-  return remaining > 0 && remaining <= 15 * 60 * 1000
-}).length)
+const activeCount = computed(() => (applications.value ?? []).filter(item => item.status === 'active').length)
 const disputeCount = computed(() => (applications.value ?? []).filter(item => item.status === 'disputed').length)
 const stats = computed(() => [
   { label: '待处理', value: pendingCount.value },
-  { label: '临近超时', value: urgentCount.value },
+  { label: '有效成员', value: activeCount.value },
   { label: '纠纷中', value: disputeCount.value },
 ])
 
@@ -84,7 +78,7 @@ async function runOwnerApplicationAction(applicationId: string, action: () => Pr
 }
 
 function acceptApplication(item: CarpoolApplication) {
-  runOwnerApplicationAction(item.id, () => acceptCarpoolApplication(item.id), '已接受申请，并预留 1 个席位 30 分钟。')
+  runOwnerApplicationAction(item.id, () => acceptCarpoolApplication(item.id), '已确认上车，成员关系已生效。')
 }
 
 function rejectApplication(item: CarpoolApplication) {
@@ -94,10 +88,10 @@ function rejectApplication(item: CarpoolApplication) {
 
 <template>
   <div>
-    <PageTitle title="上车申请" description="车主处理申请、席位预留、联系沟通、上车确认和完成状态。" />
+    <PageTitle title="上车申请" description="车主确认上车后直接建立成员关系。" />
     <CompactStats class="mb-5" :items="stats" :loading="isLoading" />
 
-    <StatusTabs v-model="activeStatus" :items="['待处理', '待联系', '服务中', '待完成', '已完成', '已拒绝取消', '纠纷']" />
+    <StatusTabs v-model="activeStatus" :items="['待处理', '有效成员', '退出或移除', '已拒绝', '纠纷']" />
     <SkeletonTable v-if="isLoading" :rows="5" :columns="7" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无申请" description="新的上车申请到达后会显示在待处理队列。" />
     <SoftTable v-else animate-rows :columns="['申请人', '车源', '价格快照', '用户摘要', '状态', '申请时间', '操作']">
@@ -114,7 +108,7 @@ function rejectApplication(item: CarpoolApplication) {
         <td>
           <div class="flex flex-wrap gap-2">
             <template v-if="item.status === 'pending_owner'">
-              <Button size="sm" :disabled="actionId === item.id" @click="acceptApplication(item)">接受</Button>
+              <Button size="sm" :disabled="actionId === item.id" @click="acceptApplication(item)">确认上车</Button>
               <Button size="sm" variant="outline" :disabled="actionId === item.id" @click="rejectApplication(item)">拒绝</Button>
             </template>
             <RouterLink :to="`/merchant/carpool-applications/${item.id}`">

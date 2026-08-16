@@ -2125,46 +2125,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
-  /api/v1/me/reviews/carpool-memberships/{membershipId}:
-    put:
-      operationId: submitCarpoolMembershipReview
-      tags: [Reviews]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: Retained compatibility route for a carpool buyer review.
-      description: Writes through the unified transaction review service. New clients use the generic transaction review route.
-      parameters:
-        - name: membershipId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SubmitReviewRequest"
-      responses:
-        "200":
-          description: Review center row after the submit/update.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReviewCenterRow"
-        "401":
-          $ref: "#/components/responses/Problem"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
   /api/v1/reports:
     post:
       operationId: createReport
@@ -2609,6 +2569,60 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/carpools/{id}/stop-recruiting:
+    post:
+      operationId: stopMyCarpoolRecruiting
+      tags: [Carpools]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Recruitment stopped without changing pending applications or active memberships.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarpoolListing"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/carpools/{id}/resume-recruiting:
+    post:
+      operationId: resumeMyCarpoolRecruiting
+      tags: [Carpools]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Recruitment resumed when governance is clear and seats are available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarpoolListing"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/carpool-applications:
     get:
       operationId: listMyCarpoolApplications
@@ -2672,17 +2686,17 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/me/carpool-applications/{id}/confirm-join:
+  /api/v1/me/carpool-applications/{id}/confirm-conditions:
     post:
-      operationId: confirmMyCarpoolApplicationJoin
+      operationId: confirmMyCarpoolApplicationConditions
       tags: [CarpoolApplications]
       security:
         - sessionCookie: []
           csrfToken: []
+      summary: Confirm the latest listing conditions for a pending application.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -2691,11 +2705,13 @@ paths:
               $ref: "#/components/schemas/EmptyRequest"
       responses:
         "200":
-          description: Buyer-side join confirmation recorded. When both sides confirm, membership becomes active.
+          description: Latest conditions frozen into the pending application.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolApplication"
+        "404":
+          $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
         "412":
@@ -2716,36 +2732,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolMembershipList"
-  /api/v1/me/carpool-memberships/{id}/confirm-complete:
-    post:
-      operationId: confirmMyCarpoolMembershipComplete
-      tags: [CarpoolMemberships]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Buyer-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolMembership"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/me/carpool-memberships/{id}/leave:
     post:
       operationId: leaveMyCarpoolMembership
@@ -3596,7 +3582,7 @@ paths:
               $ref: "#/components/schemas/EmptyRequest"
       responses:
         "200":
-          description: Application accepted and a 30-minute contact window opened.
+          description: Application joined, active membership created, and lifecycle-bound contact access opened atomically.
           content:
             application/json:
               schema:
@@ -3635,66 +3621,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/owner/carpool-applications/{id}/withdraw-acceptance:
-    post:
-      operationId: withdrawCarpoolAcceptance
-      tags: [OwnerCarpoolApplications]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MembershipEndRequest"
-      responses:
-        "200":
-          description: Owner withdrew an accepted reservation before the application joined.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolApplication"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/owner/carpool-applications/{id}/confirm-join:
-    post:
-      operationId: confirmOwnerCarpoolApplicationJoin
-      tags: [OwnerCarpoolApplications]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Owner-side join confirmation recorded. When both sides confirm, membership becomes active.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolApplication"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/owner/carpool-memberships:
     get:
       operationId: listOwnerCarpoolMemberships
@@ -3709,36 +3635,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolMembershipList"
-  /api/v1/owner/carpool-memberships/{id}/confirm-complete:
-    post:
-      operationId: confirmOwnerCarpoolMembershipComplete
-      tags: [CarpoolMemberships]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Owner-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolMembership"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/owner/carpool-memberships/{id}/remove:
     post:
       operationId: removeOwnerCarpoolMembership
@@ -9018,7 +8914,7 @@ components:
       required: true
       schema:
         type: string
-        enum: [carpool_membership, api_order]
+        enum: [api_order]
     ResourceId:
       name: id
       in: path
@@ -15837,7 +15733,7 @@ components:
     CreateCarpoolListingRequest:
       type: object
       additionalProperties: false
-      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, dailyQuotaAmount, weeklyQuotaAmount, followsOfficialQuotaReset, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, paymentMethodCode, buyerSeatCapacity, activeBuyerMembers]
+      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, dailySpendLimitUsd, weeklySpendLimitUsd, followsOfficialQuotaReset, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, paymentMethodCode, buyerSeatCapacity, offlineOccupiedSeats]
       properties:
         productPlanId:
           type: string
@@ -15887,12 +15783,12 @@ components:
           $ref: "#/components/schemas/DecimalString"
           pattern: '^1(?:\.0+)?$'
           description: System-fixed carpool multiplier. Clients must send 1; owners cannot edit it.
-        dailyQuotaAmount:
+        dailySpendLimitUsd:
           $ref: "#/components/schemas/DecimalString"
-          description: Owner-declared per-seat daily quota amount. It uses the selected product plan quota label and unit.
-        weeklyQuotaAmount:
+          description: Per-member daily maximum spend in USD.
+        weeklySpendLimitUsd:
           $ref: "#/components/schemas/DecimalString"
-          description: Owner-declared per-seat weekly quota amount. Label and unit come from the selected product plan and are not accepted from the client.
+          description: Per-member weekly maximum spend in USD.
         followsOfficialQuotaReset:
           type: boolean
           description: Whether the declared quota follows the official provider reset schedule.
@@ -15924,10 +15820,10 @@ components:
           type: integer
           minimum: 1
           description: Buyer seats only. Excludes the listing owner.
-        activeBuyerMembers:
+        offlineOccupiedSeats:
           type: integer
           minimum: 0
-          description: Active buyer members only. Excludes the listing owner.
+          description: Seats already occupied outside the platform. Platform memberships are derived and cannot be supplied by the owner.
         riskAcknowledgement:
           $ref: "#/components/schemas/RiskAcknowledgement"
     CarpoolCycleTermInput:
@@ -16004,8 +15900,8 @@ components:
         - regionName
         - priceMonthlyCny
         - serviceMultiplier
-        - dailyQuotaAmount
-        - weeklyQuotaAmount
+        - dailySpendLimitUsd
+        - weeklySpendLimitUsd
         - followsOfficialQuotaReset
         - vpsRegion
         - supportsMainlandChinaDirectConnection
@@ -16017,13 +15913,15 @@ components:
         - quotaUnit
         - quotaPeriod
         - buyerSeatCapacity
+        - offlineOccupiedSeats
         - activeBuyerMembers
-        - reservedSeats
         - availableSeats
         - applicationEligibility
         - sellerReputation
         - sourceAuthorVerification
         - status
+        - governanceStatus
+        - conditionsVersion
         - policyVersion
         - riskAckRequired
         - version
@@ -16067,10 +15965,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         serviceMultiplier:
           $ref: "#/components/schemas/DecimalString"
-        dailyQuotaAmount:
+        dailySpendLimitUsd:
           type: [string, "null"]
           pattern: '^[0-9]+(?:\.[0-9]+)?$'
-        weeklyQuotaAmount:
+        weeklySpendLimitUsd:
           $ref: "#/components/schemas/DecimalString"
         followsOfficialQuotaReset:
           type: [boolean, "null"]
@@ -16098,11 +15996,12 @@ components:
         buyerSeatCapacity:
           type: integer
           description: Buyer seats only. Excludes the listing owner.
+        offlineOccupiedSeats:
+          type: integer
+          description: Owner-declared seats already occupied outside the platform.
         activeBuyerMembers:
           type: integer
-          description: Active buyer members only. Excludes the listing owner.
-        reservedSeats:
-          type: integer
+          description: Active platform memberships, derived by the server.
         availableSeats:
           type: integer
         applicationEligibility:
@@ -16115,7 +16014,16 @@ components:
           $ref: "#/components/schemas/SourceAuthorResourceSummary"
         status:
           type: string
-          enum: [draft, pending_review, changes_requested, active, paused, rejected, removed]
+          enum: [draft, active, stopped]
+        governanceStatus:
+          type: string
+          enum: [clear, removed]
+        recruitmentStopReason:
+          type: string
+          enum: ['', owner, full, migration]
+        conditionsVersion:
+          type: integer
+          minimum: 1
         reviewReason:
           type: [string, "null"]
         reviewedAt:
@@ -16222,13 +16130,13 @@ components:
           type: string
         transactionType:
           type: string
-          enum: [carpool_membership, api_order]
+          enum: [api_order]
         transactionId:
           type: string
           format: uuid
         sourceType:
           type: string
-          enum: [carpool_membership, api_order]
+          enum: [api_order]
         sourceId:
           type: string
           format: uuid
@@ -16375,7 +16283,7 @@ components:
           type: string
         transactionType:
           type: string
-          enum: [carpool_membership, api_order]
+          enum: [api_order]
         reviewerRole:
           type: string
           enum: [buyer, seller]
@@ -18417,6 +18325,55 @@ components:
       type: object
       additionalProperties: false
       properties: {}
+    CarpoolListingConditionsSnapshot:
+      type: object
+      additionalProperties: false
+      required: [title, priceMonthlyCny, dailySpendLimitUsd, weeklySpendLimitUsd, followsOfficialQuotaReset, buyerSeatCapacity, offlineOccupiedSeats, regionCode, regionName, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, customOpeningChannel, paymentMethodCode, customPaymentMethod, distributionMethod, distributionMethodNote, providesAdminAccount, accessArrangement, policyVersion, riskNoticeCode]
+      properties:
+        title:
+          type: string
+        priceMonthlyCny:
+          $ref: "#/components/schemas/DecimalString"
+        dailySpendLimitUsd:
+          type: [string, "null"]
+        weeklySpendLimitUsd:
+          $ref: "#/components/schemas/DecimalString"
+        followsOfficialQuotaReset:
+          type: boolean
+        buyerSeatCapacity:
+          type: integer
+        offlineOccupiedSeats:
+          type: integer
+        regionCode:
+          type: string
+        regionName:
+          type: string
+        vpsRegion:
+          type: string
+        supportsMainlandChinaDirectConnection:
+          type: boolean
+        openingChannelCode:
+          type: string
+        customOpeningChannel:
+          type: string
+        paymentMethodCode:
+          type: string
+        customPaymentMethod:
+          type: string
+        distributionMethod:
+          type: string
+        distributionMethodNote:
+          type: string
+        providesAdminAccount:
+          type: boolean
+        accessArrangement:
+          type: string
+        cycleTerm:
+          $ref: "#/components/schemas/CarpoolCycleTermInput"
+        policyVersion:
+          type: integer
+        riskNoticeCode:
+          type: string
     CarpoolApplication:
       type: object
       required:
@@ -18431,6 +18388,10 @@ components:
         - listingTitleSnapshot
         - priceMonthlyCny
         - policyVersionSnapshot
+        - conditionsVersionSnapshot
+        - conditionsSnapshot
+        - acceptedConditionsVersion
+        - conditionsAcceptedAt
         - buyerReputation
         - version
         - createdAt
@@ -18456,7 +18417,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [pending_owner, accepted_reserved, joined, rejected, cancelled_by_buyer, expired]
+          enum: [pending_owner, joined, rejected, cancelled_by_buyer]
         seatCount:
           type: integer
           const: 1
@@ -18472,23 +18433,20 @@ components:
             - type: "null"
         riskNoticeCode:
           type: string
+        conditionsVersionSnapshot:
+          type: integer
+          minimum: 1
+        conditionsSnapshot:
+          $ref: "#/components/schemas/CarpoolListingConditionsSnapshot"
+        acceptedConditionsVersion:
+          type: integer
+          minimum: 1
+        conditionsAcceptedAt:
+          type: string
+          format: date-time
         contactSessionId:
           type: string
           format: uuid
-        reservationExpiresAt:
-          type: [string, "null"]
-          format: date-time
-          description: Absolute deadline for the seat reservation. Expired reservations do not consume capacity even before scheduler materialization.
-        joinConfirmationDeadline:
-          type: [string, "null"]
-          format: date-time
-          description: Deadline for buyer and owner to confirm the off-platform arrangement. This is separate from payment and does not imply platform guarantee.
-        buyerConfirmedAt:
-          type: [string, "null"]
-          format: date-time
-        ownerConfirmedAt:
-          type: [string, "null"]
-          format: date-time
         joinedAt:
           type: [string, "null"]
           format: date-time
@@ -18528,6 +18486,8 @@ components:
         - seatCount
         - priceMonthlyCny
         - policyVersionSnapshot
+        - conditionsVersionSnapshot
+        - conditionsSnapshot
         - joinedAt
         - version
         - createdAt
@@ -18556,7 +18516,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [active, completed, left, removed]
+          enum: [active, left, removed]
         seatCount:
           type: integer
           const: 1
@@ -18566,17 +18526,13 @@ components:
           type: integer
         riskNoticeCode:
           type: string
+        conditionsVersionSnapshot:
+          type: integer
+          minimum: 1
+        conditionsSnapshot:
+          $ref: "#/components/schemas/CarpoolListingConditionsSnapshot"
         joinedAt:
           type: string
-          format: date-time
-        buyerCompletedAt:
-          type: [string, "null"]
-          format: date-time
-        ownerCompletedAt:
-          type: [string, "null"]
-          format: date-time
-        completedAt:
-          type: [string, "null"]
           format: date-time
         endedAt:
           type: [string, "null"]

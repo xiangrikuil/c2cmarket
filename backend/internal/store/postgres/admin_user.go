@@ -247,7 +247,7 @@ func loadAdminUserDetail(ctx context.Context, q queryer, userID string, now time
 		       (
 		         SELECT count(*)::int FROM carpool_applications application
 		         WHERE (application.buyer_user_id = u.id OR application.owner_user_id = u.id)
-		           AND application.status IN ('pending_owner', 'accepted_reserved')
+			           AND application.status = 'pending_owner'
 		       ) AS open_carpool_applications,
 		       (
 		         SELECT count(*)::int FROM api_orders order_row

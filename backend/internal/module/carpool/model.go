@@ -13,25 +13,22 @@ const (
 	ListingStatusPendingReview    = "pending_review"
 	ListingStatusChangesRequested = "changes_requested"
 	ListingStatusActive           = "active"
+	ListingStatusStopped          = "stopped"
 	ListingStatusPaused           = "paused"
 	ListingStatusRejected         = "rejected"
 	ListingStatusRemoved          = "removed"
 
 	ApplicationStatusPendingOwner     = "pending_owner"
-	ApplicationStatusAcceptedReserved = "accepted_reserved"
 	ApplicationStatusJoined           = "joined"
 	ApplicationStatusRejected         = "rejected"
 	ApplicationStatusCancelledByBuyer = "cancelled_by_buyer"
-	ApplicationStatusCancelledByOwner = "cancelled_by_owner"
-	ApplicationStatusExpired          = "expired"
 
 	JoinActorBuyer = "buyer"
 	JoinActorOwner = "owner"
 
-	MembershipStatusActive    = "active"
-	MembershipStatusCompleted = "completed"
-	MembershipStatusLeft      = "left"
-	MembershipStatusRemoved   = "removed"
+	MembershipStatusActive  = "active"
+	MembershipStatusLeft    = "left"
+	MembershipStatusRemoved = "removed"
 
 	OwnerListingViewAll        = ""
 	OwnerListingViewRecruiting = "recruiting"
@@ -57,11 +54,6 @@ const (
 	ListingPaymentMethodPayPal             = "paypal"
 	ListingPaymentMethodUCard              = "u_card"
 	ListingPaymentMethodOther              = "other"
-)
-
-const (
-	ContactWindowDuration    = 30 * time.Minute
-	JoinConfirmationDuration = ContactWindowDuration
 )
 
 type RiskAcknowledgement struct {
@@ -100,15 +92,18 @@ type Listing struct {
 	QuotaUnit                             string
 	QuotaPeriod                           string
 	BuyerSeatCapacity                     int
+	OfflineOccupiedSeats                  int
 	ActiveBuyerMembers                    int
 	Status                                string
+	GovernanceStatus                      string
+	RecruitmentStopReason                 string
+	ConditionsVersion                     int64
 	ReviewedByAdminID                     string
 	ReviewedAt                            *time.Time
 	ReviewReason                          string
 	PolicyVersion                         int64
 	RiskNoticeCode                        string
 	RiskAckRequired                       bool
-	ReservedSeats                         int
 	AvailableSeats                        int
 	RequestID                             string
 	CreatedAt                             time.Time
@@ -133,56 +128,80 @@ type CycleTerm struct {
 }
 
 type Application struct {
-	ID                       string
-	CarpoolListingID         string
-	BuyerUserID              string
-	OwnerUserID              string
-	ProductPlanID            string
-	BuyerContactMethodID     string
-	Status                   string
-	SeatCount                int
-	ListingTitleSnapshot     string
-	PriceMonthlyCNY          string
-	PolicyVersionSnapshot    int64
-	RiskNoticeCode           string
-	ContactSessionID         string
-	ReservationExpiresAt     *time.Time
-	JoinConfirmationDeadline *time.Time
-	BuyerConfirmedAt         *time.Time
-	OwnerConfirmedAt         *time.Time
-	JoinedAt                 *time.Time
-	DecisionReason           string
-	DecidedAt                *time.Time
-	RequestID                string
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-	Version                  int64
-	BuyerReputation          *reputation.ReputationSnapshot
+	ID                        string
+	CarpoolListingID          string
+	BuyerUserID               string
+	OwnerUserID               string
+	ProductPlanID             string
+	BuyerContactMethodID      string
+	Status                    string
+	SeatCount                 int
+	ListingTitleSnapshot      string
+	PriceMonthlyCNY           string
+	PolicyVersionSnapshot     int64
+	RiskNoticeCode            string
+	ConditionsVersionSnapshot int64
+	ConditionsSnapshot        ListingConditionsSnapshot
+	AcceptedConditionsVersion int64
+	ConditionsAcceptedAt      time.Time
+	ContactSessionID          string
+	JoinedAt                  *time.Time
+	DecisionReason            string
+	DecidedAt                 *time.Time
+	RequestID                 string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	Version                   int64
+	BuyerReputation           *reputation.ReputationSnapshot
 }
 
 type Membership struct {
-	ID                    string
-	CarpoolListingID      string
-	CarpoolApplicationID  string
-	CycleTermID           string
-	BuyerUserID           string
-	OwnerUserID           string
-	ProductPlanID         string
-	Status                string
-	SeatCount             int
-	PriceMonthlyCNY       string
-	PolicyVersionSnapshot int64
-	RiskNoticeCode        string
-	JoinedAt              time.Time
-	BuyerCompletedAt      *time.Time
-	OwnerCompletedAt      *time.Time
-	CompletedAt           *time.Time
-	EndedAt               *time.Time
-	EndedReason           string
-	EndedByUserID         string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	Version               int64
+	ID                        string
+	CarpoolListingID          string
+	CarpoolApplicationID      string
+	CycleTermID               string
+	BuyerUserID               string
+	OwnerUserID               string
+	ProductPlanID             string
+	Status                    string
+	SeatCount                 int
+	PriceMonthlyCNY           string
+	PolicyVersionSnapshot     int64
+	RiskNoticeCode            string
+	ConditionsVersionSnapshot int64
+	ConditionsSnapshot        ListingConditionsSnapshot
+	JoinedAt                  time.Time
+	EndedAt                   *time.Time
+	EndedReason               string
+	EndedByUserID             string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	Version                   int64
+}
+
+type ListingConditionsSnapshot struct {
+	Title                                 string     `json:"title"`
+	PriceMonthlyCNY                       string     `json:"priceMonthlyCny"`
+	DailySpendLimitUSD                    *string    `json:"dailySpendLimitUsd"`
+	WeeklySpendLimitUSD                   string     `json:"weeklySpendLimitUsd"`
+	FollowsOfficialQuotaReset             bool       `json:"followsOfficialQuotaReset"`
+	BuyerSeatCapacity                     int        `json:"buyerSeatCapacity"`
+	OfflineOccupiedSeats                  int        `json:"offlineOccupiedSeats"`
+	RegionCode                            string     `json:"regionCode"`
+	RegionName                            string     `json:"regionName"`
+	VPSRegion                             string     `json:"vpsRegion"`
+	SupportsMainlandChinaDirectConnection bool       `json:"supportsMainlandChinaDirectConnection"`
+	OpeningChannelCode                    string     `json:"openingChannelCode"`
+	CustomOpeningChannel                  string     `json:"customOpeningChannel"`
+	PaymentMethodCode                     string     `json:"paymentMethodCode"`
+	CustomPaymentMethod                   string     `json:"customPaymentMethod"`
+	DistributionMethod                    string     `json:"distributionMethod"`
+	DistributionMethodNote                string     `json:"distributionMethodNote"`
+	ProvidesAdminAccount                  bool       `json:"providesAdminAccount"`
+	AccessArrangement                     string     `json:"accessArrangement"`
+	CycleTerm                             *CycleTerm `json:"cycleTerm,omitempty"`
+	PolicyVersion                         int64      `json:"policyVersion"`
+	RiskNoticeCode                        string     `json:"riskNoticeCode"`
 }
 
 type CreateListingInput struct {
@@ -211,7 +230,7 @@ type CreateListingInput struct {
 	PaymentMethodCode                     string
 	CustomPaymentMethod                   string
 	BuyerSeatCapacity                     int
-	ActiveBuyerMembers                    int
+	OfflineOccupiedSeats                  int
 	RiskAcknowledgement                   *RiskAcknowledgement
 	RequestID                             string
 }
@@ -263,13 +282,20 @@ type UpdateListingInput struct {
 	PaymentMethodCode                     string
 	CustomPaymentMethod                   string
 	BuyerSeatCapacity                     int
-	ActiveBuyerMembers                    int
+	OfflineOccupiedSeats                  int
 	RiskAcknowledgement                   *RiskAcknowledgement
 	ExpectedVersion                       int64
 	RequestID                             string
 }
 
 type SubmitListingReviewInput struct {
+	ListingID       string
+	OwnerUserID     string
+	ExpectedVersion int64
+	RequestID       string
+}
+
+type RecruitmentInput struct {
 	ListingID       string
 	OwnerUserID     string
 	ExpectedVersion int64
@@ -305,6 +331,13 @@ type AcceptApplicationInput struct {
 	RequestID       string
 }
 
+type ConfirmApplicationConditionsInput struct {
+	ApplicationID   string
+	BuyerUserID     string
+	ExpectedVersion int64
+	RequestID       string
+}
+
 type RejectApplicationInput struct {
 	ApplicationID   string
 	OwnerUserID     string
@@ -321,22 +354,6 @@ type CancelApplicationInput struct {
 	RequestID       string
 }
 
-type WithdrawAcceptanceInput struct {
-	ApplicationID   string
-	OwnerUserID     string
-	Reason          string
-	ExpectedVersion int64
-	RequestID       string
-}
-
-type ConfirmApplicationJoinInput struct {
-	ApplicationID   string
-	ActorUserID     string
-	ActorRole       string
-	ExpectedVersion int64
-	RequestID       string
-}
-
 type ApplicationCompletionBuilder func(Application) (idempotency.Completion, *domain.AppError)
 
 type ApplicationAuditEvent struct {
@@ -348,18 +365,6 @@ type ApplicationAuditEvent struct {
 	RequestID        string
 	Status           string
 	CreatedAt        time.Time
-}
-
-type ConfirmMembershipCompleteInput struct {
-	MembershipID           string
-	ActorUserID            string
-	ActorRole              string
-	ActorAudience          string
-	GovernanceActionID     string
-	GovernanceVersion      int64
-	RestrictionEffectiveAt time.Time
-	ExpectedVersion        int64
-	RequestID              string
 }
 
 type EndMembershipInput struct {

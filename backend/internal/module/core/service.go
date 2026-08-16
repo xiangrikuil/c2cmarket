@@ -57,20 +57,16 @@ const (
 	CarpoolListingStatusRemoved          = carpool.ListingStatusRemoved
 
 	CarpoolApplicationStatusPendingOwner     = carpool.ApplicationStatusPendingOwner
-	CarpoolApplicationStatusAcceptedReserved = carpool.ApplicationStatusAcceptedReserved
 	CarpoolApplicationStatusJoined           = carpool.ApplicationStatusJoined
 	CarpoolApplicationStatusRejected         = carpool.ApplicationStatusRejected
 	CarpoolApplicationStatusCancelledByBuyer = carpool.ApplicationStatusCancelledByBuyer
-	CarpoolApplicationStatusCancelledByOwner = carpool.ApplicationStatusCancelledByOwner
-	CarpoolApplicationStatusExpired          = carpool.ApplicationStatusExpired
 
 	CarpoolJoinActorBuyer = carpool.JoinActorBuyer
 	CarpoolJoinActorOwner = carpool.JoinActorOwner
 
-	CarpoolMembershipStatusActive    = carpool.MembershipStatusActive
-	CarpoolMembershipStatusCompleted = carpool.MembershipStatusCompleted
-	CarpoolMembershipStatusLeft      = carpool.MembershipStatusLeft
-	CarpoolMembershipStatusRemoved   = carpool.MembershipStatusRemoved
+	CarpoolMembershipStatusActive  = carpool.MembershipStatusActive
+	CarpoolMembershipStatusLeft    = carpool.MembershipStatusLeft
+	CarpoolMembershipStatusRemoved = carpool.MembershipStatusRemoved
 
 	APIServiceReviewStatusDraft            = apimarket.ServiceReviewStatusDraft
 	APIServiceReviewStatusPendingReview    = apimarket.ServiceReviewStatusPendingReview
@@ -1656,6 +1652,13 @@ func (s *Service) UpdateCarpoolListingWithIdempotency(ctx context.Context, user 
 	return completion, appErr
 }
 
+func (s *Service) UpdateRecruitment(ctx context.Context, user User, input carpool.RecruitmentInput, targetStatus string) (CarpoolListing, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolListing{}, appErr
+	}
+	return s.carpoolService.UpdateRecruitment(ctx, user, input, targetStatus)
+}
+
 func (s *Service) SubmitCarpoolListingForReview(ctx context.Context, user User, input SubmitCarpoolListingReviewInput) (CarpoolListing, *domain.AppError) {
 	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
 		return CarpoolListing{}, appErr
@@ -1820,6 +1823,10 @@ func (s *Service) MyCarpoolApplication(ctx context.Context, user User, applicati
 	return s.carpoolService.MyApplication(ctx, user, applicationID)
 }
 
+func (s *Service) ConfirmCarpoolApplicationConditions(ctx context.Context, user User, input carpool.ConfirmApplicationConditionsInput) (CarpoolApplication, *domain.AppError) {
+	return s.carpoolService.ConfirmApplicationConditions(ctx, user, input)
+}
+
 func (s *Service) OwnerCarpoolApplications(ctx context.Context, user User) ([]CarpoolApplication, *domain.AppError) {
 	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
 		return nil, appErr
@@ -1875,7 +1882,7 @@ func (s *Service) sendCarpoolApplicationAcceptedEmailIfNeeded(ctx context.Contex
 	if strings.TrimSpace(buyerProfile.Email) == "" || buyerProfile.EmailVerifiedAt == nil {
 		return
 	}
-	if appErr := s.emailSender.SendCarpoolApplicationAccepted(ctx, buyerProfile.Email, application.ListingTitleSnapshot, application.ID, application.JoinConfirmationDeadline); appErr != nil {
+	if appErr := s.emailSender.SendCarpoolApplicationAccepted(ctx, buyerProfile.Email, application.ListingTitleSnapshot, application.ID); appErr != nil {
 		log.Printf("上车申请接受邮件发送失败 application_id=%s buyer_user_id=%s code=%s title=%s", application.ID, application.BuyerUserID, appErr.Code, appErr.Title)
 	}
 }
@@ -1900,22 +1907,6 @@ func (s *Service) CancelCarpoolApplicationWithIdempotency(ctx context.Context, u
 	return s.carpoolService.CancelApplicationWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input WithdrawCarpoolAcceptanceInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
-		return IdempotencyCompletion{}, appErr
-	}
-	return s.carpoolService.WithdrawAcceptanceWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input ConfirmCarpoolApplicationJoinInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	if input.ActorRole == CarpoolJoinActorOwner {
-		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
-			return IdempotencyCompletion{}, appErr
-		}
-	}
-	return s.carpoolService.ConfirmApplicationJoinWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
-}
-
 func (s *Service) MyCarpoolMemberships(ctx context.Context, user User) ([]CarpoolMembership, *domain.AppError) {
 	return s.carpoolService.MyMemberships(ctx, user)
 }
@@ -1927,15 +1918,6 @@ func (s *Service) CarpoolMembershipsForActor(ctx context.Context, actor authmodu
 		}
 	}
 	return s.carpoolService.MembershipsForActor(ctx, actor, participantRole)
-}
-
-func (s *Service) ConfirmCarpoolMembershipCompleteForActorWithIdempotency(ctx context.Context, actor authmodule.BusinessActor, routeKey, key, requestHash string, input ConfirmCarpoolMembershipCompleteInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	if actor.Audience == authmodule.SessionAudienceNormal && input.ActorRole == CarpoolJoinActorOwner {
-		if appErr := authmodule.RequireProjectedCapability(actor.Capabilities, authmodule.CapabilityCarpoolPublish); appErr != nil {
-			return IdempotencyCompletion{}, appErr
-		}
-	}
-	return s.carpoolService.ConfirmMembershipCompleteForActorWithIdempotency(ctx, actor, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) EndCarpoolMembershipForActorWithIdempotency(ctx context.Context, actor authmodule.BusinessActor, routeKey, key, requestHash string, input EndCarpoolMembershipInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
@@ -1956,15 +1938,6 @@ func (s *Service) OwnerCarpoolMemberships(ctx context.Context, user User) ([]Car
 		return nil, appErr
 	}
 	return s.carpoolService.OwnerMemberships(ctx, user)
-}
-
-func (s *Service) ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input ConfirmCarpoolMembershipCompleteInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	if input.ActorRole == CarpoolJoinActorOwner {
-		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
-			return IdempotencyCompletion{}, appErr
-		}
-	}
-	return s.carpoolService.ConfirmMembershipCompleteWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) EndCarpoolMembershipWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input EndCarpoolMembershipInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
@@ -2242,14 +2215,6 @@ func (s *Service) PublicUserProfileBundle(ctx context.Context, username string) 
 	if appErr != nil {
 		return profile.PublicUserProfileBundle{}, appErr
 	}
-	buyerMemberships, appErr := s.carpoolService.MyMemberships(ctx, user)
-	if appErr != nil {
-		return profile.PublicUserProfileBundle{}, appErr
-	}
-	ownerMemberships, appErr := s.carpoolService.OwnerMemberships(ctx, user)
-	if appErr != nil {
-		return profile.PublicUserProfileBundle{}, appErr
-	}
 	buyerOrders, appErr := s.apiOrder.BuyerOrders(ctx, user)
 	if appErr != nil {
 		return profile.PublicUserProfileBundle{}, appErr
@@ -2279,7 +2244,7 @@ func (s *Service) PublicUserProfileBundle(ctx context.Context, username string) 
 		Reputations: reputations,
 		Carpools:    publicProfileCarpools(listingPage.Items),
 		Services:    publicProfileAPIServices(services.Items),
-		Completions: publicProfileCompletions(publicProfile, buyerMemberships, ownerMemberships, buyerOrders, sellerOrders),
+		Completions: publicProfileCompletions(publicProfile, buyerOrders, sellerOrders),
 		Reviews:     publicProfileReviews(reviews),
 		Disputes:    publicProfileDisputes(disputes),
 	}, nil
@@ -2338,30 +2303,11 @@ func publicProfileAPIServices(services []apimarket.Service) []profile.PublicProf
 
 func publicProfileCompletions(
 	publicProfile profile.PublicUserProfile,
-	buyerMemberships []carpool.Membership,
-	ownerMemberships []carpool.Membership,
 	buyerOrders []apiorder.Order,
 	sellerOrders []apiorder.Order,
 ) []profile.PublicProfileCompletion {
 	items := []profile.PublicProfileCompletion{}
 	seen := make(map[string]struct{})
-	if publicProfile.Privacy.ShowCompletedCarpoolCount {
-		for _, membership := range append(buyerMemberships, ownerMemberships...) {
-			if membership.Status != carpool.MembershipStatusCompleted || membership.CompletedAt == nil {
-				continue
-			}
-			key := "carpool:" + membership.ID
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-			role := "seller"
-			if membership.BuyerUserID == publicProfile.ID {
-				role = "buyer"
-			}
-			items = append(items, profile.PublicProfileCompletion{ID: membership.ID, Kind: "carpool", Title: "拼车成员关系", Role: role, CompletedAt: *membership.CompletedAt})
-		}
-	}
 	if publicProfile.Privacy.ShowCompletedAPIIntentCount {
 		for _, order := range append(buyerOrders, sellerOrders...) {
 			if order.Status != apiorder.StatusCompleted || order.CompletedAt == nil {
@@ -2673,14 +2619,6 @@ func (s *Service) PublicUserReviews(ctx context.Context, username string) ([]rev
 
 func (s *Service) ReviewTransactionsByUserID(ctx context.Context, userID string) ([]review.Transaction, *domain.AppError) {
 	user := User{ID: userID}
-	buyerMemberships, appErr := s.carpoolService.MyMemberships(ctx, user)
-	if appErr != nil {
-		return nil, appErr
-	}
-	sellerMemberships, appErr := s.carpoolService.OwnerMemberships(ctx, user)
-	if appErr != nil {
-		return nil, appErr
-	}
 	buyerOrders, appErr := s.apiOrder.BuyerOrders(ctx, user)
 	if appErr != nil {
 		return nil, appErr
@@ -2690,20 +2628,8 @@ func (s *Service) ReviewTransactionsByUserID(ctx context.Context, userID string)
 		return nil, appErr
 	}
 
-	items := make([]review.Transaction, 0, len(buyerMemberships)+len(sellerMemberships)+len(buyerOrders)+len(sellerOrders))
+	items := make([]review.Transaction, 0, len(buyerOrders)+len(sellerOrders))
 	seen := make(map[string]struct{})
-	for _, membership := range append(buyerMemberships, sellerMemberships...) {
-		if membership.Status != carpool.MembershipStatusCompleted {
-			continue
-		}
-		transaction := reviewTransactionFromCarpoolMembership(membership)
-		key := transaction.Type + ":" + transaction.ID
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		items = append(items, transaction)
-	}
 	for _, order := range append(buyerOrders, sellerOrders...) {
 		if !review.IsReviewableAPIOrderOutcome(order.CommercialOutcome) || order.CommercialOutcomeUpdatedAt == nil {
 			continue
@@ -2730,28 +2656,6 @@ func (s *Service) ResolveReviewTransaction(ctx context.Context, transactionType,
 		}
 	}
 	return review.Transaction{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Transaction not found", "可评价交易不存在。")
-}
-
-func reviewTransactionFromCarpoolMembership(membership carpool.Membership) review.Transaction {
-	completedAt := membership.UpdatedAt
-	if membership.EndedAt != nil {
-		completedAt = *membership.EndedAt
-	} else if membership.CompletedAt != nil {
-		completedAt = *membership.CompletedAt
-	}
-	return review.Transaction{
-		Type:              review.TransactionCarpoolMembership,
-		ID:                membership.ID,
-		Target:            "拼车成员关系 " + membership.ID,
-		BuyerUserID:       membership.BuyerUserID,
-		BuyerUsername:     membership.BuyerUserID,
-		BuyerDisplayName:  membership.BuyerUserID,
-		SellerUserID:      membership.OwnerUserID,
-		SellerUsername:    membership.OwnerUserID,
-		SellerDisplayName: membership.OwnerUserID,
-		CompletedAt:       completedAt,
-		ReviewDeadlineAt:  completedAt.Add(review.ReviewWindow),
-	}
 }
 
 func reviewTransactionFromAPIOrder(order apiorder.Order) review.Transaction {

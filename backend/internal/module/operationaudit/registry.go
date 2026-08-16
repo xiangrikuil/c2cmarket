@@ -64,16 +64,12 @@ var actionRegistry = []ActionDefinition{
 	{SourceDomain, "carpool_listing.changes_requested", "carpool_listing", DomainCarpool, "拼车车源要求修改", OutcomeStatusChanged, "管理员要求修改拼车车源", ""},
 	{SourceDomain, "carpool_listing.paused", "carpool_listing", DomainCarpool, "拼车车源暂停", OutcomeStatusChanged, "车主暂停了拼车车源", ""},
 	{SourceDomain, "carpool_listing.resumed", "carpool_listing", DomainCarpool, "拼车车源恢复", OutcomeStatusChanged, "车主恢复了拼车车源", ""},
+	{SourceDomain, "carpool_listing.recruitment_updated", "carpool_listing", DomainCarpool, "拼车招募状态更新", OutcomeStatusChanged, "车主更新了拼车招募状态", ""},
 	{SourceDomain, "carpool_application.created", "carpool_application", DomainCarpool, "拼车申请创建", OutcomeSucceeded, "用户提交了拼车申请", ""},
-	{SourceDomain, "carpool_application.accepted", "carpool_application", DomainCarpool, "拼车申请接受", OutcomeStatusChanged, "车主接受了拼车申请", ""},
+	{SourceDomain, "carpool_application.conditions_confirmed", "carpool_application", DomainCarpool, "拼车条件确认", OutcomeStatusChanged, "买家确认了最新车源条件", ""},
 	{SourceDomain, "carpool_application.rejected", "carpool_application", DomainCarpool, "拼车申请拒绝", OutcomeStatusChanged, "车主拒绝了拼车申请", ""},
 	{SourceDomain, "carpool_application.cancelled_by_buyer", "carpool_application", DomainCarpool, "拼车申请取消", OutcomeStatusChanged, "买家取消了拼车申请", ""},
-	{SourceDomain, "carpool_application.cancelled_by_owner", "carpool_application", DomainCarpool, "拼车预留取消", OutcomeStatusChanged, "车主取消了拼车预留", ""},
-	{SourceDomain, "carpool_application.join_confirmed", "carpool_application", DomainCarpool, "拼车加入确认", OutcomeStatusChanged, "参与方确认了加入拼车", ""},
-	{SourceDomain, "carpool_application.joined", "carpool_application", DomainCarpool, "拼车加入完成", OutcomeStatusChanged, "参与方已加入拼车", ""},
-	{SourceDomain, "carpool_application.expired", "carpool_application", DomainCarpool, "拼车预留到期", OutcomeStatusChanged, "系统将超时的拼车预留标记为已过期", ""},
-	{SourceDomain, "carpool_membership.completion_confirmed", "carpool_membership", DomainCarpool, "拼车完成确认", OutcomeStatusChanged, "参与方确认了拼车完成", ""},
-	{SourceDomain, "carpool_membership.completed", "carpool_membership", DomainCarpool, "拼车完成", OutcomeStatusChanged, "拼车成员关系已完成", ""},
+	{SourceDomain, "carpool_application.joined", "carpool_application", DomainCarpool, "拼车确认上车", OutcomeStatusChanged, "车主确认上车并建立了有效成员关系", ""},
 	{SourceDomain, "carpool_membership.left", "carpool_membership", DomainCarpool, "拼车退出", OutcomeStatusChanged, "买家退出了拼车", ""},
 	{SourceDomain, "carpool_membership.removed", "carpool_membership", DomainCarpool, "拼车成员移除", OutcomeStatusChanged, "车主移除了拼车成员", ""},
 	{SourceDomain, "api_purchase_intent.created", "api_purchase_intent", DomainAPIOrder, "购买意向创建", OutcomeSucceeded, "买家创建了 API 购买意向", ""},
@@ -188,7 +184,7 @@ func AllowedActorKinds(definition ActionDefinition) []string {
 		return []string{ActorUser, ActorAdmin, ActorSystem}
 	case SourceDomain:
 		switch definition.Action {
-		case "api_quota_batch.inventory_expired", "api_quota_sale_round.expired", "carpool_application.expired":
+		case "api_quota_batch.inventory_expired", "api_quota_sale_round.expired":
 			return []string{ActorSystem}
 		case "carpool_listing.rejected", "carpool_listing.changes_requested":
 			return []string{ActorAdmin}

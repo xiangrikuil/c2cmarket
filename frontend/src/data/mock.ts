@@ -121,17 +121,10 @@ export type CarpoolDistributionMethod = 'sub2api' | 'other'
 
 export type CarpoolApplicationStatus =
   | 'pending_owner'
-  | 'accepted_reserved'
-  | 'waiting_contact'
-  | 'contacted'
-  | 'joined_pending_confirmation'
   | 'active'
-  | 'pending_completion'
-  | 'completed'
   | 'rejected'
   | 'cancelled_by_buyer'
   | 'cancelled_by_owner'
-  | 'expired'
   | 'disputed'
 
 export type CarpoolApplicationActorRole = 'buyer' | 'owner' | 'admin' | 'system'
@@ -139,16 +132,7 @@ export type CarpoolApplicationEventType =
   | 'application_created'
   | 'owner_accepted'
   | 'owner_rejected'
-  | 'buyer_contacted'
-  | 'buyer_confirmed_joined'
-  | 'owner_confirmed_joined'
-  | 'service_started'
-  | 'pending_completion'
-  | 'buyer_confirmed_completed'
-  | 'owner_confirmed_completed'
-  | 'completed'
   | 'cancelled'
-  | 'expired'
   | 'disputed'
   | 'admin_updated'
 
@@ -158,7 +142,6 @@ export type CarpoolSeatSummary = {
   carpoolId: string
   totalSeats: number
   activeMemberCount: number
-  reservedSeatCount: number
   availableSeats: number
 }
 
@@ -168,6 +151,7 @@ export type CarpoolApplicationSnapshot = {
   regionName: string
   monthlyPriceCny: number
   serviceMultiplier?: number
+  dailyQuotaAmount?: number
   weeklyQuotaAmount?: number
   quotaLabel?: string
   quotaUnit?: string
@@ -198,13 +182,6 @@ export type CarpoolApplicantStats = {
   unresolvedDisputes: number | null
 }
 
-export type CarpoolApplicationReview = {
-  rating: number
-  tags: string[]
-  note: string
-  createdAt: string
-}
-
 export type CarpoolApplication = {
   id: string
   carpoolId: string
@@ -217,22 +194,11 @@ export type CarpoolApplication = {
   status: CarpoolApplicationStatus
   seatsRequested: number
   snapshot: CarpoolApplicationSnapshot
-  reservedUntil: string | null
-  buyerContactedAt: string | null
-  buyerConfirmedJoinedAt: string | null
-  ownerConfirmedJoinedAt: string | null
   startedAt: string | null
-  expectedEndAt: string | null
-  buyerConfirmedCompletedAt: string | null
-  ownerConfirmedCompletedAt: string | null
-  completedAt: string | null
-  completionMode: 'mutual' | 'automatic' | 'admin' | null
   cancellationReasonCode: string | null
   cancellationReasonText: string | null
   responsibility: CarpoolCancellationResponsibility | null
   disputeReason: string | null
-  buyerReview?: CarpoolApplicationReview
-  ownerReview?: CarpoolApplicationReview
   createdAt: string
   updatedAt: string
 }
@@ -1269,16 +1235,7 @@ export const carpoolApplications: CarpoolApplication[] = [
     status: 'pending_owner',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c1,
-    reservedUntil: null,
-    buyerContactedAt: null,
-    buyerConfirmedJoinedAt: null,
-    ownerConfirmedJoinedAt: null,
     startedAt: null,
-    expectedEndAt: null,
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1294,19 +1251,10 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 2, completed30d: 1, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-orbit',
     ownerUsername: 'orbit',
-    status: 'accepted_reserved',
+    status: 'active',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c1,
-    reservedUntil: '2026-06-19 17:05',
-    buyerContactedAt: null,
-    buyerConfirmedJoinedAt: null,
-    ownerConfirmedJoinedAt: null,
-    startedAt: null,
-    expectedEndAt: null,
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
+    startedAt: '2026-06-19 16:35',
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1325,16 +1273,7 @@ export const carpoolApplications: CarpoolApplication[] = [
     status: 'active',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-06-18 20:12',
-    buyerConfirmedJoinedAt: '2026-06-18 20:24',
-    ownerConfirmedJoinedAt: '2026-06-18 20:26',
     startedAt: '2026-06-18 20:26',
-    expectedEndAt: '2026-07-18 20:26',
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1350,19 +1289,10 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 2, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-beifeng',
     ownerUsername: '北风',
-    status: 'pending_completion',
+    status: 'active',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c3,
-    reservedUntil: null,
-    buyerContactedAt: '2026-05-19 12:30',
-    buyerConfirmedJoinedAt: '2026-05-19 12:45',
-    ownerConfirmedJoinedAt: '2026-05-19 12:48',
     startedAt: '2026-05-19 12:48',
-    expectedEndAt: '2026-06-19 12:48',
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1378,25 +1308,14 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 2, completed30d: 0, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-qingning',
     ownerUsername: '青柠',
-    status: 'completed',
+    status: 'cancelled_by_buyer',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-05-10 10:12',
-    buyerConfirmedJoinedAt: '2026-05-10 10:20',
-    ownerConfirmedJoinedAt: '2026-05-10 10:22',
     startedAt: '2026-05-10 10:22',
-    expectedEndAt: '2026-06-10 10:22',
-    buyerConfirmedCompletedAt: '2026-06-10 12:00',
-    ownerConfirmedCompletedAt: '2026-06-10 12:04',
-    completedAt: '2026-06-10 12:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'buyer_left',
+    cancellationReasonText: '买家已退出成员关系。',
+    responsibility: 'buyer',
     disputeReason: null,
-    buyerReview: { rating: 5, tags: ['规则清楚', '服务稳定'], note: '本地 mock 已验证评价。', createdAt: '2026-06-10 12:08' },
-    ownerReview: { rating: 4, tags: ['付款及时', '确认及时'], note: '买家付款和确认都很及时。', createdAt: '2026-06-10 12:10' },
     createdAt: '2026-05-10 10:00',
     updatedAt: '2026-06-10 12:10',
   },
@@ -1408,24 +1327,14 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-qingning',
     ownerUsername: '青柠',
-    status: 'completed',
+    status: 'cancelled_by_owner',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-07-23 18:12',
-    buyerConfirmedJoinedAt: '2026-07-23 18:20',
-    ownerConfirmedJoinedAt: '2026-07-23 18:22',
     startedAt: '2026-07-23 18:22',
-    expectedEndAt: '2026-07-24 09:00',
-    buyerConfirmedCompletedAt: '2026-07-24 09:02',
-    ownerConfirmedCompletedAt: '2026-07-24 09:04',
-    completedAt: '2026-07-24 09:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'owner_removed',
+    cancellationReasonText: '车主已移除该成员。',
+    responsibility: 'owner',
     disputeReason: null,
-    ownerReview: { rating: 5, tags: ['付款及时', '确认及时'], note: '付款和确认都很及时，沟通顺畅。', createdAt: '2026-07-24 09:15' },
     createdAt: '2026-07-23 17:55',
     updatedAt: '2026-07-24 09:15',
   },
@@ -1437,24 +1346,14 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-beifeng',
     ownerUsername: '北风',
-    status: 'completed',
+    status: 'cancelled_by_buyer',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c3,
-    reservedUntil: null,
-    buyerContactedAt: '2026-07-22 11:12',
-    buyerConfirmedJoinedAt: '2026-07-22 11:20',
-    ownerConfirmedJoinedAt: '2026-07-22 11:22',
     startedAt: '2026-07-22 11:22',
-    expectedEndAt: '2026-07-23 12:00',
-    buyerConfirmedCompletedAt: '2026-07-23 12:02',
-    ownerConfirmedCompletedAt: '2026-07-23 12:04',
-    completedAt: '2026-07-23 12:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'buyer_left',
+    cancellationReasonText: '买家已退出成员关系。',
+    responsibility: 'buyer',
     disputeReason: null,
-    buyerReview: { rating: 4, tags: ['沟通顺畅', '规则清晰'], note: '自己的评价在双盲期内仍可查看和修改。', createdAt: '2026-07-23 12:18' },
     createdAt: '2026-07-22 10:55',
     updatedAt: '2026-07-23 12:18',
   },
@@ -1466,22 +1365,13 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-qingning',
     ownerUsername: '青柠',
-    status: 'completed',
+    status: 'cancelled_by_owner',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-06-30 18:12',
-    buyerConfirmedJoinedAt: '2026-06-30 18:20',
-    ownerConfirmedJoinedAt: '2026-06-30 18:22',
     startedAt: '2026-06-30 18:22',
-    expectedEndAt: '2026-07-01 09:00',
-    buyerConfirmedCompletedAt: '2026-07-01 09:02',
-    ownerConfirmedCompletedAt: '2026-07-01 09:04',
-    completedAt: '2026-07-01 09:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'owner_removed',
+    cancellationReasonText: '车主已移除该成员。',
+    responsibility: 'owner',
     disputeReason: null,
     createdAt: '2026-06-30 17:55',
     updatedAt: '2026-07-01 09:04',
@@ -1497,16 +1387,7 @@ export const carpoolApplications: CarpoolApplication[] = [
     status: 'disputed',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c3,
-    reservedUntil: null,
-    buyerContactedAt: '2026-06-16 09:30',
-    buyerConfirmedJoinedAt: '2026-06-16 09:50',
-    ownerConfirmedJoinedAt: '2026-06-16 09:52',
     startedAt: '2026-06-16 09:52',
-    expectedEndAt: '2026-07-16 09:52',
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: 'undetermined',
@@ -1519,11 +1400,10 @@ export const carpoolApplications: CarpoolApplication[] = [
 export const carpoolApplicationEvents: CarpoolApplicationEvent[] = [
   { id: 'ride-event-1', applicationId: 'ride-app-1', actorId: 'buyer-zhichuan', actorLabel: '纸船', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请，等待车主处理。', createdAt: '2026-06-19 16:18' },
   { id: 'ride-event-2', applicationId: 'ride-app-2', actorId: 'buyer-muzhou', actorLabel: '木舟', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请。', createdAt: '2026-06-19 15:55' },
-  { id: 'ride-event-3', applicationId: 'ride-app-2', actorId: 'owner-orbit', actorLabel: 'orbit', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'accepted_reserved', note: '车主接受申请，预留 1 席 30 分钟。', createdAt: '2026-06-19 16:35' },
-  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录与车主完成联系。', createdAt: '2026-06-18 20:12' },
-  { id: 'ride-event-5', applicationId: 'ride-app-3', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'service_started', fromStatus: 'joined_pending_confirmation', toStatus: 'active', note: '双方确认后进入服务中。', createdAt: '2026-06-18 20:26' },
-  { id: 'ride-event-6', applicationId: 'ride-app-4', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'pending_completion', fromStatus: 'active', toStatus: 'pending_completion', note: '服务周期到期，等待双方确认完成。', createdAt: '2026-06-19 12:48' },
-  { id: 'ride-event-7', applicationId: 'ride-app-5', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'completed', fromStatus: 'pending_completion', toStatus: 'completed', note: '双方确认完成，评价可用。', createdAt: '2026-06-10 12:04' },
+  { id: 'ride-event-3', applicationId: 'ride-app-2', actorId: 'owner-orbit', actorLabel: 'orbit', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'active', note: '车主确认上车，成员关系立即生效。', createdAt: '2026-06-19 16:35' },
+  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'owner-qingning', actorLabel: '青柠', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'active', note: '车主确认上车，成员关系立即生效。', createdAt: '2026-06-18 20:26' },
+  { id: 'ride-event-5', applicationId: 'ride-app-5', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'cancelled', fromStatus: 'active', toStatus: 'cancelled_by_buyer', note: '买家已退出成员关系。', createdAt: '2026-06-10 12:04' },
+  { id: 'ride-event-6', applicationId: 'ride-app-7', actorId: 'owner-qingning', actorLabel: '青柠', actorRole: 'owner', type: 'cancelled', fromStatus: 'active', toStatus: 'cancelled_by_owner', note: '车主已移除该成员。', createdAt: '2026-07-24 09:04' },
   { id: 'ride-event-8', applicationId: 'ride-app-6', actorId: 'buyer-yuji', actorLabel: '雨季', actorRole: 'buyer', type: 'disputed', fromStatus: 'active', toStatus: 'disputed', note: '买家发起纠纷，等待管理员处理。', createdAt: '2026-06-18 15:30' },
 ]
 

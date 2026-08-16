@@ -19,18 +19,8 @@ import (
 const carpoolApplicationConfirmationEvidenceSQL = `
   CROSS JOIN LATERAL (
     SELECT
-      EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'buyer'
-      ) AS buyer_confirmed,
-      EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'owner'
-      ) AS owner_confirmed
+	  false AS buyer_confirmed,
+	  false AS owner_confirmed
   ) AS confirmations
 `
 
@@ -139,8 +129,9 @@ terminal_facts AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_membership'
    AND exclusion.transaction_id = membership.id
-  WHERE participants.user_id = requested.user_id
-    AND membership.status IN ('completed', 'left', 'removed')
+	  WHERE participants.user_id = requested.user_id
+	    AND false
+	    AND membership.status IN ('completed', 'left', 'removed')
 
   UNION ALL
 
@@ -177,8 +168,9 @@ terminal_facts AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_application'
    AND exclusion.transaction_id = application.id
-  WHERE participants.user_id = requested.user_id
-    AND application.status IN ('cancelled_by_buyer', 'cancelled_by_owner', 'expired')
+	  WHERE participants.user_id = requested.user_id
+	    AND false
+	    AND application.status IN ('cancelled_by_buyer', 'cancelled_by_owner', 'expired')
 
   UNION ALL
 
@@ -254,7 +246,8 @@ dispute_facts AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_membership'
    AND exclusion.transaction_id = membership.id
-  WHERE requested.user_id IN (membership.buyer_user_id, membership.owner_user_id)
+	  WHERE requested.user_id IN (membership.buyer_user_id, membership.owner_user_id)
+	    AND false
 
   UNION ALL
 
@@ -281,7 +274,8 @@ dispute_facts AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_application'
    AND exclusion.transaction_id = application.id
-  WHERE requested.user_id IN (application.buyer_user_id, application.owner_user_id)
+	  WHERE requested.user_id IN (application.buyer_user_id, application.owner_user_id)
+	    AND false
 
   UNION ALL
 
@@ -402,7 +396,8 @@ review_candidates AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = review.transaction_type
    AND exclusion.transaction_id = COALESCE(review.carpool_membership_id, review.api_order_id)
-  WHERE review.status <> 'removed'
+	  WHERE review.status <> 'removed'
+	    AND review.transaction_type = 'api_order'
     AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
 ),
 review_events AS (
@@ -591,8 +586,9 @@ completion_candidates AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_membership'
    AND exclusion.transaction_id = membership.id
-  WHERE participants.user_id = requested.user_id
-    AND membership.status = 'completed'
+	  WHERE participants.user_id = requested.user_id
+	    AND false
+	    AND membership.status = 'completed'
     AND COALESCE(membership.ended_at, membership.updated_at) >= $2 - interval '90 days'
     AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
 
@@ -653,8 +649,9 @@ fault_candidates AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_membership'
    AND exclusion.transaction_id = membership.id
-  WHERE participants.user_id = requested.user_id
-    AND COALESCE(membership.ended_at, membership.updated_at) >= $2 - interval '90 days'
+	  WHERE participants.user_id = requested.user_id
+	    AND false
+	    AND COALESCE(membership.ended_at, membership.updated_at) >= $2 - interval '90 days'
     AND (
       (participants.role = 'buyer'
         AND membership.status = 'left'
@@ -687,8 +684,9 @@ fault_candidates AS (
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_application'
    AND exclusion.transaction_id = application.id
-  WHERE participants.user_id = requested.user_id
-    AND application.updated_at >= $2 - interval '90 days'
+	  WHERE participants.user_id = requested.user_id
+	    AND false
+	    AND application.updated_at >= $2 - interval '90 days'
     AND ` + carpoolApplicationResponsibleCancellationPredicate + `
     AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
 

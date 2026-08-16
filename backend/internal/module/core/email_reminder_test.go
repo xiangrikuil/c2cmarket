@@ -31,7 +31,6 @@ type sentCarpoolAcceptedEmail struct {
 	to            string
 	listingTitle  string
 	applicationID string
-	joinDeadline  *time.Time
 }
 
 type sentAPIOrderEmail struct {
@@ -61,17 +60,11 @@ func (f *emailReminderFakeSender) SendCarpoolApplicationCreated(_ context.Contex
 	return nil
 }
 
-func (f *emailReminderFakeSender) SendCarpoolApplicationAccepted(_ context.Context, toEmail, listingTitle, applicationID string, joinDeadline *time.Time) *domain.AppError {
-	var deadlineCopy *time.Time
-	if joinDeadline != nil {
-		value := *joinDeadline
-		deadlineCopy = &value
-	}
+func (f *emailReminderFakeSender) SendCarpoolApplicationAccepted(_ context.Context, toEmail, listingTitle, applicationID string) *domain.AppError {
 	f.carpoolAccepted = append(f.carpoolAccepted, sentCarpoolAcceptedEmail{
 		to:            toEmail,
 		listingTitle:  listingTitle,
 		applicationID: applicationID,
-		joinDeadline:  deadlineCopy,
 	})
 	if f.failCarpoolAccept {
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "Email send failed", "邮件发送失败。")
@@ -121,7 +114,7 @@ func TestCarpoolAcceptanceEmailSentToVerifiedBuyerOnce(t *testing.T) {
 		t.Fatalf("expected one buyer acceptance email, got %+v", sender.carpoolAccepted)
 	}
 	sent := sender.carpoolAccepted[0]
-	if sent.to != "buyer-carpool@example.com" || sent.listingTitle != application.ListingTitleSnapshot || sent.applicationID != application.ID || sent.joinDeadline == nil {
+	if sent.to != "buyer-carpool@example.com" || sent.listingTitle != application.ListingTitleSnapshot || sent.applicationID != application.ID {
 		t.Fatalf("unexpected buyer acceptance email: %+v", sent)
 	}
 

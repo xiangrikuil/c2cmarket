@@ -195,32 +195,21 @@ func filterCarpoolApplications(r *http.Request, items []carpool.Application, mem
 
 func carpoolApplicationActionRequired(status, sortMode string) bool {
 	if sortMode == "default_owner" {
-		return status == "pending_owner" || status == "joined_pending_confirmation" || status == "pending_completion" || status == "disputed"
+		return status == carpool.ApplicationStatusPendingOwner || status == "disputed"
 	}
-	return status == "accepted_reserved" || status == "waiting_contact" || status == "contacted" || status == "pending_completion" || status == "disputed"
+	return status == "disputed"
 }
 
 func carpoolApplicationDisplayStatus(application carpool.Application, membership carpool.Membership) string {
 	if membership.ID != "" {
 		switch membership.Status {
-		case carpool.MembershipStatusCompleted:
-			return "completed"
 		case carpool.MembershipStatusLeft:
-			return "cancelled_by_buyer"
+			return carpool.MembershipStatusLeft
 		case carpool.MembershipStatusRemoved:
-			return "cancelled_by_owner"
+			return carpool.MembershipStatusRemoved
 		case carpool.MembershipStatusActive:
-			if membership.BuyerCompletedAt != nil || membership.OwnerCompletedAt != nil {
-				return "pending_completion"
-			}
-			return "active"
+			return carpool.MembershipStatusActive
 		}
-	}
-	if application.Status == carpool.ApplicationStatusAcceptedReserved {
-		if application.BuyerConfirmedAt != nil || application.OwnerConfirmedAt != nil {
-			return "joined_pending_confirmation"
-		}
-		return "accepted_reserved"
 	}
 	return application.Status
 }

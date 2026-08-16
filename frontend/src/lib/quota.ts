@@ -36,14 +36,13 @@ export function formatMonthlyQuota(input: QuotaDisplayInput, fallback = '额度�
 }
 
 export function formatDailyWeeklyQuota(input: QuotaDisplayInput, fallback = '未声明') {
-  const unit = (input.unit ?? input.quotaUnit)?.trim() || defaultQuotaUnit
-  const daily = input.dailyQuotaAmount
+	const daily = input.dailyQuotaAmount
   const weekly = input.weeklyQuotaAmount ?? input.amount
   const dailyText = Number.isFinite(daily) && daily && daily > 0
-    ? `${formatQuotaAmount(daily)} ${unit}`
+		? `$${formatQuotaAmount(daily)}`
     : fallback
   const weeklyText = Number.isFinite(weekly) && weekly && weekly > 0
-    ? `${formatQuotaAmount(weekly)} ${unit}`
+		? `$${formatQuotaAmount(weekly)}`
     : fallback
-  return `日 ${dailyText} · 周 ${weeklyText}`
+	return `每日最大花费 ${dailyText} · 每周最大花费 ${weeklyText}`
 }

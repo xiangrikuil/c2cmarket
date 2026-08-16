@@ -204,10 +204,8 @@ export function buildCarpoolShareText(
   const distributionText = form.distributionMethod === 'other'
     ? `${distributionMethodLabel(form.distributionMethod)}：${form.distributionMethodNote.trim() || '待确认'}`
     : distributionMethodLabel(form.distributionMethod)
-  const product = selectedProduct(form, catalogById)
-  const unit = product?.quotaUnit || 'USD'
-  const dailyQuota = form.dailyQuotaAmount ? `${formatQuotaAmount(form.dailyQuotaAmount)} ${unit}` : '待确认'
-  const weeklyQuota = form.weeklyQuotaAmount ? `${formatQuotaAmount(form.weeklyQuotaAmount)} ${unit}` : '待确认'
+  const dailyQuota = form.dailyQuotaAmount ? `$${formatQuotaAmount(form.dailyQuotaAmount)}` : '待确认'
+  const weeklyQuota = form.weeklyQuotaAmount ? `$${formatQuotaAmount(form.weeklyQuotaAmount)}` : '待确认'
   const priceText = form.monthlyPriceCny ? `¥${form.monthlyPriceCny}/月` : '价格待确认'
 
   return [
@@ -217,8 +215,8 @@ export function buildCarpoolShareText(
     `开通区：${regionName}`,
     `席位：总 ${form.totalSeats} 人，已上车 ${form.occupiedSeats} 人，剩余 ${remaining} 席`,
     `价格：${priceText}`,
-    `每天${product?.quotaLabel || '额度'}：${dailyQuota}`,
-    `每周${product?.quotaLabel || '额度'}：${weeklyQuota}`,
+    `每日最大花费额度：${dailyQuota}`,
+    `每周最大花费额度：${weeklyQuota}`,
     `额度重置：${form.followsOfficialQuotaReset === null ? '待确认' : form.followsOfficialQuotaReset ? '跟随官方重置' : '不跟随官方重置'}`,
     `VPS 区域：${form.vpsRegion.trim() || '待确认'}`,
     `国内直连：${form.supportsMainlandChinaDirectConnection === null ? '待确认' : form.supportsMainlandChinaDirectConnection ? '支持' : '不支持'}`,

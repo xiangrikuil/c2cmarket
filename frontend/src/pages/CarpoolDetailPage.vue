@@ -90,10 +90,8 @@ const applyDisabledReason = computed(() => {
 
 const totalSeats = computed(() => seatSummary.value?.totalSeats ?? carpool.value?.maxMembers ?? 0)
 const activeSeats = computed(() => seatSummary.value?.activeMemberCount ?? carpool.value?.currentConfirmedMembers ?? 0)
-const reservedSeats = computed(() => seatSummary.value?.reservedSeatCount ?? 0)
 const availableSeats = computed(() => seatSummary.value?.availableSeats ?? (carpool.value ? getRemainingSeats(carpool.value) : 0))
 const occupiedPercent = computed(() => getSeatPercent(activeSeats.value, totalSeats.value))
-const reservedPercent = computed(() => getSeatPercent(reservedSeats.value, totalSeats.value))
 const availablePercent = computed(() => getSeatPercent(availableSeats.value, totalSeats.value))
 const applyStatusText = computed(() => applicationEligibility.value?.reason ?? applyDisabledReason.value)
 const seatAvailabilityLabel = computed(() => applicationEligibility.value?.canApply ? '可申请' : '剩余名额')
@@ -294,7 +292,7 @@ async function shareCarpool() {
                 <span class="font-medium">{{ pricing?.note }}</span>
               </div>
               <div class="flex justify-between gap-4 rounded-md bg-muted/40 px-3 py-2">
-                <span class="text-muted-foreground">每天 / 每周额度</span>
+                <span class="text-muted-foreground">每日最大花费额度 / 每周最大花费额度</span>
                 <span class="font-medium">{{ quotaText }}</span>
               </div>
             </div>
@@ -327,13 +325,11 @@ async function shareCarpool() {
           <div class="mt-5 h-3 overflow-hidden rounded-full bg-muted">
             <div class="flex h-full w-full">
               <div v-if="activeSeats" class="h-full bg-primary" :style="{ width: occupiedPercent }" />
-              <div v-if="reservedSeats" class="h-full bg-amber-400" :style="{ width: reservedPercent }" />
               <div v-if="availableSeats" class="h-full bg-emerald-500" :style="{ width: availablePercent }" />
             </div>
           </div>
-          <div class="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+          <div class="mt-3 grid grid-cols-2 gap-2 text-center text-xs">
             <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ activeSeats }}</div><div class="text-muted-foreground">已上车</div></div>
-            <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ reservedSeats }}</div><div class="text-muted-foreground">预留中</div></div>
             <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ availableSeats }}</div><div class="text-muted-foreground">{{ seatAvailabilityLabel }}</div></div>
           </div>
           <Button v-if="canApplyToCarpool" class="mt-5 w-full" :variant="applyDisabledReason ? 'secondary' : 'default'" :disabled="Boolean(applyDisabledReason)" @click="applyDialogOpen = true">
@@ -393,7 +389,7 @@ async function shareCarpool() {
             <span>¥{{ pricing.nextTierPrice }}/月</span>
           </div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">价格说明</span><span>{{ pricing?.note }}</span></div>
-          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">每天 / 每周额度</span><span>{{ quotaText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">每日最大花费额度 / 每周最大花费额度</span><span>{{ quotaText }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">额度重置</span><span>{{ quotaResetText }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">VPS 区域</span><span>{{ carpool.vpsRegion?.trim() || '未声明' }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">国内直连</span><span>{{ mainlandDirectText }}</span></div>

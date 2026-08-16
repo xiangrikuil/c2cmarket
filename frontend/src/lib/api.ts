@@ -69,7 +69,6 @@ import {
   type CarpoolApplicationEligibilityCode,
   type CarpoolApplicationEvent,
   type CarpoolApplicationEventType,
-  type CarpoolApplicationReview,
   type CarpoolApplicationStatus,
   type CarpoolCancellationResponsibility,
   type CarpoolSeatSummary,
@@ -140,8 +139,7 @@ import {
   backendAdminCarpoolRowsPage,
   backendBuyerLeaveCarpool,
   backendCancelCarpoolApplication,
-  backendBuyerConfirmCarpoolCompleted,
-  backendBuyerConfirmCarpoolJoined,
+  backendConfirmCarpoolApplicationConditions,
   backendCarpoolApplicationEligibility,
   backendCarpoolApplicationById,
   backendCarpoolApplicationContacts,
@@ -162,14 +160,12 @@ import {
   backendMyCarpoolApplications,
   backendMyCarpoolApplicationsPage,
   backendOwnerRemoveCarpool,
-  backendOwnerConfirmCarpoolCompleted,
-  backendOwnerConfirmCarpoolJoined,
   backendRejectCarpoolApplication,
   backendRunAdminCarpoolAction,
   backendSubmitCarpool,
 	backendUpdateOwnerCarpool,
   backendUpdateAdminCarpoolStatus,
-  backendWithdrawCarpoolAcceptance,
+  backendUpdateCarpoolRecruitment,
 } from '@/lib/carpoolBackend'
 import type { CarpoolPageFilters } from '@/lib/carpoolBackend'
 import {
@@ -427,7 +423,7 @@ export type SearchResult = {
 
 export type ReviewCenterRow = {
   id: string
-  transactionType: 'carpool_membership' | 'api_order'
+  transactionType: 'api_order'
   transactionId: string
   direction: 'pending' | 'sent' | 'received'
   target: string
@@ -557,6 +553,10 @@ export type SubmitReviewPayload = {
   rating: number
   tags: string[]
   note: string
+}
+
+type MockApiOrderReview = Pick<SubmitReviewPayload, 'rating' | 'tags' | 'note'> & {
+  createdAt: string
 }
 
 export type CreatePublicProfileReportRequest = CreatePublicUserReportRequest
@@ -918,8 +918,8 @@ export type BackendResourceMeta = {
   backendStatus?: string
 }
 
-export type CarpoolWithMeta = Carpool & BackendResourceMeta & { seatSummary?: CarpoolSeatSummary }
-export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta
+export type CarpoolWithMeta = Carpool & BackendResourceMeta & { seatSummary?: CarpoolSeatSummary, offlineOccupiedSeats?: number, recruitmentStopReason?: string }
+export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta & { conditionsOutdated?: boolean, acceptedConditionsVersion?: number, conditionsVersionSnapshot?: number }
 export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
@@ -997,13 +997,14 @@ const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
 const favoriteStorageKey = 'c2cmarket.favorites.v1'
 const apiOrderNumberAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const carpoolApplyAllowedStatuses: Carpool['status'][] = ['可上车']
-const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation', 'active', 'pending_completion', 'completed', 'disputed']
+const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['active']
 const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'ordered', 'buyer_cancelled', 'owner_closed']
 
 let apiPurchaseIntentStore = normalizeApiPurchaseIntentStore(readSessionStore(apiPurchaseIntentStorageKey, apiPurchaseIntents))
 let apiPurchaseIntentEventStore = normalizeApiPurchaseIntentEventStore(readSessionStore(apiPurchaseIntentEventStorageKey, apiPurchaseIntentEvents))
 const loadedApiOrders = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
 let apiOrderStore = normalizeApiOrderStore(loadedApiOrders)
+const mockApiOrderReviewStore = new Map<string, MockApiOrderReview>()
 if (loadedApiOrders.some(order => !order.orderNo)) persistApiOrderStore()
 let apiQuotaBatchStore = readSessionStore<ApiQuotaBatch[]>(apiQuotaBatchStorageKey, apiQuotaBatches)
 let apiQuotaOfferStore = normalizeApiQuotaOfferStore(readSessionStore<PublicApiQuotaOffer[]>(apiQuotaOfferStorageKey, apiQuotaOffers))
@@ -1725,7 +1726,9 @@ export function getReadableStatus(value: string | null | undefined) {
     under_review: '申诉复核中',
     need_more_information: '需要补充信息',
     pending_owner: '待车主处理',
-    accepted_reserved: '席位已预留',
+    active: '有效成员',
+    cancelled_by_buyer: '买家已退出',
+    cancelled_by_owner: '车主已移除',
     open: '意向已创建',
     contacted: '商户已记录联系',
     ordered: '已生成订单',
@@ -1862,62 +1865,43 @@ export function isHighRiskSubscriptionCarpool(carpool: Pick<Carpool, 'product' |
 export function getCarpoolApplicationStatusLabel(status: CarpoolApplicationStatus) {
   const labels: Record<CarpoolApplicationStatus, string> = {
     pending_owner: '等待车主处理',
-    accepted_reserved: '席位已预留',
-    waiting_contact: '等待买家联系车主',
-    contacted: '已联系车主',
-    joined_pending_confirmation: '等待车主确认已上车',
-    active: '服务中',
-    pending_completion: '等待双方确认本次完成',
-    completed: '已完成',
+		active: '有效成员',
     rejected: '已拒绝',
     cancelled_by_buyer: '买家已取消',
-    cancelled_by_owner: '车主已取消',
-    expired: '联系窗口已过期',
+		cancelled_by_owner: '车主已移除',
     disputed: '纠纷中',
   }
   return labels[status]
 }
 
 export function isCarpoolBuyerActionRequired(application: CarpoolApplication) {
-  return ['accepted_reserved', 'waiting_contact', 'contacted', 'pending_completion', 'disputed'].includes(application.status)
+	return application.status === 'disputed'
 }
 
 export function isCarpoolOwnerActionRequired(application: CarpoolApplication) {
-  return ['pending_owner', 'joined_pending_confirmation', 'pending_completion', 'disputed'].includes(application.status)
+	return ['pending_owner', 'disputed'].includes(application.status)
 }
 
 export function getCarpoolApplicationNextAction(application: CarpoolApplication, role: 'buyer' | 'owner') {
-  if (role === 'buyer') {
-    if (application.status === 'pending_owner') return '等待车主处理'
-    if (application.status === 'accepted_reserved' || application.status === 'waiting_contact') return '已联系车主'
-    if (application.status === 'contacted') return '确认已经上车'
-    if (application.status === 'joined_pending_confirmation') return '等待车主确认'
-    if (application.status === 'active') return '查看服务记录'
-    if (application.status === 'pending_completion') return '确认本次完成'
-    if (application.status === 'completed' && !application.buyerReview) return '评价车主'
+	if (role === 'buyer') {
+		if (application.status === 'pending_owner') return '等待车主处理'
+		if (application.status === 'active') return '查看成员关系'
     if (application.status === 'disputed') return '查看纠纷'
     return '查看详情'
   }
 
   if (application.status === 'pending_owner') return '处理申请'
-  if (application.status === 'accepted_reserved' || application.status === 'waiting_contact') return '等待买家联系'
-  if (application.status === 'contacted') return '确认用户已上车'
-  if (application.status === 'joined_pending_confirmation') return '确认用户已上车'
-  if (application.status === 'pending_completion') return '确认本次完成'
+	if (application.status === 'active') return '查看成员关系'
   if (application.status === 'disputed') return '处理纠纷'
   return '查看详情'
 }
 
 function isOngoingCarpoolApplication(status: CarpoolApplicationStatus) {
-  return !['completed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'].includes(status)
-}
-
-function isReservedCarpoolApplication(status: CarpoolApplicationStatus) {
-  return ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation'].includes(status)
+  return status === 'pending_owner' || status === 'active' || status === 'disputed'
 }
 
 function isActiveCarpoolApplication(status: CarpoolApplicationStatus) {
-  return ['active', 'pending_completion'].includes(status)
+  return status === 'active'
 }
 
 function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] {
@@ -1950,20 +1934,12 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
 }
 
 export function getCarpoolSeatSummary(carpool: Carpool): CarpoolSeatSummary {
-  const related = carpoolApplicationStore.filter(item => item.carpoolId === carpool.id)
-  const reservedSeatCount = related
-    .filter(item => isReservedCarpoolApplication(item.status))
-    .reduce((sum, item) => sum + item.seatsRequested, 0)
-  const activeSessionSeats = related
-    .filter(item => isActiveCarpoolApplication(item.status))
-    .reduce((sum, item) => sum + item.seatsRequested, 0)
-  const activeMemberCount = carpool.currentConfirmedMembers + activeSessionSeats
+  const activeMemberCount = carpool.currentConfirmedMembers
   return {
     carpoolId: carpool.id,
     totalSeats: carpool.maxMembers,
     activeMemberCount,
-    reservedSeatCount,
-    availableSeats: Math.max(0, carpool.maxMembers - activeMemberCount - reservedSeatCount),
+    availableSeats: Math.max(0, carpool.maxMembers - activeMemberCount),
   }
 }
 
@@ -2002,22 +1978,6 @@ function updateCarpoolApplication(id: string, updater: (application: CarpoolAppl
   application.updatedAt = nowText()
   persistCarpoolApplicationStores()
   return clone(application)
-}
-
-function startCarpoolServiceIfBothConfirmed(application: CarpoolApplication) {
-  if (!application.buyerConfirmedJoinedAt || !application.ownerConfirmedJoinedAt) return false
-  application.status = 'active'
-  application.startedAt = application.startedAt ?? nowText()
-  application.expectedEndAt = application.expectedEndAt ?? minutesFromNow(30 * 24 * 60)
-  return true
-}
-
-function completeCarpoolIfBothConfirmed(application: CarpoolApplication) {
-  if (!application.buyerConfirmedCompletedAt || !application.ownerConfirmedCompletedAt) return false
-  application.status = 'completed'
-  application.completedAt = application.completedAt ?? nowText()
-  application.completionMode = 'mutual'
-  return true
 }
 
 export function isBuyerActionRequired(intent: ApiPurchaseIntent) {
@@ -2181,27 +2141,10 @@ function dateFromDateTime(value: string | null | undefined) {
   return value.split(' ')[0]
 }
 
-function buildPublicReviewFromCarpoolApplication(application: CarpoolApplication): PublicReviewRecord | null {
-  if (application.status !== 'completed' || !application.buyerReview) return null
-  return {
-    id: `public-carpool-review-${application.id}`,
-    username: application.ownerUsername,
-    date: dateFromDateTime(application.buyerReview.createdAt ?? application.completedAt ?? application.updatedAt),
-    serviceType: application.snapshot.productName,
-    rating: application.buyerReview.rating,
-    tags: application.buyerReview.tags,
-    note: application.buyerReview.note,
-    verified: true,
-  }
-}
-
 function publicReviewsForProfile(username: string) {
   const staticReviews = publicReviewRecords.filter(item => item.verified && profileMatchesUsername(item.username, username))
-  const carpoolReviews = carpoolApplicationStore
-    .map(buildPublicReviewFromCarpoolApplication)
-    .filter((item): item is PublicReviewRecord => item !== null && profileMatchesUsername(item.username, username))
   const byId = new Map<string, PublicReviewRecord>()
-  for (const review of [...staticReviews, ...carpoolReviews]) {
+  for (const review of staticReviews) {
     byId.set(review.id, review)
   }
   return Array.from(byId.values()).sort((a, b) => compareTimeDesc(a.date, b.date))
@@ -2317,8 +2260,6 @@ export type CreateApiPurchaseIntentPayload = {
   buyerNote?: string
 }
 
-export type ReviewCarpoolApplicationPayload = Pick<CarpoolApplicationReview, 'rating' | 'tags' | 'note'>
-
 export type CarpoolApplicationFilters = {
   buyerId?: string
   ownerId?: string
@@ -2430,7 +2371,6 @@ function defaultCarpoolSortForRole(role: 'buyer' | 'owner') {
     const aAction = role === 'buyer' ? isCarpoolBuyerActionRequired(a) : isCarpoolOwnerActionRequired(a)
     const bAction = role === 'buyer' ? isCarpoolBuyerActionRequired(b) : isCarpoolOwnerActionRequired(b)
     return Number(bAction) - Number(aAction)
-      || deadlineTime(a.reservedUntil ?? undefined) - deadlineTime(b.reservedUntil ?? undefined)
       || compareTimeDesc(a.updatedAt, b.updatedAt)
   }
 }
@@ -2600,8 +2540,8 @@ export async function getCarpoolApplicationEligibility(id: string): Promise<Carp
   const carpool = carpoolStore.find(item => item.id === id)
   if (!carpool) throw new Error('车源不存在。')
   const related = carpoolApplicationStore.filter(item => item.carpoolId === id && item.applicantUserId === currentBuyerId)
-  const hasActiveMembership = related.some(item => ['active', 'pending_completion'].includes(item.status))
-  const hasOngoingApplication = related.some(item => !['completed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'].includes(item.status))
+  const hasActiveMembership = related.some(item => isActiveCarpoolApplication(item.status))
+  const hasOngoingApplication = related.some(item => isOngoingCarpoolApplication(item.status))
   return clone(evaluateCarpoolApplicationEligibility(carpool, getCarpoolSeatSummary(carpool), hasOngoingApplication, currentBuyerId, hasActiveMembership))
 }
 
@@ -3843,12 +3783,13 @@ export async function getPublicUserProfile(username: string) {
 	        refundCommitment: Boolean(item.merchantRefundCommitment),
 	        updatedAt: item.serviceUpdatedAt ?? item.lastOnlineConfirmedAt,
 	      })),
-	    completions: publicCompletionRecords
-	      .filter(item => item.username === username)
-	      .slice(0, 10)
-	      .map(item => ({
-	        id: item.id,
-	        kind: item.serviceType.includes('API') ? 'api_order' as const : 'carpool' as const,
+		    completions: publicCompletionRecords
+		      .filter(item => item.username === username)
+		      .filter(item => item.serviceType.includes('API'))
+		      .slice(0, 10)
+		      .map(item => ({
+		        id: item.id,
+		        kind: 'api_order' as const,
 	        title: item.serviceType,
 	        role: 'buyer' as const,
 	        completedAt: item.date,
@@ -3880,13 +3821,13 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
       orderId: applicationId,
       sellerContacts: [],
       buyerContacts: [],
-      contactWindowEndsAt: application.reservedUntil,
+      contactWindowEndsAt: null,
       canView: false,
-      unavailableReason: '车主接受申请并预留席位后才展示联系窗口联系方式。',
+      unavailableReason: '车主确认上车并建立有效成员关系后才展示联系方式。',
       createdAt: application.createdAt,
     })
   }
-  if (snapshot) return clone(contactSnapshotForVisibility(snapshot, canView, null, application.reservedUntil))
+  if (snapshot) return clone(contactSnapshotForVisibility(snapshot, canView, null, null))
   return clone({
     id: `contact-snapshot-${applicationId}`,
     orderType: 'carpool_application',
@@ -3895,7 +3836,7 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
       { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: linuxDoProfileSummaryUrl(application.ownerUsername) },
     ],
     buyerContacts: [],
-    contactWindowEndsAt: application.reservedUntil,
+    contactWindowEndsAt: null,
     canView: true,
     unavailableReason: null,
     createdAt: application.updatedAt,
@@ -4708,7 +4649,7 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
     throw new Error('请选择是否提供管理员账号。')
   }
   if (!payload.dailyQuotaAmount || payload.dailyQuotaAmount <= 0 || !payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0) {
-    throw new Error('请填写有效的每天额度与每周额度。')
+    throw new Error('请填写有效的每日最大花费额度与每周最大花费额度。')
   }
   if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
   if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
@@ -5417,7 +5358,7 @@ function markReadState<T extends { id: string, unread: boolean }>(items: T[]) {
 async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
   const carpoolRows: UnifiedNotification[] = carpoolApplicationStore
     .filter(item => [currentBuyerId, currentOwnerId].includes(item.applicantUserId) || [currentBuyerId, currentOwnerId].includes(item.ownerUserId))
-    .filter(item => ['pending_owner', 'accepted_reserved', 'contacted', 'joined_pending_confirmation', 'pending_completion', 'disputed', 'rejected'].includes(item.status))
+    .filter(item => ['pending_owner', 'active', 'disputed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner'].includes(item.status))
     .map(item => {
       const isOwner = item.ownerUserId === currentOwnerId
       return {
@@ -5516,18 +5457,11 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   const currentTime = Date.now()
   const isPendingPaymentActive = (order: ApiOrder) => order.status === 'pending_payment'
     && new Date(order.paymentExpiresAt).getTime() > currentTime
-  const reservedStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation']
-  const hasActiveReservation = (application: CarpoolApplication) => reservedStatuses.includes(application.status)
-    && Boolean(application.reservedUntil)
-    && new Date(application.reservedUntil!).getTime() > currentTime
   const buyerCarpoolActions = carpoolApplicationStore.filter(item => item.applicantUserId === currentBuyerId)
-    .filter(item => (hasActiveReservation(item) && !item.buyerConfirmedJoinedAt)
-      || (['active', 'pending_completion'].includes(item.status) && Boolean(item.ownerConfirmedCompletedAt) && !item.buyerConfirmedCompletedAt))
+    .filter(isCarpoolBuyerActionRequired)
     .length
   const merchantCarpoolActions = carpoolApplicationStore.filter(item => item.ownerUserId === currentOwnerId)
-    .filter(item => item.status === 'pending_owner'
-      || (hasActiveReservation(item) && Boolean(item.buyerConfirmedJoinedAt) && !item.ownerConfirmedJoinedAt)
-      || (['active', 'pending_completion'].includes(item.status) && Boolean(item.buyerConfirmedCompletedAt) && !item.ownerConfirmedCompletedAt))
+    .filter(isCarpoolOwnerActionRequired)
     .length
   const currentUserFeedback = feedbackTicketStore
     .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
@@ -5716,132 +5650,66 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
 export async function getReviewCenterRows(): Promise<ReviewCenterData> {
   if (shouldUseRealBackend()) return backendReviewCenterRows()
   await wait()
+  materializeMockApiOrderReviews()
   const reviewWindowMs = 14 * 24 * 60 * 60 * 1000
-  const carpoolRows = carpoolApplicationStore
-    .filter(item => item.status === 'completed' && (item.applicantUserId === currentBuyerId || item.ownerUserId === currentOwnerId))
-    .flatMap((item): ReviewCenterRow[] => {
-      const currentIsBuyer = item.applicantUserId === currentBuyerId
-      const ownReview = currentIsBuyer ? item.buyerReview : item.ownerReview
-      const counterpartyReview = currentIsBuyer ? item.ownerReview : item.buyerReview
+  const rows = apiOrderStore
+    .filter(item => item.status === 'completed' && item.buyerId === currentBuyerId)
+    .map((item): ReviewCenterRow => {
+      const ownReview = mockApiOrderReviewStore.get(item.id)
       const completedAt = item.completedAt ?? item.updatedAt
       const completedAtMs = Date.parse(completedAt)
       if (!Number.isFinite(completedAtMs)) throw new Error(`评价交易完成时间无效：${item.id}`)
       const reviewDeadlineAt = new Date(completedAtMs + reviewWindowMs).toISOString()
       const deadlinePassed = Date.now() >= Date.parse(reviewDeadlineAt)
-      const bothSubmitted = Boolean(ownReview && counterpartyReview)
-      const published = bothSubmitted || deadlinePassed
-      const visibleAt = published
-        ? bothSubmitted
-          ? new Date(Math.max(Date.parse(ownReview!.createdAt), Date.parse(counterpartyReview!.createdAt))).toISOString()
-          : reviewDeadlineAt
-        : null
-      const counterparty = currentIsBuyer ? item.ownerUsername : item.applicantUsername
-      const ownReviewerRole = currentIsBuyer ? 'buyer' as const : 'seller' as const
-      const ownRevieweeRole = currentIsBuyer ? 'seller' as const : 'buyer' as const
-      const rows: ReviewCenterRow[] = []
-      const allowedTags = mockReviewTags.filter(tag => (
-        ['smooth_comm', 'quick_response', 'clear_rules', 'good_coop', 'slow_response', 'hard_to_comm', 'late_change'].includes(tag.code)
-        || (ownReviewerRole === 'buyer' && ['true_desc', 'good_aftercare', 'desc_diff'].includes(tag.code))
-        || (ownReviewerRole === 'seller' && ['quick_payment', 'quick_confirm', 'clear_needs', 'kept_agreement'].includes(tag.code))
-      ))
-
-      if (ownReview) {
-        rows.push({
-          id: `review-carpool-${item.id}-sent`,
-          transactionType: 'carpool_membership',
-          transactionId: item.id,
-          direction: 'sent',
-          target: item.snapshot.productName,
-          counterparty,
-          counterpartyUsername: counterparty,
-          reviewerRole: ownReviewerRole,
-          revieweeRole: ownRevieweeRole,
-          status: published ? 'published' : 'sealed',
-          visibility: published ? 'published' : 'sealed',
-          allowedTags,
-          canCreate: false,
-          canEdit: !published,
-          rating: ownReview.rating,
-          tags: [...ownReview.tags],
-          note: ownReview.note,
-          completedAt,
-          reviewDeadlineAt,
-          commercialOutcome: '',
-          reviewPaused: false,
-          submittedAt: ownReview.createdAt,
-          visibleAt,
-          frozenAt: visibleAt,
-          createdAt: ownReview.createdAt,
-          updatedAt: ownReview.createdAt,
-          version: 1,
-        })
-      } else {
-        rows.push({
-          id: `reviewable-carpool-${item.id}`,
-          transactionType: 'carpool_membership',
-          transactionId: item.id,
-          direction: 'pending',
-          target: item.snapshot.productName,
-          counterparty,
-          counterpartyUsername: counterparty,
-          reviewerRole: ownReviewerRole,
-          revieweeRole: ownRevieweeRole,
-          status: deadlinePassed ? 'expired' : 'reviewable',
-          visibility: 'none',
-          allowedTags,
-          canCreate: !deadlinePassed,
-          canEdit: false,
-          rating: null,
-          tags: [],
-          note: null,
-          completedAt,
-          reviewDeadlineAt,
-          commercialOutcome: '',
-          reviewPaused: false,
-          submittedAt: null,
-          visibleAt: null,
-          frozenAt: null,
-          createdAt: completedAt,
-          updatedAt: completedAt,
-          version: 0,
-        })
+      const reviewPaused = isApiOrderDisputeActive(item.disputeStatus)
+      const published = Boolean(ownReview && deadlinePassed)
+      const allowedTags = mockReviewTags.filter(tag => [
+        'smooth_comm',
+        'quick_response',
+        'clear_rules',
+        'good_coop',
+        'slow_response',
+        'hard_to_comm',
+        'late_change',
+        'true_desc',
+        'good_aftercare',
+        'desc_diff',
+      ].includes(tag.code))
+      const commercialOutcome = ['normal_fulfillment', 'continued_fulfillment', 'full_refund', 'partial_refund'].includes(item.commercialOutcome)
+        ? item.commercialOutcome as ReviewCenterRow['commercialOutcome']
+        : 'legacy_fulfillment'
+      return {
+        id: ownReview ? `review-api-order-${item.id}-sent` : `reviewable-api-order-${item.id}`,
+        transactionType: 'api_order',
+        transactionId: item.id,
+        direction: ownReview ? 'sent' : 'pending',
+        target: item.serviceTitle,
+        counterparty: item.seller,
+        counterpartyUsername: item.seller,
+        reviewerRole: 'buyer',
+        revieweeRole: 'seller',
+        status: reviewPaused ? 'paused' : ownReview ? published ? 'published' : 'sealed' : deadlinePassed ? 'expired' : 'reviewable',
+        visibility: ownReview ? published ? 'published' : 'sealed' : 'none',
+        allowedTags,
+        canCreate: !ownReview && !deadlinePassed && !reviewPaused,
+        canEdit: Boolean(ownReview && !deadlinePassed && !reviewPaused),
+        rating: ownReview?.rating ?? null,
+        tags: ownReview ? [...ownReview.tags] : [],
+        note: ownReview?.note ?? null,
+        completedAt,
+        reviewDeadlineAt,
+        commercialOutcome,
+        reviewPaused,
+        submittedAt: ownReview?.createdAt ?? null,
+        visibleAt: published ? reviewDeadlineAt : null,
+        frozenAt: published ? reviewDeadlineAt : null,
+        createdAt: ownReview?.createdAt ?? completedAt,
+        updatedAt: ownReview?.createdAt ?? completedAt,
+        version: ownReview ? 1 : 0,
       }
-
-      if (counterpartyReview && published) {
-        rows.push({
-          id: `review-carpool-${item.id}-received`,
-          transactionType: 'carpool_membership',
-          transactionId: item.id,
-          direction: 'received',
-          target: item.snapshot.productName,
-          counterparty,
-          counterpartyUsername: counterparty,
-          reviewerRole: ownRevieweeRole,
-          revieweeRole: ownReviewerRole,
-          status: published ? 'published' : 'sealed',
-          visibility: published ? 'published' : 'sealed',
-          allowedTags: [],
-          canCreate: false,
-          canEdit: false,
-          rating: published ? counterpartyReview.rating : null,
-          tags: published ? [...counterpartyReview.tags] : [],
-          note: published ? counterpartyReview.note : null,
-          completedAt,
-          reviewDeadlineAt,
-          commercialOutcome: '',
-          reviewPaused: false,
-          submittedAt: counterpartyReview.createdAt,
-          visibleAt,
-          frozenAt: visibleAt,
-          createdAt: counterpartyReview.createdAt,
-          updatedAt: counterpartyReview.createdAt,
-          version: 1,
-        })
-      }
-      return rows
     })
   return {
-    items: clone(carpoolRows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
+    items: clone(rows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
     presetTags: mockReviewTags,
   }
 }
@@ -5858,13 +5726,23 @@ export async function getReviewCenterPage(direction: ReviewCenterRow['direction'
 export async function submitReview(payload: SubmitReviewPayload) {
   if (shouldUseRealBackend()) return backendSubmitReview(payload)
   await wait()
-  await reviewCarpoolApplication(payload.transactionId, {
-    rating: payload.rating,
-    tags: payload.tags,
-    note: payload.note,
-  })
+  if (payload.transactionType !== 'api_order') throw new Error('拼车不支持评价。')
+  const order = apiOrderStore.find(item => item.id === payload.transactionId && item.buyerId === currentBuyerId)
+  if (!order || order.status !== 'completed') throw new Error('只有已完成的 API 订单可以评价。')
+  const completedAt = Date.parse(order.completedAt ?? order.updatedAt)
+  if (!Number.isFinite(completedAt)) throw new Error('API 订单完成时间无效。')
+  if (Date.now() >= completedAt + 14 * 24 * 60 * 60 * 1000) throw new Error('评价窗口已截止。')
   const center = await getReviewCenterRows()
-  const row = center.items.find(item => item.transactionId === payload.transactionId && item.direction === 'sent')
+  const current = center.items.find(item => item.transactionId === payload.transactionId)
+  if (!current || (!current.canCreate && !current.canEdit)) throw new Error('当前 API 订单不能评价。')
+  mockApiOrderReviewStore.set(payload.transactionId, {
+    rating: payload.rating,
+    tags: [...payload.tags],
+    note: payload.note,
+    createdAt: nowText(),
+  })
+  const updatedCenter = await getReviewCenterRows()
+  const row = updatedCenter.items.find(item => item.transactionId === payload.transactionId && item.direction === 'sent')
   if (!row) throw new Error('评价已保存，但评价中心记录暂不可用。')
   return row
 }
@@ -5915,7 +5793,7 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
   const carpool = carpoolStore.find(item => item.id === carpoolId)
   if (!carpool) throw new Error(`Carpool not found: ${carpoolId}`)
   const related = carpoolApplicationStore.filter(item => item.carpoolId === carpoolId && item.applicantUserId === currentBuyerId)
-  const hasActiveMembership = related.some(item => ['active', 'pending_completion'].includes(item.status))
+  const hasActiveMembership = related.some(item => isActiveCarpoolApplication(item.status))
   const hasOngoingApplication = related.some(item => isOngoingCarpoolApplication(item.status))
   const seatSummary = getCarpoolSeatSummary(carpool)
   const eligibility = evaluateCarpoolApplicationEligibility(carpool, seatSummary, hasOngoingApplication, currentBuyerId, hasActiveMembership)
@@ -5934,16 +5812,7 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
     status: 'pending_owner',
     seatsRequested: 1,
     snapshot: buildCarpoolSnapshot(carpool),
-    reservedUntil: null,
-    buyerContactedAt: null,
-    buyerConfirmedJoinedAt: null,
-    ownerConfirmedJoinedAt: null,
     startedAt: null,
-    expectedEndAt: null,
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -5977,10 +5846,11 @@ export async function acceptCarpoolApplication(id: string) {
     const carpool = carpoolStore.find(item => item.id === application.carpoolId)
     if (!carpool) throw new Error(`Carpool not found: ${application.carpoolId}`)
     const seatSummary = getCarpoolSeatSummary(carpool)
-    if (seatSummary.availableSeats < application.seatsRequested) throw new Error('可申请名额不足，无法预留席位')
+    if (seatSummary.availableSeats < application.seatsRequested) throw new Error('可申请名额不足，无法确认上车')
     const fromStatus = application.status
-    application.status = 'accepted_reserved'
-    application.reservedUntil = minutesFromNow(30)
+			application.status = 'active'
+			application.startedAt = nowText()
+		carpool.currentConfirmedMembers += application.seatsRequested
     appendCarpoolApplicationEvent({
       applicationId: id,
       actorId: application.ownerUserId,
@@ -5988,10 +5858,26 @@ export async function acceptCarpoolApplication(id: string) {
       actorRole: 'owner',
       type: 'owner_accepted',
       fromStatus,
-      toStatus: 'accepted_reserved',
-      note: '车主接受申请，预留 1 席 30 分钟。',
+		toStatus: 'active',
+		note: '车主确认上车，成员关系立即生效。',
     })
   })
+}
+
+export async function confirmCarpoolApplicationConditions(id: string) {
+	if (shouldUseRealBackend()) return backendConfirmCarpoolApplicationConditions(id)
+	await wait()
+	return getCarpoolApplicationById(id)
+}
+
+export async function updateCarpoolRecruitment(id: string, action: 'stop' | 'resume') {
+	if (shouldUseRealBackend()) return backendUpdateCarpoolRecruitment(id, action)
+	await wait()
+	const carpool = carpoolStore.find(item => item.id === id)
+	if (!carpool) throw new Error('车源不存在')
+	carpool.status = action === 'stop' ? '暂停' : '可上车'
+	carpool.confirmedAt = nowText()
+	return clone(carpool)
 }
 
 export async function rejectCarpoolApplication(id: string, reason: string) {
@@ -6021,13 +5907,12 @@ export async function cancelCarpoolApplication(id: string, reason: string) {
   if (shouldUseRealBackend()) return backendCancelCarpoolApplication(id, reason)
   await wait()
   return updateCarpoolApplication(id, application => {
-    if (!isOngoingCarpoolApplication(application.status)) throw new Error('当前状态不能取消')
+    if (application.status !== 'pending_owner') throw new Error('只有待处理申请可以撤回')
     const fromStatus = application.status
     application.status = 'cancelled_by_buyer'
-    application.reservedUntil = null
     application.cancellationReasonCode = 'buyer_cancelled'
     application.cancellationReasonText = reason
-    application.responsibility = fromStatus === 'pending_owner' ? 'mutual' : 'buyer'
+    application.responsibility = 'mutual'
     appendCarpoolApplicationEvent({
       applicationId: id,
       actorId: application.applicantUserId,
@@ -6043,182 +5928,50 @@ export async function cancelCarpoolApplication(id: string, reason: string) {
 
 export async function leaveCarpoolMembership(id: string, reason: string) {
   if (shouldUseRealBackend()) return backendBuyerLeaveCarpool(id, reason)
-  return cancelCarpoolApplication(id, reason)
-}
-
-export async function markCarpoolApplicationContacted(id: string) {
-  if (shouldUseRealBackend()) return backendCarpoolApplicationById(id)
   await wait()
   return updateCarpoolApplication(id, application => {
-    if (!['accepted_reserved', 'waiting_contact'].includes(application.status)) throw new Error('当前状态不能标记已联系')
+    if (application.status !== 'active') throw new Error('只有有效成员可以退出')
     const fromStatus = application.status
-    application.status = 'contacted'
-    application.buyerContactedAt = nowText()
+    application.status = 'cancelled_by_buyer'
+    application.cancellationReasonCode = 'buyer_left'
+    application.cancellationReasonText = reason
+    application.responsibility = 'buyer'
+    const carpool = carpoolStore.find(item => item.id === application.carpoolId)
+    if (carpool) carpool.currentConfirmedMembers = Math.max(0, carpool.currentConfirmedMembers - application.seatsRequested)
     appendCarpoolApplicationEvent({
       applicationId: id,
       actorId: application.applicantUserId,
       actorLabel: application.applicantUsername,
       actorRole: 'buyer',
-      type: 'buyer_contacted',
+      type: 'cancelled',
       fromStatus,
-      toStatus: 'contacted',
-      note: '买家已记录与车主完成联系。',
-    })
-  })
-}
-
-export async function buyerConfirmCarpoolJoined(id: string) {
-  if (shouldUseRealBackend()) return backendBuyerConfirmCarpoolJoined(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (!['contacted', 'joined_pending_confirmation'].includes(application.status)) throw new Error('请先记录已联系车主')
-    const fromStatus = application.status
-    application.buyerConfirmedJoinedAt = nowText()
-    application.status = 'joined_pending_confirmation'
-    startCarpoolServiceIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.applicantUserId,
-      actorLabel: application.applicantUsername,
-      actorRole: 'buyer',
-      type: 'buyer_confirmed_joined',
-      fromStatus,
-      toStatus: application.status,
-      note: '买家确认已经上车。',
-    })
-  })
-}
-
-export async function ownerConfirmCarpoolJoined(id: string) {
-  if (shouldUseRealBackend()) return backendOwnerConfirmCarpoolJoined(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (!['contacted', 'joined_pending_confirmation'].includes(application.status)) throw new Error('当前状态不能确认上车')
-    const fromStatus = application.status
-    application.ownerConfirmedJoinedAt = nowText()
-    application.status = 'joined_pending_confirmation'
-    const started = startCarpoolServiceIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.ownerUserId,
-      actorLabel: application.ownerUsername,
-      actorRole: 'owner',
-      type: started ? 'service_started' : 'owner_confirmed_joined',
-      fromStatus,
-      toStatus: application.status,
-      note: started ? '双方确认后进入服务中。' : '车主确认用户已上车。',
-    })
-  })
-}
-
-export async function buyerConfirmCarpoolCompleted(id: string) {
-  if (shouldUseRealBackend()) return backendBuyerConfirmCarpoolCompleted(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (application.status !== 'pending_completion') throw new Error('只有待完成记录可以确认完成')
-    const fromStatus = application.status
-    application.buyerConfirmedCompletedAt = nowText()
-    const completed = completeCarpoolIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.applicantUserId,
-      actorLabel: application.applicantUsername,
-      actorRole: 'buyer',
-      type: completed ? 'completed' : 'buyer_confirmed_completed',
-      fromStatus,
-      toStatus: application.status,
-      note: completed ? '双方确认完成。' : '买家确认本次完成。',
-    })
-  })
-}
-
-export async function ownerConfirmCarpoolCompleted(id: string) {
-  if (shouldUseRealBackend()) return backendOwnerConfirmCarpoolCompleted(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (application.status !== 'pending_completion') throw new Error('只有待完成记录可以确认完成')
-    const fromStatus = application.status
-    application.ownerConfirmedCompletedAt = nowText()
-    const completed = completeCarpoolIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.ownerUserId,
-      actorLabel: application.ownerUsername,
-      actorRole: 'owner',
-      type: completed ? 'completed' : 'owner_confirmed_completed',
-      fromStatus,
-      toStatus: application.status,
-      note: completed ? '双方确认完成。' : '车主确认本次完成。',
-    })
-  })
-}
-
-export async function disputeCarpoolApplication(id: string, reason: string) {
-  if (shouldUseRealBackend()) return backendOwnerRemoveCarpool(id, reason)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (!isOngoingCarpoolApplication(application.status)) throw new Error('当前状态不能发起纠纷')
-    const fromStatus = application.status
-    application.status = 'disputed'
-    application.disputeReason = reason
-    application.responsibility = 'undetermined'
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.applicantUserId,
-      actorLabel: application.applicantUsername,
-      actorRole: 'buyer',
-      type: 'disputed',
-      fromStatus,
-      toStatus: 'disputed',
+      toStatus: 'cancelled_by_buyer',
       note: reason,
     })
   })
 }
 
-export async function withdrawCarpoolAcceptance(id: string, reason: string) {
-  if (shouldUseRealBackend()) return backendWithdrawCarpoolAcceptance(id, reason)
+export async function removeCarpoolMember(id: string, reason: string) {
+  if (shouldUseRealBackend()) return backendOwnerRemoveCarpool(id, reason)
   await wait()
   return updateCarpoolApplication(id, application => {
-    if (!['accepted_reserved', 'waiting_contact'].includes(application.status)) throw new Error('只有已预留申请可以撤回接受')
+    if (application.status !== 'active') throw new Error('只有有效成员可以移除')
     const fromStatus = application.status
     application.status = 'cancelled_by_owner'
-    application.reservedUntil = null
-    application.cancellationReasonCode = 'owner_withdrawn'
+    application.cancellationReasonCode = 'owner_removed'
     application.cancellationReasonText = reason
     application.responsibility = 'owner'
+    const carpool = carpoolStore.find(item => item.id === application.carpoolId)
+    if (carpool) carpool.currentConfirmedMembers = Math.max(0, carpool.currentConfirmedMembers - application.seatsRequested)
     appendCarpoolApplicationEvent({
       applicationId: id,
-      actorId: application.ownerUserId,
-      actorLabel: application.ownerUsername,
+      actorId: application.applicantUserId,
+      actorLabel: application.applicantUsername,
       actorRole: 'owner',
       type: 'cancelled',
       fromStatus,
       toStatus: 'cancelled_by_owner',
       note: reason,
-    })
-  })
-}
-
-export async function reviewCarpoolApplication(id: string, payload: ReviewCarpoolApplicationPayload) {
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (application.status !== 'completed') throw new Error('只有已完成记录可以评价')
-    const completedAtMs = Date.parse(application.completedAt ?? application.updatedAt)
-    if (!Number.isFinite(completedAtMs)) throw new Error('交易完成时间无效')
-    if (Date.now() >= completedAtMs + 14 * 24 * 60 * 60 * 1000) throw new Error('评价窗口已截止')
-    const currentIsBuyer = application.applicantUserId === currentBuyerId
-    const currentIsOwner = application.ownerUserId === currentOwnerId
-    if (!currentIsBuyer && !currentIsOwner) throw new Error('只有交易参与方可以评价')
-    const review = { ...payload, createdAt: nowText() }
-    if (currentIsBuyer) application.buyerReview = review
-    else application.ownerReview = review
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: currentIsBuyer ? application.applicantUserId : application.ownerUserId,
-      actorLabel: currentIsBuyer ? application.applicantUsername : application.ownerUsername,
-      actorRole: currentIsBuyer ? 'buyer' : 'owner',
-      type: 'admin_updated',
-      note: `${currentIsBuyer ? '买家' : '车主'}已评价：${payload.rating} 星`,
     })
   })
 }
@@ -7003,7 +6756,7 @@ export async function getCarpoolNotifications(): Promise<CarpoolNotification[]> 
   await wait()
   const rows = carpoolApplicationStore
     .filter(item => [currentBuyerId, currentOwnerId].includes(item.applicantUserId) || [currentBuyerId, currentOwnerId].includes(item.ownerUserId))
-    .filter(item => ['pending_owner', 'accepted_reserved', 'contacted', 'joined_pending_confirmation', 'pending_completion', 'disputed', 'rejected'].includes(item.status))
+    .filter(item => ['pending_owner', 'active', 'disputed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner'].includes(item.status))
     .slice(0, 8)
     .map(item => {
       const isOwner = item.ownerUserId === currentOwnerId
@@ -7184,7 +6937,6 @@ export type {
   CarpoolApplication,
   CarpoolApplicationEvent,
   CarpoolApplicationEventType,
-  CarpoolApplicationReview,
   CarpoolApplicationStatus,
   CarpoolCancellationResponsibility,
   CarpoolSeatSummary,

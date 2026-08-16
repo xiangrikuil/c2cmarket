@@ -40,3 +40,15 @@ func TestNavigationBadgeCountsOnlyTargetedStrongAnnouncements(t *testing.T) {
 		}
 	}
 }
+
+func TestNavigationBadgeUsesLightweightCarpoolActions(t *testing.T) {
+	normalizedSQL := strings.Join(strings.Fields(navigationBadgeSummarySQL), " ")
+	for _, obsolete := range []string{"carpool_join_confirmations", "carpool_completion_confirmations", "accepted_reserved", "reservation_expires_at", "join_confirmation_deadline"} {
+		if strings.Contains(normalizedSQL, obsolete) {
+			t.Fatalf("navigation badge query still uses obsolete carpool workflow %q: %s", obsolete, normalizedSQL)
+		}
+	}
+	if !strings.Contains(normalizedSQL, "application.status = 'pending_owner') AS merchant_carpool_actions") {
+		t.Fatalf("navigation badge query must count pending owner applications: %s", normalizedSQL)
+	}
+}

@@ -141,8 +141,7 @@ function taskPriority(status: CarpoolApplication['status'] | ApiOrder['status'])
   if (status === 'payment_issue') return 1
   if (status === 'payment_submitted' || status === 'paid_confirmed') return 2
   if (status === 'pending_owner') return 3
-  if (['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation'].includes(status)) return 4
-  if (status === 'delivery_submitted' || status === 'pending_completion') return 5
+  if (status === 'delivery_submitted') return 5
   if (status === 'pending_payment') return 6
   return 7
 }

@@ -180,50 +180,36 @@ func closeCatalogPendingObjectsInTx(ctx context.Context, tx pgx.Tx, store *Store
 			predicate = "plan.category_id = $1"
 		}
 		rows, err := tx.Query(ctx, `
-			WITH affected AS (
-			  SELECT application.id, application.contact_session_id
-			  FROM carpool_applications application
-			  JOIN carpool_listings listing ON listing.id = application.carpool_listing_id
-			  JOIN product_plans plan ON plan.id = listing.product_plan_id
-			  WHERE `+predicate+` AND application.status IN ('pending_owner', 'accepted_reserved')
-			  FOR UPDATE OF application
-			), revoked AS (
-			  UPDATE contact_sessions session
-			  SET status = 'revoked', ends_at = LEAST(ends_at, $2)
-			  FROM affected WHERE session.id = affected.contact_session_id AND session.status = 'open'
-			)
-			UPDATE carpool_applications application
-			SET status = 'cancelled_by_owner', decision_reason = $3, decided_at = $2,
-			    reservation_expires_at = NULL, updated_at = $2, version = version + 1
-			FROM affected WHERE application.id = affected.id
-			RETURNING application.id::text
+			UPDATE carpool_listings listing
+			SET governance_status = 'removed', review_reason = $3,
+			    updated_at = $2, version = version + 1
+			FROM product_plans plan
+			WHERE plan.id = listing.product_plan_id AND `+predicate+`
+			RETURNING listing.id::text
 		`, input.ResourceID, now, reason)
 		if err != nil {
 			return internalStoreError()
 		}
-		applicationIDs := make([]string, 0)
+		listingIDs := make([]string, 0)
 		for rows.Next() {
-			var applicationID string
-			if err := rows.Scan(&applicationID); err != nil {
+			var listingID string
+			if err := rows.Scan(&listingID); err != nil {
 				rows.Close()
 				return internalStoreError()
 			}
-			applicationIDs = append(applicationIDs, applicationID)
+			listingIDs = append(listingIDs, listingID)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return internalStoreError()
 		}
 		rows.Close()
-		for _, applicationID := range applicationIDs {
-			application, err := store.getCarpoolApplication(ctx, tx, applicationID, false)
+		for _, listingID := range listingIDs {
+			listing, err := store.getCarpoolListing(ctx, tx, listingID, false, false)
 			if err != nil {
 				return internalStoreError()
 			}
-			if appErr := insertCarpoolApplicationEventAndNotification(
-				ctx, tx, application, input.OperatorID, "carpool_application.catalog_closed",
-				"目录变更，上车申请已关闭", reason, input.RequestID, now,
-			); appErr != nil {
+			if appErr := insertCarpoolListingEvent(ctx, tx, listing, input.OperatorID, "admin", "carpool_listing.catalog_removed", input.RequestID, now); appErr != nil {
 				return appErr
 			}
 		}

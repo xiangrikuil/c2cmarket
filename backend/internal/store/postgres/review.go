@@ -240,7 +240,7 @@ func (s *Store) ListPublicUserReviews(ctx context.Context, username string, now 
 		SELECT review.id::text,
 		       reviewer.username,
 		       review.visible_at,
-		       COALESCE(listing.title, api_order.service_title_snapshot),
+		       api_order.service_title_snapshot,
 		       review.transaction_type,
 		       review.reviewer_role,
 		       review.reviewee_role,
@@ -249,20 +249,15 @@ func (s *Store) ListPublicUserReviews(ctx context.Context, username string, now 
 		       review.note
 		FROM transaction_reviews review
 		JOIN users reviewer ON reviewer.id = review.reviewer_user_id
-		LEFT JOIN carpool_memberships membership
-		  ON membership.id = review.carpool_membership_id
-		 AND review.transaction_type = 'carpool_membership'
-		LEFT JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
-		LEFT JOIN api_orders api_order
-		  ON api_order.id = review.api_order_id
-		 AND review.transaction_type = 'api_order'
+		JOIN api_orders api_order ON api_order.id = review.api_order_id
 		WHERE review.reviewee_user_id = $1
+		  AND review.transaction_type = 'api_order'
 		  AND review.status = 'published'
 		  AND NOT EXISTS (
 		    SELECT 1
 		    FROM reputation_transaction_exclusions exclusion
 		    WHERE exclusion.transaction_type = review.transaction_type
-		      AND exclusion.transaction_id = COALESCE(review.carpool_membership_id, review.api_order_id)
+		      AND exclusion.transaction_id = review.api_order_id
 		      AND exclusion.restored_at IS NULL
 		  )
 		ORDER BY review.visible_at DESC, review.id DESC
@@ -306,8 +301,8 @@ func resolveTransactionForReview(ctx context.Context, q queryer, transactionType
 	transactionType = strings.TrimSpace(transactionType)
 	transactionID = strings.TrimSpace(transactionID)
 	userID = strings.TrimSpace(userID)
-	if transactionType != review.TransactionCarpoolMembership && transactionType != review.TransactionAPIOrder {
-		return review.Transaction{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Review validation failed", "交易类型必须是 carpool_membership 或 api_order。", "type", "invalid", "交易类型不受支持。")
+	if transactionType != review.TransactionAPIOrder {
+		return review.Transaction{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Review validation failed", "交易类型必须是 api_order。", "type", "invalid", "拼车不参与公开评价。")
 	}
 
 	var transaction review.Transaction
@@ -317,41 +312,7 @@ func resolveTransactionForReview(ctx context.Context, q queryer, transactionType
 	if forUpdate {
 		lockClause = " FOR UPDATE"
 	}
-	var err error
-	if transactionType == review.TransactionCarpoolMembership {
-		err = q.QueryRow(ctx, `
-			SELECT 'carpool_membership',
-			       membership.id::text,
-			       listing.title,
-			       buyer.id::text,
-			       buyer.username,
-			       buyer.display_name,
-			       seller.id::text,
-			       seller.username,
-			       seller.display_name,
-			       membership.status,
-			       CASE WHEN membership.status = 'completed' THEN COALESCE(membership.ended_at, membership.updated_at) END
-			FROM carpool_memberships membership
-			JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
-			JOIN users buyer ON buyer.id = membership.buyer_user_id
-			JOIN users seller ON seller.id = membership.owner_user_id
-			WHERE membership.id = $1
-			  AND $2 IN (membership.buyer_user_id, membership.owner_user_id)
-		`+lockClause, transactionID, userID).Scan(
-			&transaction.Type,
-			&transaction.ID,
-			&transaction.Target,
-			&transaction.BuyerUserID,
-			&transaction.BuyerUsername,
-			&transaction.BuyerDisplayName,
-			&transaction.SellerUserID,
-			&transaction.SellerUsername,
-			&transaction.SellerDisplayName,
-			&status,
-			&completedAt,
-		)
-	} else {
-		err = q.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 			SELECT 'api_order',
 			       api_order.id::text,
 			       api_order.service_title_snapshot,
@@ -374,20 +335,19 @@ func resolveTransactionForReview(ctx context.Context, q queryer, transactionType
 			WHERE api_order.id = $1
 			  AND $2 IN (api_order.buyer_user_id, api_order.seller_user_id)
 		`+lockClause, transactionID, userID).Scan(
-			&transaction.Type,
-			&transaction.ID,
-			&transaction.Target,
-			&transaction.BuyerUserID,
-			&transaction.BuyerUsername,
-			&transaction.BuyerDisplayName,
-			&transaction.SellerUserID,
-			&transaction.SellerUsername,
-			&transaction.SellerDisplayName,
-			&status,
-			&completedAt,
-			&transaction.ReviewPaused,
-		)
-	}
+		&transaction.Type,
+		&transaction.ID,
+		&transaction.Target,
+		&transaction.BuyerUserID,
+		&transaction.BuyerUsername,
+		&transaction.BuyerDisplayName,
+		&transaction.SellerUserID,
+		&transaction.SellerUsername,
+		&transaction.SellerDisplayName,
+		&status,
+		&completedAt,
+		&transaction.ReviewPaused,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return review.Transaction{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Transaction not found", "可评价交易不存在。")
 	}
@@ -881,36 +841,6 @@ const transactionReviewColumns = `
 
 const reviewCenterRowsSQL = `
 WITH my_transactions AS (
-  SELECT
-    'carpool_membership'::text AS transaction_type,
-    membership.id AS transaction_id,
-    listing.title AS target,
-    membership.buyer_user_id,
-    buyer.username AS buyer_username,
-    buyer.display_name AS buyer_display_name,
-    membership.owner_user_id AS seller_user_id,
-    seller.username AS seller_username,
-    seller.display_name AS seller_display_name,
-	    COALESCE(membership.ended_at, membership.updated_at) AS completed_at,
-	    COALESCE(membership.ended_at, membership.updated_at) + interval '14 days' AS review_deadline_at,
-	    ''::text AS commercial_outcome,
-	    false AS review_paused
-  FROM carpool_memberships membership
-  JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
-  JOIN users buyer ON buyer.id = membership.buyer_user_id
-  JOIN users seller ON seller.id = membership.owner_user_id
-  WHERE membership.status = 'completed'
-    AND $1 IN (membership.buyer_user_id, membership.owner_user_id)
-    AND NOT EXISTS (
-      SELECT 1
-      FROM reputation_transaction_exclusions exclusion
-      WHERE exclusion.transaction_type = 'carpool_membership'
-        AND exclusion.transaction_id = membership.id
-        AND exclusion.restored_at IS NULL
-    )
-
-  UNION ALL
-
   SELECT
     'api_order'::text,
     api_order.id,

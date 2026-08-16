@@ -171,7 +171,6 @@ type CarpoolContinuityService interface {
 	CarpoolApplicationsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Application, *domain.AppError)
 	CarpoolApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (carpool.Application, *domain.AppError)
 	CarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Membership, *domain.AppError)
-	ConfirmCarpoolMembershipCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	EndCarpoolMembershipForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
@@ -445,6 +444,7 @@ type CarpoolService interface {
 	PublishCarpoolListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.PublishListingInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateCarpoolListing(ctx context.Context, user auth.User, input carpool.UpdateListingInput) (carpool.Listing, *domain.AppError)
 	UpdateCarpoolListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.UpdateListingInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateRecruitment(ctx context.Context, user auth.User, input carpool.RecruitmentInput, targetStatus string) (carpool.Listing, *domain.AppError)
 	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input carpool.SubmitListingReviewInput) (carpool.Listing, *domain.AppError)
 	SubmitCarpoolListingForReviewWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.SubmitListingReviewInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
@@ -460,17 +460,15 @@ type CarpoolService interface {
 	CreateCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.CreateApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
 	MyCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
+	ConfirmCarpoolApplicationConditions(ctx context.Context, user auth.User, input carpool.ConfirmApplicationConditionsInput) (carpool.Application, *domain.AppError)
 	OwnerCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
 	OwnerCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
 	AcceptCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.AcceptApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	RejectCarpoolApplication(ctx context.Context, user auth.User, input carpool.RejectApplicationInput) (carpool.Application, *domain.AppError)
 	RejectCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.RejectApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CancelCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.CancelApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.WithdrawAcceptanceInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.ConfirmApplicationJoinInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
 	OwnerCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
-	ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	EndCarpoolMembershipWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 

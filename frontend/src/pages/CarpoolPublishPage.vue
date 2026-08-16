@@ -373,8 +373,8 @@ const publishTasks = computed<PublishTask[]>(() => [
   },
   {
     key: 'dailyQuota',
-    label: `填写每天${selectedProductForValidation.value?.quotaLabel || '额度'}`,
-    shortLabel: `每天${selectedProductForValidation.value?.quotaLabel || '额度'}`,
+    label: '填写每日最大花费额度（美元）',
+    shortLabel: '每日最大花费额度',
     section: 'basic',
     fieldId: publishTaskFieldIds.dailyQuota,
     description: '额度与重置',
@@ -383,8 +383,8 @@ const publishTasks = computed<PublishTask[]>(() => [
   },
   {
     key: 'weeklyQuota',
-    label: `填写每周${selectedProductForValidation.value?.quotaLabel || '额度'}`,
-    shortLabel: `每周${selectedProductForValidation.value?.quotaLabel || '额度'}`,
+    label: '填写每周最大花费额度（美元）',
+    shortLabel: '每周最大花费额度',
     section: 'basic',
     fieldId: publishTaskFieldIds.weeklyQuota,
     description: '车源基础信息',
@@ -685,9 +685,9 @@ function validate(requireComplete: boolean) {
   if (!form.regionCode) next.region = '请选择开通区。'
   else if (!finalRegionName.value) next.region = '请填写自定义开通区。'
   if (!Number.isFinite(form.monthlyPriceCny) || !form.monthlyPriceCny || form.monthlyPriceCny <= 0) next.monthlyPriceCny = '月费必须大于 0。'
-  if (!Number.isFinite(form.dailyQuotaAmount) || !form.dailyQuotaAmount || form.dailyQuotaAmount <= 0) next.dailyQuota = `每天${selectedProductForValidation.value?.quotaLabel || '额度'}必须大于 0。`
+  if (!Number.isFinite(form.dailyQuotaAmount) || !form.dailyQuotaAmount || form.dailyQuotaAmount <= 0) next.dailyQuota = '每日最大花费额度必须大于 0。'
   if (!Number.isFinite(form.weeklyQuotaAmount) || !form.weeklyQuotaAmount || form.weeklyQuotaAmount <= 0) {
-    next.weeklyQuota = `每周${selectedProductForValidation.value?.quotaLabel || '额度'}必须大于 0。`
+    next.weeklyQuota = '每周最大花费额度必须大于 0。'
   }
   if (form.followsOfficialQuotaReset === null) next.quotaReset = '请选择额度是否跟随官方重置。'
   if (!form.vpsRegion.trim()) next.connection = '请填写 VPS 区域。'
@@ -814,7 +814,7 @@ const completeness = computed<CompletenessItem[]>(() => [
   form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()) ? { label: '产品', status: 'done' } : { label: '产品', status: 'pending' },
   taskComplete('region') ? { label: '地区', status: 'done' } : { label: '地区', status: 'pending' },
   form.monthlyPriceCny && form.monthlyPriceCny > 0 ? { label: '月费', status: 'done' } : { label: '月费', status: 'pending' },
-  taskComplete('dailyQuota') && taskComplete('weeklyQuota') ? { label: '每天 / 每周额度', status: 'done' } : { label: '每天 / 每周额度', status: 'pending' },
+  taskComplete('dailyQuota') && taskComplete('weeklyQuota') ? { label: '每日 / 每周最大花费额度', status: 'done' } : { label: '每日 / 每周最大花费额度', status: 'pending' },
   taskComplete('quotaReset') ? { label: '额度重置', status: 'done' } : { label: '额度重置', status: 'pending' },
   taskComplete('connection') ? { label: 'VPS 与国内直连', status: 'done' } : { label: 'VPS 与国内直连', status: 'pending' },
   form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats < form.totalSeats ? { label: '名额', status: 'done' } : { label: '名额', status: 'conflict' },

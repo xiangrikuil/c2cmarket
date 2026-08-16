@@ -1107,7 +1107,7 @@ func TestPostgresContactIntegrityConstraints(t *testing.T) {
 	assertPostgresConstraintError(t, err, "non-positive contact window must be rejected")
 }
 
-func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
+func TestPostgresCarpoolMembershipUniquenessConstraint(t *testing.T) {
 	databaseURL := os.Getenv("C2C_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("C2C_TEST_DATABASE_URL is not set")
@@ -1125,7 +1125,6 @@ func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-member-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-member-buyer-"+suffix, false)
-	otherSession := createSession(t, server, "pg-member-other-"+suffix, false)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Member Owner "+suffix, "@pg_member_owner_"+suffix)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG Member Buyer "+suffix, "@pg_member_buyer_"+suffix)
 
@@ -1136,14 +1135,6 @@ func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
 
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()
-
-	_, err = pool.Exec(ctx, `
-		INSERT INTO carpool_join_confirmations (
-			carpool_application_id, actor_user_id, actor_role, confirmed_at, request_id
-		)
-		VALUES ($1, $2, 'buyer', now(), 'wrong-buyer')
-	`, accepted.ID, otherSession.userID)
-	assertPostgresConstraintError(t, err, "wrong buyer join confirmation actor must be rejected")
 
 	_, err = pool.Exec(ctx, `
 		INSERT INTO carpool_memberships (
@@ -1157,18 +1148,7 @@ func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
 		FROM carpool_applications
 		WHERE id = $1
 	`, accepted.ID)
-	assertPostgresConstraintError(t, err, "membership before joined application must be rejected")
-
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "pg-member-buyer-confirm-"+suffix)
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "pg-member-owner-confirm-"+suffix)
-	membership := firstCarpoolMembership(t, server, ownerSession, "owner", joined.ID)
-	_, err = pool.Exec(ctx, `
-		INSERT INTO carpool_completion_confirmations (
-			carpool_membership_id, actor_user_id, actor_role, confirmed_at, request_id
-		)
-		VALUES ($1, $2, 'buyer', now(), 'wrong-completion-buyer')
-	`, membership.ID, otherSession.userID)
-	assertPostgresConstraintError(t, err, "wrong buyer completion confirmation actor must be rejected")
+	assertPostgresConstraintError(t, err, "duplicate membership for one application must be rejected")
 }
 
 func TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent(t *testing.T) {
@@ -1266,7 +1246,7 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	assertCarpoolApplicationCreatedOwnerNotification(t, databaseURL, application.ID, ownerSession.userID, 1)
 	first := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "pg-carpool-accept-"+suffix)
 	second := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "pg-carpool-accept-"+suffix)
-	if first.ContactSessionID == "" || first.ContactSessionID != second.ContactSessionID {
+	if first.Status != app.CarpoolApplicationStatusJoined || first.JoinedAt == nil || first.ContactSessionID == "" || first.ContactSessionID != second.ContactSessionID {
 		t.Fatalf("expected idempotent contact session, got %+v and %+v", first, second)
 	}
 	assertCarpoolApplicationSideEffects(t, databaseURL, application.ID, first.ContactSessionID, 1)
@@ -1310,33 +1290,15 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 		t.Fatalf("expected owner contact in accepted carpool contact response")
 	}
 
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", first.ID, first.Version, "pg-carpool-buyer-confirm-"+suffix)
-	if buyerConfirmed.Status != app.CarpoolApplicationStatusAcceptedReserved || buyerConfirmed.BuyerConfirmedAt == nil {
-		t.Fatalf("unexpected postgres buyer-confirmed application: %+v", buyerConfirmed)
-	}
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", first.ID, buyerConfirmed.Version, "pg-carpool-owner-confirm-"+suffix)
-	if joined.Status != app.CarpoolApplicationStatusJoined || joined.JoinedAt == nil || joined.ReservationExpiresAt != nil {
-		t.Fatalf("unexpected postgres joined application: %+v", joined)
-	}
-	assertCarpoolJoinSideEffects(t, databaseURL, application.ID, buyerSession.userID, ownerSession.userID, 1)
-	assertCarpoolJoinIdempotencyCache(t, databaseURL, buyerSession.userID, application.ID, "pg-carpool-buyer-confirm-"+suffix, app.CarpoolApplicationStatusAcceptedReserved)
-	assertCarpoolJoinIdempotencyCache(t, databaseURL, ownerSession.userID, application.ID, "pg-carpool-owner-confirm-"+suffix, app.CarpoolApplicationStatusJoined)
-
 	membership := firstCarpoolMembership(t, server, ownerSession, "owner", application.ID)
 	if membership.Status != app.CarpoolMembershipStatusActive {
 		t.Fatalf("unexpected postgres active membership: %+v", membership)
 	}
-	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "pg-carpool-buyer-complete-"+suffix)
-	if buyerCompleted.Status != app.CarpoolMembershipStatusActive || buyerCompleted.BuyerCompletedAt == nil {
-		t.Fatalf("unexpected postgres buyer-completed membership: %+v", buyerCompleted)
+	left := endCarpoolMembership(t, server, buyerSession, "me", "leave", membership.ID, membership.Version, "pg-carpool-buyer-leave-"+suffix)
+	if left.Status != app.CarpoolMembershipStatusLeft || left.EndedAt == nil {
+		t.Fatalf("unexpected postgres left membership: %+v", left)
 	}
-	ownerCompleted := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "pg-carpool-owner-complete-"+suffix)
-	if ownerCompleted.Status != app.CarpoolMembershipStatusCompleted || ownerCompleted.CompletedAt == nil || ownerCompleted.EndedAt == nil {
-		t.Fatalf("unexpected postgres completed membership: %+v", ownerCompleted)
-	}
-	assertCarpoolMembershipCompletionSideEffects(t, databaseURL, membership.ID, buyerSession.userID, ownerSession.userID, 1)
-	assertCarpoolMembershipIdempotencyCache(t, databaseURL, buyerSession.userID, membership.ID, "pg-carpool-buyer-complete-"+suffix, app.CarpoolMembershipStatusActive)
-	assertCarpoolMembershipIdempotencyCache(t, databaseURL, ownerSession.userID, membership.ID, "pg-carpool-owner-complete-"+suffix, app.CarpoolMembershipStatusCompleted)
+	assertContactSessionConflict(t, server, buyerSession, first.ContactSessionID)
 }
 
 func storeAccessLogCount(t *testing.T, store *postgres.Store, sessionID string) int {
@@ -1978,9 +1940,8 @@ func assertCarpoolApplicationSideEffects(t *testing.T, databaseURL, applicationI
 			FROM carpool_applications
 			WHERE id = $1
 			  AND contact_session_id = $2
-			  AND status = 'accepted_reserved'
-			  AND reservation_expires_at IS NOT NULL
-			  AND reservation_expires_at > decided_at
+			  AND status = 'joined'
+			  AND joined_at IS NOT NULL
 		`,
 		"application_session_participants": `
 			SELECT count(*)::int
@@ -1994,7 +1955,7 @@ func assertCarpoolApplicationSideEffects(t *testing.T, databaseURL, applicationI
 		"contact_session": `
 			SELECT count(*)::int
 			FROM contact_sessions
-			WHERE id = $1 AND status = 'open' AND ends_at > opens_at
+			WHERE id = $1 AND status = 'open' AND ends_at IS NULL
 		`,
 		"contact_items": `
 			SELECT count(*)::int
@@ -2126,179 +2087,5 @@ func assertCarpoolApplicationCreatedOwnerNotification(t *testing.T, databaseURL,
 	expectedURL := "/merchant/carpool-applications/" + applicationID
 	if want > 0 && targetURL != expectedURL {
 		t.Fatalf("expected owner notification target URL %q, got %q", expectedURL, targetURL)
-	}
-}
-
-func assertCarpoolJoinSideEffects(t *testing.T, databaseURL, applicationID, buyerUserID, ownerUserID string, want int) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	checks := map[string]string{
-		"buyer_confirmation": `
-			SELECT count(*)::int
-			FROM carpool_join_confirmations
-			WHERE carpool_application_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'buyer'
-		`,
-		"owner_confirmation": `
-			SELECT count(*)::int
-			FROM carpool_join_confirmations
-			WHERE carpool_application_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'owner'
-		`,
-		"membership": `
-			SELECT count(*)::int
-			FROM carpool_memberships membership
-			JOIN carpool_applications application ON application.id = membership.carpool_application_id
-			JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
-			WHERE application.id = $1
-			  AND application.status = 'joined'
-			  AND application.joined_at IS NOT NULL
-			  AND membership.status = 'active'
-			  AND membership.joined_at = application.joined_at
-			  AND listing.active_buyer_members >= 1
-		`,
-		"joined_event": `
-			SELECT count(*)::int
-			FROM domain_events
-			WHERE aggregate_type = 'carpool_application'
-			  AND aggregate_id = $1
-			  AND event_type = 'carpool_application.joined'
-		`,
-	}
-	for name, query := range checks {
-		var count int
-		var err error
-		switch name {
-		case "buyer_confirmation":
-			err = pool.QueryRow(context.Background(), query, applicationID, buyerUserID).Scan(&count)
-		case "owner_confirmation":
-			err = pool.QueryRow(context.Background(), query, applicationID, ownerUserID).Scan(&count)
-		default:
-			err = pool.QueryRow(context.Background(), query, applicationID).Scan(&count)
-		}
-		if err != nil {
-			t.Fatalf("count %s side effects: %v", name, err)
-		}
-		if count != want {
-			t.Fatalf("expected %d %s side effects, got %d", want, name, count)
-		}
-	}
-}
-
-func assertCarpoolJoinIdempotencyCache(t *testing.T, databaseURL, userID, applicationID, key, expectedStatus string) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	routeKey := "POST /api/v1/me/carpool-applications/{id}/confirm-join:" + applicationID
-	if expectedStatus == app.CarpoolApplicationStatusJoined {
-		routeKey = "POST /api/v1/owner/carpool-applications/{id}/confirm-join:" + applicationID
-	}
-	var status string
-	var resourceType string
-	var resourceID string
-	var bodyText string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT status, resource_type, resource_id::text, response_body_json::text
-		FROM idempotency_keys
-		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-	`, userID, routeKey, key).Scan(&status, &resourceType, &resourceID, &bodyText); err != nil {
-		t.Fatalf("query carpool join idempotency cache: %v", err)
-	}
-	if status != "completed" || resourceType != "carpool_application" || resourceID != applicationID {
-		t.Fatalf("unexpected carpool join idempotency cache: status=%s resource=%s %s", status, resourceType, resourceID)
-	}
-	if !strings.Contains(bodyText, expectedStatus) {
-		t.Fatalf("cached carpool join response does not include status %s: %s", expectedStatus, bodyText)
-	}
-}
-
-func assertCarpoolMembershipCompletionSideEffects(t *testing.T, databaseURL, membershipID, buyerUserID, ownerUserID string, want int) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	checks := map[string]string{
-		"buyer_completion": `
-			SELECT count(*)::int
-			FROM carpool_completion_confirmations
-			WHERE carpool_membership_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'buyer'
-		`,
-		"owner_completion": `
-			SELECT count(*)::int
-			FROM carpool_completion_confirmations
-			WHERE carpool_membership_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'owner'
-		`,
-		"membership_completed": `
-			SELECT count(*)::int
-			FROM carpool_memberships membership
-			JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
-			WHERE membership.id = $1
-			  AND membership.status = 'completed'
-			  AND membership.ended_at IS NOT NULL
-			  AND membership.ended_reason <> ''
-			  AND listing.active_buyer_members = 0
-		`,
-		"completed_event": `
-			SELECT count(*)::int
-			FROM domain_events
-			WHERE aggregate_type = 'carpool_membership'
-			  AND aggregate_id = $1
-			  AND event_type = 'carpool_membership.completed'
-		`,
-	}
-	for name, query := range checks {
-		var count int
-		var err error
-		switch name {
-		case "buyer_completion":
-			err = pool.QueryRow(context.Background(), query, membershipID, buyerUserID).Scan(&count)
-		case "owner_completion":
-			err = pool.QueryRow(context.Background(), query, membershipID, ownerUserID).Scan(&count)
-		default:
-			err = pool.QueryRow(context.Background(), query, membershipID).Scan(&count)
-		}
-		if err != nil {
-			t.Fatalf("count %s side effects: %v", name, err)
-		}
-		if count != want {
-			t.Fatalf("expected %d %s side effects, got %d", want, name, count)
-		}
-	}
-}
-
-func assertCarpoolMembershipIdempotencyCache(t *testing.T, databaseURL, userID, membershipID, key, expectedStatus string) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	routeKey := "POST /api/v1/me/carpool-memberships/{id}/confirm-complete:" + membershipID
-	if expectedStatus == app.CarpoolMembershipStatusCompleted {
-		routeKey = "POST /api/v1/owner/carpool-memberships/{id}/confirm-complete:" + membershipID
-	}
-	var status string
-	var resourceType string
-	var resourceID string
-	var bodyText string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT status, resource_type, resource_id::text, response_body_json::text
-		FROM idempotency_keys
-		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-	`, userID, routeKey, key).Scan(&status, &resourceType, &resourceID, &bodyText); err != nil {
-		t.Fatalf("query carpool membership idempotency cache: %v", err)
-	}
-	if status != "completed" || resourceType != "carpool_membership" || resourceID != membershipID {
-		t.Fatalf("unexpected carpool membership idempotency cache: status=%s resource=%s %s", status, resourceType, resourceID)
-	}
-	if !strings.Contains(bodyText, expectedStatus) {
-		t.Fatalf("cached carpool membership response does not include status %s: %s", expectedStatus, bodyText)
 	}
 }

@@ -15,13 +15,8 @@ func TestAggregateReputationFactsSQLUsesTruthfulTerminalStatesAndBatchInput(t *t
 		"SELECT DISTINCT unnest($1::uuid[]) AS user_id",
 		"CROSS JOIN (VALUES ('buyer'), ('seller'))",
 		"CROSS JOIN (VALUES ('overall'), ('carpool'), ('api'))",
-		"membership.status = 'completed'",
 		"api_order.status = 'completed'",
 		"api_order.completed_at >= $2",
-		"application.status = 'cancelled_by_buyer'",
-		"application.status = 'cancelled_by_owner'",
-		"membership.ended_by_user_id = membership.buyer_user_id",
-		"membership.ended_by_user_id = membership.owner_user_id",
 		"event.event_type = 'api_order.cancelled'",
 		"dispute.status IN ('negotiating', 'open', 'waiting_info')",
 		"ON dispute.subject_user_id = requested.user_id",
@@ -37,6 +32,7 @@ func TestAggregateReputationFactsSQLUsesTruthfulTerminalStatesAndBatchInput(t *t
 		"carpool_listings.status = 'completed'",
 		"dispute.primary_user_id = requested.user_id",
 		"dispute.counterparty_user_id = requested.user_id",
+		"FROM carpool_join_confirmations confirmation",
 	} {
 		if strings.Contains(aggregateReputationFactsSQL, forbidden) {
 			t.Fatalf("aggregate reputation SQL contains false completion source %q", forbidden)
@@ -47,17 +43,13 @@ func TestAggregateReputationFactsSQLUsesTruthfulTerminalStatesAndBatchInput(t *t
 func TestAggregateReputationFactsSQLAttributesControllableTimeoutsToResponsibleRole(t *testing.T) {
 	t.Parallel()
 
-	for _, required := range []string{
-		"api_order.cancel_reason = 'payment_timeout'",
-		"FROM carpool_join_confirmations confirmation",
-		"confirmation.actor_role = 'buyer'",
-		"confirmation.actor_role = 'owner'",
-		"participants.role = 'buyer' AND NOT confirmations.buyer_confirmed",
-		"participants.role = 'seller' AND NOT confirmations.owner_confirmed",
-	} {
+	for _, required := range []string{"api_order.cancel_reason = 'payment_timeout'"} {
 		if !strings.Contains(aggregateReputationFactsSQL, required) {
 			t.Fatalf("aggregate reputation SQL missing responsibility evidence %q", required)
 		}
+	}
+	if !strings.Contains(aggregateReputationFactsSQL, "AND false") {
+		t.Fatal("carpool facts must be excluded from public reputation")
 	}
 }
 

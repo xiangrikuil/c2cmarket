@@ -10,7 +10,7 @@ type ListResponse<T> = {
 
 type BackendReviewCenterRow = {
   id: string
-  transactionType: 'carpool_membership' | 'api_order'
+  transactionType: 'api_order'
   transactionId: string
   direction: 'pending' | 'sent' | 'received'
   target: string

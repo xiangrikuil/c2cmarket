@@ -27,7 +27,7 @@ type EmailSender interface {
 	SendVerificationCode(ctx context.Context, toEmail, code string, expiresAt time.Time) *domain.AppError
 	SendRegistrationSuccess(ctx context.Context, toEmail, username, displayName string, registeredAt time.Time) *domain.AppError
 	SendCarpoolApplicationCreated(ctx context.Context, toEmail, listingTitle, applicationID string, createdAt time.Time) *domain.AppError
-	SendCarpoolApplicationAccepted(ctx context.Context, toEmail, listingTitle, applicationID string, joinDeadline *time.Time) *domain.AppError
+	SendCarpoolApplicationAccepted(ctx context.Context, toEmail, listingTitle, applicationID string) *domain.AppError
 	SendAPIOrderCreated(ctx context.Context, toEmail, serviceTitle, orderID, amount, currency string, paymentExpiresAt, createdAt time.Time) *domain.AppError
 	ExposeDevCode() bool
 }
@@ -54,7 +54,7 @@ func (DevelopmentEmailSender) SendCarpoolApplicationCreated(context.Context, str
 	return nil
 }
 
-func (DevelopmentEmailSender) SendCarpoolApplicationAccepted(context.Context, string, string, string, *time.Time) *domain.AppError {
+func (DevelopmentEmailSender) SendCarpoolApplicationAccepted(context.Context, string, string, string) *domain.AppError {
 	return nil
 }
 
@@ -234,7 +234,7 @@ func (s *SMTPEmailSender) SendCarpoolApplicationCreated(ctx context.Context, toE
 	})
 }
 
-func (s *SMTPEmailSender) SendCarpoolApplicationAccepted(ctx context.Context, toEmail, listingTitle, applicationID string, joinDeadline *time.Time) *domain.AppError {
+func (s *SMTPEmailSender) SendCarpoolApplicationAccepted(ctx context.Context, toEmail, listingTitle, applicationID string) *domain.AppError {
 	if s == nil {
 		return emailUnavailableError()
 	}
@@ -243,12 +243,10 @@ func (s *SMTPEmailSender) SendCarpoolApplicationAccepted(ctx context.Context, to
 		title = "你的上车申请"
 	}
 	applicationID = strings.TrimSpace(applicationID)
-	deadline := formatOptionalEmailTime(joinDeadline)
 	detailURL := s.frontendOrigin + "/my/rides/" + url.PathEscape(applicationID)
 	htmlBody, err := s.templates.renderCarpoolAcceptance(carpoolAcceptanceTemplateData{
 		ListingTitle:  title,
 		ApplicationID: emailReferenceID(applicationID, "CA"),
-		JoinDeadline:  deadline,
 		DetailURL:     detailURL,
 	})
 	if err != nil {
@@ -257,7 +255,7 @@ func (s *SMTPEmailSender) SendCarpoolApplicationAccepted(ctx context.Context, to
 	return s.send(ctx, emailMessage{
 		To:       toEmail,
 		Subject:  "C2CMarket 上车申请已被接受",
-		TextBody: carpoolAcceptanceTextBody(title, emailReferenceID(applicationID, "CA"), deadline, detailURL),
+		TextBody: carpoolAcceptanceTextBody(title, emailReferenceID(applicationID, "CA"), detailURL),
 		HTMLBody: htmlBody,
 	})
 }
@@ -474,7 +472,6 @@ type carpoolApplicationTemplateData struct {
 type carpoolAcceptanceTemplateData struct {
 	ListingTitle  string
 	ApplicationID string
-	JoinDeadline  string
 	DetailURL     string
 }
 
@@ -551,19 +548,15 @@ func carpoolApplicationTextBody(listingTitle, applicationID string, createdAt ti
 	if title == "" {
 		title = "你的车源"
 	}
-	return fmt.Sprintf("你的车源「%s」收到一条新的上车申请。\n申请编号：%s\n提交时间：%s\n\n请前往经营中心 → 上车申请，查看申请详情并及时处理。\n查看上车申请：%s\n\n上车申请仅表示买家希望加入，接受后才会进入确认上车阶段。%s", title, strings.TrimSpace(applicationID), formatEmailTime(createdAt), strings.TrimSpace(detailURL), systemEmailFooterText)
+	return fmt.Sprintf("你的车源「%s」收到一条新的上车申请。\n申请编号：%s\n提交时间：%s\n\n请前往经营中心 → 上车申请，查看申请详情并及时处理。\n查看上车申请：%s\n\n车主确认上车后会直接建立有效成员关系并开放双方联系方式。%s", title, strings.TrimSpace(applicationID), formatEmailTime(createdAt), strings.TrimSpace(detailURL), systemEmailFooterText)
 }
 
-func carpoolAcceptanceTextBody(listingTitle, applicationID, joinDeadline, detailURL string) string {
+func carpoolAcceptanceTextBody(listingTitle, applicationID, detailURL string) string {
 	title := strings.TrimSpace(listingTitle)
 	if title == "" {
 		title = "你的上车申请"
 	}
-	deadlineLine := ""
-	if strings.TrimSpace(joinDeadline) != "" {
-		deadlineLine = "\n确认截止时间：" + strings.TrimSpace(joinDeadline)
-	}
-	return fmt.Sprintf("你的上车申请「%s」已被车主接受。\n申请编号：%s%s\n\n请查看车主联系方式，并在截止时间前完成“确认上车”。\n查看申请详情：%s%s", title, strings.TrimSpace(applicationID), deadlineLine, strings.TrimSpace(detailURL), systemEmailFooterText)
+	return fmt.Sprintf("你的上车申请「%s」已被车主接受。\n申请编号：%s\n\n成员关系已生效，双方联系方式现已开放。请查看申请详情并按已确认的车源条件与车主站外联系。\n查看申请详情：%s%s", title, strings.TrimSpace(applicationID), strings.TrimSpace(detailURL), systemEmailFooterText)
 }
 
 func apiOrderTextBody(serviceTitle, orderID, amount string, paymentExpiresAt, createdAt time.Time, detailURL string) string {
@@ -636,8 +629,8 @@ const passwordResetHTMLTemplate = `<p>你正在重置 C2CMarket 学生账号密�
 
 const registrationHTMLTemplate = `<p>你好，{{if .DisplayName}}{{.DisplayName}}{{else}}C2CMarket 用户{{end}}：</p><p>你的 C2CMarket 账号已注册成功。</p>{{if .Username}}<p>账号：@{{.Username}}</p>{{end}}<p>注册时间：{{.RegisteredAt}}</p><p>你现在可以前往个人中心，完善资料与常用联系方式。</p><p><a href="{{.ProfileURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">前往个人中心</a></p><p>若非本人操作，请及时检查账号状态。</p>` + systemEmailFooterHTML
 
-const carpoolApplicationHTMLTemplate = `<p>你的车源「{{.ListingTitle}}」收到一条新的上车申请。</p><p>申请编号：{{.ApplicationID}}</p><p>提交时间：{{.CreatedAt}}</p><p>请前往经营中心 → 上车申请，查看申请详情并及时处理。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看上车申请</a></p><p>上车申请仅表示买家希望加入，接受后才会进入确认上车阶段。</p>` + systemEmailFooterHTML
+const carpoolApplicationHTMLTemplate = `<p>你的车源「{{.ListingTitle}}」收到一条新的上车申请。</p><p>申请编号：{{.ApplicationID}}</p><p>提交时间：{{.CreatedAt}}</p><p>请前往经营中心 → 上车申请，查看申请详情并及时处理。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看上车申请</a></p><p>车主确认上车后会直接建立有效成员关系并开放双方联系方式。</p>` + systemEmailFooterHTML
 
-const carpoolAcceptanceHTMLTemplate = `<p>你的上车申请「{{.ListingTitle}}」已被车主接受。</p><p>申请编号：{{.ApplicationID}}</p>{{if .JoinDeadline}}<p>确认截止时间：{{.JoinDeadline}}</p>{{end}}<p>请查看车主联系方式，并在截止时间前完成“确认上车”。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看申请详情</a></p>` + systemEmailFooterHTML
+const carpoolAcceptanceHTMLTemplate = `<p>你的上车申请「{{.ListingTitle}}」已被车主接受。</p><p>申请编号：{{.ApplicationID}}</p><p>成员关系已生效，双方联系方式现已开放。请按已确认的车源条件与车主站外联系。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看申请详情</a></p>` + systemEmailFooterHTML
 
 const apiOrderHTMLTemplate = `<p>你的 API 服务「{{.ServiceTitle}}」产生一笔新订单。</p><p>订单状态：<strong>待买家付款</strong></p><p>订单编号：{{.OrderID}}</p><p>订单金额：{{.Amount}}</p><p>创建时间：{{.CreatedAt}}</p><p>付款截止时间：{{.PaymentExpiresAt}}</p><p>请打开订单详情，等待买家付款，并在收款账户实际到账后确认收款。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看 API 订单</a></p><p><strong>温馨提示：</strong>订单已创建不代表款项已到账，请以你的收款账户实际到账为准。</p>` + systemEmailFooterHTML

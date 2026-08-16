@@ -2,7 +2,7 @@
 
 Date: 2026-07-24
 Executor: Codex
-Updated: 2026-08-15
+Updated: 2026-08-17
 
 ## Scenario: Truthful Reputation Facts And Transaction Exclusions
 
@@ -40,14 +40,13 @@ PostgreSQL:
 
 ### 3. Contracts
 
-- Carpool completion comes only from `carpool_memberships.status='completed'`. API normal-completion facts come only from `api_orders.commercial_outcome='normal_fulfillment'`; refund, partial refund, continued fulfillment, pending, and unverified closure must not inflate normal completion counts.
+- Carpool applications and memberships do not produce completion, cancellation-responsibility, review, or public reputation facts. API normal-completion facts come only from `api_orders.commercial_outcome='normal_fulfillment'`; refund, partial refund, continued fulfillment, pending, and unverified closure must not inflate normal completion counts.
 - Purchase intents, accepted applications, payment submission, delivery submission, or other intermediate states must not be inferred as completed transactions.
-- Buyer and seller facts remain separate. Carpool and API facts remain separate. `overall` is the service-layer sum of the two business scopes for one role.
+- Buyer and seller API facts remain separate. Carpool scope is retained only as a zero-valued compatibility projection and must not query carpool applications or memberships. `overall` is the service-layer API fact projection for one role.
 - The recent completion window is 90 days from the repository `now` argument. Compatibility DTO field names must not change the calculation window.
 - A responsibility cancellation is counted only when durable status/event data identifies that role as responsible. The system executor and the business-responsible participant are separate concepts; a system-created timeout event must not be rewritten with a participant actor.
 - An API order cancelled with `cancel_reason='payment_timeout'` is buyer responsibility even though `api_order.payment_timeout_cancelled` has no actor. The seller receives neither a responsible nor an unknown cancellation fact for that order.
-- An expired `accepted_reserved` carpool application uses `carpool_join_confirmations` as responsibility evidence. A missing buyer confirmation is buyer responsibility, a missing owner confirmation is seller responsibility, and both missing confirmations create one responsibility cancellation for each role. A participant who confirmed is not affected.
-- Historical cancellation without durable status, event, reason, or confirmation evidence increments the unknown count and must not be guessed. An impossible expired carpool application with both confirmations is also unknown for both participants.
+- Historical carpool reservation/cancellation rows are removed by migration 111 and must not be reintroduced as reputation evidence.
 - Unresolved disputes are `open|waiting_info` cases mapped through the actual transaction participants. A dispute is not a responsibility decision.
 - An active transaction exclusion removes all facts from that transaction for both participants. Restore makes the facts eligible again without rewriting the transaction terminal state.
 - Exclusion events are append-only and record administrator, action, reason code, reason, and time. Restore updates the current exclusion row and appends a new event.
@@ -69,14 +68,14 @@ PostgreSQL:
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a completed carpool membership contributes one buyer/carpool completion and one seller/carpool completion; only an API order with `commercial_outcome=normal_fulfillment` contributes API normal-completion facts.
+- Good: carpool membership changes leave all reputation facts unchanged; only an API order with `commercial_outcome=normal_fulfillment` contributes API normal-completion facts.
 - Good: an administrator excludes a disputed API order, both participants lose that order's facts, and restore makes them visible again while preserving two audit events.
 - Base: a requested user has no matching terminal transactions; a successful batch query returns explicit zero facts for every role/scope.
-- Bad: count a purchase intent as an API completion, assign every expired reservation to the buyer without checking confirmations, use the system timeout executor as the event actor, or run one SQL query per profile row.
+- Bad: count a carpool membership or purchase intent as a completion, reconstruct removed reservation responsibility, use the system timeout executor as the event actor, or run one SQL query per profile row.
 
 ### 6. Tests Required
 
-- Unit tests must cover empty input, duplicate IDs, role/scope merge, 90-day window behavior, unknown cancellation, API payment-timeout responsibility, role-specific carpool confirmation expiry, and exclusion validation.
+- Unit tests must cover empty input, duplicate IDs, role/scope merge, 90-day window behavior, unknown cancellation, API payment-timeout responsibility, zero-valued carpool compatibility projections, and exclusion validation.
 - Repository SQL tests must assert terminal predicates, participant joins, the shared cumulative/window responsibility matrix, active-exclusion predicates, and one UUID-array batch parameter.
 - PostgreSQL integration must apply the complete migration chain, aggregate an empty user, exclude/restore a transaction, and prove exclusion events reject update/delete.
 - Profile/DTO tests must prove repository-backed zero is distinct from unavailable `null`.
@@ -323,7 +322,7 @@ PostgreSQL:
 
 ### 3. Contracts
 
-- A verified review points to one completed carpool membership or one API order with a reviewable commercial outcome: `normal_fulfillment|full_refund|partial_refund|continued_fulfillment`. Purchase intents, applications, payment/delivery submission, `pending`, `cancelled_unpaid`, and `closed_unverified` are not review sources.
+- A verified review points to one API order with a reviewable commercial outcome: `normal_fulfillment|full_refund|partial_refund|continued_fulfillment`. Carpool memberships, purchase intents, applications, payment/delivery submission, `pending`, `cancelled_unpaid`, and `closed_unverified` are not review sources.
 - API-order review eligibility and deadline are independent of `api_orders.status` and `completed_at`. Mutable rows snapshot `commercial_outcome`; when a dispute finalizes, unfrozen rows refresh to the new outcome and `commercial_outcome_updated_at + 14 days`.
 - Any active API-order dispute pauses review creation, sealed-review editing, deadline auto-publication, public/reputation aggregation, and deadline-driven recalculation. Published/frozen rows remain immutable. Closing the active dispute resumes only mutable rows under the final commercial outcome.
 - Buyer and seller may each create one review of the other participant. Direction and role are preserved so future reputation aggregation can keep buyer and seller behavior separate.
@@ -348,7 +347,7 @@ PostgreSQL:
 | More than five tags or a tag not allowed for the resolved roles | `422 VALIDATION_FAILED`, field `tags` |
 | Both tags and trimmed note are empty | `422 VALIDATION_FAILED`, field `content` |
 | Current user is not a participant | `404 OBJECT_NOT_FOUND` |
-| Carpool is not completed, API commercial outcome is not reviewable, or transaction is actively excluded | `409 INVALID_STATE_TRANSITION` |
+| Transaction type is carpool, API commercial outcome is not reviewable, or transaction is actively excluded | `409 INVALID_STATE_TRANSITION` |
 | API order has an active dispute | Return `reviewPaused=true`; reject create/edit and skip auto-publication/aggregation without exposing a received sealed row |
 | Submission/edit at or after the deadline | `409 INVALID_STATE_TRANSITION` |
 | Edit targets a published, removed, or otherwise frozen review | `409 INVALID_STATE_TRANSITION` |

@@ -93,35 +93,7 @@ SELECT
      )) AS important_announcement_unread,
   support_counts.feedback_unread,
   (support_counts.feedback_actions + support_counts.moderation_actions)::int AS support_action_count,
-  ((SELECT count(*)::int
-    FROM carpool_applications application
-    WHERE application.buyer_user_id = $1
-      AND application.status = 'accepted_reserved'
-      AND application.reservation_expires_at > $2
-      AND application.join_confirmation_deadline > $2
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'buyer'
-      ))
-   +
-   (SELECT count(*)::int
-    FROM carpool_memberships membership
-    WHERE membership.buyer_user_id = $1
-      AND membership.status = 'active'
-      AND EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'owner'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'buyer'
-      )))::int AS buyer_carpool_actions,
+  0::int AS buyer_carpool_actions,
   (SELECT count(*)::int
    FROM api_orders
    WHERE buyer_user_id = $1
@@ -130,46 +102,10 @@ SELECT
        OR status = 'payment_issue'
        OR status = 'delivery_submitted'
      )) AS buyer_api_order_actions,
-  ((SELECT count(*)::int
-    FROM carpool_applications application
-    WHERE application.owner_user_id = $1
-      AND application.status = 'pending_owner')
-   +
-   (SELECT count(*)::int
-    FROM carpool_applications application
-    WHERE application.owner_user_id = $1
-      AND application.status = 'accepted_reserved'
-      AND application.reservation_expires_at > $2
-      AND application.join_confirmation_deadline > $2
-      AND EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'buyer'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'owner'
-      ))
-   +
-   (SELECT count(*)::int
-    FROM carpool_memberships membership
-    WHERE membership.owner_user_id = $1
-      AND membership.status = 'active'
-      AND EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'buyer'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'owner'
-      )))::int AS merchant_carpool_actions,
+  (SELECT count(*)::int
+   FROM carpool_applications application
+   WHERE application.owner_user_id = $1
+     AND application.status = 'pending_owner') AS merchant_carpool_actions,
   (SELECT count(*)::int
    FROM api_orders
    WHERE seller_user_id = $1
@@ -178,7 +114,7 @@ SELECT
     (SELECT count(*)::int FROM official_price_leads WHERE status = 'pending')
   ELSE 0 END AS admin_official_prices,
   CASE WHEN $3 THEN
-    (SELECT count(*)::int FROM carpool_listings WHERE status IN ('pending_review', 'paused'))
+    (SELECT count(*)::int FROM carpool_listings WHERE governance_status = 'removed')
   ELSE 0 END AS admin_carpools,
   CASE WHEN $3 THEN
     (SELECT count(*)::int
