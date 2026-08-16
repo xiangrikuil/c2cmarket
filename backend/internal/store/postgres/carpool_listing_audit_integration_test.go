@@ -275,14 +275,18 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 			DELETE FROM users WHERE id = $1;
 		`, admin.ID)
 	})
+	currentListing, appErr := service.AdminListing(ctx, admin, published.ID)
+	if appErr != nil {
+		t.Fatalf("read listing before governance removal: %v", appErr)
+	}
 	paused, _, changed, appErr := service.UpdateListingReviewStatusWithIdempotency(ctx, admin, "carpool-pause", "pause-key", "pause-hash", carpool.ReviewInput{
-		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: published.Version, RequestID: "carpool-pause-request",
+		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: currentListing.Version, RequestID: "carpool-pause-request",
 	}, completionBuilder)
-	if appErr != nil || !changed || paused.Status != carpool.ListingStatusPaused {
+	if appErr != nil || !changed || paused.Status != currentListing.Status || paused.GovernanceStatus != "removed" {
 		t.Fatalf("pause listing atomically: listing=%+v changed=%t error=%v", paused, changed, appErr)
 	}
 	if _, _, changed, appErr = service.UpdateListingReviewStatusWithIdempotency(ctx, admin, "carpool-pause", "pause-key", "pause-hash", carpool.ReviewInput{
-		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: published.Version, RequestID: "carpool-pause-request",
+		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: currentListing.Version, RequestID: "carpool-pause-request",
 	}, completionBuilder); appErr != nil || changed {
 		t.Fatalf("replay listing pause: changed=%t error=%v", changed, appErr)
 	}

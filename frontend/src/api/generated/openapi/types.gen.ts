@@ -4878,7 +4878,7 @@ export type ContactSession = {
 
 export type ContactSessionContacts = {
     sessionId: string;
-    endsAt: string;
+    endsAt: string | null;
     items: Array<{
         side: 'buyer' | 'seller';
         subjectId: string;
@@ -12033,7 +12033,7 @@ export type PauseCarpoolError = PauseCarpoolErrors[keyof PauseCarpoolErrors];
 
 export type PauseCarpoolResponses = {
     /**
-     * Carpool listing paused.
+     * Carpool listing removed from public visibility without changing recruitment state.
      */
     200: CarpoolListing;
 };
@@ -12068,7 +12068,7 @@ export type RestoreCarpoolError = RestoreCarpoolErrors[keyof RestoreCarpoolError
 
 export type RestoreCarpoolResponses = {
     /**
-     * Carpool listing restored to active.
+     * Carpool listing governance restored without changing recruitment state.
      */
     200: CarpoolListing;
 };

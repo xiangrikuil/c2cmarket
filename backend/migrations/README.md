@@ -584,8 +584,9 @@ application, membership, contact-session, and carpool-review test data; separate
 owner recruitment state from administrator governance; records offline and
 platform seats independently; renames daily and weekly quota values to USD spend
 limits; and adds versioned full-condition snapshots. Carpool matching no longer
-creates review or public reputation facts. The down migration refuses rollback
-because the removed pre-launch workflow data cannot be reconstructed.
+creates review or public reputation facts. The down migration restores the old
+schema only on a database without carpool data or open-ended contact sessions.
+Deleted pre-launch workflow data remains recoverable only from a backup.
 
 ## Docker Compose
 

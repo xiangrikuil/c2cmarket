@@ -1140,11 +1140,13 @@ func TestPostgresCarpoolMembershipUniquenessConstraint(t *testing.T) {
 		INSERT INTO carpool_memberships (
 			carpool_listing_id, carpool_application_id, buyer_user_id, owner_user_id,
 			product_plan_id, status, seat_count, price_monthly_cny_snapshot,
-			policy_version_snapshot, risk_notice_code_snapshot, joined_at
+			policy_version_snapshot, risk_notice_code_snapshot,
+			conditions_version_snapshot, conditions_snapshot, joined_at
 		)
 		SELECT carpool_listing_id, id, buyer_user_id, owner_user_id,
 		       product_plan_id, 'active', seat_count, price_monthly_cny_snapshot,
-		       policy_version_snapshot, risk_notice_code_snapshot, now()
+		       policy_version_snapshot, risk_notice_code_snapshot,
+		       conditions_version_snapshot, conditions_snapshot, now()
 		FROM carpool_applications
 		WHERE id = $1
 	`, accepted.ID)
@@ -1253,27 +1255,15 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	assertCarpoolAcceptIdempotencyCache(t, databaseURL, ownerSession.userID, application.ID, "pg-carpool-accept-"+suffix, first.ContactSessionID)
 
 	adminSession := createSession(t, server, "pg-carpool-admin-"+suffix, true)
-	reviewListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-legacy-review-create-"+suffix)
-	forcedPendingVersion := forceCarpoolPendingReview(t, databaseURL, reviewListing.ID)
-	changesRequested := reviewCarpool(t, server, adminSession, reviewListing.ID, "request-changes", forcedPendingVersion, "pg-carpool-request-changes-"+suffix)
-	if changesRequested.Status != app.CarpoolListingStatusChangesRequested {
-		t.Fatalf("unexpected legacy changes-requested listing: %+v", changesRequested)
+	governanceListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-governance-create-"+suffix)
+	governancePublished := submitCarpoolReview(t, server, ownerSession, governanceListing.ID, governanceListing.Version, "pg-carpool-governance-publish-"+suffix)
+	paused := reviewCarpool(t, server, adminSession, governancePublished.ID, "pause", governancePublished.Version, "pg-carpool-pause-"+suffix)
+	if paused.Status != app.CarpoolListingStatusActive || paused.GovernanceStatus != "removed" {
+		t.Fatalf("postgres governance removal changed recruitment state: %+v", paused)
 	}
-	republished := submitCarpoolReview(t, server, ownerSession, changesRequested.ID, changesRequested.Version, "pg-carpool-republish-"+suffix)
-	if republished.Status != app.CarpoolListingStatusActive {
-		t.Fatalf("unexpected republished listing: %+v", republished)
-	}
-	rejectedListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-legacy-reject-create-"+suffix)
-	rejectedPendingVersion := forceCarpoolPendingReview(t, databaseURL, rejectedListing.ID)
-	rejected := reviewCarpool(t, server, adminSession, rejectedListing.ID, "reject", rejectedPendingVersion, "pg-carpool-reject-"+suffix)
-	if rejected.Status != app.CarpoolListingStatusRejected {
-		t.Fatalf("unexpected legacy rejected listing: %+v", rejected)
-	}
-	approvedListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-legacy-approve-create-"+suffix)
-	approvedPendingVersion := forceCarpoolPendingReview(t, databaseURL, approvedListing.ID)
-	approvedLegacy := reviewCarpool(t, server, adminSession, approvedListing.ID, "approve", approvedPendingVersion, "pg-carpool-approve-legacy-"+suffix)
-	if approvedLegacy.Status != app.CarpoolListingStatusActive {
-		t.Fatalf("unexpected legacy approved listing: %+v", approvedLegacy)
+	restored := reviewCarpool(t, server, adminSession, paused.ID, "restore", paused.Version, "pg-carpool-restore-"+suffix)
+	if restored.Status != app.CarpoolListingStatusActive || restored.GovernanceStatus != "clear" {
+		t.Fatalf("postgres governance restore changed recruitment state: %+v", restored)
 	}
 
 	readContact := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+first.ContactSessionID+"/contacts", nil)
@@ -1586,28 +1576,6 @@ func forceAPIServicePendingReview(t *testing.T, databaseURL, serviceID string) i
 	`, serviceID).Scan(&version)
 	if err != nil {
 		t.Fatalf("force API service pending review: %v", err)
-	}
-	return version
-}
-
-func forceCarpoolPendingReview(t *testing.T, databaseURL, listingID string) int64 {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-	var version int64
-	err := pool.QueryRow(context.Background(), `
-		UPDATE carpool_listings
-		SET status = 'pending_review',
-		    reviewed_by_admin_id = NULL,
-		    reviewed_at = NULL,
-		    review_reason = NULL,
-		    updated_at = now(),
-		    version = version + 1
-		WHERE id = $1
-		RETURNING version
-	`, listingID).Scan(&version)
-	if err != nil {
-		t.Fatalf("force carpool pending review: %v", err)
 	}
 	return version
 }
@@ -1967,14 +1935,14 @@ func assertCarpoolApplicationSideEffects(t *testing.T, databaseURL, applicationI
 			FROM domain_events
 			WHERE aggregate_type = 'carpool_application'
 			  AND aggregate_id = $1
-			  AND event_type = 'carpool_application.accepted'
+			  AND event_type = 'carpool_application.joined'
 		`,
 		"notifications": `
 			SELECT count(*)::int
 			FROM notifications
 			WHERE target_type = 'carpool_application'
 			  AND target_id = $1
-			  AND type = 'carpool_application.accepted'
+			  AND type = 'carpool_application.joined'
 		`,
 	}
 	for name, query := range checks {

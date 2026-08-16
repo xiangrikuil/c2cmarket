@@ -629,7 +629,7 @@ func (s *Service) PublicListings(ctx context.Context, filter ListingFilter, page
 	var listings []Listing
 	for _, id := range s.listingOrder {
 		listing := s.withSeatSummaryLocked(s.listings[id])
-		if listing.Status == ListingStatusActive {
+		if isPublicListing(listing) {
 			listings = append(listings, listing)
 		}
 	}
@@ -643,7 +643,7 @@ func (s *Service) PublicListing(ctx context.Context, listingID string) (Listing,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	listing, ok := s.listings[listingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	return s.withSeatSummaryLocked(listing), nil
@@ -764,7 +764,12 @@ func (s *Service) UpdateListingReviewStatus(ctx context.Context, user auth.User,
 	if input.ExpectedVersion > 0 && listing.Version != input.ExpectedVersion {
 		return Listing{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if !canUpdateListingStatus(listing.Status, input.Status, input.Action) {
+	governanceAction := input.Action == "pause" || input.Action == "restore"
+	if governanceAction {
+		if !canUpdateListingGovernance(listing, input.Action) {
+			return Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源治理状态不能执行该操作。")
+		}
+	} else if !canUpdateListingStatus(listing.Status, input.Status, input.Action) {
 		return Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源状态不能执行该审核动作。")
 	}
 	if input.Action == "approve" {
@@ -777,7 +782,15 @@ func (s *Service) UpdateListingReviewStatus(ctx context.Context, user auth.User,
 		}
 	}
 	now := s.now()
-	listing.Status = input.Status
+	if governanceAction {
+		if input.Action == "pause" {
+			listing.GovernanceStatus = "removed"
+		} else {
+			listing.GovernanceStatus = "clear"
+		}
+	} else {
+		listing.Status = input.Status
+	}
 	listing.ReviewedByAdminID = user.ID
 	listing.ReviewedAt = &now
 	listing.ReviewReason = strings.TrimSpace(input.Reason)
@@ -866,7 +879,7 @@ func (s *Service) CreateApplication(ctx context.Context, user auth.User, input C
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	listing, ok := s.listings[input.ListingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	listing = s.withSeatSummaryLocked(listing)
@@ -952,7 +965,7 @@ func (s *Service) CreateApplicationWithIdempotency(ctx context.Context, user aut
 	now := s.now()
 	s.mu.Lock()
 	listing, ok := s.listings[input.ListingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
 		return Application{}, idempotency.Completion{}, false, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -1000,7 +1013,7 @@ func (s *Service) publicListingForApplication(ctx context.Context, listingID str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	listing, ok := s.listings[listingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	return s.withSeatSummaryLocked(listing), nil
@@ -1021,7 +1034,7 @@ func (s *Service) ApplicationEligibility(ctx context.Context, user auth.User, li
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	listing, ok := s.listings[strings.TrimSpace(listingID)]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return ApplicationEligibility{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	listing = s.withSeatSummaryLocked(listing)
@@ -1544,6 +1557,10 @@ func (s *Service) withSeatSummaryLocked(listing Listing) Listing {
 	return listing
 }
 
+func isPublicListing(listing Listing) bool {
+	return listing.Status == ListingStatusActive && listing.GovernanceStatus == "clear"
+}
+
 func (s *Service) appendListingAuditEventLocked(listing Listing, actorUserID, actorKind, eventType, requestID string) {
 	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
@@ -1551,7 +1568,8 @@ func (s *Service) appendListingAuditEventLocked(listing Listing, actorUserID, ac
 	}
 	s.listingAuditEvents = append(s.listingAuditEvents, ListingAuditEvent{
 		ListingID: listing.ID, EventType: eventType, ActorUserID: actorUserID, ActorKind: actorKind,
-		AggregateVersion: listing.Version, RequestID: requestID, Status: listing.Status, CreatedAt: s.now(),
+		AggregateVersion: listing.Version, RequestID: requestID, Status: listing.Status,
+		GovernanceStatus: listing.GovernanceStatus, CreatedAt: s.now(),
 	})
 }
 
@@ -1638,7 +1656,6 @@ func (s *Service) acceptApplicationInMemory(input AcceptApplicationInput) (Appli
 		BuyerVersionID:  buyerVersion.ID,
 		SellerVersionID: ownerVersion.ID,
 		OpensAt:         now,
-		EndsAt:          now.AddDate(100, 0, 0),
 	}
 	s.contact.AddSession(session)
 	application.Status = ApplicationStatusJoined
@@ -2067,10 +2084,6 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 		return nextStatus == ListingStatusRejected && currentStatus == ListingStatusPendingReview
 	case "request_changes":
 		return nextStatus == ListingStatusChangesRequested && (currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive)
-	case "pause":
-		return nextStatus == ListingStatusPaused && currentStatus == ListingStatusActive
-	case "restore":
-		return nextStatus == ListingStatusActive && currentStatus == ListingStatusPaused
 	}
 	switch nextStatus {
 	case ListingStatusActive:
@@ -2079,8 +2092,18 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 		return currentStatus == ListingStatusPendingReview
 	case ListingStatusChangesRequested:
 		return currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive
-	case ListingStatusPaused:
-		return currentStatus == ListingStatusActive
+	default:
+		return false
+	}
+}
+
+func canUpdateListingGovernance(listing Listing, action string) bool {
+	published := listing.Status == ListingStatusActive || listing.Status == ListingStatusStopped
+	switch action {
+	case "pause":
+		return published && listing.GovernanceStatus == "clear"
+	case "restore":
+		return published && listing.GovernanceStatus == "removed"
 	default:
 		return false
 	}

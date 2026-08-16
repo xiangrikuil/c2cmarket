@@ -843,7 +843,12 @@ func (s *Store) updateCarpoolListingReviewStatusInTx(ctx context.Context, tx pgx
 	if input.ExpectedVersion > 0 && listing.Version != input.ExpectedVersion {
 		return carpool.Listing{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if !canUpdateCarpoolListingStatus(listing.Status, input.Status, input.Action) {
+	governanceAction := input.Action == "pause" || input.Action == "restore"
+	if governanceAction {
+		if !canUpdateCarpoolListingGovernance(listing, input.Action) {
+			return carpool.Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源治理状态不能执行该操作。")
+		}
+	} else if !canUpdateCarpoolListingStatus(listing.Status, input.Status, input.Action) {
 		return carpool.Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源状态不能执行该审核动作。")
 	}
 	if input.Action == "approve" {
@@ -851,7 +856,15 @@ func (s *Store) updateCarpoolListingReviewStatusInTx(ctx context.Context, tx pgx
 			return carpool.Listing{}, appErr
 		}
 	}
-	listing.Status = input.Status
+	if governanceAction {
+		if input.Action == "pause" {
+			listing.GovernanceStatus = "removed"
+		} else {
+			listing.GovernanceStatus = "clear"
+		}
+	} else {
+		listing.Status = input.Status
+	}
 	listing.ReviewedByAdminID = user.ID
 	listing.ReviewedAt = &now
 	listing.ReviewReason = strings.TrimSpace(input.Reason)
@@ -859,10 +872,10 @@ func (s *Store) updateCarpoolListingReviewStatusInTx(ctx context.Context, tx pgx
 	listing.Version++
 	if _, err = tx.Exec(ctx, `
 		UPDATE carpool_listings
-		SET status = $2, reviewed_by_admin_id = $3, reviewed_at = $4, review_reason = $5,
-		    updated_at = $6, version = $7
-		WHERE id = $1
-	`, listing.ID, listing.Status, listing.ReviewedByAdminID, listing.ReviewedAt, listing.ReviewReason, listing.UpdatedAt, listing.Version); err != nil {
+			SET status = $2, governance_status = $3, reviewed_by_admin_id = $4,
+			    reviewed_at = $5, review_reason = $6, updated_at = $7, version = $8
+			WHERE id = $1
+		`, listing.ID, listing.Status, listing.GovernanceStatus, listing.ReviewedByAdminID, listing.ReviewedAt, listing.ReviewReason, listing.UpdatedAt, listing.Version); err != nil {
 		return carpool.Listing{}, internalStoreError()
 	}
 	eventType := carpoolListingReviewEventType(input.Action)
@@ -1995,8 +2008,8 @@ func (s *Store) acceptCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, inp
 	sessionID := uuid.NewString()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO contact_sessions (id, buyer_user_id, seller_user_id, opens_at, ends_at, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, 'open', $4)
-	`, sessionID, application.BuyerUserID, application.OwnerUserID, now, now.AddDate(100, 0, 0))
+		VALUES ($1, $2, $3, $4, NULL, 'open', $4)
+	`, sessionID, application.BuyerUserID, application.OwnerUserID, now)
 	if err != nil {
 		return carpool.Application{}, internalStoreError()
 	}
@@ -2195,7 +2208,10 @@ func insertCarpoolListingEvent(ctx context.Context, tx pgx.Tx, listing carpool.L
 	if requestID == "" {
 		requestID = "unknown"
 	}
-	metadata, err := json.Marshal(map[string]string{"status": listing.Status})
+	metadata, err := json.Marshal(map[string]string{
+		"status":           listing.Status,
+		"governanceStatus": listing.GovernanceStatus,
+	})
 	if err != nil {
 		return internalStoreError()
 	}
@@ -2427,10 +2443,6 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 		return nextStatus == carpool.ListingStatusRejected && currentStatus == carpool.ListingStatusPendingReview
 	case "request_changes":
 		return nextStatus == carpool.ListingStatusChangesRequested && (currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive)
-	case "pause":
-		return nextStatus == carpool.ListingStatusPaused && currentStatus == carpool.ListingStatusActive
-	case "restore":
-		return nextStatus == carpool.ListingStatusActive && currentStatus == carpool.ListingStatusPaused
 	}
 	switch nextStatus {
 	case carpool.ListingStatusActive:
@@ -2439,8 +2451,18 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 		return currentStatus == carpool.ListingStatusPendingReview
 	case carpool.ListingStatusChangesRequested:
 		return currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive
-	case carpool.ListingStatusPaused:
-		return currentStatus == carpool.ListingStatusActive
+	default:
+		return false
+	}
+}
+
+func canUpdateCarpoolListingGovernance(listing carpool.Listing, action string) bool {
+	published := listing.Status == carpool.ListingStatusActive || listing.Status == carpool.ListingStatusStopped
+	switch action {
+	case "pause":
+		return published && listing.GovernanceStatus == "clear"
+	case "restore":
+		return published && listing.GovernanceStatus == "removed"
 	default:
 		return false
 	}

@@ -457,13 +457,13 @@ func disposeAccountGovernanceSalesResourceInTx(ctx context.Context, tx pgx.Tx, j
 			return err
 		}
 	case "carpool_listing":
-		if err := tx.QueryRow(ctx, `SELECT status FROM carpool_listings WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, resourceID, job.TargetUserID).Scan(&beforeStatus); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT governance_status FROM carpool_listings WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, resourceID, job.TargetUserID).Scan(&beforeStatus); err != nil {
 			return err
 		}
 	}
 	afterStatus := map[string]string{
 		"api_service": "owner_paused", "api_quota_batch": "paused", "api_quota_offer": "paused",
-		"api_service_promotion": "stopped", "carpool_listing": "paused",
+		"api_service_promotion": "stopped", "carpool_listing": "removed",
 	}[resourceType]
 	dispositionID, err := createAccountGovernanceDispositionInTx(ctx, tx, job, accountGovernanceDispositionInput{
 		ResourceType: resourceType, ResourceID: resourceID, Result: "sales_stopped", TriggerRole: "seller",
@@ -482,7 +482,7 @@ func disposeAccountGovernanceSalesResourceInTx(ctx context.Context, tx pgx.Tx, j
 	case "api_service_promotion":
 		_, err = tx.Exec(ctx, `UPDATE api_service_promotions SET stopped_at = $3, stopped_by_governance_action_id = $4, stopped_reason = $5, governance_disposition_id = $2, updated_at = $3, version = version + 1 WHERE id = $1 AND stopped_at IS NULL AND ends_at > $3`, resourceID, dispositionID, now, job.GovernanceActionID, accountGovernanceCancelReason)
 	case "carpool_listing":
-		_, err = tx.Exec(ctx, `UPDATE carpool_listings SET status = 'paused', governance_disposition_id = $2, updated_at = $3, version = version + 1 WHERE id = $1 AND status = 'active'`, resourceID, dispositionID, now)
+		_, err = tx.Exec(ctx, `UPDATE carpool_listings SET governance_status = 'removed', governance_disposition_id = $2, updated_at = $3, version = version + 1 WHERE id = $1 AND governance_status = 'clear'`, resourceID, dispositionID, now)
 	}
 	return err
 }

@@ -840,24 +840,24 @@ const transactionReviewColumns = `
 `
 
 const reviewCenterRowsSQL = `
-WITH my_transactions AS (
-  SELECT
-    'api_order'::text,
-    api_order.id,
-    api_order.service_title_snapshot,
-    api_order.buyer_user_id,
-    buyer.username,
-    buyer.display_name,
-    api_order.seller_user_id,
-    seller.username,
-    seller.display_name,
-	    api_order.commercial_outcome_updated_at,
-	    api_order.commercial_outcome_updated_at + interval '14 days',
-	    api_order.commercial_outcome,
-	    EXISTS (
-	      SELECT 1 FROM dispute_cases dispute
-	      WHERE dispute.api_order_id = api_order.id AND dispute.active = true
-	    )
+	WITH my_transactions AS (
+	  SELECT
+	    'api_order'::text AS transaction_type,
+	    api_order.id AS transaction_id,
+	    api_order.service_title_snapshot AS target,
+	    api_order.buyer_user_id,
+	    buyer.username AS buyer_username,
+	    buyer.display_name AS buyer_display_name,
+	    api_order.seller_user_id,
+	    seller.username AS seller_username,
+	    seller.display_name AS seller_display_name,
+		    api_order.commercial_outcome_updated_at AS completed_at,
+		    api_order.commercial_outcome_updated_at + interval '14 days' AS review_deadline_at,
+		    api_order.commercial_outcome,
+		    EXISTS (
+		      SELECT 1 FROM dispute_cases dispute
+		      WHERE dispute.api_order_id = api_order.id AND dispute.active = true
+		    ) AS review_paused
   FROM api_orders api_order
   JOIN users buyer ON buyer.id = api_order.buyer_user_id
   JOIN users seller ON seller.id = api_order.seller_user_id

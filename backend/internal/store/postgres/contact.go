@@ -736,7 +736,7 @@ func (s *Store) ReadContactSession(ctx context.Context, sessionID, viewerUserID,
 	defer rollback(ctx, tx)
 
 	var buyerUserID, sellerUserID, status string
-	var endsAt time.Time
+	var endsAt *time.Time
 	err = tx.QueryRow(ctx, `
 		SELECT buyer_user_id::text, seller_user_id::text, status, ends_at
 		FROM contact_sessions
@@ -752,8 +752,9 @@ func (s *Store) ReadContactSession(ctx context.Context, sessionID, viewerUserID,
 	if viewerUserID != buyerUserID && viewerUserID != sellerUserID {
 		return contact.ContactSessionView{}, domain.NewError(http.StatusForbidden, domain.CodeContactAccessForbidden, "Contact access forbidden", "你不是该联系窗口参与方。")
 	}
-	if status != "open" || !now.Before(endsAt) {
-		if status == "open" && !now.Before(endsAt) {
+	expired := endsAt != nil && !now.Before(*endsAt)
+	if status != "open" || expired {
+		if status == "open" && expired {
 			_, _ = tx.Exec(ctx, `UPDATE contact_sessions SET status = 'expired' WHERE id = $1 AND status = 'open'`, sessionID)
 		}
 		return contact.ContactSessionView{}, domain.NewError(http.StatusConflict, domain.CodeContactWindowExpired, "Contact window expired", "联系窗口已过期。")

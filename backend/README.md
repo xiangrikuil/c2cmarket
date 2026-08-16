@@ -122,7 +122,7 @@ C2C_TEST_DATABASE_URL='postgres://c2c_market:c2c_market_dev_password@127.0.0.1:5
 - Announcements：用户端 `/api/v1/announcements*`、receipt `/api/v1/me/announcements/*`、管理端 `/api/v1/admin/announcements*`
 - Catalog/official price：`/api/v1/product-*`、`/api/v1/api-models*`、`/api/v1/official-prices*`、`/api/v1/official-price-leads*`（提交已禁用，保留只读兼容）、`/api/v1/admin/official-price-records*`、`/api/v1/admin/official-price-leads*`（遗留审核兼容）
 - Favorites：用户 `/api/v1/me/favorites*`
-- Reviews：用户 `GET /api/v1/me/reviews`、`POST|PUT /api/v1/me/transactions/{type}/{id}/review`、兼容 `PUT /api/v1/me/reviews/carpool-memberships/{membershipId}`，公开 `GET /api/v1/users/{username}/reviews`，管理员 `POST /api/v1/admin/reviews/{id}/remove`
+- Reviews：仅 API 订单支持评价；用户 `GET /api/v1/me/reviews`、`POST|PUT /api/v1/me/transactions/{type}/{id}/review`，公开 `GET /api/v1/users/{username}/reviews`，管理员 `POST /api/v1/admin/reviews/{id}/remove`
 - Reports/disputes/appeals/reputation governance：用户 `/api/v1/reports`、`/api/v1/me/reports`、`/api/v1/me/appeals`，公开 `/api/v1/users/{username}/disputes`，admin `/api/v1/admin/reports*`、`/api/v1/admin/disputes*`、`/api/v1/admin/appeals*`、`POST /api/v1/admin/disputes/{id}/reputation-outcome`、`POST /api/v1/admin/users/{id}/reputation-restrictions`、`POST /api/v1/admin/reputation-restrictions/{id}/revoke`
 - Notifications：用户 `/api/v1/me/notifications*`
 - Carpool：公开 `/api/v1/carpools*`、买家 `/api/v1/me/carpool-*`、owner `/api/v1/owner/carpool-*`、admin `/api/v1/admin/carpools*`

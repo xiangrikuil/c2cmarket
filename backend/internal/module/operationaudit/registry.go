@@ -62,7 +62,7 @@ var actionRegistry = []ActionDefinition{
 	{SourceDomain, "carpool_listing.published", "carpool_listing", DomainCarpool, "拼车车源发布", OutcomeStatusChanged, "车主发布了拼车车源", ""},
 	{SourceDomain, "carpool_listing.rejected", "carpool_listing", DomainCarpool, "拼车车源审核拒绝", OutcomeStatusChanged, "管理员拒绝了拼车车源", ""},
 	{SourceDomain, "carpool_listing.changes_requested", "carpool_listing", DomainCarpool, "拼车车源要求修改", OutcomeStatusChanged, "管理员要求修改拼车车源", ""},
-	{SourceDomain, "carpool_listing.paused", "carpool_listing", DomainCarpool, "拼车车源暂停", OutcomeStatusChanged, "车主暂停了拼车车源", ""},
+	{SourceDomain, "carpool_listing.paused", "carpool_listing", DomainCarpool, "拼车车源下架", OutcomeStatusChanged, "管理员下架了拼车车源", ""},
 	{SourceDomain, "carpool_listing.resumed", "carpool_listing", DomainCarpool, "拼车车源恢复", OutcomeStatusChanged, "车主恢复了拼车车源", ""},
 	{SourceDomain, "carpool_listing.recruitment_updated", "carpool_listing", DomainCarpool, "拼车招募状态更新", OutcomeStatusChanged, "车主更新了拼车招募状态", ""},
 	{SourceDomain, "carpool_application.created", "carpool_application", DomainCarpool, "拼车申请创建", OutcomeSucceeded, "用户提交了拼车申请", ""},

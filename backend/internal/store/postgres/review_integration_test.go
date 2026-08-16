@@ -170,7 +170,7 @@ func TestTransactionReviewPostgresLifecycle(t *testing.T) {
 	}
 }
 
-func TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles(t *testing.T) {
+func TestTransactionReviewPostgresDeadlineExclusionAndRejectsCarpool(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("C2C_TEST_DATABASE_URL is not configured")
@@ -339,7 +339,7 @@ func TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles(t *testing.T)
 		t.Fatalf("non-participant review must be rejected, got %#v", appErr)
 	}
 
-	membershipID := seedCompletedCarpoolMembershipForReview(
+	membershipID := seedEndedCarpoolMembershipWithoutReview(
 		t,
 		ctx,
 		pool,
@@ -349,30 +349,36 @@ func TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles(t *testing.T)
 		buyerContactID,
 		baseTime.Add(-24*time.Hour),
 	)
-	submitReviewForTest(t, ctx, service, sellerID, review.TransactionCarpoolMembership, membershipID, review.OperationCreate, 5, []string{"确认及时"}, "卖家评价买家。", "carpool-seller-create")
-	sellerSent := findReviewCenterRow(t, listReviewCenter(t, ctx, service, sellerID), review.DirectionSent, membershipID)
-	if sellerSent.ReviewerRole != review.RoleSeller || sellerSent.RevieweeRole != review.RoleBuyer {
-		t.Fatalf("unexpected carpool seller direction: %#v", sellerSent)
+	if _, appErr := service.SubmitWithIdempotency(
+		ctx,
+		sellerID,
+		"POST /integration/reviews",
+		"carpool-review-rejected",
+		"hash-carpool-review-rejected",
+		review.SubmitReviewInput{
+			TransactionType: review.TransactionCarpoolMembership,
+			TransactionID:   membershipID,
+			Operation:       review.OperationCreate,
+			Rating:          5,
+			Tags:            []string{"确认及时"},
+			Note:            "拼车撮合不产生评价。",
+		},
+		reviewIntegrationCompletion,
+	); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("carpool review must be rejected by the service contract, got %#v", appErr)
 	}
-	buyerPending := findReviewCenterRow(t, listReviewCenter(t, ctx, service, buyerID), review.DirectionPending, membershipID)
-	if buyerPending.CounterpartySubmitted || buyerPending.ContentVisible || buyerPending.Rating != 0 || buyerPending.Note != "" {
-		t.Fatalf("sealed carpool seller review leaked to buyer: %#v", buyerPending)
-	}
-	submitReviewForTest(t, ctx, service, buyerID, review.TransactionCarpoolMembership, membershipID, review.OperationCreate, 4, []string{"规则清晰"}, "买家评价卖家。", "carpool-buyer-create")
-
-	var buyerRoleCount, sellerRoleCount int
-	if err := pool.QueryRow(ctx, `
-		SELECT
-		  count(*) FILTER (WHERE reviewer_role = 'buyer' AND reviewee_role = 'seller'),
-		  count(*) FILTER (WHERE reviewer_role = 'seller' AND reviewee_role = 'buyer')
-		FROM transaction_reviews
-		WHERE carpool_membership_id = $1
-		  AND status = 'published'
-	`, membershipID).Scan(&buyerRoleCount, &sellerRoleCount); err != nil {
-		t.Fatalf("read carpool review roles: %v", err)
-	}
-	if buyerRoleCount != 1 || sellerRoleCount != 1 {
-		t.Fatalf("expected one review in each carpool direction, buyer=%d seller=%d", buyerRoleCount, sellerRoleCount)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO transaction_reviews (
+			transaction_type, carpool_membership_id,
+			reviewer_user_id, reviewee_user_id, reviewer_role, reviewee_role,
+			rating, tags, note, status, review_deadline_at
+		) VALUES (
+			'carpool_membership', $1,
+			$2, $3, 'seller', 'buyer',
+			5, ARRAY['确认及时']::text[], '绕过服务的拼车评价', 'sealed', $4
+		)
+	`, membershipID, sellerID, buyerID, baseTime.Add(14*24*time.Hour)); err == nil || !strings.Contains(err.Error(), "carpool matching does not produce reviews") {
+		t.Fatalf("carpool review must be rejected by the database trigger, got %v", err)
 	}
 }
 
@@ -489,7 +495,7 @@ func seedCompletedAPIOrderForReview(
 	return orderID
 }
 
-func seedCompletedCarpoolMembershipForReview(
+func seedEndedCarpoolMembershipWithoutReview(
 	t *testing.T,
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -497,7 +503,7 @@ func seedCompletedCarpoolMembershipForReview(
 	sellerContactID string,
 	buyerID string,
 	buyerContactID string,
-	completedAt time.Time,
+	endedAt time.Time,
 ) string {
 	t.Helper()
 	var productPlanID string
@@ -513,34 +519,37 @@ func seedCompletedCarpoolMembershipForReview(
 		)
 		VALUES ($1, $2, $3, '评价集成测试拼车', '用于双向评价集成测试', '双方站外确认',
 		        20, 2, 0, 'active', 1, $4, $5, $5)
-	`, listingID, sellerID, productPlanID, sellerContactID, completedAt.Add(-35*24*time.Hour)); err != nil {
+		`, listingID, sellerID, productPlanID, sellerContactID, endedAt.Add(-35*24*time.Hour)); err != nil {
 		t.Fatalf("seed carpool listing: %v", err)
 	}
-	joinedAt := completedAt.Add(-30 * 24 * time.Hour)
+	joinedAt := endedAt.Add(-30 * 24 * time.Hour)
 	applicationID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO carpool_applications (
 		  id, carpool_listing_id, buyer_user_id, owner_user_id, product_plan_id,
-		  buyer_contact_method_id, status, listing_title_snapshot,
-		  price_monthly_cny_snapshot, policy_version_snapshot,
-		  joined_at, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'joined', '评价集成测试拼车',
-		        20, 1, $7, $7, $7)
-	`, applicationID, listingID, buyerID, sellerID, productPlanID, buyerContactID, joinedAt); err != nil {
+			  buyer_contact_method_id, status, listing_title_snapshot,
+			  price_monthly_cny_snapshot, policy_version_snapshot,
+			  conditions_version_snapshot, conditions_snapshot,
+			  accepted_conditions_version, conditions_accepted_at,
+			  joined_at, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'joined', '评价集成测试拼车',
+			        20, 1, 1, '{}'::jsonb, 1, $7, $7, $7, $7)
+		`, applicationID, listingID, buyerID, sellerID, productPlanID, buyerContactID, joinedAt); err != nil {
 		t.Fatalf("seed joined carpool application: %v", err)
 	}
 	membershipID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO carpool_memberships (
-		  id, carpool_listing_id, carpool_application_id, buyer_user_id, owner_user_id,
-		  product_plan_id, status, price_monthly_cny_snapshot, policy_version_snapshot,
-		  joined_at, ended_at, ended_reason, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'completed', 20, 1,
-		        $7, $8, 'completed_by_both', $7, $8)
-	`, membershipID, listingID, applicationID, buyerID, sellerID, productPlanID, joinedAt, completedAt); err != nil {
-		t.Fatalf("seed completed carpool membership: %v", err)
+			  id, carpool_listing_id, carpool_application_id, buyer_user_id, owner_user_id,
+			  product_plan_id, status, price_monthly_cny_snapshot, policy_version_snapshot,
+			  conditions_version_snapshot, conditions_snapshot,
+			  joined_at, ended_at, ended_reason, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'left', 20, 1,
+			        1, '{}'::jsonb, $7, $8, 'left', $7, $8)
+		`, membershipID, listingID, applicationID, buyerID, sellerID, productPlanID, joinedAt, endedAt); err != nil {
+		t.Fatalf("seed ended carpool membership: %v", err)
 	}
 	return membershipID
 }

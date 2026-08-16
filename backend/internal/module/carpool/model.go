@@ -311,6 +311,7 @@ type ListingAuditEvent struct {
 	AggregateVersion int64
 	RequestID        string
 	Status           string
+	GovernanceStatus string
 	CreatedAt        time.Time
 }
 

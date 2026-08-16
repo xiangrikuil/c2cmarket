@@ -947,7 +947,7 @@ paths:
       tags: [Reviews]
       security: []
       summary: List verified public reviews for a user.
-      description: Returns published, non-removed reviews from completed carpool memberships and API orders. Sealed and reputation-excluded transaction reviews are never exposed.
+      description: Returns published, non-removed reviews from reviewable API orders. Sealed and reputation-excluded transaction reviews are never exposed; carpool applications and memberships do not produce reviews.
       parameters:
         - name: username
           in: path
@@ -5308,7 +5308,7 @@ paths:
               $ref: "#/components/schemas/ReviewActionRequest"
       responses:
         "200":
-          description: Carpool listing paused.
+          description: Carpool listing removed from public visibility without changing recruitment state.
           content:
             application/json:
               schema:
@@ -5336,7 +5336,7 @@ paths:
               $ref: "#/components/schemas/ReviewActionRequest"
       responses:
         "200":
-          description: Carpool listing restored to active.
+          description: Carpool listing governance restored without changing recruitment state.
           content:
             application/json:
               schema:
@@ -19083,7 +19083,7 @@ components:
           type: string
           format: uuid
         endsAt:
-          type: string
+          type: [string, "null"]
           format: date-time
         items:
           type: array

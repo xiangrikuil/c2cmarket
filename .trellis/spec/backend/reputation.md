@@ -291,7 +291,7 @@ reverseOnlyAppellantOwnedFacts(outcome, appeal.AppellantUserID)
 
 ```text
 transaction_type:
-  carpool_membership | api_order
+  api_order
 
 reviewer_role / reviewee_role:
   buyer | seller
@@ -347,7 +347,8 @@ PostgreSQL:
 | More than five tags or a tag not allowed for the resolved roles | `422 VALIDATION_FAILED`, field `tags` |
 | Both tags and trimmed note are empty | `422 VALIDATION_FAILED`, field `content` |
 | Current user is not a participant | `404 OBJECT_NOT_FOUND` |
-| Transaction type is carpool, API commercial outcome is not reviewable, or transaction is actively excluded | `409 INVALID_STATE_TRANSITION` |
+| Transaction type is carpool or otherwise unsupported | `422 VALIDATION_FAILED` |
+| API commercial outcome is not reviewable or transaction is actively excluded | `409 INVALID_STATE_TRANSITION` |
 | API order has an active dispute | Return `reviewPaused=true`; reject create/edit and skip auto-publication/aggregation without exposing a received sealed row |
 | Submission/edit at or after the deadline | `409 INVALID_STATE_TRANSITION` |
 | Edit targets a published, removed, or otherwise frozen review | `409 INVALID_STATE_TRANSITION` |
@@ -361,13 +362,13 @@ PostgreSQL:
 - Good: a confirmed full refund starts a new 14-day review window at `commercial_outcome_updated_at`; both participants may review, but the order does not count as a normal fulfillment.
 - Good: an active dispute pauses an author's sealed review; it is neither editable nor auto-published nor aggregated until the dispute closes.
 - Good: seller-to-buyer `quick_payment` is stored as a code, rendered as `付款及时`, and included in the positive reputation-tag aggregate.
-- Good: one carpool review reaches its deadline, materializes as published, and remains immutable while its revision history records the transition.
+- Good: a carpool review submission is rejected and no carpool row appears in the review center or public profile.
 - Base: an administrator removes abusive published text. Public reads omit it, while frozen content and audited removal history remain stored.
 - Bad: return `counterpartySubmitted`, return a received sealed placeholder row, accept a tag in the wrong role direction, or display weighted rating as the ordinary public average.
 
 ### 6. Tests Required
 
-- Service and repository tests must cover both transaction types, both directions, no counterparty-submission signal, commercial-outcome eligibility, the outcome-time 14-day boundary, active-dispute pause, tag-or-note validation, scenario tag rejection, historical aliases, active exclusion, and post-publication immutability.
+- Service and repository tests must cover both API-order directions, carpool-source rejection, no counterparty-submission signal, commercial-outcome eligibility, the outcome-time 14-day boundary, active-dispute pause, tag-or-note validation, scenario tag rejection, historical aliases, active exclusion, and post-publication immutability.
 - PostgreSQL integration must prove confirmed refunds remain reviewable without counting as normal completion, active disputes pause create/edit/auto-publication/reputation aggregation, mutable deadline refresh, second-submit atomic publication, append-only revisions, legacy review preservation, and audited removal.
 - Public-profile tests must prove only published, non-removed, non-excluded rows appear and role/type fields survive the API boundary.
 - Run the full backend suite, vet, OpenAPI parsing and route parity, migration documentation checks, and `git diff --check`.
@@ -429,6 +430,7 @@ PostgreSQL:
 ### 3. Contracts
 
 - `reputation-v2` calculates six independent snapshots per user: buyer/seller crossed with overall/carpool/API. The version upgrade changes timeout responsibility attribution only; tier, state, confidence, and scoring thresholds remain unchanged.
+- Carpool snapshots remain zero-valued compatibility projections. Carpool applications, memberships, reviews, disputes, outcomes, and carpool-scoped restrictions do not enter public reputation aggregation; their governance and action-enforcement records remain authoritative in their own modules.
 - A cached `reputation-v1` snapshot is stale. The next list, detail, profile, or explicit recalculation read rebuilds and persists it as `reputation-v2` from current durable facts.
 - `tier`, `state`, `confidence`, metrics, progress, warnings, and badges come from one pure evaluator and one versioned rule set.
 - Verified review ratings use a Bayesian prior weight of 5. The platform prior is the same role/scope public-review average, or 4.0 while that sample has fewer than 20 reviews.

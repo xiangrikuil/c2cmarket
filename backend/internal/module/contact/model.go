@@ -136,7 +136,7 @@ type CreateContactSessionInput struct {
 
 type ContactSessionView struct {
 	SessionID string
-	EndsAt    time.Time
+	EndsAt    *time.Time
 	Items     []ContactItemView
 }
 

@@ -1552,7 +1552,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	assertPublicCarpoolVisible(t, server, published.ID, true)
 
 	paused := reviewCarpool(t, server, adminSession, published.ID, "pause", published.Version, "carpool-pause")
-	if paused.Status != app.CarpoolListingStatusPaused || paused.Version != 3 {
+	if paused.Status != app.CarpoolListingStatusActive || paused.GovernanceStatus != "removed" || paused.Version != 3 {
 		t.Fatalf("unexpected paused listing: %+v", paused)
 	}
 	assertPublicCarpoolVisible(t, server, paused.ID, false)
@@ -1565,7 +1565,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 
 	restored := reviewCarpool(t, server, adminSession, paused.ID, "restore", paused.Version, "carpool-restore")
-	if restored.Status != app.CarpoolListingStatusActive || restored.Version != 4 {
+	if restored.Status != app.CarpoolListingStatusActive || restored.GovernanceStatus != "clear" || restored.Version != 4 {
 		t.Fatalf("unexpected restored listing: %+v", restored)
 	}
 	assertPublicCarpoolVisible(t, server, restored.ID, true)
@@ -1628,6 +1628,9 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 	if !strings.Contains(readContactResponse.Body.String(), "@owner_carpool") {
 		t.Fatalf("expected owner contact in contact window response")
+	}
+	if !strings.Contains(readContactResponse.Body.String(), `"endsAt":null`) {
+		t.Fatalf("expected membership contact access without a countdown, got %s", readContactResponse.Body.String())
 	}
 
 	membership := firstCarpoolMembership(t, server, buyerSession, "me", accepted.ID)
@@ -3482,6 +3485,7 @@ type createdMerchantProfile struct {
 type createdCarpool struct {
 	ID                                    string                    `json:"id"`
 	Status                                string                    `json:"status"`
+	GovernanceStatus                      string                    `json:"governanceStatus"`
 	DistributionMethod                    string                    `json:"distributionMethod"`
 	DistributionMethodNote                string                    `json:"distributionMethodNote"`
 	ProvidesAdminAccount                  bool                      `json:"providesAdminAccount"`

@@ -1,3 +1,5 @@
+import { seedVerifiedProbeConnection } from './smoke-support.mjs'
+
 const baseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8080'
 const runSuffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 const userSuffix = runSuffix.replace(/[^a-z0-9]/gi, '').slice(-8).toLowerCase()
@@ -93,113 +95,132 @@ async function createContact(auth, value, label) {
   }, auth)
 }
 
-async function createCompletedMembership(owner, buyer) {
-  const plans = await request('/api/v1/product-plans')
-  const plan = plans.items.find(item => item.riskAckRequired && item.publishPolicy === 'allowed') ?? plans.items[0]
-  assert(plan?.id, 'product plan catalog is empty')
-
+async function createCompletedAPIOrder(owner, buyer) {
+  const models = await request('/api/v1/api-models')
+  const model = models.items[0]
+  assert(model?.id, 'api model catalog is empty')
+  const probeConnectionId = seedVerifiedProbeConnection(owner.user.id)
   const ownerContactValue = `@review_owner_${runSuffix.replaceAll('-', '_')}`
   const buyerContactValue = `@review_buyer_${runSuffix.replaceAll('-', '_')}`
   const ownerContact = await createContact(owner, ownerContactValue, 'Review smoke owner')
   const buyerContact = await createContact(buyer, buyerContactValue, 'Review smoke buyer')
-  const listing = await request('/api/v1/carpools', {
+
+  const draft = await request('/api/v1/owner/api-services', {
     method: 'POST',
-    idempotencyPrefix: 'review-smoke-listing',
+    idempotencyPrefix: 'review-smoke-service',
     body: {
-      productPlanId: plan.id,
+      merchantProfileId: '',
+      merchantIdentityMode: 'public_profile',
       ownerContactMethodId: ownerContact.id,
-      cycleTerm: {
-        billingPeriod: 'monthly',
-        cycleStartDay: 1,
-        noticeDays: 3,
-        exitPolicy: '按月确认，退出需提前 3 天站外告知车主，平台不托管支付、不担保。',
-        usageRules: '仅按车主说明使用席位，不在平台填写、粘贴或上传任何密码、API Key、token、Cookie 或 Session。',
+      probeConnectionId,
+      title: `Review Smoke API Service ${Date.now()}`,
+      shortDescription: '评价 smoke API 服务',
+      distributionSystem: 'sub2api',
+      billingMode: 'metered_usd_quota',
+      declaredCnyPerUsdAllowance: '0.8',
+      declaredMaxUsdAllowancePerIntent: '100',
+      availableUsdAllowance: '1000',
+      quotaExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      quotaUsagePolicy: {
+        fiveHour: { mode: 'limited', amountUsd: '5' },
+        daily: { mode: 'unlimited' },
       },
-      title: `Review Smoke Carpool ${Date.now()}`,
-      summary: '评价 smoke 车源',
-      accessArrangement: '费用分摊或成员邀请方案，平台不保存、不交付任何凭据。',
-      distributionMethod: 'sub2api',
-      distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。',
-      providesAdminAccount: true,
-      regionCode: 'other',
-      regionName: 'Smoke 测试区',
-      priceMonthlyCny: '68.00',
-      serviceMultiplier: '1.0000',
-      dailyQuotaAmount: '10.00',
-      weeklyQuotaAmount: '50.00',
-      followsOfficialQuotaReset: true,
-      vpsRegion: '香港',
-      supportsMainlandChinaDirectConnection: true,
-      openingChannelCode: 'web',
-      customOpeningChannel: '',
-      paymentMethodCode: 'u_card',
-      customPaymentMethod: '',
-      buyerSeatCapacity: 1,
-      activeBuyerMembers: 0,
-      riskAcknowledgement: plan.riskAckRequired ? {
-        riskNoticeCode: plan.riskNoticeCode,
-        policyVersion: plan.policyVersion,
-      } : undefined,
+      minimumIntentCny: '20',
+      maximumIntentCny: '300',
+      usageVisibility: 'offsite_panel_readonly',
+      publicAccessNote: '仅展示接入说明，不展示凭据。',
+      merchantNote: '站外确认后按说明接入。',
+      accountPoolType: 'custom',
+      accountPoolCustomName: 'Review Smoke API Pool',
+      merchantRefundCommitment: false,
+      declaredMaxConcurrency: 4,
+      promptAuditEnabled: false,
+      accessModes: [
+        { accessMode: 'buyer_dedicated_sub_key', publicNote: '站外确认接入说明。' },
+      ],
+      models: [
+        { modelCatalogId: model.id, merchantMultiplier: '1.0000', enabled: true },
+      ],
+      packages: [],
     },
   }, owner)
-
-  const published = await request(`/api/v1/carpools/${listing.id}/submit-review`, {
+  const approved = await request(`/api/v1/owner/api-services/${draft.id}/submit-review`, {
     method: 'POST',
-    idempotencyPrefix: 'review-smoke-submit',
-    ifMatch: listing.version,
+    idempotencyPrefix: 'review-smoke-service-submit',
+    ifMatch: draft.version,
     body: {},
   }, owner)
-  assert(published.status === 'active', 'listing should be active')
-
-  const application = await request(`/api/v1/carpools/${listing.id}/applications`, {
+  const published = await request(`/api/v1/owner/api-services/${draft.id}/publish`, {
     method: 'POST',
-    idempotencyPrefix: 'review-smoke-apply',
+    idempotencyPrefix: 'review-smoke-service-publish',
+    ifMatch: approved.version,
+    body: {},
+  }, owner)
+  const orderable = await request(`/api/v1/owner/api-services/${draft.id}/order-settings`, {
+    method: 'PATCH',
+    ifMatch: published.version,
+    body: {
+      acceptingOrders: true,
+      paymentWindowMinutes: 10,
+      paymentOptions: [{
+        paymentMethod: 'wechat',
+        enabled: true,
+        paymentInstructions: '站外确认付款后填写付款摘要。',
+        paymentQrCodeDataUrl: 'data:image/png;base64,aGVsbG8=',
+      }],
+    },
+  }, owner)
+  assert(orderable.isOrderable === true, 'review smoke service should be orderable')
+
+  const intent = await request(`/api/v1/api-services/${draft.id}/purchase-intents`, {
+    method: 'POST',
+    idempotencyPrefix: 'review-smoke-intent',
     body: {
       buyerContactMethodId: buyerContact.id,
-      riskAcknowledgement: plan.riskAckRequired ? {
-        riskNoticeCode: plan.riskNoticeCode,
-        policyVersion: plan.policyVersion,
-      } : undefined,
+      requestedCnyAmount: '20',
+      requestedUsdAllowance: '25',
+      selectedAccessMode: 'buyer_dedicated_sub_key',
+      selectedPackageId: '',
+      buyerNote: 'review smoke intent',
     },
   }, buyer)
-  const accepted = await request(`/api/v1/owner/carpool-applications/${application.id}/accept`, {
+  const order = await request(`/api/v1/me/api-purchase-intents/${intent.id}/orders`, {
     method: 'POST',
-    idempotencyPrefix: 'review-smoke-accept',
-    ifMatch: application.version,
+    idempotencyPrefix: 'review-smoke-order',
+    body: { paymentMethod: 'wechat' },
+  }, buyer)
+  const paid = await request(`/api/v1/me/api-orders/${order.id}/submit-payment`, {
+    method: 'POST',
+    idempotencyPrefix: 'review-smoke-submit-payment',
+    ifMatch: order.version,
+    body: { paymentSummary: '已按站外确认金额完成付款。' },
+  }, buyer)
+  const confirmed = await request(`/api/v1/owner/api-orders/${order.id}/confirm-payment`, {
+    method: 'POST',
+    idempotencyPrefix: 'review-smoke-confirm-payment',
+    ifMatch: paid.version,
     body: {},
   }, owner)
-  const buyerJoined = await request(`/api/v1/me/carpool-applications/${application.id}/confirm-join`, {
+  const delivered = await request(`/api/v1/owner/api-orders/${order.id}/submit-delivery`, {
     method: 'POST',
-    idempotencyPrefix: 'review-smoke-buyer-join',
-    ifMatch: accepted.version,
+    idempotencyPrefix: 'review-smoke-submit-delivery',
+    ifMatch: confirmed.version,
+    body: {
+      deliveryKind: 'login_account',
+      panelLoginUrl: 'https://panel.example.com/login',
+      username: `review-smoke-${runSuffix}`,
+      password: `review-smoke-password-${runSuffix}`,
+      instructions: '买家专属接入信息；提交后不可修改。',
+    },
+  }, owner)
+  const completed = await request(`/api/v1/me/api-orders/${order.id}/confirm-complete`, {
+    method: 'POST',
+    idempotencyPrefix: 'review-smoke-confirm-complete',
+    ifMatch: delivered.version,
     body: {},
   }, buyer)
-  const ownerJoined = await request(`/api/v1/owner/carpool-applications/${application.id}/confirm-join`, {
-    method: 'POST',
-    idempotencyPrefix: 'review-smoke-owner-join',
-    ifMatch: buyerJoined.version,
-    body: {},
-  }, owner)
-  assert(ownerJoined.status === 'joined', 'application should be joined')
-
-  const memberships = await request('/api/v1/me/carpool-memberships', {}, buyer)
-  const membership = memberships.items.find(item => item.carpoolApplicationId === application.id)
-  assert(membership?.status === 'active', 'membership should be active')
-
-  const buyerCompleted = await request(`/api/v1/me/carpool-memberships/${membership.id}/confirm-complete`, {
-    method: 'POST',
-    idempotencyPrefix: 'review-smoke-buyer-complete',
-    ifMatch: membership.version,
-    body: {},
-  }, buyer)
-  const ownerCompleted = await request(`/api/v1/owner/carpool-memberships/${membership.id}/confirm-complete`, {
-    method: 'POST',
-    idempotencyPrefix: 'review-smoke-owner-complete',
-    ifMatch: buyerCompleted.version,
-    body: {},
-  }, owner)
-  assert(ownerCompleted.status === 'completed', 'membership should be completed')
-  return { listing: published, application, membership: ownerCompleted }
+  assert(completed.status === 'completed', 'API order should be completed')
+  return { service: orderable, order: completed }
 }
 
 async function main() {
@@ -215,7 +236,7 @@ async function main() {
     body: {
       displayName: 'Review Smoke Owner',
       username: ownerUsername,
-      bio: '评价 smoke 车主公开主页。',
+      bio: '评价 smoke API 商户公开主页。',
       regionCode: 'cn',
       timezone: 'Asia/Shanghai',
       avatarMode: 'linuxdo',
@@ -231,20 +252,20 @@ async function main() {
     },
   }, owner)
 
-  const { listing, membership } = await createCompletedMembership(owner, buyer)
+  const { service, order } = await createCompletedAPIOrder(owner, buyer)
 
   const beforeRows = await request('/api/v1/me/reviews', {}, buyer)
-  const before = beforeRows.items.find(item => item.sourceId === membership.id)
-  assert(before?.status === 'reviewable', 'completed membership should be reviewable')
-  assert(before.target === listing.title, 'review center row should include listing title')
+  const before = beforeRows.items.find(item => item.sourceId === order.id)
+  assert(before?.status === 'reviewable', 'completed API order should be reviewable')
+  assert(before.target === service.title, 'review center row should include service title')
 
-  const firstReview = await request(`/api/v1/me/reviews/carpool-memberships/${membership.id}`, {
-    method: 'PUT',
-    idempotencyPrefix: 'review-smoke-put-first',
+  const firstReview = await request(`/api/v1/me/transactions/api_order/${order.id}/review`, {
+    method: 'POST',
+    idempotencyPrefix: 'review-smoke-create-first',
     body: {
       rating: 5,
       tags: ['沟通顺畅', '规则清晰'],
-      note: '车主说明清楚，拼车规则透明，服务稳定。',
+      note: '商户说明清楚，接入规则透明，交付顺畅。',
     },
   }, buyer)
   assert(firstReview.status === 'sealed', 'first submitted review should remain sealed')
@@ -252,9 +273,9 @@ async function main() {
   assert(firstReview.rating === 5, 'submitted review rating mismatch')
 
   const afterRows = await request('/api/v1/me/reviews', {}, buyer)
-  const after = afterRows.items.find(item => item.sourceId === membership.id)
+  const after = afterRows.items.find(item => item.sourceId === order.id)
   assert(after?.status === 'sealed', 'review center should show sealed status')
-  assert(after.note.includes('服务稳定'), 'review center should keep note')
+  assert(after.note.includes('交付顺畅'), 'review center should keep note')
 
   const publicReviews = await request(`/api/v1/users/${ownerUsername}/reviews`)
   const publicReview = publicReviews.items.find(item => item.id === firstReview.id)
@@ -263,9 +284,9 @@ async function main() {
   const publicProfile = await request(`/api/v1/users/${ownerUsername}/public-profile`)
   assert(!JSON.stringify(publicProfile).includes('@review_owner_'), 'public profile must not leak owner contact')
 
-  const updatedReview = await request(`/api/v1/me/reviews/carpool-memberships/${membership.id}`, {
+  const updatedReview = await request(`/api/v1/me/transactions/api_order/${order.id}/review`, {
     method: 'PUT',
-    idempotencyPrefix: 'review-smoke-put-update',
+    idempotencyPrefix: 'review-smoke-edit',
     body: {
       rating: 4,
       tags: ['响应及时', '规则清晰'],
@@ -276,9 +297,9 @@ async function main() {
   assert(updatedReview.rating === 4, 'updated review rating mismatch')
   assert(updatedReview.visibility === 'sealed', 'updated review should remain sealed until the counterparty submits')
 
-  const ownerReview = await request(`/api/v1/me/reviews/carpool-memberships/${membership.id}`, {
-    method: 'PUT',
-    idempotencyPrefix: 'review-smoke-put-owner',
+  const ownerReview = await request(`/api/v1/me/transactions/api_order/${order.id}/review`, {
+    method: 'POST',
+    idempotencyPrefix: 'review-smoke-create-owner',
     body: {
       rating: 5,
       tags: ['付款及时', '确认及时'],
@@ -294,8 +315,8 @@ async function main() {
 
   console.log(JSON.stringify({
     ok: true,
-    listingId: listing.id,
-    membershipId: membership.id,
+    serviceId: service.id,
+    orderId: order.id,
     reviewId: updatedReview.id,
     publicReviewCount: updatedPublicReviews.items.length,
   }, null, 2))

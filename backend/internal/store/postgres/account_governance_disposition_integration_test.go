@@ -157,7 +157,7 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 			buyer_seat_capacity, active_buyer_members, status, policy_version,
 			created_at, updated_at
 		) VALUES ($1, $2, $3, $4, '受限拼车', '受限业务连续性测试', '双方站外确认', 20,
-		          2, 2, 'active', 1, $5, $5)
+		          2, 1, 'active', 1, $5, $5)
 	`, listingID, owner.ID, productPlanID, ownerContactID, joinedAt.Add(-time.Hour)); err != nil {
 		t.Fatalf("insert restricted carpool listing: %v", err)
 	}
@@ -165,9 +165,12 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 		INSERT INTO carpool_applications (
 			id, carpool_listing_id, buyer_user_id, owner_user_id, product_plan_id,
 			buyer_contact_method_id, status, listing_title_snapshot,
-			price_monthly_cny_snapshot, policy_version_snapshot, joined_at,
+			price_monthly_cny_snapshot, policy_version_snapshot,
+			conditions_version_snapshot, conditions_snapshot,
+			accepted_conditions_version, conditions_accepted_at, joined_at,
 			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 'joined', '受限拼车', 20, 1, $7, $7, $7)`
+		) VALUES ($1, $2, $3, $4, $5, $6, 'joined', '受限拼车', 20, 1,
+		          1, '{}'::jsonb, 1, $7, $7, $7, $7)`
 	if _, err := store.pool.Exec(ctx, insertApplication, applicationID, listingID, buyer.ID, owner.ID, productPlanID, buyerContactID, joinedAt); err != nil {
 		t.Fatalf("insert preserved carpool application: %v", err)
 	}
@@ -179,13 +182,14 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 		INSERT INTO carpool_memberships (
 			id, carpool_listing_id, carpool_application_id, buyer_user_id, owner_user_id,
 			product_plan_id, status, price_monthly_cny_snapshot,
-			policy_version_snapshot, joined_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 'active', 20, 1, $7, $7, $7)`
+			policy_version_snapshot, conditions_version_snapshot, conditions_snapshot,
+			joined_at, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, 'active', 20, 1, 1, '{}'::jsonb, $7, $7, $7)`
 	if _, err := store.pool.Exec(ctx, insertMembership, membershipID, listingID, applicationID, buyer.ID, owner.ID, productPlanID, joinedAt); err != nil {
 		t.Fatalf("insert preserved carpool membership: %v", err)
 	}
 	unlinkedInsertMembership := strings.Replace(insertMembership, "status, price_monthly_cny_snapshot,", "status, ended_at, ended_reason, price_monthly_cny_snapshot,", 1)
-	unlinkedInsertMembership = strings.Replace(unlinkedInsertMembership, "'active', 20", "'completed', $8, 'completed', 20", 1)
+	unlinkedInsertMembership = strings.Replace(unlinkedInsertMembership, "'active', 20", "'left', $8, 'left', 20", 1)
 	if _, err := store.pool.Exec(ctx, unlinkedInsertMembership, unlinkedMembershipID, listingID, secondApplicationID, buyer.ID, owner.ID, productPlanID, joinedAt.Add(time.Minute), joinedAt.Add(2*time.Minute)); err != nil {
 		t.Fatalf("insert unlinked carpool membership: %v", err)
 	}
