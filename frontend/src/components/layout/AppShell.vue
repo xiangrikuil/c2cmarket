@@ -17,7 +17,6 @@ import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
 import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
 import MessageSquarePlus from 'lucide-vue-next/dist/esm/icons/message-square-plus.js'
 import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
-import Palette from 'lucide-vue-next/dist/esm/icons/palette.js'
 import PanelLeftClose from 'lucide-vue-next/dist/esm/icons/panel-left-close.js'
 import PanelLeftOpen from 'lucide-vue-next/dist/esm/icons/panel-left-open.js'
 import Search from 'lucide-vue-next/dist/esm/icons/search.js'
@@ -37,15 +36,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
-import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { loginRoute } from '@/lib/authNavigation'
@@ -61,7 +57,6 @@ const menuOpen = ref(false)
 const logoutLoading = ref(false)
 const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
-const activeTheme = ref(getInitialAppTheme())
 const { data: myProfile, isPending: profilePending } = useMyProfileQuery(import.meta.client)
 const isAuthenticated = computed(() => Boolean(myProfile.value))
 const authResolved = computed(() => import.meta.client && !profilePending.value)
@@ -255,12 +250,6 @@ async function logout() {
   } finally {
     logoutLoading.value = false
   }
-}
-
-function setActiveTheme(theme: unknown) {
-  if (typeof theme !== 'string' || !isAppTheme(theme)) return
-  activeTheme.value = theme
-  applyAppTheme(theme)
 }
 
 function closeMenu() {
@@ -461,23 +450,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
           </div>
           <div class="flex-1" />
           <DevPersonaSwitcher :current-username="currentUsername" />
-          <DropdownMenu v-if="appThemes.length > 1">
-            <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="icon" aria-label="切换主题">
-                <Palette class="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" class="w-44">
-              <DropdownMenuLabel>主题</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuRadioGroup :model-value="activeTheme" @update:model-value="setActiveTheme">
-                <DropdownMenuRadioItem v-for="theme in appThemes" :key="theme.value" :value="theme.value">
-                  <span class="h-3 w-3 rounded-full border border-border" :style="{ background: theme.swatch }"></span>
-                  <span>{{ theme.label }}</span>
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
           <DropdownMenu v-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" class="relative text-muted-foreground" aria-label="打开通知">
