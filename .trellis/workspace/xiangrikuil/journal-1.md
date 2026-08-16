@@ -1813,3 +1813,25 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 59: 管理员售后处理记录时间线
+
+**Date**: 2026-08-16
+**Task**: 管理员售后处理记录时间线
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+管理员纠纷详情按时间展示买家申请、卖家决定、平台介入、补件与整改记录，并按正式动作归组私有图片；旧流程记录保持独立只读。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56cb94c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
