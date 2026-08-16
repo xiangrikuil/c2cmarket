@@ -10,9 +10,10 @@ const querySource = source('../../queries/useReportQueries.ts')
 
 describe('举报与申诉中心前端闭环', () => {
   it('注册受保护列表和详情路由并提供统一账户导航', () => {
-    expect(routerSource).toContain("path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: userAuthMeta")
-    expect(routerSource).toContain("path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: userAuthMeta")
-    expect(appShellSource).toContain("{ label: '举报与申诉', to: '/my/reports', count: null, icon: Siren }")
+    expect(routerSource).toContain("path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: workspaceUserAuthMeta('support-center')")
+    expect(routerSource).toContain("path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: workspaceUserAuthMeta('support-center')")
+    expect(appShellSource).toContain("label: '支持中心', to: '/my/reports', count: supportActionCount.value")
+    expect(pageSource).toContain('<WorkspaceSectionTabs section="support-center"')
     expect(myCenterSource).toContain("router.push('/my/reports')")
     expect(myCenterSource).not.toContain("toast('申诉请求已记录。')")
   })

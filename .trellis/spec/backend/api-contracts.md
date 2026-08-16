@@ -2122,11 +2122,13 @@ Client-visible named SSE events: ready | invalidate
 Client-visible data: {"schemaVersion":1,"topics":["all-live"]}
 ```
 
-`GET /api/v1/me/navigation-badges` returns `generatedAt`, `notificationUnread`, `importantAnnouncementUnread`, `feedbackUnread`, `buyer`, `merchant`, and nullable `admin`. Buyer/merchant fields are `carpoolActions` and `apiOrderActions`; administrator fields are `total`, `officialPrices`, `carpools`, `apiServices`, `feedbackTickets`, and `reports`.
+`GET /api/v1/me/navigation-badges` returns `generatedAt`, `notificationUnread`, `importantAnnouncementUnread`, `feedbackUnread`, `supportActionCount`, `buyer`, `merchant`, and nullable `admin`. Buyer/merchant fields are `carpoolActions` and `apiOrderActions`; administrator fields are `total`, `officialPrices`, `carpools`, `apiServices`, `feedbackTickets`, and `reports`.
 
 ### 3. Contracts
 
 - Navigation badges are scalar PostgreSQL projections, not counts of a paginated frontend list. Non-admin responses must set `admin=null`; `admin.total` is the server-computed sum of the five non-overlapping administrator queues.
+- `importantAnnouncementUnread` counts only published, active `important` or `critical` announcements whose audience includes the current user and whose current revision is not read/acknowledged as required. Ordinary announcements are excluded.
+- `feedbackUnread` remains the unread feedback-reply projection. `supportActionCount` is the count of the current user's feedback tickets where the administrator reply is unread or `status='needs_user_info'` (one per ticket), plus open `moderation_info_requests` assigned to the current user. Closed requests, requests assigned to someone else, and report/appeal history are excluded.
 - Buyer API-order actions are non-expired `pending_payment`, `payment_issue`, and `delivery_submitted`. Seller actions are `payment_submitted` plus `paid_confirmed`.
 - Buyer carpool actions are an unexpired reserved application not yet confirmed by the buyer, plus an active membership where the owner confirmed completion and the buyer did not. Owner actions are `pending_owner`, a reserved application confirmed by the buyer but not the owner, plus an active membership where the buyer confirmed completion and the owner did not.
 - API-order transitions write `api_order_events`, a safe `domain_events` row, a deduplicated counterparty `notifications` row, and idempotency completion in one transaction. Notify on payment submit, buyer cancel, seller payment confirmation, delivery submit, buyer completion, counterparty dispute, and payment timeout. `api_order.created` does not notify again because purchase-intent creation already notified the seller.
@@ -2144,6 +2146,10 @@ Client-visible data: {"schemaVersion":1,"topics":["all-live"]}
 | --- | --- |
 | Missing/expired session on either GET | `401 SESSION_EXPIRED` |
 | Non-admin summary request | `200`, `admin=null` |
+| Ordinary announcement is unread | `importantAnnouncementUnread` is unchanged |
+| Important/critical announcement does not match the user audience | `importantAnnouncementUnread` is unchanged |
+| One ticket is both unread and `needs_user_info` | Count that feedback ticket once in `supportActionCount` |
+| One assigned information request is open | Add one to `supportActionCount` |
 | Hub already shutting down | SSE returns `503 INTERNAL_ERROR` before opening |
 | Badge repository unavailable | Summary returns `503 INTERNAL_ERROR`, not all-zero success |
 | Invalid/unknown PostgreSQL payload field, version, audience, or padded user ID | Ignore signal, log only a sanitized parse error, keep listener alive |
@@ -2161,7 +2167,7 @@ Client-visible data: {"schemaVersion":1,"topics":["all-live"]}
 ### 6. Tests Required
 
 - Pure API-order recipient/title/target matrix, including no notification for create and no secret-bearing copy.
-- Navigation-badge service tests for non-admin hiding, administrator total recomputation, and missing dependencies.
+- Navigation-badge service and PostgreSQL tests for non-admin hiding, administrator total recomputation, audience-filtered important/critical announcements, `supportActionCount`, and missing dependencies.
 - Hub routing/coalescing/close tests and strict PostgreSQL payload parser tests.
 - Listener reconnect/backoff/re-LISTEN wake/clean shutdown tests.
 - SSE authorization, headers, `ready`, user/admin `invalidate`, middleware flush, bounded writes, cancellation, and payload non-leakage tests.

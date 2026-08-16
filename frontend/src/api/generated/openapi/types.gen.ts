@@ -76,6 +76,10 @@ export type NavigationBadgeSummary = {
     notificationUnread: number;
     importantAnnouncementUnread: number;
     feedbackUnread: number;
+    /**
+     * Current-user feedback tickets with an unread administrator reply or needs_user_info status, counted once per ticket, plus open moderation information requests assigned to the current user.
+     */
+    supportActionCount: number;
     buyer: NavigationBadgeRoleSummary;
     merchant: NavigationBadgeRoleSummary;
     admin: NavigationBadgeAdminSummary | null;

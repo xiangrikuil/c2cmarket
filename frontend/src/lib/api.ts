@@ -5529,15 +5529,21 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
       || (hasActiveReservation(item) && Boolean(item.buyerConfirmedJoinedAt) && !item.ownerConfirmedJoinedAt)
       || (['active', 'pending_completion'].includes(item.status) && Boolean(item.buyerConfirmedCompletedAt) && !item.ownerConfirmedCompletedAt))
     .length
+  const currentUserFeedback = feedbackTicketStore
+    .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
+  const feedbackUnreadCount = currentUserFeedback
+    .filter(feedbackUnread)
+    .length
+  const feedbackActionCount = currentUserFeedback
+    .filter(item => item.status === 'needs_user_info' || feedbackUnread(item))
+    .length
 
   const summary: NavigationBadgeSummary = {
     generatedAt: new Date(currentTime).toISOString(),
     notificationUnread: notifications.filter(item => item.unread).length,
     importantAnnouncementUnread,
-    feedbackUnread: feedbackTicketStore
-      .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
-      .filter(feedbackUnread)
-      .length,
+    feedbackUnread: feedbackUnreadCount,
+    supportActionCount: feedbackActionCount,
     buyer: {
       carpoolActions: buyerCarpoolActions,
       apiOrderActions: apiOrderStore

@@ -10,12 +10,10 @@ import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
 import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
-import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
 import FlaskConical from 'lucide-vue-next/dist/esm/icons/flask-conical.js'
 import Home from 'lucide-vue-next/dist/esm/icons/house.js'
 import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
 import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
-import Megaphone from 'lucide-vue-next/dist/esm/icons/megaphone.js'
 import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
 import MessageSquarePlus from 'lucide-vue-next/dist/esm/icons/message-square-plus.js'
 import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
@@ -25,7 +23,6 @@ import PanelLeftOpen from 'lucide-vue-next/dist/esm/icons/panel-left-open.js'
 import Search from 'lucide-vue-next/dist/esm/icons/search.js'
 import ShieldCheck from 'lucide-vue-next/dist/esm/icons/shield-check.js'
 import ShoppingBag from 'lucide-vue-next/dist/esm/icons/shopping-bag.js'
-import Siren from 'lucide-vue-next/dist/esm/icons/siren.js'
 import Star from 'lucide-vue-next/dist/esm/icons/star.js'
 import Upload from 'lucide-vue-next/dist/esm/icons/upload.js'
 import UserCog from 'lucide-vue-next/dist/esm/icons/user-cog.js'
@@ -52,7 +49,6 @@ import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/them
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { loginRoute } from '@/lib/authNavigation'
-import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
 import { logoutCurrentSession } from '@/lib/sessionActions'
@@ -72,7 +68,6 @@ const authResolved = computed(() => import.meta.client && !profilePending.value)
 const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
 const { data: notifications } = useNotifications(isAuthenticated)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
-const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
@@ -81,7 +76,8 @@ const buyerCarpoolActionCount = computed(() => navigationBadges.value?.buyer.car
 const ownerCarpoolActionCount = computed(() => navigationBadges.value?.merchant.carpoolActions ?? 0)
 const unreadBusinessCount = computed(() => navigationBadges.value?.notificationUnread ?? 0)
 const importantAnnouncementUnreadCount = computed(() => navigationBadges.value?.importantAnnouncementUnread ?? 0)
-const feedbackMenuUnreadCount = computed(() => navigationBadges.value?.feedbackUnread ?? 0)
+const messageCenterCount = computed(() => unreadBusinessCount.value + importantAnnouncementUnreadCount.value)
+const supportActionCount = computed(() => navigationBadges.value?.supportActionCount ?? 0)
 const currentUsername = computed(() => myProfile.value?.username ?? '')
 const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProfile.value?.username ?? '未登录')
 const currentAvatarURL = computed(() => myProfile.value?.avatarUrl ?? '')
@@ -91,7 +87,6 @@ const canPublishApiService = computed(() => hasCapability(myProfile.value, CAPAB
 const canManageApiProbe = computed(() => hasCapability(myProfile.value, CAPABILITY.apiProbeManage))
 const canViewAdminNav = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
 const canPublishAnything = computed(() => canPublishCarpool.value || canPublishApiService.value)
-const announcementCenterTo = '/my/notifications?tab=announcements'
 const currentLoginTo = computed(() => loginRoute(route.fullPath))
 const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
@@ -109,70 +104,67 @@ const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value
 
 type NavigationGroup = {
   title: string
-  items: Array<{ label: string, to: string, count: number | null, icon: Component, workspaceNavKey?: WorkspaceNavKey }>
+  items: Array<{ key: string, label: string, to: string, count: number | null, icon: Component, workspaceNavKey?: WorkspaceNavKey }>
 }
 
 const navGroups = computed(() => {
   const browseGroup = {
     title: '发现市场',
     items: [
-      { label: '首页', to: '/', count: null, icon: Home },
-      { label: '订阅拼车', to: '/carpools', count: null, icon: CarFront },
-      { label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
-      { label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
+      { key: 'home', label: '首页', to: '/', count: null, icon: Home },
+      { key: 'carpools', label: '订阅拼车', to: '/carpools', count: null, icon: CarFront },
+      { key: 'api-market', label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
+      { key: 'official-prices', label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
     ],
   }
   const publishGroup = {
     title: '发布入口',
     items: [
-      ...(canPublishCarpool.value ? [{ label: '发布车源', to: '/carpools/new', count: null, icon: CarFront }] : []),
-      ...(canPublishApiService.value ? [{ label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch }] : []),
+      ...(canPublishCarpool.value ? [{ key: 'publish-carpool', label: '发布车源', to: '/carpools/new', count: null, icon: CarFront }] : []),
+      ...(canPublishApiService.value ? [{ key: 'publish-api-service', label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch }] : []),
     ],
   }
   const userGroup = {
     title: '我的交易',
     items: [
-      { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: CarFront },
-      { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
-      { label: '收藏', to: '/my/favorites', count: null, icon: Star },
-      { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
-      { label: '平台公告', to: announcementCenterTo, count: importantAnnouncementUnreadCount.value, icon: Megaphone },
+      { key: 'my-rides', label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: CarFront },
+      { key: 'my-api-orders', label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
+      { key: 'favorites', label: '收藏', to: '/my/favorites', count: null, icon: Star },
+      { key: 'message-center', label: '消息中心', to: '/my/notifications', count: messageCenterCount.value, icon: Bell, workspaceNavKey: 'message-center' as const },
     ],
   }
   const merchantGroup = {
     title: '经营中心',
     items: [
       ...(canPublishCarpool.value ? [
-        { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
-        { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+        { key: 'my-carpools', label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
+        { key: 'merchant-carpool-applications', label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
       ] : []),
       ...(canPublishApiService.value ? [
-        { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-        { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+        { key: 'my-api-services', label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
+        { key: 'merchant-api-orders', label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
       ] : []),
-      ...(canManageApiProbe.value ? [{ label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable }] : []),
+      ...(canManageApiProbe.value ? [{ key: 'api-probe-connections', label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable }] : []),
     ],
   }
   const toolsGroup = {
     title: '工具',
     items: [
-      { label: 'API 模型测试', to: '/tools/api-model-tester', count: null, icon: FlaskConical },
+      { key: 'api-model-tester', label: 'API 模型测试', to: '/tools/api-model-tester', count: null, icon: FlaskConical },
     ],
   }
   const accountGroup = {
     title: '账户',
     items: [
-      { label: '个人中心', to: '/my', count: null, icon: UserRound, workspaceNavKey: 'personal-center' as const },
-      { label: '账户设置', to: '/my/profile', count: null, icon: MessageSquarePlus, workspaceNavKey: 'account-settings' as const },
-      { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
-      ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
-      { label: '举报与申诉', to: '/my/reports', count: null, icon: Siren },
-      { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
+      { key: 'personal-center', label: '个人中心', to: '/my', count: null, icon: UserRound, workspaceNavKey: 'personal-center' as const },
+      { key: 'account-settings', label: '账户设置', to: '/my/profile', count: null, icon: MessageSquarePlus, workspaceNavKey: 'account-settings' as const },
+      { key: 'reputation-rights', label: '信誉与权益', to: '/my/reputation', count: null, icon: BadgeCheck, workspaceNavKey: 'reputation-rights' as const },
+      { key: 'support-center', label: '支持中心', to: '/my/reports', count: supportActionCount.value, icon: CircleHelp, workspaceNavKey: 'support-center' as const },
     ],
   }
   const adminEntryGroup = {
     title: '管理',
-    items: [{ label: '进入管理台', to: '/admin', count: navigationBadges.value?.admin?.total ?? null, icon: UserCog }],
+    items: [{ key: 'admin', label: '进入管理台', to: '/admin', count: navigationBadges.value?.admin?.total ?? null, icon: UserCog }],
   }
 
   if (!isAuthenticated.value) return [browseGroup]
@@ -204,16 +196,14 @@ const currentTitle = computed(() => {
   return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
 })
 
-function isActive(to: string) {
-  return activeNavItem.value?.to === to
+function isActive(key: string) {
+  return activeNavItem.value?.key === key
 }
 
 function matchesRoute(item: NavigationGroup['items'][number]) {
   const { to, workspaceNavKey } = item
   if (workspaceNavKey) return route.meta.workspaceNavKey === workspaceNavKey
   if (to === '/') return route.path === '/'
-  if (to === announcementCenterTo) return route.path === '/my/notifications' && route.query.tab === 'announcements'
-  if (to === '/my/notifications') return route.path === to && route.query.tab !== 'announcements'
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
@@ -311,12 +301,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             <span v-else>{{ group.title }}</span>
           </h2>
           <div class="mt-2 grid gap-1">
-            <div v-for="item in group.items" :key="item.to">
+            <div v-for="item in group.items" :key="item.key">
               <RouterLink
                 :to="item.to"
                 class="flex h-9 items-center rounded-md text-[14px] font-semibold text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 :title="sidebarCollapsed ? item.label : undefined"
-                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
+                :class="isActive(item.key) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
               >
                 <span
                   class="flex min-w-0 items-center"
@@ -395,11 +385,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         <section v-for="group in navGroups" :key="group.title">
           <h2 class="px-2 text-xs font-medium text-muted-foreground">{{ group.title }}</h2>
           <div class="mt-2 grid gap-1">
-            <div v-for="item in group.items" :key="item.to">
+            <div v-for="item in group.items" :key="item.key">
               <RouterLink
                 :to="item.to"
                 class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                :class="isActive(item.key) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                 @click="closeMenu"
               >
                 <span class="flex min-w-0 items-center gap-2">
@@ -586,20 +576,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               <DropdownMenuItem as-child>
                 <RouterLink to="/my/profile" class="flex items-center gap-2">
                   <ShieldCheck class="h-4 w-4" />账户设置
-                </RouterLink>
-              </DropdownMenuItem>
-              <DropdownMenuItem as-child>
-                <RouterLink to="/my/feedback" class="flex items-center justify-between gap-3">
-                  <span class="flex min-w-0 items-center gap-2">
-                    <CircleHelp class="h-4 w-4 shrink-0" />
-                    <span>问题反馈</span>
-                  </span>
-                  <span
-                    v-if="feedbackMenuUnreadCount"
-                    class="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground"
-                  >
-                    {{ formatBadgeCount(feedbackMenuUnreadCount) }}
-                  </span>
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>

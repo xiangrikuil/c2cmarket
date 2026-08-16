@@ -582,6 +582,7 @@ type NavigationBadgeSummary = {
   notificationUnread: number
   importantAnnouncementUnread: number
   feedbackUnread: number
+  supportActionCount: number
   buyer: { carpoolActions: number; apiOrderActions: number }
   merchant: { carpoolActions: number; apiOrderActions: number }
   admin: null | {
@@ -605,8 +606,9 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 - `AppShell.vue` mounts one `useEventSource` connection only when real-backend mode and an authenticated profile are present. Mock mode must not construct `EventSource`. Fatal `CLOSED` streams retry indefinitely with a bounded delay and reopen immediately when the browser returns online.
 - SSE events are invalidations only. They invalidate navigation badges, notifications, announcements, feedback, API orders/intents, carpool applications/details/contacts, and administrator query families; components never increment counts from an event.
 - `useNavigationBadges` refetches every 15 seconds only while visible and also refetches on mount, focus, and reconnect. When SSE is not open, the realtime composable performs the same broad 15-second reconciliation and reconciles immediately on visibility/network recovery.
-- AppShell reads buyer, merchant, feedback, notification, announcement, and administrator counts from `NavigationBadgeSummary`; it must not keep full order/application lists mounted only to count them.
-- Bell badge is `notificationUnread` only. Important-announcement unread count belongs on the platform-announcement entry. Opening the bell only opens its dropdown; `查看全部通知` is a separate link.
+- AppShell reads buyer, merchant, support, notification, announcement, and administrator counts from `NavigationBadgeSummary`; it must not keep full order/application lists mounted only to count them.
+- The `消息中心` sidebar badge is `notificationUnread + importantAnnouncementUnread`; ordinary announcements never increase it. The header bell remains the business-notification surface, and opening it only opens its dropdown; `查看全部通知` is a separate link.
+- The `支持中心` sidebar badge uses the authoritative `supportActionCount`. The frontend must not add `feedbackUnread` again or count complete report/appeal history locally.
 - Mark-notification-read/read-all, announcement receipt, feedback, API-order, and carpool workflow mutations invalidate `navigation-badges` in addition to their normal query families. Direct page-level facade mutations follow the same rule, so the current actor never waits for fallback polling. Badge counts are never adjusted heuristically.
 - The strict envelope decoder may reject invalid payloads in tests, but the EventSource serializer boundary converts malformed/unsupported server events to `null`; bad data must not become an uncaught browser exception or mutate cache state.
 - Real backend failures remain visible; do not return mock badge data from `backendNavigationBadges()` on failure. Mock summary is derived from current mock stores and the same actionable-state semantics.
@@ -623,6 +625,10 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 | Unknown/malformed realtime envelope | Do not mutate cached counts; REST polling remains authoritative |
 | EventSource enters terminal `CLOSED` | Reconnect after 3 seconds indefinitely; an `online` event may reopen immediately |
 | `admin=null` | Do not render administrator badge values |
+| Ordinary announcement is unread | Keep the message-center badge unchanged |
+| Important or critical announcement is unread and matches the user audience | Include it in `importantAnnouncementUnread` and therefore the message-center badge |
+| Feedback ticket has an unread administrator reply or `needs_user_info` | Include that ticket once in `supportActionCount`, even when both are true |
+| Assigned moderation information request is open | Add it to `supportActionCount` |
 | Count is zero / above 99 | Hide zero; display `99+` above 99 |
 
 ### 5. Good/Base/Bad Cases
@@ -637,6 +643,7 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 - Envelope parser rejects unsupported version/topic and accepts `all-live`.
 - All-live invalidation list covers summary, notification, order, carpool, feedback, announcement, and admin prefixes.
 - Source/integration tests assert no hard-coded admin counts, undefined admin queues stay unbadged, bell has a separate full-center link, and AppShell no longer mounts full lists for counts.
+- Navigation tests assert the message-center badge sums business unread plus important/critical announcement unread, while support uses `supportActionCount` directly.
 - Mutation tests assert notification/order/feedback/announcement success invalidates `navigation-badges`.
 - Full Vitest, Nuxt typecheck, and real-mode Nuxt production build.
 

@@ -20,18 +20,18 @@ describe('平台公告中心导航', () => {
     expect(notificationsPage).toContain('v-else-if="activeTab === \'system\'"')
     expect(notificationsPage).toContain('<AnnouncementListItem v-for="item in announcementRows"')
     expect(notificationsPage).not.toContain("reviewCount + (announcementUnreadCount ?? 0)")
+    expect(notificationsPage).not.toContain("'business'")
   })
 
   it('在公告页显示公告标题并隐藏通知批量操作', () => {
-    expect(notificationsPage).toContain(':title="activeTab === \'announcements\' ? \'平台公告\' : \'通知中心\'"')
+    expect(notificationsPage).toContain('title="消息中心"')
     expect(notificationsPage).toContain("activeTab === 'todo' || activeTab === 'transactions'")
   })
 
-  it('把平台公告放入普通导航并按查询参数独立选中', () => {
-    expect(appShell).toContain("{ label: '平台公告', to: announcementCenterTo, count: importantAnnouncementUnreadCount.value, icon: Megaphone }")
-    expect(appShell).toContain('if (to === announcementCenterTo)')
-    expect(appShell).toContain("route.query.tab === 'announcements'")
-    expect(appShell).not.toContain('查看公告与更新')
-    expect(appShell).not.toContain('平台公告 · 查看公告与更新')
+  it('用一个消息中心入口承载业务通知和重要公告提醒', () => {
+    expect(appShell).toContain("key: 'message-center', label: '消息中心', to: '/my/notifications'")
+    expect(appShell).toContain('const messageCenterCount = computed(() => unreadBusinessCount.value + importantAnnouncementUnreadCount.value)')
+    expect(appShell).not.toContain("label: '平台公告'")
+    expect(appShell).not.toContain('announcementCenterTo')
   })
 })

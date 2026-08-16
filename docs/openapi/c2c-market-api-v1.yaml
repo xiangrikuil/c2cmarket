@@ -9254,7 +9254,7 @@ components:
           minimum: 0
     NavigationBadgeSummary:
       type: object
-      required: [generatedAt, notificationUnread, importantAnnouncementUnread, feedbackUnread, buyer, merchant, admin]
+      required: [generatedAt, notificationUnread, importantAnnouncementUnread, feedbackUnread, supportActionCount, buyer, merchant, admin]
       properties:
         generatedAt:
           type: string
@@ -9268,6 +9268,10 @@ components:
         feedbackUnread:
           type: integer
           minimum: 0
+        supportActionCount:
+          type: integer
+          minimum: 0
+          description: Current-user feedback tickets with an unread administrator reply or needs_user_info status, counted once per ticket, plus open moderation information requests assigned to the current user.
         buyer:
           $ref: "#/components/schemas/NavigationBadgeRoleSummary"
         merchant:

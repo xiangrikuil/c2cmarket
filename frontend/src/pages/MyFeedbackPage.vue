@@ -14,6 +14,7 @@ import StatusTabs from '@/components/market/StatusTabs.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
+import WorkspaceSectionTabs from '@/components/workspace/WorkspaceSectionTabs.vue'
 import {
   getFeedbackImpactLabel,
   getFeedbackStatusLabel,
@@ -156,7 +157,9 @@ function statusVariant(item: FeedbackTicket) {
 
 <template>
   <div class="space-y-5">
-    <PageTitle title="我的反馈" description="提交页面问题、数据纠错和体验建议；举报、纠纷和申诉仍请使用对应入口。" />
+    <PageTitle title="支持中心" description="提交页面问题、数据纠错和体验建议；举报、纠纷和申诉仍保留独立处理流程。" />
+
+    <WorkspaceSectionTabs section="support-center" />
 
     <CompactStats :items="stats" />
 

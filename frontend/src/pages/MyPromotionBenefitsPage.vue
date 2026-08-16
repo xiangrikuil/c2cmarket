@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import {
   Check,
@@ -21,6 +22,7 @@ import PageTitle from '@/components/market/PageTitle.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
+import WorkspaceSectionTabs from '@/components/workspace/WorkspaceSectionTabs.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -48,9 +50,11 @@ import {
 import { useMyApiServices, useMyProfileQuery } from '@/queries/useMarketQueries'
 
 const publicConfigQuery = usePromotionRewardPublicConfig()
+const router = useRouter()
 const profileQuery = useMyProfileQuery()
 const canPublishApiService = computed(() => hasCapability(profileQuery.data.value, CAPABILITY.apiServicePublish))
 const programEnabled = computed(() => publicConfigQuery.data.value?.programEnabled === true)
+const promotionTabEnabled = computed(() => publicConfigQuery.isSuccess.value ? programEnabled.value : undefined)
 const referralQuery = useMyReferralSummary(programEnabled)
 const couponStatus = ref<PromotionCouponFilter>('all')
 const couponPage = ref(1)
@@ -70,6 +74,16 @@ const posterLoading = ref(false)
 watch(couponStatus, () => {
   couponPage.value = 1
 })
+
+watch(
+  () => [publicConfigQuery.isSuccess.value, programEnabled.value] as const,
+  ([resolved, enabled]) => {
+    if (resolved && !enabled) {
+      router.replace({ path: '/my/reputation', query: { notice: 'promotion-disabled' } })
+    }
+  },
+  { immediate: true },
+)
 
 const referral = computed(() => referralQuery.data.value)
 const inviteLink = computed(() => {
@@ -259,7 +273,9 @@ function applyCoupon() {
 
 <template>
   <div class="min-w-0 space-y-6">
-    <PageTitle title="推广权益" description="管理邀请奖励和 API 服务推广券。" />
+    <PageTitle title="信誉与权益" description="管理信誉成长、邀请奖励和 API 服务推广券。" />
+
+    <WorkspaceSectionTabs section="reputation-rights" :promotion-enabled="promotionTabEnabled" />
 
     <div v-if="publicConfigQuery.isLoading.value" class="grid gap-4 md:grid-cols-2">
       <SkeletonBlock class="h-44" />

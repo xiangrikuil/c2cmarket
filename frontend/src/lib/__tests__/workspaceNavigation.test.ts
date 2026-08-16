@@ -18,29 +18,31 @@ const apiOrderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderD
 describe('个人与经营中心导航', () => {
   it('按个人活动与经营活动提供明确入口', () => {
     expect(appShellSource).toContain("title: '我的交易'")
-    expect(appShellSource).toContain("{ label: '我的上车', to: '/my/rides'")
-    expect(appShellSource).toContain("{ label: 'API 购买订单', to: '/my/api-orders'")
-    expect(appShellSource).toContain("{ label: '收藏', to: '/my/favorites'")
-    expect(appShellSource).toContain("{ label: '通知', to: '/my/notifications'")
+    expect(appShellSource).toContain("label: '我的上车', to: '/my/rides'")
+    expect(appShellSource).toContain("label: 'API 购买订单', to: '/my/api-orders'")
+    expect(appShellSource).toContain("label: '收藏', to: '/my/favorites'")
+    expect(appShellSource).toContain("label: '消息中心', to: '/my/notifications'")
 
     expect(appShellSource).toContain("title: '经营中心'")
-    expect(appShellSource).toContain("{ label: '我的车源', to: '/my/carpools'")
-    expect(appShellSource).toContain("{ label: '上车申请', to: '/merchant/carpool-applications'")
-    expect(appShellSource).toContain("{ label: '我的 API 服务', to: '/my/api-services'")
-    expect(appShellSource).toContain("{ label: 'API 销售订单', to: '/merchant/api-orders'")
+    expect(appShellSource).toContain("label: '我的车源', to: '/my/carpools'")
+    expect(appShellSource).toContain("label: '上车申请', to: '/merchant/carpool-applications'")
+    expect(appShellSource).toContain("label: '我的 API 服务', to: '/my/api-services'")
+    expect(appShellSource).toContain("label: 'API 销售订单', to: '/merchant/api-orders'")
     expect(appShellSource).toContain("title: '账户'")
-    expect(appShellSource).toContain("{ label: '个人中心', to: '/my'")
-    expect(appShellSource).toContain("{ label: '推广权益', to: '/my/promotion-benefits'")
-    expect(appShellSource).toContain('promotionRewardConfig.value?.programEnabled')
-    expect(appShellSource).toContain("{ label: '账户设置', to: '/my/profile'")
+    expect(appShellSource).toContain("label: '个人中心', to: '/my'")
+    expect(appShellSource).toContain("label: '账户设置', to: '/my/profile'")
+    expect(appShellSource).toContain("label: '信誉与权益', to: '/my/reputation'")
+    expect(appShellSource).toContain("label: '支持中心', to: '/my/reports'")
+    expect(appShellSource).not.toContain("label: '推广权益'")
+    expect(appShellSource).not.toContain('promotionRewardConfig')
     expect(appShellSource).not.toContain("{ label: '安全设置', to: '/my/account'")
     expect(appShellSource).not.toContain('/my/demands')
-    expect(appShellSource).toContain("{ label: '进入管理台', to: '/admin'")
+    expect(appShellSource).toContain("label: '进入管理台', to: '/admin'")
     expect(appShellSource).toContain('const groups: NavigationGroup[] = [browseGroup]')
     expect(appShellSource).toContain('if (publishGroup.items.length > 0) groups.push(publishGroup)')
     expect(appShellSource).toContain('if (canViewMerchantWorkspace.value) groups.push(merchantGroup)')
     expect(appShellSource).toContain('if (canViewAdminNav.value) groups.push(adminEntryGroup)')
-    expect(appShellSource).toContain("...(canManageApiProbe.value ? [{ label: '探针连接'")
+    expect(appShellSource).toContain("...(canManageApiProbe.value ? [{ key: 'api-probe-connections', label: '探针连接'")
   })
 
   it('在导航、页面和详情返回入口明确区分 API 买卖角色', () => {
@@ -59,7 +61,7 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain('useNotifications(isAuthenticated)')
     expect(appShellSource).toContain('if (!isAuthenticated.value) return [browseGroup]')
     expect(appShellSource).toContain('const groups: NavigationGroup[] = [browseGroup]')
-    expect(appShellSource).toContain("{ label: '平台公告', to: announcementCenterTo")
+    expect(appShellSource).not.toContain("label: '平台公告'")
     expect(appShellSource).toContain('v-if="showLoginAction"')
     expect(appShellSource).toContain('v-else-if="isAuthenticated"')
     expect(appShellSource).toContain('登录后发布')
@@ -84,6 +86,19 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).not.toContain('accountSettingsPaths')
     expect(myCenterSource).toContain('<AccountSettingsShell')
     expect(myCenterSource).not.toContain('my-center-settings-nav')
+  })
+
+  it('将消息、信誉权益和支持详情映射到稳定工作区入口', () => {
+    const workspaceKey = (path: string) => routes.find(route => route.path === path)?.meta?.workspaceNavKey
+
+    expect(workspaceKey('/my/notifications')).toBe('message-center')
+    for (const path of ['/my/reputation', '/my/promotion-benefits']) {
+      expect(workspaceKey(path)).toBe('reputation-rights')
+    }
+    for (const path of ['/my/reports', '/my/reports/:kind/:id', '/my/feedback', '/my/feedback/:id']) {
+      expect(workspaceKey(path)).toBe('support-center')
+    }
+    expect(appShellSource).not.toContain('to="/my/feedback" class="flex items-center justify-between gap-3"')
   })
 
   it('在 API 市场深链保持市场入口和二级目录可见', () => {

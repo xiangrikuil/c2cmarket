@@ -13,6 +13,7 @@ func TestNavigationBadgeSummaryDTOKeepsAdminOptional(t *testing.T) {
 		NotificationUnread:          3,
 		ImportantAnnouncementUnread: 2,
 		FeedbackUnread:              1,
+		SupportActionCount:          4,
 		Buyer:                       navigationbadge.RoleActions{CarpoolActions: 4, APIOrderActions: 5},
 		Merchant:                    navigationbadge.RoleActions{CarpoolActions: 6, APIOrderActions: 7},
 	}
@@ -20,7 +21,7 @@ func TestNavigationBadgeSummaryDTOKeepsAdminOptional(t *testing.T) {
 	if dto.Admin != nil {
 		t.Fatalf("non-admin DTO exposed admin counts: %#v", dto.Admin)
 	}
-	if dto.GeneratedAt != "2026-07-11T08:00:00Z" || dto.NotificationUnread != 3 || dto.Buyer.APIOrderActions != 5 {
+	if dto.GeneratedAt != "2026-07-11T08:00:00Z" || dto.NotificationUnread != 3 || dto.SupportActionCount != 4 || dto.Buyer.APIOrderActions != 5 {
 		t.Fatalf("unexpected navigation badge DTO: %#v", dto)
 	}
 

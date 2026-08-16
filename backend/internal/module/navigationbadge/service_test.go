@@ -29,6 +29,7 @@ func TestGetHidesAdminCountsFromNonAdmin(t *testing.T) {
 	now := time.Date(2026, 7, 11, 8, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 	repo := &fakeRepository{result: Summary{
 		NotificationUnread: 3,
+		SupportActionCount: 2,
 		Admin:              &AdminCounts{OfficialPrices: 9},
 	}}
 	service := NewService(repo, func() time.Time { return now })
@@ -42,6 +43,9 @@ func TestGetHidesAdminCountsFromNonAdmin(t *testing.T) {
 	}
 	if result.NotificationUnread != 3 {
 		t.Fatalf("notification unread = %d, want 3", result.NotificationUnread)
+	}
+	if result.SupportActionCount != 2 {
+		t.Fatalf("support action count = %d, want 2", result.SupportActionCount)
 	}
 	if !result.GeneratedAt.Equal(now.UTC()) || !repo.requestedAt.Equal(now.UTC()) {
 		t.Fatalf("generated time mismatch: result=%s repo=%s", result.GeneratedAt, repo.requestedAt)

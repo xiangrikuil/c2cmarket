@@ -590,7 +590,9 @@ export function useUnsavedChangesGuard(
 
 - `App.vue` selects exactly one layout: standalone routes render directly, `/admin/**` uses `AdminShell`, and all other authenticated pages use `AppShell`.
 - `AppShell` always shows public browse, authenticated buyer transactions, notifications, and account settings. It shows carpool apply/publish, API service/quota publishing, merchant workspaces, and probes only for their exact capabilities.
-- Aggregated workspace entries use typed `meta.workspaceNavKey` values rather than duplicated path arrays. `/my` maps exactly to `personal-center`; `/my/profile`, `/my/contacts`, `/my/account`, and `/my/privacy` map to `account-settings`; unrelated `/my/**` routes must not inherit either active state.
+- Aggregated workspace entries use typed `meta.workspaceNavKey` values rather than duplicated path arrays. `/my` maps exactly to `personal-center`; `/my/profile`, `/my/contacts`, `/my/account`, and `/my/privacy` map to `account-settings`; `/my/notifications` maps to `message-center`; `/my/reputation` and `/my/promotion-benefits` map to `reputation-rights`; report/appeal and feedback list/detail routes map to `support-center`. Unrelated `/my/**` routes must not inherit these active states.
+- Every sidebar item has a stable `key`; active state compares that key after resolving the best route match. Query tabs and detail routes therefore activate exactly one aggregated entry even when several items share a route prefix.
+- The account group is fixed at `个人中心 / 账户设置 / 信誉与权益 / 支持中心`. Message, reputation/promotion, and report/feedback variants live in page-level tabs and must not reappear as separate sidebar or avatar-menu entries.
 - The four account-setting routes retain stable deep links and share one persistent tab shell. Because they reuse the same page component, unsaved-change protection must register both `onBeforeRouteLeave` and `onBeforeRouteUpdate`, plus `beforeunload` for browser refresh and tab close.
 - Profile, contact/payment, and privacy forms compute dirty state from independent saved snapshots. A successful save refreshes only its own snapshot; a failed save remains dirty; query refetches do not overwrite a dirty draft. Profile writes send the saved privacy projection, while privacy writes send the saved profile projection.
 - A student profile has only `api_order.create`; it can buy quota/API service offers and use order-scoped after-sales, dispute, review, buyer contacts, and eligible model testing, but it must not trigger carpool/seller/probe owner queries.
@@ -621,6 +623,9 @@ export function useUnsavedChangesGuard(
 | Student has only `api_order.create` | Buyer/order/account links remain; carpool, publish, merchant, payment, and probe links/queries stay absent |
 | User opens any of the four account-setting deep links | The same four tabs render, exactly one tab is current, and the sidebar activates only `account-settings` |
 | User opens `/my` or an unrelated `/my/**` route | Only the exact matching workspace entry activates; account settings and personal center do not light together |
+| User opens any message query tab | Preserve the query, select the matching one of four page tabs, and activate only `message-center` |
+| Promotion program is disabled on `/my/promotion-benefits` | Replace to `/my/reputation?notice=promotion-disabled`, show one notice, remove the query, and keep `reputation-rights` active |
+| User opens report/appeal or feedback list/detail | Preserve the detail location, select the matching support tab, and activate only `support-center` |
 | Dirty settings form switches between routes backed by the same page component | `onBeforeRouteUpdate` prompts before navigation; cancel keeps the route and draft, confirm discards and continues |
 | Server data refetches while a settings draft is dirty | Preserve the local draft and saved snapshot until the user saves or explicitly leaves |
 | Linux.do seller has zero owned resources | All applicable publish/merchant/probe entries remain visible, including probe first-create |
@@ -652,6 +657,7 @@ export function useUnsavedChangesGuard(
 - Bad: ordinary user sidebar hides merchant workspace links behind a separate `商户` role switch.
 - Bad: sidebar has a manual `用户 / 管理员` role toggle.
 - Bad: maintain a hard-coded list of account-setting paths in `AppShell` or use `/my` prefix matching for personal-center activation.
+- Bad: render separate sidebar entries for platform announcements, promotion benefits, reports, or feedback, or use `to` as a `v-for` key when distinct navigation concepts may share a destination.
 - Bad: register only `onBeforeRouteLeave` for several route records that reuse the same Vue page component; tab navigation can bypass the guard through an in-place route update.
 - Bad: submit the current privacy draft from the profile save action, or overwrite a dirty form when TanStack Query refreshes its server projection.
 
@@ -678,6 +684,11 @@ export function useUnsavedChangesGuard(
   - the current mobile tab scrolls into view without horizontal page overflow,
   - dirty profile/contact/privacy drafts prompt through tabs, sidebar, avatar menu, Back, and refresh,
   - capability profiles without `api_service.publish` retain contact fields but do not render API payment settings.
+- Workspace aggregation smoke at the same four viewports:
+  - all four message query tabs remain directly addressable and activate only `message-center`,
+  - reputation and disabled-promotion redirect activate only `reputation-rights`, with the promotion notice consumed once,
+  - report/appeal and feedback list/detail routes activate only `support-center`,
+  - page-level tab strips have no page overflow or clipped control text.
 
 ### 7. Wrong vs Correct
 

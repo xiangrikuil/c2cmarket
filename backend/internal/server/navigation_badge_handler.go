@@ -26,6 +26,7 @@ type navigationBadgeSummaryDTO struct {
 	NotificationUnread          int                      `json:"notificationUnread"`
 	ImportantAnnouncementUnread int                      `json:"importantAnnouncementUnread"`
 	FeedbackUnread              int                      `json:"feedbackUnread"`
+	SupportActionCount          int                      `json:"supportActionCount"`
 	Buyer                       navigationBadgeRoleDTO   `json:"buyer"`
 	Merchant                    navigationBadgeRoleDTO   `json:"merchant"`
 	Admin                       *navigationBadgeAdminDTO `json:"admin"`
@@ -51,6 +52,7 @@ func toNavigationBadgeSummaryDTO(summary navigationbadge.Summary) navigationBadg
 		NotificationUnread:          summary.NotificationUnread,
 		ImportantAnnouncementUnread: summary.ImportantAnnouncementUnread,
 		FeedbackUnread:              summary.FeedbackUnread,
+		SupportActionCount:          summary.SupportActionCount,
 		Buyer: navigationBadgeRoleDTO{
 			CarpoolActions:  summary.Buyer.CarpoolActions,
 			APIOrderActions: summary.Buyer.APIOrderActions,

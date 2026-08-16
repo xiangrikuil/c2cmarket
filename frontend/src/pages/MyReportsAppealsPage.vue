@@ -12,6 +12,7 @@ import PageTitle from '@/components/market/PageTitle.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
+import WorkspaceSectionTabs from '@/components/workspace/WorkspaceSectionTabs.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -218,7 +219,9 @@ function recordAPIOrderId(record: ModerationRecord | null) {
 
 <template>
   <div class="space-y-5">
-    <PageTitle title="举报与申诉" description="查看你提交的举报、与你有关的纠纷和申诉处理状态。" />
+    <PageTitle title="支持中心" description="查看举报、纠纷、申诉和问题反馈的处理进展。" />
+
+    <WorkspaceSectionTabs section="support-center" />
 
     <CompactStats :items="stats" :loading="isLoading" />
 
