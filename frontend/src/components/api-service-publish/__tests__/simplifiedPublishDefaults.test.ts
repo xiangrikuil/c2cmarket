@@ -117,6 +117,11 @@ test('locks API publish merchant display name to profile data', () => {
   const pageSource = readFileSync(new URL('../../../pages/ApiServicePublishPage.vue', import.meta.url), 'utf8')
   const rushPageSource = readFileSync(new URL('../../../pages/ApiQuotaRushPublishPage.vue', import.meta.url), 'utf8')
   const identitySectionSource = readFileSync(new URL('../MerchantIdentitySection.vue', import.meta.url), 'utf8')
+  const backendSource = readFileSync(new URL('../../../lib/apiMarketBackend.ts', import.meta.url), 'utf8')
+  const submitServiceSource = backendSource.slice(
+    backendSource.indexOf('export async function backendSubmitAPIService'),
+    backendSource.indexOf('export async function backendUpdateAPIServiceProbeConnection'),
+  )
 
   assert.match(pageSource, /useMyProfileQuery/)
   assert.match(pageSource, /merchantIdentityMode: 'public_profile'/)
@@ -127,6 +132,9 @@ test('locks API publish merchant display name to profile data', () => {
   assert.match(pageSource, /preview-only/)
   assert.match(identitySectionSource, /默认公开个人身份/)
   assert.match(identitySectionSource, /隐藏社区身份，仅展示商家展示名/)
+  assert.match(submitServiceSource, /apiServiceMerchantIdentityMode\(payload\.merchantIdentityMode\)/)
+  assert.match(submitServiceSource, /merchantIdentityMode === 'store_alias' \? await ensureMerchantProfile\(payload\) : null/)
+  assert.doesNotMatch(submitServiceSource, /merchantIdentityMode:\s*'store_alias'/)
   assert.doesNotMatch(pageSource, /v-model="form\.merchantDisplayName"/)
   assert.doesNotMatch(pageSource, /placeholder="例如：小葵 API"/)
   assert.doesNotMatch(pageSource, /预览标题：/)

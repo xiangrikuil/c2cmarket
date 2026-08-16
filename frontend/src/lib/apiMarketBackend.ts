@@ -3,6 +3,7 @@ import type {
   AdminApiOrderDetail,
   ApiBillingMode,
   ApiDeliveryMode,
+  ApiMerchantIdentityMode,
   ApiOrder,
   ApiOrderCompletionSource,
 	ApiOrderDisputeStatus,
@@ -657,7 +658,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     merchantDisplayName: displayName,
     merchantAvatarUrl: service.merchantAvatarUrl?.trim() || undefined,
     trustLevel: null,
-    merchantType: '商户',
+    merchantType: isStoreAlias ? '商户' : '个人卖家',
     models: service.models.filter(item => item.enabled).map(item => item.modelKeySnapshot),
     modelMultipliers: service.models.filter(item => item.enabled).map(item => ({ model: item.modelKeySnapshot, multiplier: `${numberFromDecimal(item.merchantMultiplier, 1).toFixed(2)}x` })),
     rate: `${numberFromDecimal(service.models[0]?.merchantMultiplier, 1).toFixed(2)}x`,
@@ -2054,7 +2055,8 @@ export async function backendSubmitAPIOrderDeliveryCredential(id: string, payloa
 
 export async function backendSubmitAPIService(payload: Record<string, unknown>) {
   await ensureBackendSession('merchant', false)
-  const merchantProfile = await ensureMerchantProfile(payload)
+  const merchantIdentityMode = apiServiceMerchantIdentityMode(payload.merchantIdentityMode)
+  const merchantProfile = merchantIdentityMode === 'store_alias' ? await ensureMerchantProfile(payload) : null
 	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
 		? payload.ownerContactMethodIds.map(String).filter(Boolean)
 		: []
@@ -2063,8 +2065,8 @@ export async function backendSubmitAPIService(payload: Record<string, unknown>) 
     ...payload,
 		ownerContactMethodId: ownerContactMethodIds[0],
 		ownerContactMethodIds,
-    merchantProfileId: merchantProfile.id,
-    merchantIdentityMode: 'store_alias',
+    merchantProfileId: merchantProfile?.id ?? '',
+    merchantIdentityMode,
   }), {
     idempotencyPrefix: 'api-service',
   })
@@ -2139,7 +2141,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
   return {
     probeConnectionId: String(payload.probeConnectionId ?? ''),
     merchantProfileId: String(payload.merchantProfileId ?? ''),
-    merchantIdentityMode: String(payload.merchantIdentityMode ?? 'public_profile'),
+    merchantIdentityMode: apiServiceMerchantIdentityMode(payload.merchantIdentityMode),
 		ownerContactMethodId: ownerContactMethodIds[0] ?? String(payload.ownerContactMethodId ?? ''),
 		ownerContactMethodIds,
     title: String(payload.generatedTitle ?? 'API 服务'),
@@ -2185,6 +2187,10 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
       modelCatalogIds: item.modelCatalogIds ?? [],
     })),
   }
+}
+
+function apiServiceMerchantIdentityMode(value: unknown): ApiMerchantIdentityMode {
+  return value === 'store_alias' ? 'store_alias' : 'public_profile'
 }
 
 function toBackendOrderSettingsRequest(payload: Record<string, unknown>) {

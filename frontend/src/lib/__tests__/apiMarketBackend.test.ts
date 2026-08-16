@@ -166,6 +166,7 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.online, true)
   assert.equal(service.publiclyOrderable, true)
   assert.equal(service.merchantAvatarUrl, 'https://cdn.example.com/xiaokui-api.webp')
+  assert.equal(service.merchantType, '商户')
   assert.equal(api.isApiServicePubliclyOrderable(service), true)
   assert.equal(service.trustLevel, null)
   assert.equal(service.completed30d, null)
@@ -316,6 +317,19 @@ test('maps public-profile merchant identity and avatar from the backend projecti
   assert.equal(service.merchantDisplayName, 'Profile Owner')
   assert.equal(service.merchantUsername, 'profile-owner')
   assert.equal(service.merchantAvatarUrl, 'https://cdn.example.com/profile-owner.png')
+  assert.equal(service.merchantType, '个人卖家')
+})
+
+test('preserves the selected API merchant identity mode in service requests', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const base = {
+    billingMode: 'metered_credit',
+    promptAuditEnabled: false,
+    quotaUsagePolicy: writableQuotaPolicy,
+  }
+
+  assert.equal(apiMarketBackend.toBackendServiceRequest({ ...base, merchantIdentityMode: 'public_profile' }).merchantIdentityMode, 'public_profile')
+  assert.equal(apiMarketBackend.toBackendServiceRequest({ ...base, merchantIdentityMode: 'store_alias' }).merchantIdentityMode, 'store_alias')
 })
 
 test('maps required owner sales and health summaries without changing the public service projection', async () => {
