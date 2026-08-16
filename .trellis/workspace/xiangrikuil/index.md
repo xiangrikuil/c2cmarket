@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 60
+- **Total Sessions**: 61
 - **Last Active**: 2026-08-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1862 | Active |
+| `journal-1.md` | ~1884 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 61 | 2026-08-16 | 修复 PR #39 CI 发布门禁 | `7e35f46` | `codex/api-order-after-sales` |
 | 60 | 2026-08-16 | API 订单售后与纠纷合并并提交评审 | `966373e`, `348c977`, `fbcfe33`, `56cb94c` | `codex/api-order-after-sales` |
 | 59 | 2026-08-16 | 管理员售后处理记录时间线 | `56cb94c` | `codex/api-after-sales-selected` |
 | 58 | 2026-08-15 | 简化 API 订单纠纷平台处理流程 | `348c977` | `codex/api-after-sales-selected` |

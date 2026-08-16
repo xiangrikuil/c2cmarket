@@ -1860,3 +1860,25 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 61: 修复 PR #39 CI 发布门禁
+
+**Date**: 2026-08-16
+**Task**: 修复 PR #39 CI 发布门禁
+**Package**: frontend
+**Branch**: `codex/api-order-after-sales`
+
+### Summary
+
+升级存在漏洞的 Go 图像与 AWS S3 依赖，修正 PostgreSQL 生命周期测试的纠纷终态夹具，并验证所有 PR 检查通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7e35f46` | (see git log) |
+
+### Status
+
+[OK] **Completed**
