@@ -1882,3 +1882,25 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 62: 公告分级强触达与回执闭环
+
+**Date**: 2026-08-16
+**Task**: 公告分级强触达与回执闭环
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+完成 critical 公告全站触达、强制确认、受众快照与回执闭环，补齐管理端配置、迁移、OpenAPI、测试和浏览器验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54a8cf0` | (see git log) |
+
+### Status
+
+[OK] **Completed**
