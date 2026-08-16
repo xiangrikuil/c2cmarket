@@ -1926,3 +1926,25 @@ Consolidated message, reputation, and support workspace entries; added authorita
 ### Status
 
 [OK] **Completed**
+
+
+## Session 64: API 市场卡片身份、模型与图标修复
+
+**Date**: 2026-08-16
+**Task**: API 市场卡片身份、模型与图标修复
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+修复免费服务商户头像透传，按模型目录新鲜度排序商户声明模型，增加最多两项加可访问 Tooltip，并统一三类 API 卡片白色近满版产品图标。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bfdffae` | (see git log) |
+
+### Status
+
+[OK] **Completed**
