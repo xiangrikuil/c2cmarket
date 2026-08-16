@@ -589,7 +589,10 @@ func TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAn
 
 	if _, err := store.pool.Exec(ctx, `
 		UPDATE dispute_cases
-		SET status = 'closed', closed_at = $2, updated_at = $2
+		SET status = 'closed', active = false, closed_at = $2,
+		    final_reason = 'applicant_decision_expired', appeal_expires_at = NULL,
+		    adversely_affected_user_ids = '{}'::uuid[],
+		    next_actor = 'none', due_at = NULL, updated_at = $2
 		WHERE id = ANY($1::uuid[])
 		`, []string{openDisputeID, waitingDisputeID, reportRaceResult.Dispute.ID}, lateRunAt); err != nil {
 		t.Fatalf("release dispute holds: %v", err)
