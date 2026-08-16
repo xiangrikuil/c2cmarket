@@ -200,7 +200,8 @@ POST /api/v1/contact-methods
 PATCH /api/v1/contact-methods/{id}
 DELETE /api/v1/contact-methods/{id}
 POST /api/v1/contact-methods/{id}/set-default
-POST /api/v1/contact-methods/{id}/verify
+POST /api/v1/contact-methods/{id}/email-verification/start
+POST /api/v1/contact-methods/{id}/email-verification/confirm
 POST /api/v1/dev/contact-sessions
 GET  /api/v1/contact-sessions/{id}/contacts
 ```
@@ -2622,7 +2623,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 109 (current repository target)
+  ExpectedMigrationVersion = 110 (current repository target)
 ```
 
 ### 3. Contracts

@@ -166,6 +166,53 @@ test('account recovery remains complete after the profile is fetched again', asy
   )
 })
 
+test('transaction contact email verification never calls the account email confirmation endpoint', async () => {
+  const contactId = '11111111-1111-4111-8111-111111111112'
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({
+      contactMethodId: contactId,
+      contactMethodVersionId: '11111111-1111-4111-8111-111111111113',
+      email: 'trade@example.com',
+      expiresAt: '2026-08-16T10:15:00Z',
+      devCode: '123456',
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      id: contactId,
+      userId: '11111111-1111-4111-8111-111111111111',
+      type: 'email',
+      label: '交易邮箱',
+      maskedValue: 'tr****om',
+      displayValue: 'trade@example.com',
+      usageScopes: ['buyer', 'dispute'],
+      isDefault: false,
+      enabled: true,
+      verified: true,
+      createdAt: '2026-08-16T10:00:00Z',
+      updatedAt: '2026-08-16T10:01:00Z',
+      version: 2,
+    }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  vi.resetModules()
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  client.setBackendCSRFToken('csrf-profile')
+  const {
+    backendConfirmContactEmailVerification,
+    backendStartContactEmailVerification,
+  } = await import('../profileBackend')
+
+  const challenge = await backendStartContactEmailVerification(contactId)
+  const verified = await backendConfirmContactEmailVerification(contactId, challenge.devCode ?? '')
+
+  assert.equal(verified.verified, true)
+  assert.deepEqual(fetchMock.mock.calls.map(call => call[0]), [
+    `/api/v1/contact-methods/${contactId}/email-verification/start`,
+    `/api/v1/contact-methods/${contactId}/email-verification/confirm`,
+  ])
+  assert.equal(fetchMock.mock.calls.some(call => String(call[0]).includes('/me/email-verification/confirm')), false)
+})
+
 test('linux.do avatar shortcut persists through the real profile PATCH', async () => {
   const current = backendProfile({
     avatarMode: 'custom_url',

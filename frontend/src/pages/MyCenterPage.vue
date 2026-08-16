@@ -41,6 +41,7 @@ import {
 } from '@/lib/personalCenterDashboard'
 import {
   useApiPaymentAccountSettingsQuery,
+  useConfirmContactEmailVerificationMutation,
   useConfirmEmailVerificationMutation,
   useCreateContactMethodMutation,
   useDeleteContactMethodMutation,
@@ -55,11 +56,11 @@ import {
   useMyProfileQuery,
   useSetBackupPasswordMutation,
   useSetDefaultContactMethodMutation,
+  useStartContactEmailVerificationMutation,
   useStartEmailVerificationMutation,
   useUpdateContactMethodMutation,
   useUpdateMyProfileMutation,
   useUseLinuxDoAvatarMutation,
-  useVerifyContactMethodMutation,
 } from '@/queries/useMarketQueries'
 import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 import { backendErrorMessage, reauthenticatePassword, startLinuxDoLink } from '@/lib/backendClient'
@@ -101,11 +102,12 @@ const useLinuxDoAvatarMutation = useUseLinuxDoAvatarMutation()
 const setPasswordMutation = useSetBackupPasswordMutation()
 const startEmailVerificationMutation = useStartEmailVerificationMutation()
 const confirmEmailVerificationMutation = useConfirmEmailVerificationMutation()
+const startContactEmailVerificationMutation = useStartContactEmailVerificationMutation()
+const confirmContactEmailVerificationMutation = useConfirmContactEmailVerificationMutation()
 const createContactMutation = useCreateContactMethodMutation()
 const updateContactMutation = useUpdateContactMethodMutation()
 const deleteContactMutation = useDeleteContactMethodMutation()
 const setDefaultContactMutation = useSetDefaultContactMethodMutation()
-const verifyContactMutation = useVerifyContactMethodMutation()
 
 const sectionLinks = computed(() => [
   { label: '账户概览', to: '/my', key: 'overview' },
@@ -154,7 +156,12 @@ const passwordForm = reactive({
 })
 const confirmPasswordTouched = ref(false)
 
-const emailForm = reactive({
+const accountEmailForm = reactive({
+  email: '',
+  code: '',
+})
+
+const contactEmailForm = reactive({
   email: '',
   code: '',
   usageScopes: [] as ContactUsageScope[],
@@ -338,7 +345,7 @@ const profileCompleteness = computed(() => dashboardCompleteness.value?.percenta
 const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wechatContact.value.displayValue))
 const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailContact.value.verified))
 const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
-const emailBindingPending = computed(() => contactSaving.value || startEmailVerificationMutation.isPending.value || confirmEmailVerificationMutation.isPending.value || verifyContactMutation.isPending.value)
+const emailBindingPending = computed(() => contactSaving.value || startContactEmailVerificationMutation.isPending.value || confirmContactEmailVerificationMutation.isPending.value)
 const apiPaymentEditorDirty = ref(false)
 const wechatUsageScopesDirty = computed(() => !sameContactUsageScopes(
   wechatForm.usageScopes,
@@ -349,15 +356,15 @@ const wechatContactDirty = computed(() => (
   || wechatUsageScopesDirty.value
 ))
 const emailValueDirty = computed(() => (
-  emailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? profile.value?.email ?? '').trim().toLowerCase()
+  contactEmailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? '').trim().toLowerCase()
 ))
 const emailUsageScopesDirty = computed(() => !sameContactUsageScopes(
-  emailForm.usageScopes,
+  contactEmailForm.usageScopes,
   initialContactUsageScopes(emailContact.value, defaultContactUsageScopes.value),
 ))
 const emailContactDirty = computed(() => (
   emailValueDirty.value
-  || Boolean(emailForm.code.trim())
+  || Boolean(contactEmailForm.code.trim())
   || emailUsageScopesDirty.value
 ))
 const hasContactDraftChanges = computed(() => (
@@ -414,11 +421,16 @@ const accountRecoveryDialogOpen = ref(false)
 const dismissedAccountRecoveryDialogKey = ref('')
 const accountSetupDialogMode = ref<AccountSetupDialogMode>('required')
 const accountSetupActiveStep = ref<AccountSetupStep>('email')
-const emailVerificationResendAvailableAt = ref<number | null>(null)
-const emailVerificationNow = ref(Date.now())
-const emailVerificationDevCode = ref('')
-const emailVerificationDevCodeEmail = ref('')
-let emailVerificationTimer: number | null = null
+const accountEmailVerificationResendAvailableAt = ref<number | null>(null)
+const accountEmailVerificationNow = ref(Date.now())
+const accountEmailVerificationDevCode = ref('')
+const accountEmailVerificationDevCodeEmail = ref('')
+const contactEmailVerificationResendAvailableAt = ref<number | null>(null)
+const contactEmailVerificationNow = ref(Date.now())
+const contactEmailVerificationDevCode = ref('')
+const contactEmailVerificationChallengeEmail = ref('')
+let accountEmailVerificationTimer: number | null = null
+let contactEmailVerificationTimer: number | null = null
 const accountRecoveryDialogKey = computed(() => {
   if (!profile.value || activeSection.value !== 'account' || accountRecoveryComplete.value) return ''
   const missingIds = accountRecoveryMissingItems.value.map(item => item.id).join(',')
@@ -471,21 +483,36 @@ const accountSecurityBenefits = computed(() => [
     icon: Bell,
   },
 ])
-const emailVerificationCooldownSeconds = computed(() => {
-  if (!emailVerificationResendAvailableAt.value) return 0
-  return Math.max(0, Math.ceil((emailVerificationResendAvailableAt.value - emailVerificationNow.value) / 1000))
+const accountEmailVerificationCooldownSeconds = computed(() => {
+  if (!accountEmailVerificationResendAvailableAt.value) return 0
+  return Math.max(0, Math.ceil((accountEmailVerificationResendAvailableAt.value - accountEmailVerificationNow.value) / 1000))
 })
-const emailVerificationSendDisabled = computed(() => startEmailVerificationMutation.isPending.value || !emailForm.email.trim() || emailVerificationCooldownSeconds.value > 0)
-const emailVerificationButtonLabel = computed(() => {
+const contactEmailVerificationCooldownSeconds = computed(() => {
+  if (!contactEmailVerificationResendAvailableAt.value) return 0
+  return Math.max(0, Math.ceil((contactEmailVerificationResendAvailableAt.value - contactEmailVerificationNow.value) / 1000))
+})
+const accountEmailVerificationSendDisabled = computed(() => startEmailVerificationMutation.isPending.value || !accountEmailForm.email.trim() || accountEmailVerificationCooldownSeconds.value > 0)
+const accountEmailVerificationButtonLabel = computed(() => {
   if (startEmailVerificationMutation.isPending.value) return '发送中'
-  if (emailVerificationCooldownSeconds.value > 0) return `${emailVerificationCooldownSeconds.value} 秒后重发`
+  if (accountEmailVerificationCooldownSeconds.value > 0) return `${accountEmailVerificationCooldownSeconds.value} 秒后重发`
   return '发送验证码'
 })
-const visibleEmailVerificationDevCode = computed(() => {
-  if (!emailVerificationDevCode.value) return ''
-  const currentEmail = emailForm.email.trim().toLowerCase()
-  if (!currentEmail || currentEmail !== emailVerificationDevCodeEmail.value) return ''
-  return emailVerificationDevCode.value
+const contactEmailVerificationButtonLabel = computed(() => {
+  if (startContactEmailVerificationMutation.isPending.value) return '发送中'
+  if (contactEmailVerificationCooldownSeconds.value > 0) return `${contactEmailVerificationCooldownSeconds.value} 秒后重发`
+  return '发送验证码'
+})
+const visibleAccountEmailVerificationDevCode = computed(() => {
+  if (!accountEmailVerificationDevCode.value) return ''
+  const currentEmail = accountEmailForm.email.trim().toLowerCase()
+  if (!currentEmail || currentEmail !== accountEmailVerificationDevCodeEmail.value) return ''
+  return accountEmailVerificationDevCode.value
+})
+const visibleContactEmailVerificationDevCode = computed(() => {
+  if (!contactEmailVerificationDevCode.value) return ''
+  const currentEmail = contactEmailForm.email.trim().toLowerCase()
+  if (!currentEmail || currentEmail !== contactEmailVerificationChallengeEmail.value) return ''
+  return contactEmailVerificationDevCode.value
 })
 const passwordChecks = computed(() => getPasswordChecks(passwordForm.newPassword))
 const passwordPassedCount = computed(() => passwordChecks.value.filter(item => item.completed).length)
@@ -535,7 +562,7 @@ watchEffect(() => {
   profileForm.timezone = profile.value.timezone ?? 'Asia/Shanghai'
   profileForm.avatarMode = profile.value.avatarMode
   profileForm.avatarUrl = profile.value.customAvatarUrl ?? ''
-  if (!emailForm.email) emailForm.email = emailContact.value?.displayValue || profile.value.email || ''
+  if (!accountEmailForm.email) accountEmailForm.email = profile.value.email || ''
   Object.assign(privacyForm, profile.value.privacy)
 
   const wechat = wechatContact.value
@@ -547,10 +574,11 @@ watchEffect(() => {
   }
 
   const email = emailContact.value
-  const emailDraftKey = `${email?.id ?? profile.value.email ?? 'empty'}:${email?.updatedAt ?? profile.value.emailVerifiedAt ?? ''}`
+  const emailDraftKey = `${email?.id ?? 'empty'}:${email?.updatedAt ?? ''}`
   if (loadedContactDraftKeys.email !== emailDraftKey) {
-    emailForm.email = email?.displayValue || profile.value.email || ''
-    emailForm.usageScopes = initialContactUsageScopes(email, defaultContactUsageScopes.value)
+    contactEmailForm.email = email?.displayValue ?? ''
+    contactEmailForm.code = ''
+    contactEmailForm.usageScopes = initialContactUsageScopes(email, defaultContactUsageScopes.value)
     loadedContactDraftKeys.email = emailDraftKey
   }
 
@@ -604,23 +632,42 @@ function scopeLabels(scopes: ContactUsageScope[]) {
   return scopes.map(scope => CONTACT_USAGE_SCOPE_OPTIONS.find(item => item.value === scope)?.label ?? scope).join('、')
 }
 
-function stopEmailVerificationTimer() {
-  if (emailVerificationTimer === null) return
-  window.clearInterval(emailVerificationTimer)
-  emailVerificationTimer = null
+function stopAccountEmailVerificationTimer() {
+  if (accountEmailVerificationTimer === null) return
+  window.clearInterval(accountEmailVerificationTimer)
+  accountEmailVerificationTimer = null
 }
 
-function startEmailVerificationTimer() {
-  emailVerificationResendAvailableAt.value = Date.now() + 60 * 1000
-  emailVerificationNow.value = Date.now()
-  stopEmailVerificationTimer()
-  emailVerificationTimer = window.setInterval(() => {
-    emailVerificationNow.value = Date.now()
-    if (emailVerificationCooldownSeconds.value === 0) stopEmailVerificationTimer()
+function startAccountEmailVerificationTimer() {
+  accountEmailVerificationResendAvailableAt.value = Date.now() + 60 * 1000
+  accountEmailVerificationNow.value = Date.now()
+  stopAccountEmailVerificationTimer()
+  accountEmailVerificationTimer = window.setInterval(() => {
+    accountEmailVerificationNow.value = Date.now()
+    if (accountEmailVerificationCooldownSeconds.value === 0) stopAccountEmailVerificationTimer()
   }, 1000)
 }
 
-onUnmounted(stopEmailVerificationTimer)
+function stopContactEmailVerificationTimer() {
+  if (contactEmailVerificationTimer === null) return
+  window.clearInterval(contactEmailVerificationTimer)
+  contactEmailVerificationTimer = null
+}
+
+function startContactEmailVerificationTimer() {
+  contactEmailVerificationResendAvailableAt.value = Date.now() + 60 * 1000
+  contactEmailVerificationNow.value = Date.now()
+  stopContactEmailVerificationTimer()
+  contactEmailVerificationTimer = window.setInterval(() => {
+    contactEmailVerificationNow.value = Date.now()
+    if (contactEmailVerificationCooldownSeconds.value === 0) stopContactEmailVerificationTimer()
+  }, 1000)
+}
+
+onUnmounted(() => {
+  stopAccountEmailVerificationTimer()
+  stopContactEmailVerificationTimer()
+})
 
 function saveProfile() {
   updateProfileMutation.mutate({
@@ -680,16 +727,16 @@ function continueAfterAccountRecovery() {
 }
 
 function startEmailVerification() {
-  emailVerificationDevCode.value = ''
-  emailVerificationDevCodeEmail.value = ''
-  startEmailVerificationMutation.mutate(emailForm.email, {
+  accountEmailVerificationDevCode.value = ''
+  accountEmailVerificationDevCodeEmail.value = ''
+  startEmailVerificationMutation.mutate(accountEmailForm.email, {
     onSuccess: challenge => {
       const devCode = challenge.devCode?.trim() ?? ''
-      emailForm.email = challenge.email
-      emailForm.code = devCode
-      emailVerificationDevCode.value = devCode
-      emailVerificationDevCodeEmail.value = challenge.email.trim().toLowerCase()
-      startEmailVerificationTimer()
+      accountEmailForm.email = challenge.email
+      accountEmailForm.code = devCode
+      accountEmailVerificationDevCode.value = devCode
+      accountEmailVerificationDevCodeEmail.value = challenge.email.trim().toLowerCase()
+      startAccountEmailVerificationTimer()
       toast.success(devCode ? '开发验证码已填入。' : '验证码已发送，请查看邮箱。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '验证码发送失败。'),
@@ -698,15 +745,15 @@ function startEmailVerification() {
 
 function confirmEmailVerification() {
   confirmEmailVerificationMutation.mutate({
-    email: emailForm.email,
-    code: emailForm.code,
+    email: accountEmailForm.email,
+    code: accountEmailForm.code,
   }, {
     onSuccess: updatedProfile => {
-      emailForm.code = ''
-      emailVerificationDevCode.value = ''
-      emailVerificationDevCodeEmail.value = ''
-      stopEmailVerificationTimer()
-      emailVerificationResendAvailableAt.value = null
+      accountEmailForm.code = ''
+      accountEmailVerificationDevCode.value = ''
+      accountEmailVerificationDevCodeEmail.value = ''
+      stopAccountEmailVerificationTimer()
+      accountEmailVerificationResendAvailableAt.value = null
       accountSetupActiveStep.value = updatedProfile.linuxDoBinding.bound && !updatedProfile.passwordConfigured ? 'password' : 'complete'
       toast.success('邮箱已绑定。')
     },
@@ -750,24 +797,13 @@ function saveWechatContact() {
   createContactMutation.mutate(payload, mutationOptions)
 }
 
-function markEmailContactVerified(contact: UserContactMethod) {
-  if (contact.verified) {
-    toast.success('邮箱联系方式已绑定。')
-    return
-  }
-  verifyContactMutation.mutate(contact.id, {
-    onSuccess: () => toast.success('邮箱联系方式已绑定。'),
-    onError: error => toast.error(error instanceof Error ? error.message : '邮箱联系方式验证失败。'),
-  })
-}
-
-function saveVerifiedEmailContact() {
-  const displayValue = emailForm.email.trim().toLowerCase()
+function persistEmailContactForVerification(onSaved: (contact: UserContactMethod) => void) {
+  const displayValue = contactEmailForm.email.trim().toLowerCase()
   if (!displayValue) {
     toast.warning('请先填写邮箱。')
     return
   }
-  if (!emailForm.usageScopes.length) {
+  if (!contactEmailForm.usageScopes.length) {
     toast.warning('请至少选择一个适用场景。')
     return
   }
@@ -776,12 +812,16 @@ function saveVerifiedEmailContact() {
     type: 'email',
     label: '邮箱',
     displayValue,
-    usageScopes: emailForm.usageScopes,
+    usageScopes: contactEmailForm.usageScopes,
     current,
   })
   const mutationOptions = {
-    onSuccess: markEmailContactVerified,
+    onSuccess: onSaved,
     onError: (error: Error) => toast.error(error.message),
+  }
+  if (current && !emailValueDirty.value && !emailUsageScopesDirty.value) {
+    onSaved(current)
+    return
   }
   if (current) {
     updateContactMutation.mutate({ contactId: current.id, payload }, mutationOptions)
@@ -790,10 +830,29 @@ function saveVerifiedEmailContact() {
   createContactMutation.mutate(payload, mutationOptions)
 }
 
+function startContactEmailVerification() {
+  contactEmailVerificationDevCode.value = ''
+  contactEmailVerificationChallengeEmail.value = ''
+  persistEmailContactForVerification((contact) => {
+    startContactEmailVerificationMutation.mutate(contact.id, {
+      onSuccess: challenge => {
+        const devCode = challenge.devCode?.trim() ?? ''
+        contactEmailForm.email = challenge.email
+        contactEmailForm.code = devCode
+        contactEmailVerificationDevCode.value = devCode
+        contactEmailVerificationChallengeEmail.value = challenge.email.trim().toLowerCase()
+        startContactEmailVerificationTimer()
+        toast.success(devCode ? '开发验证码已填入。' : '验证码已发送，请查看邮箱。')
+      },
+      onError: error => toast.error(error instanceof Error ? error.message : '验证码发送失败。'),
+    })
+  })
+}
+
 function saveEmailUsageScopes() {
   const current = emailContact.value
   if (!current || emailValueDirty.value) return
-  if (!emailForm.usageScopes.length) {
+  if (!contactEmailForm.usageScopes.length) {
     toast.warning('请至少选择一个适用场景。')
     return
   }
@@ -802,8 +861,8 @@ function saveEmailUsageScopes() {
     payload: buildContactMethodPayload({
       type: 'email',
       label: current.label || '邮箱',
-      displayValue: emailForm.email,
-      usageScopes: emailForm.usageScopes,
+      displayValue: contactEmailForm.email,
+      usageScopes: contactEmailForm.usageScopes,
       current,
     }),
   }, {
@@ -813,20 +872,40 @@ function saveEmailUsageScopes() {
 }
 
 function confirmContactEmailVerification() {
-  confirmEmailVerificationMutation.mutate({
-    email: emailForm.email,
-    code: emailForm.code,
+  const current = emailContact.value
+  if (!current) {
+    toast.warning('请先发送验证码。')
+    return
+  }
+  if (!contactEmailVerificationChallengeEmail.value || contactEmailForm.email.trim().toLowerCase() !== contactEmailVerificationChallengeEmail.value) {
+    toast.warning('邮箱已变化，请重新发送验证码。')
+    return
+  }
+  confirmContactEmailVerificationMutation.mutate({
+    contactId: current.id,
+    code: contactEmailForm.code,
   }, {
     onSuccess: () => {
-      emailForm.code = ''
-      emailVerificationDevCode.value = ''
-      emailVerificationDevCodeEmail.value = ''
-      stopEmailVerificationTimer()
-      emailVerificationResendAvailableAt.value = null
-      saveVerifiedEmailContact()
+      contactEmailForm.code = ''
+      contactEmailVerificationDevCode.value = ''
+      contactEmailVerificationChallengeEmail.value = ''
+      stopContactEmailVerificationTimer()
+      contactEmailVerificationResendAvailableAt.value = null
+      toast.success('交易联系邮箱已验证。')
     },
-    onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '交易联系邮箱验证失败。'),
   })
+}
+
+function useVerifiedAccountEmailForContact() {
+  const accountEmail = profile.value?.email?.trim().toLowerCase()
+  if (!profile.value?.emailVerified || !accountEmail) return
+  contactEmailForm.email = accountEmail
+  contactEmailForm.code = ''
+  contactEmailVerificationDevCode.value = ''
+  contactEmailVerificationChallengeEmail.value = ''
+  stopContactEmailVerificationTimer()
+  contactEmailVerificationResendAvailableAt.value = null
 }
 
 function removeContact(contact: UserContactMethod) {
@@ -834,8 +913,9 @@ function removeContact(contact: UserContactMethod) {
     onSuccess: () => {
       if (contact.type === 'wechat') wechatForm.displayValue = ''
       if (contact.type === 'email') {
-        emailForm.email = profile.value?.email ?? ''
-        emailForm.code = ''
+        contactEmailForm.email = ''
+        contactEmailForm.code = ''
+        contactEmailVerificationChallengeEmail.value = ''
       }
       toast.success('联系方式已解除绑定。')
     },
@@ -1028,7 +1108,7 @@ function goToLogin() {
                     <span class="text-sm font-medium">邮箱地址</span>
                     <span class="relative block">
                       <Mail class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input v-model="emailForm.email" class="h-11 pl-10" type="email" autocomplete="email" placeholder="name@example.com" />
+                      <Input v-model="accountEmailForm.email" class="h-11 pl-10" type="email" autocomplete="email" placeholder="name@example.com" />
                     </span>
                   </label>
 
@@ -1037,19 +1117,19 @@ function goToLogin() {
                     <span class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                       <span class="relative block">
                         <MailCheck class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input v-model="emailForm.code" class="h-11 pl-10" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+                        <Input v-model="accountEmailForm.code" class="h-11 pl-10" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
                       </span>
                       <Button
                         variant="outline"
                         class="h-11 shrink-0 sm:min-w-[140px]"
-                        :disabled="emailVerificationSendDisabled"
+                        :disabled="accountEmailVerificationSendDisabled"
                         @click="startEmailVerification"
                       >
-                        <MailCheck class="h-4 w-4" />{{ emailVerificationButtonLabel }}
+                        <MailCheck class="h-4 w-4" />{{ accountEmailVerificationButtonLabel }}
                       </Button>
                     </span>
-                    <span v-if="visibleEmailVerificationDevCode" class="block rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-                      开发验证码：<span class="font-semibold tabular-nums">{{ visibleEmailVerificationDevCode }}</span>
+                    <span v-if="visibleAccountEmailVerificationDevCode" class="block rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                      开发验证码：<span class="font-semibold tabular-nums">{{ visibleAccountEmailVerificationDevCode }}</span>
                     </span>
                   </label>
                 </div>
@@ -1181,7 +1261,7 @@ function goToLogin() {
             <DialogFooter class="account-security-footer gap-2 border-t border-border px-5 py-4 sm:justify-end sm:px-6">
               <Button
                 v-if="accountSetupActiveStep === 'email'"
-                :disabled="confirmEmailVerificationMutation.isPending.value || !emailForm.code.trim()"
+                :disabled="confirmEmailVerificationMutation.isPending.value || !accountEmailForm.code.trim()"
                 @click="confirmEmailVerification"
               >
                 下一步
@@ -1442,40 +1522,46 @@ function goToLogin() {
           <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
             <label class="space-y-2">
               <span class="text-sm font-medium">邮箱地址</span>
-              <Input v-model="emailForm.email" type="email" autocomplete="email" placeholder="name@example.com" />
+              <Input v-model="contactEmailForm.email" type="email" autocomplete="email" placeholder="name@example.com" />
             </label>
             <Button
               class="sm:self-end"
               variant="outline"
-              :disabled="emailBindingPending || emailVerificationCooldownSeconds > 0 || !emailForm.email.trim()"
-              @click="startEmailVerification"
+              :disabled="emailBindingPending || contactEmailVerificationCooldownSeconds > 0 || !contactEmailForm.email.trim()"
+              @click="startContactEmailVerification"
             >
-              <MailCheck class="h-4 w-4" />{{ emailVerificationButtonLabel }}
+              <MailCheck class="h-4 w-4" />{{ contactEmailVerificationButtonLabel }}
             </Button>
             <label class="space-y-2">
               <span class="text-sm font-medium">验证码</span>
-              <Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
-              <span v-if="visibleEmailVerificationDevCode" class="block rounded-md border border-dashed border-warning/35 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
-                开发验证码：<span class="font-semibold tabular-nums">{{ visibleEmailVerificationDevCode }}</span>
+              <Input v-model="contactEmailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+              <span v-if="visibleContactEmailVerificationDevCode" class="block rounded-md border border-dashed border-warning/35 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
+                开发验证码：<span class="font-semibold tabular-nums">{{ visibleContactEmailVerificationDevCode }}</span>
               </span>
             </label>
             <Button
               class="sm:self-end"
-              :disabled="emailBindingPending || !emailForm.code.trim() || !emailForm.usageScopes.length"
+              :disabled="emailBindingPending || !contactEmailForm.code.trim() || !contactEmailForm.usageScopes.length || contactEmailForm.email.trim().toLowerCase() !== contactEmailVerificationChallengeEmail"
               @click="confirmContactEmailVerification"
             >
               验证并绑定邮箱
             </Button>
           </div>
+          <div v-if="profile?.emailVerified && profile.email" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Button type="button" size="sm" variant="ghost" class="h-8 px-2" @click="useVerifiedAccountEmailForContact">
+              <Mail class="h-3.5 w-3.5" />使用已验证账号邮箱
+            </Button>
+            <span>保存后仍需单独验证，并会在符合交易披露条件时向交易对方展示。</span>
+          </div>
           <div class="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <ContactUsageScopeSelector
-              v-model="emailForm.usageScopes"
+              v-model="contactEmailForm.usageScopes"
               :options="availableContactUsageScopeOptions"
             />
             <Button
               v-if="emailContact"
               variant="outline"
-              :disabled="contactSaving || emailValueDirty || !emailUsageScopesDirty || !emailForm.usageScopes.length"
+              :disabled="contactSaving || emailValueDirty || !emailUsageScopesDirty || !contactEmailForm.usageScopes.length"
               @click="saveEmailUsageScopes"
             >
               <Save class="h-4 w-4" />保存适用场景

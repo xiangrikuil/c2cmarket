@@ -83,6 +83,14 @@ type BackendEmailVerificationChallenge = {
   devCode?: string
 }
 
+export type BackendContactEmailVerificationChallenge = {
+  contactMethodId: string
+  contactMethodVersionId: string
+  email: string
+  expiresAt: string
+  devCode?: string
+}
+
 type BackendContact = {
   id: string
   userId: string
@@ -207,9 +215,13 @@ export async function backendSetDefaultContact(contactId: string): Promise<UserC
   }))
 }
 
-export async function backendVerifyContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/verify`, {}, {
-    idempotencyPrefix: 'profile-contact-verify',
+export async function backendStartContactEmailVerification(contactId: string): Promise<BackendContactEmailVerificationChallenge> {
+  return backendMutation<BackendContactEmailVerificationChallenge>(`/api/v1/contact-methods/${contactId}/email-verification/start`, {})
+}
+
+export async function backendConfirmContactEmailVerification(contactId: string, code: string): Promise<UserContactMethod> {
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/email-verification/confirm`, { code }, {
+    idempotencyPrefix: 'profile-contact-email-confirm',
   }))
 }
 

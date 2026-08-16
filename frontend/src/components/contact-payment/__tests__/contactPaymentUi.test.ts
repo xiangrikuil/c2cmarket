@@ -69,8 +69,17 @@ describe('联系方式与收款设置 UI', () => {
     expect(myCenter).toContain('wechatUsageScopesDirty')
     expect(myCenter).toContain('emailUsageScopesDirty')
     expect(myCenter).toContain('usageScopes: wechatForm.usageScopes')
-    expect(myCenter).toContain('usageScopes: emailForm.usageScopes')
+    expect(myCenter).toContain('usageScopes: contactEmailForm.usageScopes')
     expect(publishPage).toContain("contact.enabled && contact.usageScopes.includes('api_merchant')")
+  })
+
+  it('账号恢复邮箱与交易联系邮箱使用独立草稿和挑战状态', () => {
+    expect(myCenter).toContain('const accountEmailForm = reactive')
+    expect(myCenter).toContain('const contactEmailForm = reactive')
+    expect(myCenter).toContain('accountEmailForm.email = profile.value.email ||')
+    expect(myCenter).toContain("contactEmailForm.email = email?.displayValue ?? ''")
+    expect(myCenter).toContain('contactEmailVerificationChallengeEmail')
+    expect(myCenter).not.toContain('email?.displayValue || profile.value.email')
   })
 
   it('显示未保存状态并在离开页面前保护草稿', () => {

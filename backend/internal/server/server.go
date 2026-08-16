@@ -398,8 +398,8 @@ type Service interface {
 	DeleteContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SetDefaultContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError)
 	SetDefaultContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	VerifyContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError)
-	VerifyContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	StartContactEmailVerification(ctx context.Context, userID, methodID string) (contact.ContactEmailVerificationChallenge, *domain.AppError)
+	ConfirmContactEmailVerificationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, code, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateContactSession(ctx context.Context, input contact.CreateContactSessionInput) (contact.ContactSession, *domain.AppError)
 	ReadContactSession(ctx context.Context, sessionID, viewerUserID, requestID string) (contact.ContactSessionView, *domain.AppError)
 

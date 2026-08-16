@@ -569,6 +569,13 @@ acknowledgement receipts, and snapshots role or explicit-user audiences at the
 current delivery revision. Its down migration degrades critical notices to
 important notices and removes global-only delivery state.
 
+Version 110 (`000110_contact_email_verification`) gives transaction-contact
+email addresses an ownership challenge independent from the account recovery
+email. Each active challenge is purpose-isolated and bound to the current user,
+contact method, immutable contact-method version, and normalized email. The
+down migration removes only contact-email challenges before restoring the
+previous purpose constraint.
+
 ## Docker Compose
 
 The repository root `compose.yaml` provides a PostgreSQL service and a one-shot

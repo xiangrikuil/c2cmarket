@@ -243,22 +243,23 @@ import { productMatchesCategory, productMatchesPlan, type ProductCategoryKey } f
 import { isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
 import { isApiServiceAdminActionStatus, isApiServiceExceptionStatus, isApiServicePublicStatus } from '@/lib/apiServiceModeration'
 import {
+  backendConfirmContactEmailVerification,
+  backendConfirmEmailVerification,
   backendCreateContact,
   backendDeleteContact,
   backendMyContactMethods,
   backendMyMerchantProfile,
   backendMyProfile,
-  backendConfirmEmailVerification,
   backendPublicMerchantProfile,
   backendPublicUserProfile,
   backendSetDefaultContact,
   backendSetPassword,
+  backendStartContactEmailVerification,
   backendStartEmailVerification,
   backendUpdateContact,
   backendUpdateMyProfile,
   backendUpsertMerchantProfile,
   backendUseLinuxDoAvatar,
-  backendVerifyContact,
   type BackendMerchantProfile,
 } from '@/lib/profileBackend'
 import { backendReviewCenterPage, backendReviewCenterRows, backendSubmitReview } from '@/lib/reviewBackend'
@@ -1021,6 +1022,14 @@ let notificationReadStore = readSessionStore<string[]>(notificationReadStorageKe
 let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
 let myUserProfileStore = clone(myUserProfile)
 let myContactMethodStore = clone(myContactMethods)
+let contactMethodVersionSequence = 0
+const contactMethodVersionStore = new Map(myContactMethodStore.map(item => [item.id, nextContactMethodVersionToken(item.id)]))
+const contactEmailVerificationStore = new Map<string, { email: string, code: string, expiresAt: string, contactMethodVersionId: string, attemptCount: number }>()
+
+function nextContactMethodVersionToken(contactId: string) {
+  contactMethodVersionSequence += 1
+  return `${contactId}:v${contactMethodVersionSequence}`
+}
 
 function syncMockProfileIdentity() {
   const identity = requireMockIdentity()
@@ -1651,6 +1660,11 @@ export type EmailVerificationChallenge = {
   email: string
   expiresAt: string
   devCode?: string
+}
+
+export type ContactEmailVerificationChallenge = EmailVerificationChallenge & {
+  contactMethodId: string
+  contactMethodVersionId: string
 }
 
 export type SaveContactMethodRequest = {
@@ -3670,6 +3684,7 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     myContactMethodStore = myContactMethodStore.map(item => item.usageScopes.some(scope => contact.usageScopes.includes(scope)) ? { ...item, isDefault: false } : item)
   }
   myContactMethodStore = [contact, ...myContactMethodStore]
+  contactMethodVersionStore.set(contact.id, nextContactMethodVersionToken(contact.id))
   return clone(contact)
 }
 
@@ -3679,22 +3694,27 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo' && payload.displayValue !== current.displayValue) throw new Error('linux.do 联系方式不能手动修改')
+  const nextType = current.type === 'linuxdo' ? 'linuxdo' : payload.type
+  const currentVersionValue = nextType === 'email' ? current.displayValue.trim().toLowerCase() : current.displayValue.trim()
+  const nextVersionValue = nextType === 'email' ? payload.displayValue.trim().toLowerCase() : payload.displayValue.trim()
+  const valueChanged = current.type !== nextType || currentVersionValue !== nextVersionValue
   const updated: UserContactMethod = {
     ...current,
-    type: current.type === 'linuxdo' ? 'linuxdo' : payload.type,
+    type: nextType,
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(current.type === 'linuxdo' ? 'linuxdo' : payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
     usageScopes: [...payload.usageScopes],
     isDefault: payload.isDefault,
     enabled: payload.enabled,
-    verified: current.type === payload.type ? current.verified : false,
+    verified: valueChanged ? false : current.verified,
     updatedAt: nowText(),
   }
   myContactMethodStore = myContactMethodStore.map(item => item.id === contactId ? updated : item)
   if (updated.isDefault) {
     myContactMethodStore = myContactMethodStore.map(item => item.id !== updated.id && item.usageScopes.some(scope => updated.usageScopes.includes(scope)) ? { ...item, isDefault: false } : item)
   }
+  if (valueChanged) contactMethodVersionStore.set(contactId, nextContactMethodVersionToken(contactId))
   return clone(updated)
 }
 
@@ -3705,6 +3725,8 @@ export async function deleteContactMethod(contactId: string) {
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo') throw new Error('linux.do 绑定联系方式不能删除')
   myContactMethodStore = myContactMethodStore.filter(item => item.id !== contactId)
+  contactMethodVersionStore.delete(contactId)
+  contactEmailVerificationStore.delete(contactId)
   return clone(current)
 }
 
@@ -3721,19 +3743,41 @@ export async function setDefaultContactMethod(contactId: string) {
   return clone(myContactMethodStore.find(item => item.id === contactId)!)
 }
 
-export async function sendContactVerification(contactId: string) {
+export async function startContactEmailVerification(contactId: string): Promise<ContactEmailVerificationChallenge> {
+  if (shouldUseRealBackend()) return backendStartContactEmailVerification(contactId)
   await wait()
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type !== 'email') throw new Error('当前仅邮箱支持验证码验证')
-  return clone({ contactId, sentAt: nowText() })
+  if (!current.enabled) throw new Error('联系方式已停用')
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+  const contactMethodVersionId = contactMethodVersionStore.get(contactId) ?? nextContactMethodVersionToken(contactId)
+  contactMethodVersionStore.set(contactId, contactMethodVersionId)
+  contactEmailVerificationStore.set(contactId, { email: current.displayValue.trim().toLowerCase(), code: '123456', expiresAt, contactMethodVersionId, attemptCount: 0 })
+  return clone({
+    contactMethodId: contactId,
+    contactMethodVersionId,
+    email: current.displayValue.trim().toLowerCase(),
+    expiresAt,
+    devCode: '123456',
+  })
 }
 
-export async function verifyContactMethod(contactId: string) {
-  if (shouldUseRealBackend()) return backendVerifyContact(contactId)
+export async function confirmContactEmailVerification(contactId: string, code: string) {
+  if (shouldUseRealBackend()) return backendConfirmContactEmailVerification(contactId, code)
   await wait()
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
+  const challenge = contactEmailVerificationStore.get(contactId)
+  if (!current.enabled || current.type !== 'email' || !challenge || challenge.contactMethodVersionId !== contactMethodVersionStore.get(contactId) || challenge.email !== current.displayValue.trim().toLowerCase() || Date.now() >= Date.parse(challenge.expiresAt) || challenge.attemptCount >= 5) {
+    throw new Error('验证码无效或已过期')
+  }
+  if (challenge.code !== code.trim()) {
+    challenge.attemptCount += 1
+    contactEmailVerificationStore.set(contactId, challenge)
+    throw new Error('验证码无效或已过期')
+  }
+  contactEmailVerificationStore.delete(contactId)
   myContactMethodStore = myContactMethodStore.map(item => item.id === contactId ? { ...item, verified: true, updatedAt: nowText() } : item)
   return clone(myContactMethodStore.find(item => item.id === contactId)!)
 }

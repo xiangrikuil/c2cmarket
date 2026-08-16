@@ -8543,23 +8543,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContactMethod"
-  /api/v1/contact-methods/{id}/verify:
+  /api/v1/contact-methods/{id}/email-verification/start:
     post:
-      operationId: verifyContactMethod
+      operationId: startContactEmailVerification
       tags: [ContactMethods]
+      summary: Send an ownership code to the current transaction-contact email.
+      description: The challenge is independent from the account recovery email and is bound to the current immutable contact-method version.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Contact email verification challenge created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactEmailVerificationChallenge"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/contact-methods/{id}/email-verification/confirm:
+    post:
+      operationId: confirmContactEmailVerification
+      tags: [ContactMethods]
+      summary: Confirm ownership of the current transaction-contact email version.
       security:
         - sessionCookie: []
           csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmContactEmailVerificationRequest"
       responses:
         "200":
-          description: Contact method marked verified.
+          description: Contact method marked verified without changing the account email.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContactMethod"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/dev/contact-sessions:
     post:
       x-dev-only: true
@@ -19002,6 +19041,35 @@ components:
     ContactUsageScope:
       type: string
       enum: [carpool_owner, api_merchant, buyer, dispute]
+    ContactEmailVerificationChallenge:
+      type: object
+      additionalProperties: false
+      required: [contactMethodId, contactMethodVersionId, email, expiresAt]
+      properties:
+        contactMethodId:
+          type: string
+          format: uuid
+        contactMethodVersionId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        expiresAt:
+          type: string
+          format: date-time
+        devCode:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Present only in development/test local automation responses.
+    ConfirmContactEmailVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
     ContactMethodList:
       type: object
       required: [items]

@@ -4813,6 +4813,21 @@ export type ContactMethod = {
 
 export type ContactUsageScope = 'carpool_owner' | 'api_merchant' | 'buyer' | 'dispute';
 
+export type ContactEmailVerificationChallenge = {
+    contactMethodId: string;
+    contactMethodVersionId: string;
+    email: string;
+    expiresAt: string;
+    /**
+     * Present only in development/test local automation responses.
+     */
+    devCode?: string;
+};
+
+export type ConfirmContactEmailVerificationRequest = {
+    code: string;
+};
+
 export type ContactMethodList = {
     items: Array<ContactMethod>;
     nextCursor?: string | null;
@@ -16973,8 +16988,43 @@ export type SetDefaultContactMethodResponses = {
 
 export type SetDefaultContactMethodResponse = SetDefaultContactMethodResponses[keyof SetDefaultContactMethodResponses];
 
-export type VerifyContactMethodData = {
+export type StartContactEmailVerificationData = {
     body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/contact-methods/{id}/email-verification/start';
+};
+
+export type StartContactEmailVerificationErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type StartContactEmailVerificationError = StartContactEmailVerificationErrors[keyof StartContactEmailVerificationErrors];
+
+export type StartContactEmailVerificationResponses = {
+    /**
+     * Contact email verification challenge created.
+     */
+    200: ContactEmailVerificationChallenge;
+};
+
+export type StartContactEmailVerificationResponse = StartContactEmailVerificationResponses[keyof StartContactEmailVerificationResponses];
+
+export type ConfirmContactEmailVerificationData = {
+    body: ConfirmContactEmailVerificationRequest;
     headers: {
         'Idempotency-Key': string;
     };
@@ -16982,17 +17032,38 @@ export type VerifyContactMethodData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/contact-methods/{id}/verify';
+    url: '/api/v1/contact-methods/{id}/email-verification/confirm';
 };
 
-export type VerifyContactMethodResponses = {
+export type ConfirmContactEmailVerificationErrors = {
     /**
-     * Contact method marked verified.
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ConfirmContactEmailVerificationError = ConfirmContactEmailVerificationErrors[keyof ConfirmContactEmailVerificationErrors];
+
+export type ConfirmContactEmailVerificationResponses = {
+    /**
+     * Contact method marked verified without changing the account email.
      */
     200: ContactMethod;
 };
 
-export type VerifyContactMethodResponse = VerifyContactMethodResponses[keyof VerifyContactMethodResponses];
+export type ConfirmContactEmailVerificationResponse = ConfirmContactEmailVerificationResponses[keyof ConfirmContactEmailVerificationResponses];
 
 export type CreateDevContactSessionData = {
     body: CreateDevContactSessionRequest;
