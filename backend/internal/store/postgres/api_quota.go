@@ -1746,6 +1746,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		SellerUserID:                  orderContext.OwnerUserID,
 		Status:                        apiorder.StatusPendingPayment,
 		DisputeStatus:                 apiorder.DisputeStatusNone,
+		CommercialOutcome:             apiorder.CommercialOutcomePending,
 		ServiceTitleSnapshot:          orderContext.ServiceTitle,
 		ServiceVersionSnapshot:        orderContext.ServiceVersion,
 		BillingModeSnapshot:           orderContext.BillingMode,

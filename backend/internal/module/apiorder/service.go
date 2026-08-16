@@ -40,7 +40,7 @@ type PublicServiceResolver interface {
 }
 
 type DisputeCaseCreator interface {
-	RegisterAPIOrderDispute(ctx context.Context, input DisputeCaseInput) (string, *domain.AppError)
+	RegisterAPIOrderDispute(ctx context.Context, input DisputeCaseInput) (DisputeProjection, *domain.AppError)
 }
 
 type Service struct {
@@ -412,34 +412,57 @@ func (s *Service) OpenDisputeForActorWithIdempotency(ctx context.Context, actor 
 }
 
 func (s *Service) CloseDisputeProjection(_ context.Context, disputeCaseID, actorUserID, requestID string) *domain.AppError {
-	return s.SetDisputeProjection(context.Background(), disputeCaseID, DisputeStatusClosed, actorUserID, requestID)
+	return s.SetDisputeProjection(context.Background(), DisputeProjection{CaseID: disputeCaseID, Status: DisputeStatusClosed}, actorUserID, requestID)
 }
 
-func (s *Service) SetDisputeProjection(_ context.Context, disputeCaseID, status, actorUserID, requestID string) *domain.AppError {
+func (s *Service) SetDisputeProjection(_ context.Context, projection DisputeProjection, actorUserID, requestID string) *domain.AppError {
 	if s.repo != nil {
 		return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "数据库纠纷投影必须在管理员事务中更新。")
 	}
-	if status != DisputeStatusOpen && status != DisputeStatusAwaitingFulfillment && status != DisputeStatusFulfillmentConfirmation && status != DisputeStatusClosed {
+	status := strings.TrimSpace(projection.Status)
+	if status != DisputeStatusPendingSellerResponse && status != DisputeStatusPendingApplicantDecision &&
+		status != DisputeStatusOpen && status != DisputeStatusAwaitingFulfillment && status != DisputeStatusFulfillmentConfirmation && status != DisputeStatusClosed {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷投影目标状态不支持。")
 	}
-	disputeCaseID = strings.TrimSpace(disputeCaseID)
+	disputeCaseID := strings.TrimSpace(projection.CaseID)
 	if disputeCaseID == "" {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷未关联 API 订单。")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, order := range s.orders {
+		if status == DisputeStatusClosed && order.DisputeCaseID == "" && order.LatestDisputeCaseID == disputeCaseID && order.DisputeStatus == DisputeStatusNone {
+			return nil
+		}
 		if order.DisputeCaseID != disputeCaseID {
 			continue
 		}
-		if order.DisputeStatus == status {
+		order.DisputeNextActor = strings.TrimSpace(projection.NextActor)
+		order.DisputeNextUserID = strings.TrimSpace(projection.NextUserID)
+		order.DisputeDueAt = cloneTime(projection.DueAt)
+		order.ActiveRemedyAction = strings.TrimSpace(projection.ActiveRemedyAction)
+		if status != DisputeStatusClosed && order.DisputeStatus == status {
+			s.orders[id] = order
 			return nil
 		}
 		if !IsDisputeActive(order.DisputeStatus) {
 			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单状态不一致，无法结案。")
 		}
 		previousDisputeStatus := order.DisputeStatus
-		order.DisputeStatus = status
+		if status == DisputeStatusClosed {
+			order.LatestDisputeCaseID = order.DisputeCaseID
+			order.DisputeCaseID = ""
+			order.DisputeStatus = DisputeStatusNone
+			order.ActiveRemedyAction = ""
+			order.DisputeNextActor = ""
+			order.DisputeNextUserID = ""
+			order.DisputeDueAt = nil
+			order.CommercialOutcome = CommercialOutcomeClosedUnverified
+			closedAt := s.now()
+			order.CommercialOutcomeUpdatedAt = &closedAt
+		} else {
+			order.DisputeStatus = status
+		}
 		order.UpdatedAt = s.now()
 		order.Version++
 		s.orders[id] = order
@@ -475,7 +498,7 @@ func (s *Service) ValidateDisputeProposalAmount(_ context.Context, disputeCaseID
 	defer s.mu.Unlock()
 	for _, order := range s.orders {
 		if order.DisputeCaseID == strings.TrimSpace(disputeCaseID) {
-			return ValidateRequestedDisputeAmount(resolution, amount, order.Amount)
+			return ValidateDisputeResolutionForOrder(order, resolution, amount)
 		}
 	}
 	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单不存在或关联不一致。")
@@ -671,14 +694,7 @@ func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action st
 	case "create", "submit_payment", "cancel", "confirm_complete", "report_late_payment":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "open_dispute":
-		order, appErr := s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
-		if appErr == nil {
-			return order, nil
-		}
-		if appErr.Status != http.StatusNotFound {
-			return Order{}, appErr
-		}
-		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
+		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	default:
@@ -758,10 +774,29 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 		}
 	}
 	from := order.Status
+	if action == "confirm_payment" && order.PurchaseKind == PurchaseKindLimitedQuotaOffer &&
+		order.QuotaDeliveryMode == QuotaDeliveryModePreimported && !HasMinimumDeliveryValidity(order, now) {
+		order.QuotaValidityIssueAt = &now
+		order.QuotaValidityIssueReason = QuotaValidityIssueDelivery
+		order.UpdatedAt = now
+		order.Version++
+		s.orders[order.ID] = WithAfterSalesProjection(order, now)
+		s.appendEventLocked(order, input.ActorUserID, EventQuotaValidityIssue, order.Status, order.Status, "首次交付剩余有效期不足 60 分钟", input.RequestID)
+		return order, QuotaValidityIssueError()
+	}
 	if action == "cancel" {
 		s.releaseInventoryLocked(&order)
 	}
 	if action == "submit_delivery" {
+		if !HasMinimumDeliveryValidity(order, now) {
+			order.QuotaValidityIssueAt = &now
+			order.QuotaValidityIssueReason = QuotaValidityIssueDelivery
+			order.UpdatedAt = now
+			order.Version++
+			s.orders[order.ID] = WithAfterSalesProjection(order, now)
+			s.appendEventLocked(order, input.ActorUserID, EventQuotaValidityIssue, order.Status, order.Status, "首次交付剩余有效期不足 60 分钟", input.RequestID)
+			return order, QuotaValidityIssueError()
+		}
 		expiresAt, appErr := PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, now)
 		if appErr != nil {
 			return Order{}, appErr
@@ -775,11 +810,15 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 		order.DeliveryCredential = &credential
 	}
 	if action == "open_dispute" {
-		caseID, appErr := s.registerDisputeCaseLocked(ctx, order, input, now)
+		projection, appErr := s.registerDisputeCaseLocked(ctx, order, input, now)
 		if appErr != nil {
 			return Order{}, appErr
 		}
-		order.DisputeCaseID = caseID
+		order.DisputeCaseID = projection.CaseID
+		order.DisputeNextActor = projection.NextActor
+		order.DisputeNextUserID = projection.NextUserID
+		order.DisputeDueAt = cloneTime(projection.DueAt)
+		order.ActiveRemedyAction = projection.ActiveRemedyAction
 	}
 	order = WithAfterSalesProjection(applyAction(order, input, action, now), now)
 	s.orders[order.ID] = order
@@ -794,13 +833,13 @@ func (s *Service) withCredentialLocked(order Order) Order {
 	return order
 }
 
-func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, input ActionInput, now time.Time) (string, *domain.AppError) {
+func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, input ActionInput, now time.Time) (DisputeProjection, *domain.AppError) {
 	if s.disputes == nil {
-		return "", domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "订单纠纷登记依赖不可用。")
+		return DisputeProjection{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "订单纠纷登记依赖不可用。")
 	}
 	issueOccurredAt, appErr := ValidateDisputeOccurrence(order, input.IssueOccurredAt, now)
 	if appErr != nil {
-		return "", appErr
+		return DisputeProjection{}, appErr
 	}
 	return s.disputes.RegisterAPIOrderDispute(ctx, DisputeCaseInput{
 		OrderID:             order.ID,
@@ -818,6 +857,14 @@ func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, in
 	})
 }
 
+func cloneTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
 func (s *Service) materializeTimeoutLocked(orderID string) Order {
 	return s.materializeTimeoutLockedAt(orderID, s.now())
 }
@@ -829,6 +876,8 @@ func (s *Service) materializeTimeoutLockedAt(orderID string, now time.Time) Orde
 		order.Status = StatusCancelled
 		order.CancelReason = CancelReasonPaymentTimeout
 		order.CancelledAt = &now
+		order.CommercialOutcome = CommercialOutcomeCancelledUnpaid
+		order.CommercialOutcomeUpdatedAt = &now
 		order.UpdatedAt = now
 		order.Version++
 		s.releaseInventoryLocked(&order)
@@ -844,6 +893,8 @@ func (s *Service) materializeTimeoutLockedAt(orderID string, now time.Time) Orde
 		order.Status = StatusCompleted
 		order.CompletionSource = CompletionSourceAutoCompleted
 		order.CompletedAt = &completedAt
+		order.CommercialOutcome = CommercialOutcomeNormalFulfillment
+		order.CommercialOutcomeUpdatedAt = &completedAt
 		order.UpdatedAt = now
 		order.Version++
 		s.orders[orderID] = order
@@ -997,6 +1048,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		SellerUserID:                  intent.OwnerUserID,
 		Status:                        StatusPendingPayment,
 		DisputeStatus:                 DisputeStatusNone,
+		CommercialOutcome:             CommercialOutcomePending,
 		ServiceTitleSnapshot:          service.Title,
 		ServiceVersionSnapshot:        service.Version,
 		BillingModeSnapshot:           service.BillingMode,
@@ -1381,7 +1433,7 @@ func canActorAccess(order Order, actorUserID, action string) bool {
 	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
 	case "open_dispute":
-		return order.BuyerUserID == actorUserID || order.SellerUserID == actorUserID
+		return order.BuyerUserID == actorUserID
 	default:
 		return false
 	}
@@ -1435,6 +1487,8 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusCancelled
 		order.CancelReason = strings.TrimSpace(input.Reason)
 		order.CancelledAt = &now
+		order.CommercialOutcome = CommercialOutcomeCancelledUnpaid
+		order.CommercialOutcomeUpdatedAt = &now
 	case "confirm_payment":
 		order.Status = StatusPaidConfirmed
 		order.PaidConfirmedAt = &now
@@ -1451,8 +1505,10 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusCompleted
 		order.CompletionSource = CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
+		order.CommercialOutcome = CommercialOutcomeNormalFulfillment
+		order.CommercialOutcomeUpdatedAt = &now
 	case "open_dispute":
-		order.DisputeStatus = DisputeStatusNegotiating
+		order.DisputeStatus = DisputeStatusPendingSellerResponse
 	case "report_late_payment":
 		order.LatePaymentStatus = LatePaymentStatusReported
 		order.LatePaymentReportedAt = &now

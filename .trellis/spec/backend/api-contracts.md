@@ -1015,7 +1015,7 @@ return PublicDispute{Type: dispute.PublicSummary, Result: dispute.PublicResult}
 ### 1. Scope / Trigger
 
 - Trigger: cross-layer API and database contract for user reports, manual dispute cases, and user appeals.
-- Scope: reports/disputes/appeals are manual risk records and public-safe summaries. They are not payment, refund, compensation, escrow, guarantee, fulfillment, credential delivery, file upload, email, webhook, external ticket, or automatic penalty systems.
+- Scope: reports/disputes/appeals are manual risk records and public-safe summaries. They are not payment, refund, compensation, escrow, guarantee, fulfillment, credential delivery, email, webhook, external ticket, or automatic penalty systems. API-order disputes alone may attach bounded private image evidence under the authorization and lifecycle contract in `api-order-disputes.md`; generic reports and non-API disputes do not gain a file-upload surface.
 
 ### 2. Signatures
 
@@ -2522,18 +2522,17 @@ page: status says available; button: local risk check says blocked
 list/detail/create -> EvaluateApplicationEligibility -> one code/reason/action
 ```
 
-## Scenario: API Order Email And Participant Dispute Entry
+## Scenario: API Order Email And Buyer After-Sales Entry
 
 ### 1. Scope / Trigger
 
-- Trigger: API purchase-intent/order creation, merchant email reminders, API-order dispute routes, or buyer/merchant order-detail actions change.
-- Purpose: an order-style email must refer to a committed order, and both order participants must use the order dispute workflow instead of generic feedback.
+- Trigger: API purchase-intent/order creation, merchant email reminders, API-order after-sales routes, or buyer/merchant order-detail actions change.
+- Purpose: an order-style email must refer to a committed order, and only the buyer may create the formal after-sales request instead of using generic feedback.
 
 ### 2. Signatures
 
 ```text
 POST /api/v1/me/api-orders/{id}/dispute
-POST /api/v1/owner/api-orders/{id}/dispute
 
 CreateWithIdempotencyResult(...) -> (Order, idempotency.Completion, created bool, *domain.AppError)
 SendAPIOrderCreated(ctx, toEmail, serviceTitle, orderID, amount, currency, paymentExpiresAt, createdAt)
@@ -2544,8 +2543,8 @@ SendAPIOrderCreated(ctx, toEmail, serviceTitle, orderID, amount, currency, payme
 - Purchase-intent creation never sends the merchant an order-style email. Core sends `SendAPIOrderCreated` only after a new order commits and only when `created=true`.
 - An idempotency replay returns the existing order and completion with `created=false`; it must not send a duplicate email. Email failure is logged after the business commit and never changes a successful order response.
 - Merchant email delivery requires a non-empty verified profile email. The email includes a display-only `AO-<last-six>` reference, amount, Beijing payment deadline, full merchant order URL, and an explicit statement that order creation does not mean funds arrived.
-- Buyer and owner dispute endpoints both require session, CSRF, `If-Match`, `Idempotency-Key`, and a non-empty non-secret `reason`. Both call the same `open_dispute` domain transition; the main fulfillment status remains unchanged while `disputeStatus` becomes `open`.
-- Frontend real and mock adapters expose one `openApiOrderDispute(id, reason, version, perspective)` operation. Order detail displays `平台介入中` after success and must not route API-order problems to the generic feedback page.
+- The buyer after-sales endpoint requires session, CSRF, `If-Match`, `Idempotency-Key`, and a non-empty non-secret `reason`. It creates `pending_seller_response`; the main fulfillment status remains unchanged. No owner dispute-creation route or OpenAPI operation exists.
+- Frontend real and mock adapters reject a merchant perspective before issuing a request. Buyer and merchant order details render the independent after-sales projection and must not route API-order problems to the generic feedback page.
 
 ### 4. Validation & Error Matrix
 
@@ -2557,7 +2556,7 @@ SendAPIOrderCreated(ctx, toEmail, serviceTitle, orderID, amount, currency, payme
 | Merchant email is missing or unverified | Order succeeds; email is skipped |
 | Email provider fails | Order succeeds; sanitized failure is logged |
 | Dispute reason is empty | `422 VALIDATION_FAILED` |
-| Caller is not the buyer or seller | Not found/permission response; no dispute change |
+| Caller is not the buyer | Not found/permission response; no dispute change |
 | Order is cancelled, completed, or already disputed | `409 INVALID_STATE_TRANSITION` |
 | Stale `If-Match` | `412 PRECONDITION_FAILED` |
 
@@ -2565,15 +2564,16 @@ SendAPIOrderCreated(ctx, toEmail, serviceTitle, orderID, amount, currency, payme
 
 - Good: order commits, the verified merchant receives one direct order link, and a retry with the same idempotency key sends nothing new.
 - Base: an unverified merchant still receives the durable in-app state but no email.
-- Good: either participant submits a concise order problem and sees `平台介入中` after the order query refreshes.
+- Good: the buyer submits a concise order problem, the seller sees the pending-decision action, and both order views retain the original fulfillment status.
+- Bad: the seller creates the after-sales request or the public OpenAPI schema advertises an owner dispute-creation path.
 - Bad: send an “API order” email from purchase-intent creation, use a full UUID as the primary display number, or send the user to `/my/feedback` for an API-order dispute.
 
 ### 6. Tests Required
 
 - Core tests: purchase-intent-only sends zero emails; new order sends one; replay sends no duplicate; unverified email skips; provider failure does not block creation.
 - Email template tests: text and HTML contain `AO-<last-six>`, amount, Beijing deadline, full merchant URL, no-arrival warning, and system footer.
-- Router test: buyer and owner dispute routes both succeed, owner idempotency replay succeeds, and the administrator dispute queue contains the linked case.
-- Frontend tests: real path builder selects `me` versus `owner`; mock permits each participant exactly once; order-detail copy contains the in-place intervention state and no generic feedback route.
+- Router test: the buyer route succeeds, the removed owner route returns 404 without mutating the order, and the linked case appears to both participants.
+- Frontend tests: the path builder returns only the `me` route, merchant calls fail before the mutation, and order-detail copy renders the after-sales state without a generic feedback route.
 - Full `go test ./...`, frontend Vitest/type/build, OpenAPI route parity, product-boundary scan, and `git diff --check`.
 
 ### 7. Wrong vs Correct
@@ -2622,7 +2622,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 98 (current repository target)
+  ExpectedMigrationVersion = 108 (current repository target)
 ```
 
 ### 3. Contracts

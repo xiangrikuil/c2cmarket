@@ -273,7 +273,7 @@ func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testin
 	}
 	if remedyStatus != report.RemedyStatusConfirmationExpired || responseNote != report.RemedyConfirmationExpiredNote ||
 		disputeStatus != report.DisputeStatusClosed || publicResult != report.RemedyConfirmationExpiredPublicResult ||
-		orderDisputeStatus != apiorder.DisputeStatusClosed {
+		orderDisputeStatus != apiorder.DisputeStatusNone {
 		t.Fatalf("unexpected neutral timeout state remedy=%q note=%q dispute=%q result=%q order=%q", remedyStatus, responseNote, disputeStatus, publicResult, orderDisputeStatus)
 	}
 	var notificationCount int
@@ -291,6 +291,116 @@ func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testin
 	second, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
 	if appErr != nil || second.DisputeRemedyConfirmationsExpired != 0 {
 		t.Fatalf("remedy timeout rerun must be idempotent: result=%+v err=%v", second, appErr)
+	}
+}
+
+func TestPostgresRemedyLatenessDecisionSurvivesLateFulfillmentClaim(t *testing.T) {
+	store := connectLifecycleTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	sellerID := uuid.NewString()
+	sellerContactID := uuid.NewString()
+	buyerID := uuid.NewString()
+	buyerContactID := uuid.NewString()
+	serviceID := uuid.NewString()
+	seedQuotaServiceForTest(t, ctx, store.pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now.Add(-24*time.Hour))
+	order := insertLifecycleCompletedCredentialOrder(t, store, serviceID, sellerID, sellerContactID, buyerID, buyerContactID, now.Add(-2*time.Hour), now.Add(-3*time.Hour), "", nil)
+	disputeID := insertLifecycleDispute(t, store, order.OrderID, buyerID, sellerID, report.DisputeStatusResolved, now.Add(-24*time.Hour))
+	remedyID := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `
+			UPDATE api_orders
+			SET dispute_status = 'none', dispute_case_id = NULL, active_remedy_action = ''
+			WHERE id = $1
+		`, order.OrderID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM notifications WHERE target_id = $1`, disputeID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM dispute_events WHERE entity_id = $1`, disputeID)
+		cleanupLifecycleCredentialFixtures(t, context.Background(), store, sellerID, buyerID, "")
+	})
+	if _, err := store.pool.Exec(ctx, `
+		UPDATE api_orders
+		SET dispute_status = 'awaiting_fulfillment', dispute_case_id = $2, updated_at = $3
+		WHERE id = $1
+	`, order.OrderID, disputeID, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("attach remedy dispute: %v", err)
+	}
+	if _, err := store.pool.Exec(ctx, `
+		INSERT INTO api_order_dispute_remedies (
+			id, dispute_case_id, action, responsible_user_id, beneficiary_user_id,
+			instructions, status, due_at, lateness_status, source,
+			created_by_admin_id, created_request_id, created_at, updated_at, version
+		)
+		VALUES ($1, $2, 'full_refund', $3, $4, '请完成约定退款。', 'pending', $5,
+		        'not_due', 'admin_decision', $4, $6, $7, $7, 1)
+	`, remedyID, disputeID, sellerID, buyerID, now, "lateness-remedy-created-"+remedyID, now.Add(-24*time.Hour)); err != nil {
+		t.Fatalf("seed pending remedy: %v", err)
+	}
+	var initialCommercialOutcome string
+	if err := store.pool.QueryRow(ctx, `SELECT commercial_outcome FROM api_orders WHERE id = $1`, order.OrderID).Scan(&initialCommercialOutcome); err != nil {
+		t.Fatalf("read initial commercial outcome: %v", err)
+	}
+
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin lateness decision: %v", err)
+	}
+	result, appErr := updateDisputeAdminInTx(ctx, tx, report.AdminActionInput{
+		ID: disputeID, Action: "confirm_lateness", ExpectedVersion: 1,
+		AdminUserID: buyerID, Reason: "责任方未在约定期限内声明履行。", RequestID: "confirm-lateness-" + remedyID,
+	}, now)
+	if appErr != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("confirm remedy lateness: %v", appErr)
+	}
+	if result.Dispute == nil || result.Dispute.Status != report.DisputeStatusResolved || !result.Dispute.Active || result.Dispute.ClosedAt != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("lateness decision changed dispute progress: %+v", result.Dispute)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit lateness decision: %v", err)
+	}
+
+	claimAt := now.Add(time.Hour)
+	tx, err = store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin late claim: %v", err)
+	}
+	dispute, err := scanDispute(ctx, tx, disputeSelectSQL+` WHERE d.id = $1 FOR UPDATE OF d`, disputeID)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("lock dispute for late claim: %v", err)
+	}
+	storedOrder, err := store.getAPIOrder(ctx, tx, order.OrderID, true, false)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("lock order for late claim: %v", err)
+	}
+	if appErr := store.applyDisputeParticipantActionInTx(ctx, tx, &dispute, &storedOrder, report.DisputeParticipantActionInput{
+		DisputeID: disputeID, Action: report.DisputeRemedyActionClaim, ActorUserID: sellerID,
+		Note: "已在迟到裁定后补充履行。", RequestID: "late-claim-" + remedyID,
+	}, claimAt); appErr != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("claim after lateness decision: %v", appErr)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit late claim: %v", err)
+	}
+
+	var remedyStatus, latenessStatus, disputeStatus, orderDisputeStatus, commercialOutcome string
+	var active bool
+	if err := store.pool.QueryRow(ctx, `
+		SELECT r.status, r.lateness_status, d.status, d.active, o.dispute_status, o.commercial_outcome
+		FROM api_order_dispute_remedies r
+		JOIN dispute_cases d ON d.id = r.dispute_case_id
+		JOIN api_orders o ON o.id = d.api_order_id
+		WHERE r.id = $1
+	`, remedyID).Scan(&remedyStatus, &latenessStatus, &disputeStatus, &active, &orderDisputeStatus, &commercialOutcome); err != nil {
+		t.Fatalf("read late claim state: %v", err)
+	}
+	if remedyStatus != report.RemedyStatusClaimedFulfilled || latenessStatus != report.RemedyLatenessLateConfirmed ||
+		disputeStatus != report.DisputeStatusResolved || !active || orderDisputeStatus != apiorder.DisputeStatusFulfillmentConfirmation ||
+		commercialOutcome != initialCommercialOutcome {
+		t.Fatalf("unexpected late claim state remedy=%q lateness=%q dispute=%q active=%v order=%q commercial=%q", remedyStatus, latenessStatus, disputeStatus, active, orderDisputeStatus, commercialOutcome)
 	}
 }
 
@@ -336,12 +446,12 @@ func TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAn
 
 	openDisputeID := insertLifecycleDispute(t, store, openHold.OrderID, buyerID, sellerID, "open", oldCompletion)
 	waitingDisputeID := insertLifecycleDispute(t, store, waitingHold.OrderID, buyerID, sellerID, "waiting_info", oldCompletion)
-	appealDisputeID := insertLifecycleDispute(t, store, appealHold.OrderID, buyerID, sellerID, "resolved", oldCompletion)
+	appealDisputeID := insertLifecycleFinalDispute(t, store, appealHold.OrderID, buyerID, sellerID, oldCompletion)
 	appealID := createLifecycleAppeal(t, store, buyerID, appealDisputeID, oldCompletion)
 	if _, err := store.pool.Exec(ctx, `UPDATE appeals SET target_type = 'public_user', target_id = 'poisoned-target' WHERE id = $1`, appealID); err != nil {
 		t.Fatalf("poison denormalized appeal target: %v", err)
 	}
-	falseHoldDisputeID := insertLifecycleDispute(t, store, "unrelated-order", buyerID, sellerID, "resolved", oldCompletion)
+	falseHoldDisputeID := insertLifecycleFinalDispute(t, store, deliveryAnchor.OrderID, buyerID, sellerID, oldCompletion)
 	falseHoldAppealID := uuid.NewString()
 	if _, err := store.pool.Exec(ctx, `
 		INSERT INTO appeals (
@@ -374,7 +484,7 @@ func TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAn
 		assertLifecycleOrderCredentialState(t, store, fixture.CredentialID, false, "")
 	}
 
-	destroyedSourceDisputeID := insertLifecycleDispute(t, store, eligibleFirst.OrderID, buyerID, sellerID, "resolved", runAt)
+	destroyedSourceDisputeID := insertLifecycleFinalDispute(t, store, eligibleFirst.OrderID, buyerID, sellerID, runAt)
 	destroyedAppealTx, err := store.pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin destroyed credential appeal: %v", err)
@@ -412,7 +522,7 @@ func TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAn
 	}
 	assertLifecycleOrderCredentialState(t, store, eligibleSecond.CredentialID, true, "retention_expired")
 
-	raceDisputeID := insertLifecycleDispute(t, store, raceHold.OrderID, buyerID, sellerID, "resolved", runAt)
+	raceDisputeID := insertLifecycleFinalDispute(t, store, raceHold.OrderID, buyerID, sellerID, runAt)
 	raceTx, err := store.pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin concurrent appeal: %v", err)
@@ -479,7 +589,10 @@ func TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAn
 
 	if _, err := store.pool.Exec(ctx, `
 		UPDATE dispute_cases
-		SET status = 'closed', closed_at = $2, updated_at = $2
+		SET status = 'closed', active = false, closed_at = $2,
+		    final_reason = 'applicant_decision_expired', appeal_expires_at = NULL,
+		    adversely_affected_user_ids = '{}'::uuid[],
+		    next_actor = 'none', due_at = NULL, updated_at = $2
 		WHERE id = ANY($1::uuid[])
 		`, []string{openDisputeID, waitingDisputeID, reportRaceResult.Dispute.ID}, lateRunAt); err != nil {
 		t.Fatalf("release dispute holds: %v", err)
@@ -488,7 +601,7 @@ func TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAn
 		UPDATE appeals
 		SET status = 'approved', handled_by_admin_id = $2, handled_at = $3, updated_at = $3
 		WHERE id = ANY($1::uuid[])
-	`, []string{appealID, raceAppeal.ID}, sellerID, lateRunAt); err != nil {
+	`, []string{appealID, falseHoldAppealID, raceAppeal.ID}, sellerID, lateRunAt); err != nil {
 		t.Fatalf("release appeal holds: %v", err)
 	}
 
@@ -820,17 +933,41 @@ func insertLifecycleDispute(t *testing.T, store *Store, orderID, buyerID, seller
 	}
 	if _, err := store.pool.Exec(context.Background(), `
 		INSERT INTO dispute_cases (
-			id, target_type, target_id, target_label,
+			id, target_type, target_id, api_order_id, active, target_label,
 			primary_user_id, counterparty_user_id, subject_user_id,
 			status, public_summary, public_result_code, public_result,
 			admin_reason, opened_by_admin_id, opened_at, resolved_at, closed_at,
 			created_at, updated_at
 		)
-		VALUES ($1, 'api_order', $2, 'Lifecycle order', $3, $4, $3,
+		VALUES ($1, 'api_order', $2, $9::uuid, $5 <> 'closed', 'Lifecycle order', $3, $4, $3,
 		        $5, 'Lifecycle dispute', 'no_action', 'Lifecycle result',
 		        'Lifecycle reason', $4, $6, $7, $8, $6, $6)
-	`, disputeID, orderID, buyerID, sellerID, status, now, resolvedAt, closedAt); err != nil {
+	`, disputeID, orderID, buyerID, sellerID, status, now, resolvedAt, closedAt, orderID); err != nil {
 		t.Fatalf("seed lifecycle dispute %s: %v", status, err)
+	}
+	return disputeID
+}
+
+func insertLifecycleFinalDispute(t *testing.T, store *Store, orderID, buyerID, sellerID string, now time.Time) string {
+	t.Helper()
+	disputeID := uuid.NewString()
+	if _, err := store.pool.Exec(context.Background(), `
+		INSERT INTO dispute_cases (
+			id, target_type, target_id, api_order_id, active, target_label,
+			primary_user_id, counterparty_user_id, subject_user_id,
+			status, public_summary, public_result_code, public_result,
+			admin_reason, opened_by_admin_id, opened_at, resolved_at,
+			final_reason, appeal_expires_at, adversely_affected_user_ids,
+			created_at, updated_at
+		)
+		VALUES (
+			$1, 'api_order', $2, NULLIF($3, '')::uuid, false, 'Lifecycle order',
+			$4, $5, $4, 'resolved', 'Lifecycle dispute', 'no_action', 'Lifecycle result',
+			'Lifecycle reason', $5, $6, $6, 'legacy_resolved',
+			$6::timestamptz + interval '30 days', ARRAY[$4::uuid], $6, $6
+		)
+	`, disputeID, orderID, orderID, buyerID, sellerID, now); err != nil {
+		t.Fatalf("seed final lifecycle dispute: %v", err)
 	}
 	return disputeID
 }
@@ -927,6 +1064,7 @@ func cleanupLifecycleCredentialFixtures(t *testing.T, ctx context.Context, store
 		args  []any
 	}{
 		{`DELETE FROM appeals WHERE appellant_user_id = $1`, []any{buyerID}},
+		{`UPDATE api_orders SET dispute_case_id = NULL, latest_dispute_case_id = NULL, dispute_status = 'none', active_remedy_action = '' WHERE buyer_user_id = $1 AND seller_user_id = $2`, []any{buyerID, sellerID}},
 		{`DELETE FROM dispute_cases WHERE primary_user_id = $1 AND counterparty_user_id = $2`, []any{buyerID, sellerID}},
 		{`DELETE FROM moderation_audit_logs WHERE actor_admin_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM reports WHERE reporter_user_id = $1`, []any{buyerID}},

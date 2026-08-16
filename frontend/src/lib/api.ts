@@ -113,7 +113,7 @@ import {
 export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -434,7 +434,7 @@ export type ReviewCenterRow = {
   counterpartyUsername: string
   reviewerRole: 'buyer' | 'seller'
   revieweeRole: 'buyer' | 'seller'
-  status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
+  status: 'reviewable' | 'paused' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
   allowedTags: ReviewTag[]
   canCreate: boolean
@@ -444,6 +444,8 @@ export type ReviewCenterRow = {
   note: string | null
   completedAt: string
   reviewDeadlineAt: string
+  commercialOutcome: '' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'legacy_fulfillment'
+  reviewPaused: boolean
   submittedAt: string | null
   visibleAt: string | null
   frozenAt: string | null
@@ -646,6 +648,15 @@ export type ApiOrder = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  latestDisputeCaseId?: string
+  hasDisputeHistory: boolean
+  disputeNextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none'
+  disputeDueAt?: string
+  disputeNeedsAction?: boolean
+  disputeResponseOverdue?: boolean
+  disputeAvailableActions?: ApiOrderDisputeAction[]
+  activeRemedyAction?: ApiOrderDisputeResolution
+  activeRemedySource?: ApiOrderDisputeRemedySource
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitle: string
   amount: number
@@ -659,16 +670,23 @@ export type ApiOrder = {
   paymentSubmittedAt?: string
   merchantConfirmDueAt?: string
   merchantConfirmOverdue?: boolean
+  merchantConfirmOverdueAt?: string
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
   deliveryDueAt?: string
   deliveryOverdue?: boolean
+  deliveryOverdueAt?: string
+  deliveryDueRemindedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
   deliveryCredential?: ApiOrderDeliveryCredential
+  commercialOutcome: ApiOrderCommercialOutcome
+  commercialOutcomeUpdatedAt?: string
+  quotaValidityIssueAt?: string
+  quotaValidityIssueReason?: 'delivery_insufficient'
   completionSource?: ApiOrderCompletionSource
   completedAt?: string
   cancelledAt?: string
@@ -722,6 +740,15 @@ export type AdminApiOrderDetail = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  latestDisputeCaseId?: string
+  hasDisputeHistory: boolean
+  disputeNextActor?: ApiOrder['disputeNextActor']
+  disputeDueAt?: string
+  disputeNeedsAction?: boolean
+  disputeResponseOverdue?: boolean
+  disputeAvailableActions?: ApiOrderDisputeAction[]
+  activeRemedyAction?: ApiOrderDisputeResolution
+  activeRemedySource?: ApiOrderDisputeRemedySource
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -736,15 +763,22 @@ export type AdminApiOrderDetail = {
   paymentSubmittedAt?: string
   merchantConfirmDueAt?: string
   merchantConfirmOverdue?: boolean
+  merchantConfirmOverdueAt?: string
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
   deliveryDueAt?: string
   deliveryOverdue?: boolean
+  deliveryOverdueAt?: string
+  deliveryDueRemindedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
+  commercialOutcome: ApiOrderCommercialOutcome
+  commercialOutcomeUpdatedAt?: string
+  quotaValidityIssueAt?: string
+  quotaValidityIssueReason?: 'delivery_insufficient'
   completionSource?: ApiOrderCompletionSource
   completedAt?: string
   cancelledAt?: string
@@ -1079,7 +1113,9 @@ function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
     ...order,
     orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
 		purchaseKind: order.purchaseKind ?? 'api_service',
-		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
+			disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
+		hasDisputeHistory: order.hasDisputeHistory ?? Boolean(order.disputeCaseId || order.latestDisputeCaseId || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none'),
+		commercialOutcome: order.commercialOutcome ?? (order.status === 'completed' ? 'normal_fulfillment' : order.status === 'cancelled' ? 'cancelled_unpaid' : 'pending'),
     completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
       ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
@@ -1092,6 +1128,14 @@ function mockApiOrderValidityExpiresAt(order: ApiOrder) {
 }
 
 function applyMockApiOrderAfterSales(order: ApiOrder, currentTime = Date.now()) {
+	order.hasDisputeHistory = Boolean(order.hasDisputeHistory || order.disputeCaseId || order.latestDisputeCaseId || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none')
+	if (order.commercialOutcome === 'pending' && order.status === 'completed' && !isApiOrderDisputeActive(order.disputeStatus)) {
+		order.commercialOutcome = 'normal_fulfillment'
+		order.commercialOutcomeUpdatedAt = order.completedAt ?? order.updatedAt
+	} else if (order.commercialOutcome === 'pending' && order.status === 'cancelled') {
+		order.commercialOutcome = 'cancelled_unpaid'
+		order.commercialOutcomeUpdatedAt = order.cancelledAt ?? order.updatedAt
+	}
 	const validityExpiresAt = mockApiOrderValidityExpiresAt(order)
 	const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
 	const afterSalesTimestamp = Number.isFinite(validityTimestamp) ? validityTimestamp + 24 * 60 * 60 * 1000 : Number.NaN
@@ -1759,7 +1803,9 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'paid_confirmed') return '等待商户交付'
     if (order.status === 'delivery_submitted') {
       switch (normalizeApiOrderDisputeStatus(order.disputeStatus)) {
-        case 'negotiating': return '继续协商订单问题'
+        case 'negotiating': return '继续查看历史协商案件'
+        case 'pending_seller_response': return '等待卖家处理售后申请'
+        case 'pending_applicant_decision': return '决定是否申请平台介入'
         case 'open': return '等待平台处理凭证问题'
         case 'awaiting_fulfillment': return '等待裁决要求履行'
         case 'fulfillment_confirmation': return '确认履行结果'
@@ -3914,6 +3960,15 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     status: order.status,
     disputeStatus: order.disputeStatus,
     disputeCaseId: order.disputeCaseId,
+    latestDisputeCaseId: order.latestDisputeCaseId,
+    hasDisputeHistory: order.hasDisputeHistory,
+    disputeNextActor: order.disputeNextActor,
+    disputeDueAt: order.disputeDueAt,
+    disputeNeedsAction: order.disputeNeedsAction,
+    disputeResponseOverdue: order.disputeResponseOverdue,
+    disputeAvailableActions: order.disputeAvailableActions ?? [],
+    activeRemedyAction: order.activeRemedyAction,
+    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitle,
     selectedPackageId: order.selectedPackageId,
@@ -3924,13 +3979,24 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     selectedPaymentMethod: order.selectedPaymentMethod,
     paymentExpiresAt: order.paymentExpiresAt,
     paymentSubmittedAt: order.paymentSubmittedAt,
+    merchantConfirmDueAt: order.merchantConfirmDueAt,
+    merchantConfirmOverdue: order.merchantConfirmOverdue,
+    merchantConfirmOverdueAt: order.merchantConfirmOverdueAt,
     paymentIssueReason: order.paymentIssueReason,
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt,
     paidConfirmedAt: order.paidConfirmedAt,
+    deliveryDueAt: order.deliveryDueAt,
+    deliveryOverdue: order.deliveryOverdue,
+    deliveryOverdueAt: order.deliveryOverdueAt,
+    deliveryDueRemindedAt: order.deliveryDueRemindedAt,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt,
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt,
+    commercialOutcome: order.commercialOutcome,
+    commercialOutcomeUpdatedAt: order.commercialOutcomeUpdatedAt,
+    quotaValidityIssueAt: order.quotaValidityIssueAt,
+    quotaValidityIssueReason: order.quotaValidityIssueReason,
     completionSource: order.completionSource,
     completedAt: order.completedAt,
     cancelledAt: order.cancelledAt,
@@ -5650,6 +5716,8 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           note: ownReview.note,
           completedAt,
           reviewDeadlineAt,
+          commercialOutcome: '',
+          reviewPaused: false,
           submittedAt: ownReview.createdAt,
           visibleAt,
           frozenAt: visibleAt,
@@ -5678,6 +5746,8 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           note: null,
           completedAt,
           reviewDeadlineAt,
+          commercialOutcome: '',
+          reviewPaused: false,
           submittedAt: null,
           visibleAt: null,
           frozenAt: null,
@@ -5708,6 +5778,8 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           note: published ? counterpartyReview.note : null,
           completedAt,
           reviewDeadlineAt,
+          commercialOutcome: '',
+          reviewPaused: false,
           submittedAt: counterpartyReview.createdAt,
           visibleAt,
           frozenAt: visibleAt,
@@ -6302,6 +6374,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     seller: getApiMerchantDisplayName(intent),
     status: 'pending_payment',
     disputeStatus: 'none',
+    hasDisputeHistory: false,
     serviceTitle: intent.snapshot.serviceTitle,
     amount: intent.purchaseAmountCny,
     amountDecimal: intent.purchaseAmountCnyDecimal || normalizeDecimal(String(intent.purchaseAmountCny), 2),
@@ -6309,6 +6382,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes: 10,
     paymentExpiresAt: minutesFromNow(10),
+    commercialOutcome: 'pending',
     buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intent.snapshot),
@@ -6406,6 +6480,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     seller: getApiMerchantDisplayName(service),
     status: 'pending_payment',
     disputeStatus: 'none',
+    hasDisputeHistory: false,
     serviceTitle: service.title,
     amount: Number(offer.priceCny),
     amountDecimal: offer.priceCny,
@@ -6413,6 +6488,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes,
     paymentExpiresAt: minutesFromNow(paymentWindowMinutes),
+    commercialOutcome: 'pending',
     buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intentSnapshot),
@@ -6622,7 +6698,7 @@ export async function openApiOrderDispute(id: string, input: OpenApiOrderDispute
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
-    if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
+		if (perspective !== 'buyer') throw new Error('只有买家可以发起订单售后申请。')
 		applyMockApiOrderAfterSales(order)
 		if (!order.canOpenDispute) {
       throw new Error('当前订单不能再次申请平台介入。')
@@ -6636,7 +6712,12 @@ export async function openApiOrderDispute(id: string, input: OpenApiOrderDispute
 			if (Number.isFinite(validityTimestamp) && occurredAt > validityTimestamp) throw new Error('问题必须发生在所购服务有效期内。')
 		}
     if (!input.reason.trim()) throw new Error('请填写订单问题说明。')
-    order.disputeStatus = 'negotiating'
+		order.disputeStatus = 'pending_seller_response'
+		order.disputeNextActor = 'respondent'
+		order.disputeDueAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+		order.disputeNeedsAction = true
+		order.disputeResponseOverdue = false
+		order.disputeAvailableActions = ['withdraw']
   })
 }
 

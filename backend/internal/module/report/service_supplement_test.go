@@ -7,10 +7,25 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/notification"
 )
+
+type failingSupplementProjection struct{}
+
+func (failingSupplementProjection) CloseDisputeProjection(context.Context, string, string, string) *domain.AppError {
+	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "projection failed")
+}
+
+func (failingSupplementProjection) SetDisputeProjection(context.Context, apiorder.DisputeProjection, string, string) *domain.AppError {
+	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "projection failed")
+}
+
+func (failingSupplementProjection) ValidateDisputeProposalAmount(context.Context, string, string, string) *domain.AppError {
+	return nil
+}
 
 func TestInfoSupplementRequiresDesignatedParticipantAndReplaysIdempotently(t *testing.T) {
 	now := time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC)
@@ -34,7 +49,7 @@ func TestInfoSupplementRequiresDesignatedParticipantAndReplaysIdempotently(t *te
 		t.Fatalf("request info: completion=%+v err=%v", completion, appErr)
 	}
 	requested := service.disputes[disputeID]
-	if requested.Status != DisputeStatusWaitingInfo || requested.OpenInfoRequestID == "" || requested.InfoRequestedFromID != counterparty.ID {
+	if requested.Status != DisputeStatusWaitingInfo || requested.OpenInfoRequestID == "" || requested.InfoRequestedFromID != counterparty.ID || requested.NextActor != DisputeNextActorRespondent || requested.DueAt == nil || !requested.DueAt.Equal(now.Add(DisputeInfoRequestWindow)) {
 		t.Fatalf("missing designated open request: %+v", requested)
 	}
 
@@ -65,7 +80,7 @@ func TestInfoSupplementRequiresDesignatedParticipantAndReplaysIdempotently(t *te
 		t.Fatalf("idempotent replay mismatch: first=%+v replay=%+v err=%v", first, replay, appErr)
 	}
 	updated := service.disputes[disputeID]
-	if updated.Status != DisputeStatusWaitingInfo || updated.OpenInfoRequestID != "" || updated.Version != 3 {
+	if updated.Status != DisputeStatusOpen || updated.NextActor != DisputeNextActorAdmin || updated.DueAt != nil || updated.OpenInfoRequestID != "" || updated.Version != 3 {
 		t.Fatalf("supplement must answer request without resolving case: %+v", updated)
 	}
 	adminDetail, appErr := service.AdminDispute(context.Background(), admin, disputeID)
@@ -91,6 +106,43 @@ func mutationCompletionForSupplementTest(result MutationResult) (idempotency.Com
 		resourceID = result.Dispute.ID
 	}
 	return idempotency.Completion{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{"ok":true}`), ResourceType: "moderation_case", ResourceID: resourceID}, nil
+}
+
+func TestInfoSupplementRollsBackMemoryWhenOrderProjectionFails(t *testing.T) {
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	service := NewService(nil, idempotency.NewService(nil, func() time.Time { return now }), func() time.Time { return now })
+	participant := auth.User{ID: "30000000-0000-4000-8000-000000000001", Status: auth.AccountStatusActive}
+	disputeID := "40000000-0000-4000-8000-000000000001"
+	requestID := "50000000-0000-4000-8000-000000000001"
+	service.disputes[disputeID] = DisputeCase{
+		ID: disputeID, TargetType: TargetAPIOrder, PrimaryUserID: "20000000-0000-4000-8000-000000000001", CounterpartyUserID: participant.ID,
+		Status: DisputeStatusWaitingInfo, Active: true, NextActor: DisputeNextActorRespondent, OpenInfoRequestID: requestID,
+		InfoRequestedFromID: participant.ID, OpenedAt: now, CreatedAt: now, UpdatedAt: now, Version: 2,
+	}
+	service.infoRequests[requestID] = InfoRequest{
+		ID: requestID, EntityType: InfoRequestEntityDispute, EntityID: disputeID, RequestedFromID: participant.ID,
+		RequestedByAdminID: "10000000-0000-4000-8000-000000000001", Status: InfoRequestStatusOpen, RequestedAt: now,
+	}
+	service.SetDisputeProjectionCloser(failingSupplementProjection{})
+
+	_, appErr := service.SubmitInfoSupplementWithIdempotency(context.Background(), participant,
+		"POST /api/v1/me/disputes/{id}/supplements:"+disputeID, "rollback-1", "rollback-hash",
+		SupplementInput{EntityType: InfoRequestEntityDispute, EntityID: disputeID, InfoRequestID: requestID, Body: "补充脱敏订单事实。"},
+		mutationCompletionForSupplementTest)
+	if appErr == nil || appErr.Code != domain.CodeInternalError {
+		t.Fatalf("expected projection failure, got %v", appErr)
+	}
+	item := service.disputes[disputeID]
+	request := service.infoRequests[requestID]
+	if item.Status != DisputeStatusWaitingInfo || item.NextActor != DisputeNextActorRespondent || item.OpenInfoRequestID != requestID || item.Version != 2 {
+		t.Fatalf("dispute mutation was not rolled back: %+v", item)
+	}
+	if request.Status != InfoRequestStatusOpen || request.AnsweredAt != nil {
+		t.Fatalf("info request mutation was not rolled back: %+v", request)
+	}
+	if supplements := service.infoSupplements[infoSupplementEntityKey(InfoRequestEntityDispute, disputeID)]; len(supplements) != 0 {
+		t.Fatalf("supplement append was not rolled back: %+v", supplements)
+	}
 }
 
 func TestWithSupplementBusinessActorPreservesDisplayIdentity(t *testing.T) {

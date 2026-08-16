@@ -52,6 +52,7 @@ const tabStatusByLabel: Partial<Record<string, ApiOrderStatus>> = {
 const tabStatus = computed(() => tabStatusByLabel[activeTab.value])
 const pageFilters = computed(() => ({
   status: tabStatus.value,
+  dispute: activeTab.value === '纠纷中' ? 'active' as const : undefined,
   search: keyword.value.trim() || undefined,
   dateRange: timeRange.value,
   sort: sortMode.value === 'amount' ? 'amount_desc' as const
@@ -85,6 +86,18 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
   if (event instanceof MouseEvent && (event.target as HTMLElement).closest('a,button')) return
   router.push(`/my/api-orders/${id}`)
 }
+
+function disputeActionLabel(item: (typeof rows.value)[number]) {
+	if (item.disputeAvailableActions?.includes('request_platform_intervention')) return '可申请平台介入'
+	if (item.disputeAvailableActions?.includes('confirm_remedy')) return '确认卖家处理结果'
+	if (item.disputeAvailableActions?.includes('withdraw')) return '等待卖家处理，可撤回'
+  if (item.disputeNeedsAction) return '售后待你处理'
+  if (item.disputeNextActor === 'admin') return '等待平台处理'
+  if (item.disputeNextActor === 'respondent') return '等待卖家处理'
+  if (item.disputeNextActor === 'responsible_party') return '等待卖家或责任方履行'
+  if (item.disputeNextActor === 'counterparty') return '等待对方确认'
+  return '纠纷处理中'
+}
 </script>
 
 <template>
@@ -93,7 +106,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
 
     <div class="my-api-orders-layout">
       <main class="min-w-0 space-y-4">
-        <StatusTabs v-model="activeTab" :items="['全部', '待付款', '待补充', '已付款', '待交付', '待核验', '已完成', '已取消']" />
+        <StatusTabs v-model="activeTab" :items="['全部', '纠纷中', '待付款', '待补充', '已付款', '待交付', '待核验', '已完成', '已取消']" />
 
         <div class="grid gap-2 md:grid-cols-[1fr_160px_180px]">
           <Input v-model="keyword" placeholder="搜索订单编号、服务、商户" />
@@ -122,7 +135,12 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
             </div>
             <div class="my-transaction-owner"><span>{{ sellerInitial(item.seller) }}</span><div><small>商户</small><strong>{{ item.seller }}</strong><em>{{ item.intentSnapshot.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${item.intentSnapshot.trustLevel}` }} · {{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</em></div></div>
             <div class="my-transaction-metric"><small>创建时间</small><strong class="inline-flex items-center gap-1.5"><CalendarClock class="h-3.5 w-3.5 text-muted-foreground" /><LocalTime :value="item.createdAt" /></strong><em>付款和交付信息按参与方权限展示</em></div>
-            <div class="my-transaction-state"><StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'buyer')" /><span>{{ getApiOrderNextAction(item, 'buyer') }}</span></div>
+            <div class="my-transaction-state">
+              <StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'buyer')" />
+              <StatusBadge v-if="item.disputeCaseId" status="open" label="售后处理中" />
+              <span>{{ item.disputeCaseId ? disputeActionLabel(item) : getApiOrderNextAction(item, 'buyer') }}</span>
+              <RouterLink v-if="item.disputeCaseId" :to="`/my/disputes/${item.disputeCaseId}?orderId=${item.id}`" class="text-xs font-medium text-primary">查看案件</RouterLink>
+            </div>
             <ArrowRight class="my-transaction-arrow" />
           </Card>
           <div class="my-transaction-pagination"><CursorTablePagination :page="pagination.page.value" :item-count="rows.length" :has-next-page="Boolean(pageQuery.data.value?.nextCursor)" :loading="pageQuery.isFetching.value" @previous="pagination.previous" @next="pagination.next(pageQuery.data.value?.nextCursor)" /></div>
@@ -131,7 +149,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
       <aside class="my-api-orders-aside space-y-3">
         <Card class="my-api-order-overview p-4">
           <div class="flex items-center justify-between"><h2 class="font-semibold">订单概览</h2><WalletCards class="h-5 w-5 text-cyan-600" /></div>
-          <div class="mt-4 grid grid-cols-2 gap-3"><div><small>订单总数</small><strong>{{ (data ?? []).length }}</strong></div><div><small>累计金额</small><strong>¥{{ totalAmount.toFixed(2) }}</strong></div><div><small>待我处理</small><strong>{{ (data ?? []).filter(item => activeStatuses.includes(item.status)).length }}</strong></div><div><small>已完成</small><strong>{{ (data ?? []).filter(item => item.status === 'completed').length }}</strong></div></div>
+          <div class="mt-4 grid grid-cols-2 gap-3"><div><small>订单总数</small><strong>{{ (data ?? []).length }}</strong></div><div><small>纠纷中</small><strong>{{ (data ?? []).filter(item => item.disputeCaseId).length }}</strong></div><div><small>待我处理</small><strong>{{ (data ?? []).filter(item => activeStatuses.includes(item.status) || item.disputeNeedsAction).length }}</strong></div><div><small>已完成</small><strong>{{ (data ?? []).filter(item => item.status === 'completed').length }}</strong></div></div>
         </Card>
         <Card class="p-4">
           <h2 class="font-semibold">订单处理顺序</h2>

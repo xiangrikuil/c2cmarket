@@ -2,6 +2,7 @@
 
 Date: 2026-08-12
 Author: Codex
+Updated: 2026-08-15
 
 ## Scenario: Turnstile Gates For Password Login And Student Signup
 
@@ -185,6 +186,9 @@ POST /api/v1/auth/dev-persona-session
 Content-Type: application/json
 
 {"persona":"buyer|seller|admin"}
+
+200 OK
+{"persona":"seller","user":{...},"audience":"normal","csrfToken":"...","expiresAt":"..."}
 ```
 
 ```go
@@ -200,7 +204,7 @@ node scripts/dev-personas.mjs [all|buyer|seller|admin] \
 ### 3. Contracts
 
 - Register the route only when `EnableDevAuth=true`; production configuration must continue to reject development authentication.
-- Accept only the exact lowercase enum. The response is a normal cookie-backed session with `persona`, `user`, `csrfToken`, and `expiresAt`.
+- Accept only the exact lowercase enum. The response is a normal cookie-backed session with `persona`, `user`, `audience`, `csrfToken`, and `expiresAt`; `audience` is required and must be the literal `normal` in the Go DTO, OpenAPI schema, generated frontend type, and runtime JSON.
 - Fixed usernames are `dev-buyer`, `dev-seller`, and `dev-admin`. The OAuth provider subject is deterministic, and the returned username must equal the fixed username before permissions are changed.
 - Buyer and seller sessions explicitly remove `admin`; the administrator session explicitly grants it. Never rely on a previous persona session's permission state.
 - Repeated preparation may repair missing readiness data but must preserve usable edited contacts, passwords, merchant profiles, and payment settings. Do not seed listings, services, orders, disputes, reviews, or history.
@@ -217,6 +221,7 @@ node scripts/dev-personas.mjs [all|buyer|seller|admin] \
 | Fixed username occupied by another OAuth identity | `409 VALIDATION_FAILED`; do not grant or revoke permissions on the occupied user |
 | Buyer or seller previously has `admin` | Remove `admin` before issuing the new session |
 | Existing seller has one usable enabled payment option | Preserve it; do not rewrite payment settings |
+| Persona response omits `audience` or returns a non-`normal` value | Contract test fails and the frontend rejects the response; never infer the audience from the endpoint name |
 | Old `/auth/session` read finishes after switching | Return/retain the replacement session; never overwrite its CSRF token |
 | Script output directory or target file is a symlink | Fail closed without writing credentials |
 
@@ -226,15 +231,16 @@ node scripts/dev-personas.mjs [all|buyer|seller|admin] \
 - Good: run the seller bootstrap twice after editing the seller's WeChat contact and keep the edited value.
 - Base: run the script with no persona and receive three protected session files without raw credentials in terminal output.
 - Bad: implement personas by calling the arbitrary `/auth/dev-session` endpoint and leave a buyer with a previous administrator grant.
+- Bad: let a frontend test response helper inject `audience: "normal"` when the raw handler response omitted it; this hides backend/OpenAPI drift that fails in the browser.
 - Bad: navigate before refreshing `my-profile`; the account-recovery or admin guard can redirect using the previous user's cached profile.
 
 ### 6. Tests Required
 
 - Auth unit tests assert display-name preservation, username-collision isolation, and exact administrator grant/revoke behavior.
 - Persona service tests assert strict parsing, identity idempotency, recovery readiness, both buyer/seller contact types, usable seller merchant/payment state, and preservation of edited usable data.
-- Router/OpenAPI tests assert the route exists only in the development route set and is marked `x-dev-only`.
-- PostgreSQL integration asserts cookie/session issuance, stable identity, verified email, password, contacts, seller readiness, and admin demotion/promotion across repeated calls.
-- Frontend tests assert replacement of cached session/CSRF state, protection from older in-flight session reads, absence of a mock fallback, query refresh ordering, and shared user/admin shell integration.
+- Router/OpenAPI tests assert the route exists only in the development route set, is marked `x-dev-only`, and returns the explicit `audience: "normal"` field.
+- PostgreSQL integration asserts cookie/session issuance, the normal response audience, stable identity, verified email, password, contacts, seller readiness, and admin demotion/promotion across repeated calls.
+- Frontend tests assert replacement of cached session/CSRF state, rejection of a raw response missing the normal audience, protection from older in-flight session reads, absence of a mock fallback, query refresh ordering, and shared user/admin shell integration. The raw-response regression must not use a helper that adds missing session fields.
 - Browser verification covers buyer -> seller -> admin -> buyer at desktop and mobile widths, including the admin navigation boundary.
 
 ### 7. Wrong vs Correct
@@ -257,6 +263,26 @@ await queryClient.cancelQueries()
 await queryClient.resetQueries({ type: 'active' })
 await router.replace('/my')
 ```
+
+#### Wrong: Let Tests Invent The Audience
+
+```ts
+const response = Object.assign(rawHandlerResponse, { audience: 'normal' })
+```
+
+#### Correct: Return And Assert The Contract Field
+
+```go
+writeJSON(w, http.StatusOK, devPersonaSessionResponse{
+	Persona: result.Persona,
+	User: toUserDTO(result.User),
+	Audience: auth.SessionAudienceNormal,
+})
+```
+
+Handler and PostgreSQL tests decode the unmodified JSON and assert
+`Audience == auth.SessionAudienceNormal`; the frontend separately rejects a raw
+response without that field.
 
 ## Scenario: Student Registration, Deterministic Capabilities, And Linux.do Linking
 

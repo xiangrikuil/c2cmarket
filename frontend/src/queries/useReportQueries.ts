@@ -1,21 +1,18 @@
 import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
-  backendAppendDisputeMessage,
-  backendConfirmDisputeSettlementProposal,
+  backendRequestDisputePlatformIntervention,
+  backendSellerDisputeDecision,
+  backendWithdrawDispute,
   backendClaimDisputeRemedy,
   backendConfirmDisputeRemedy,
   backendContestDisputeRemedy,
   backendCreateAppeal,
-  backendCreateDisputeSettlementProposal,
-  backendEscalateDispute,
   backendMyAppeals,
   backendMyDispute,
   backendMyDisputes,
   backendMyReports,
   backendSubmitInfoSupplement,
-  backendRejectDisputeSettlementProposal,
-  type CreateDisputeSettlementProposalRequest,
   type CreateAppealRequest,
   type SubmitInfoSupplementRequest,
 } from '@/lib/reportBackend'
@@ -64,28 +61,20 @@ function useDisputeMutation<T>(mutationFn: (input: T) => ReturnType<typeof backe
   })
 }
 
-export function useAppendDisputeMessageMutation() {
-  return useDisputeMutation(({ disputeId, body }: { disputeId: string, body: string }) => backendAppendDisputeMessage(disputeId, body))
+export function useSellerDisputeDecisionMutation() {
+  return useDisputeMutation(({ disputeId, decision, reason, evidenceAssetIds }: { disputeId: string, decision: 'accepted' | 'rejected', reason: string, evidenceAssetIds?: string[] }) => backendSellerDisputeDecision(disputeId, { decision, reason, evidenceAssetIds }))
 }
 
-export function useCreateDisputeSettlementProposalMutation() {
-  return useDisputeMutation(({ disputeId, input }: { disputeId: string, input: CreateDisputeSettlementProposalRequest }) => backendCreateDisputeSettlementProposal(disputeId, input))
+export function useRequestDisputePlatformInterventionMutation() {
+  return useDisputeMutation(({ disputeId, reason, evidenceAssetIds }: { disputeId: string, reason: string, evidenceAssetIds?: string[] }) => backendRequestDisputePlatformIntervention(disputeId, { reason, evidenceAssetIds }))
 }
 
-export function useConfirmDisputeSettlementProposalMutation() {
-  return useDisputeMutation(({ disputeId, proposalId }: { disputeId: string, proposalId: string }) => backendConfirmDisputeSettlementProposal(disputeId, proposalId))
-}
-
-export function useRejectDisputeSettlementProposalMutation() {
-  return useDisputeMutation(({ disputeId, proposalId, reason }: { disputeId: string, proposalId: string, reason: string }) => backendRejectDisputeSettlementProposal(disputeId, proposalId, reason))
-}
-
-export function useEscalateDisputeMutation() {
-  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendEscalateDispute(disputeId, reason))
+export function useWithdrawDisputeMutation() {
+  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendWithdrawDispute(disputeId, reason))
 }
 
 export function useClaimDisputeRemedyMutation() {
-  return useDisputeMutation(({ disputeId, note }: { disputeId: string, note: string }) => backendClaimDisputeRemedy(disputeId, note))
+  return useDisputeMutation(({ disputeId, note, evidenceAssetIds }: { disputeId: string, note: string, evidenceAssetIds?: string[] }) => backendClaimDisputeRemedy(disputeId, { note, evidenceAssetIds }))
 }
 
 export function useConfirmDisputeRemedyMutation() {
@@ -93,7 +82,7 @@ export function useConfirmDisputeRemedyMutation() {
 }
 
 export function useContestDisputeRemedyMutation() {
-  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendContestDisputeRemedy(disputeId, reason))
+  return useDisputeMutation(({ disputeId, reason, evidenceAssetIds }: { disputeId: string, reason: string, evidenceAssetIds?: string[] }) => backendContestDisputeRemedy(disputeId, { reason, evidenceAssetIds }))
 }
 
 export function useMyAppealsQuery() {

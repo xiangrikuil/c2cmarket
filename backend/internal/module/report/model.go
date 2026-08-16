@@ -5,6 +5,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/evidence"
 	"c2c-market/backend/internal/module/idempotency"
 )
 
@@ -33,11 +34,23 @@ const (
 	ReportStatusDisputeOpened = "dispute_opened"
 	ReportStatusClosed        = "closed"
 
-	DisputeStatusNegotiating = "negotiating"
-	DisputeStatusOpen        = "open"
-	DisputeStatusWaitingInfo = "waiting_info"
-	DisputeStatusResolved    = "resolved"
-	DisputeStatusClosed      = "closed"
+	DisputeStatusNegotiating              = "negotiating"
+	DisputeStatusPendingSellerResponse    = "pending_seller_response"
+	DisputeStatusPendingApplicantDecision = "pending_applicant_decision"
+	DisputeStatusVoluntaryFulfillment     = "voluntary_fulfillment"
+	DisputeStatusOpen                     = "open"
+	DisputeStatusWaitingInfo              = "waiting_info"
+	DisputeStatusResolved                 = "resolved"
+	DisputeStatusClosed                   = "closed"
+	DisputeStatusWithdrawn                = "withdrawn"
+	DisputeStatusSelfResolved             = "self_resolved"
+
+	DisputeNextActorApplicant        = "applicant"
+	DisputeNextActorRespondent       = "respondent"
+	DisputeNextActorAdmin            = "admin"
+	DisputeNextActorResponsibleParty = "responsible_party"
+	DisputeNextActorCounterparty     = "counterparty"
+	DisputeNextActorNone             = "none"
 
 	PublicResultNoAction               = "no_action"
 	PublicResultContactInvalid         = "contact_invalid"
@@ -57,14 +70,14 @@ const (
 	InfoRequestStatusAnswered = "answered"
 	InfoRequestStatusCanceled = "cancelled"
 
-	DisputeMessageActionAppend   = "append_message"
-	DisputeMessageActionPropose  = "create_proposal"
-	DisputeMessageActionConfirm  = "confirm_proposal"
-	DisputeMessageActionReject   = "reject_proposal"
-	DisputeMessageActionEscalate = "escalate"
-	DisputeRemedyActionClaim     = "claim_remedy"
-	DisputeRemedyActionConfirm   = "confirm_remedy"
-	DisputeRemedyActionContest   = "contest_remedy"
+	DisputeActionRespond                     = "respond"
+	DisputeActionSellerDecision              = "seller_decision"
+	DisputeActionRequestPlatformIntervention = "request_platform_intervention"
+	DisputeActionWithdraw                    = "withdraw"
+	DisputeActionSelfResolve                 = "self_resolve"
+	DisputeRemedyActionClaim                 = "claim_remedy"
+	DisputeRemedyActionConfirm               = "confirm_remedy"
+	DisputeRemedyActionContest               = "contest_remedy"
 
 	SettlementStatusPending    = "pending"
 	SettlementStatusAccepted   = "accepted"
@@ -76,14 +89,72 @@ const (
 	RemedyStatusConfirmed           = "confirmed"
 	RemedyStatusContested           = "contested"
 	RemedyStatusConfirmationExpired = "confirmation_expired"
-	RemedyStatusOverdue             = "overdue"
 	RemedyStatusCancelled           = "cancelled"
+	RemedySourceAdminDecision       = "admin_decision"
+	RemedySourceMutualAgreement     = "mutual_agreement"
+	RemedySourceSellerAcceptance    = "seller_acceptance"
 
-	RemedyConfirmationWindow = 48 * time.Hour
+	SellerDecisionAccepted = "accepted"
+	SellerDecisionRejected = "rejected"
+
+	RemedyLatenessNotDue         = "not_due"
+	RemedyLatenessOnTime         = "on_time"
+	RemedyLatenessLateUnreviewed = "late_unreviewed"
+	RemedyLatenessLateConfirmed  = "late_confirmed"
+	RemedyLatenessLateExcused    = "late_excused"
+
+	RemedyConfirmationWindow          = 48 * time.Hour
+	VoluntaryRemedyConfirmationWindow = 24 * time.Hour
+	DisputeResponseWindow             = 24 * time.Hour
+	DisputeApplicantDecisionWindow    = 3 * 24 * time.Hour
+	VoluntaryRemedyFulfillmentWindow  = 24 * time.Hour
+	DisputeInfoRequestWindow          = 48 * time.Hour
+	DisputeAppealWindow               = 30 * 24 * time.Hour
 
 	RemedyConfirmationExpiredPublicResult = "对方未在期限内反馈，平台未核验到账或履约事实"
 	RemedyConfirmationExpiredNote         = "对方未在确认期限内反馈；平台未核验到账或履约事实。"
 )
+
+func AvailableDisputeActions(item DisputeCase, viewerUserID string, now time.Time) []string {
+	actions := make([]string, 0, 3)
+	if !item.Active || item.TargetType != TargetAPIOrder {
+		return actions
+	}
+	if viewerUserID == item.CounterpartyUserID && item.Status == DisputeStatusPendingSellerResponse && item.SellerDecision == "" {
+		actions = append(actions, DisputeActionSellerDecision)
+	}
+	if viewerUserID == item.PrimaryUserID {
+		if item.Status == DisputeStatusPendingSellerResponse || item.Status == DisputeStatusPendingApplicantDecision {
+			actions = append(actions, DisputeActionWithdraw)
+		}
+		if item.Status == DisputeStatusPendingSellerResponse && item.DueAt != nil && !now.Before(*item.DueAt) {
+			actions = append(actions, DisputeActionRequestPlatformIntervention)
+		}
+		if item.Status == DisputeStatusPendingApplicantDecision && item.ApplicantDecisionDueAt != nil && now.Before(*item.ApplicantDecisionDueAt) {
+			actions = append(actions, DisputeActionRequestPlatformIntervention)
+		}
+	}
+	index := currentRemedyIndex(item.Remedies)
+	if index < 0 {
+		return actions
+	}
+	remedy := item.Remedies[index]
+	if remedy.Status == RemedyStatusPending && viewerUserID == remedy.ResponsibleUserID {
+		actions = append(actions, DisputeRemedyActionClaim)
+	}
+	if item.Status == DisputeStatusVoluntaryFulfillment && viewerUserID == item.PrimaryUserID && remedy.Status == RemedyStatusPending && !now.Before(remedy.DueAt) {
+		actions = append(actions, DisputeActionRequestPlatformIntervention)
+	}
+	if remedy.Status == RemedyStatusClaimedFulfilled && viewerUserID == remedy.BeneficiaryUserID {
+		actions = append(actions, DisputeRemedyActionConfirm)
+		if remedy.Source == RemedySourceSellerAcceptance {
+			actions = append(actions, DisputeActionRequestPlatformIntervention)
+		} else {
+			actions = append(actions, DisputeRemedyActionContest)
+		}
+	}
+	return actions
+}
 
 type Report struct {
 	ID                  string
@@ -114,42 +185,68 @@ type Report struct {
 }
 
 type DisputeCase struct {
-	ID                   string
-	ReportID             string
-	TargetType           string
-	TargetID             string
-	TargetLabel          string
-	PrimaryUserID        string
-	PrimaryUsername      string
-	PrimaryDisplayName   string
-	CounterpartyUserID   string
-	CounterpartyUsername string
-	CounterpartyName     string
-	SubjectUserID        string
-	SubjectUsername      string
-	SubjectName          string
-	Status               string
-	IssueCode            string
-	RequestedResolution  string
-	RequestedAmountCNY   string
-	IssueOccurredAt      *time.Time
-	PublicSummary        string
-	PublicResultCode     string
-	PublicResult         string
-	AdminReason          string
-	OpenedByAdminID      string
-	OpenedAt             time.Time
-	ResolvedAt           *time.Time
-	ClosedAt             *time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	Version              int64
-	OpenInfoRequestID    string
-	InfoRequestedFromID  string
-	Supplements          []InfoSupplement
-	Messages             []DisputeMessage
-	SettlementProposals  []SettlementProposal
-	Remedies             []DisputeRemedy
+	ID                         string
+	APIOrderID                 string
+	Active                     bool
+	ReportID                   string
+	TargetType                 string
+	TargetID                   string
+	TargetLabel                string
+	PrimaryUserID              string
+	PrimaryUsername            string
+	PrimaryDisplayName         string
+	CounterpartyUserID         string
+	CounterpartyUsername       string
+	CounterpartyName           string
+	SubjectUserID              string
+	SubjectUsername            string
+	SubjectName                string
+	Status                     string
+	IssueCode                  string
+	RequestedResolution        string
+	RequestedAmountCNY         string
+	IssueOccurredAt            *time.Time
+	PublicSummary              string
+	PublicResultCode           string
+	PublicResult               string
+	AdminReason                string
+	OpenedByAdminID            string
+	OpenedAt                   time.Time
+	ResolvedAt                 *time.Time
+	ClosedAt                   *time.Time
+	FinalReason                string
+	AppealExpiresAt            *time.Time
+	AdverselyAffectedIDs       []string
+	NegotiationChannels        []string
+	NegotiationEndedConfirmed  bool
+	NegotiationSummary         string
+	RequestedPlatformAction    string
+	PlatformInterventionReason string
+	EscalatedByUserID          string
+	EscalatedAt                *time.Time
+	NextActor                  string
+	DueAt                      *time.Time
+	FactSnapshotJSON           string
+	ApplicantStatement         string
+	RespondentResponse         string
+	RespondedByUserID          string
+	RespondedAt                *time.Time
+	SellerDecision             string
+	SellerDecisionReason       string
+	SellerDecidedByUserID      string
+	SellerDecidedAt            *time.Time
+	SellerResponseLate         bool
+	ApplicantDecisionDueAt     *time.Time
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	Version                    int64
+	OpenInfoRequestID          string
+	InfoRequestedFromID        string
+	Supplements                []InfoSupplement
+	Messages                   []DisputeMessage
+	SettlementProposals        []SettlementProposal
+	Remedies                   []DisputeRemedy
+	Evidence                   []evidence.Reference
 }
 
 type DisputeMessage struct {
@@ -161,45 +258,61 @@ type DisputeMessage struct {
 }
 
 type SettlementProposal struct {
-	ID               string
-	DisputeCaseID    string
-	ProposedByUserID string
-	Resolution       string
-	AmountCNY        string
-	Terms            string
-	Status           string
-	AcceptedByUserID string
-	AcceptedAt       *time.Time
-	RejectedByUserID string
-	RejectedAt       *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	Version          int64
+	ID                  string
+	DisputeCaseID       string
+	ProposedByUserID    string
+	Resolution          string
+	AmountCNY           string
+	Terms               string
+	FulfillmentRequired bool
+	ResponsibleUserID   string
+	BeneficiaryUserID   string
+	DueAt               *time.Time
+	Status              string
+	AcceptedByUserID    string
+	AcceptedAt          *time.Time
+	RejectedByUserID    string
+	RejectedAt          *time.Time
+	SupersededReason    string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	Version             int64
 }
 
 type DisputeRemedy struct {
-	ID                    string
-	DisputeCaseID         string
-	Action                string
-	AmountCNY             string
-	Currency              string
-	ResponsibleUserID     string
-	BeneficiaryUserID     string
-	Instructions          string
-	Status                string
-	DueAt                 time.Time
-	ClaimedAt             *time.Time
-	ConfirmationDueAt     *time.Time
-	ConfirmedAt           *time.Time
-	ContestedAt           *time.Time
-	ConfirmationExpiredAt *time.Time
-	OverdueAt             *time.Time
-	ClaimNote             string
-	ResponseNote          string
-	CreatedByAdminID      string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	Version               int64
+	ID                        string
+	DisputeCaseID             string
+	Action                    string
+	AmountCNY                 string
+	Currency                  string
+	ResponsibleUserID         string
+	BeneficiaryUserID         string
+	Instructions              string
+	Status                    string
+	DueAt                     time.Time
+	ClaimedAt                 *time.Time
+	ConfirmationDueAt         *time.Time
+	ConfirmedAt               *time.Time
+	ContestedAt               *time.Time
+	ConfirmationExpiredAt     *time.Time
+	LatenessStatus            string
+	LateAt                    *time.Time
+	LatenessDecidedAt         *time.Time
+	LatenessDecidedByAdminID  string
+	LatenessReason            string
+	LatenessReversedAt        *time.Time
+	LatenessReversedByAdminID string
+	LatenessReversalAppealID  string
+	LatenessReversalReason    string
+	ClaimedLate               bool
+	ClaimNote                 string
+	ResponseNote              string
+	CreatedByAdminID          string
+	Source                    string
+	SettlementProposalID      string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	Version                   int64
 }
 
 type DisputeRemedyInput struct {
@@ -251,6 +364,7 @@ type Appeal struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	Version           int64
+	Evidence          []evidence.Reference
 }
 
 type Event struct {
@@ -300,6 +414,7 @@ type CreateAppealInput struct {
 	DisputeID         string
 	Title             string
 	Statement         string
+	EvidenceAssetIDs  []string
 }
 
 type CreateAccountGovernanceAppealInput struct {
@@ -313,17 +428,18 @@ type AppealSource struct {
 }
 
 type AdminActionInput struct {
-	ID               string
-	AdminUserID      string
-	Action           string
-	Reason           string
-	PublicSummary    string
-	PublicResultCode string
-	PublicResult     string
-	ExpectedVersion  int64
-	RequestID        string
-	RequestedFromID  string
-	Remedy           *DisputeRemedyInput
+	ID                       string
+	AdminUserID              string
+	Action                   string
+	Reason                   string
+	PublicSummary            string
+	PublicResultCode         string
+	PublicResult             string
+	ExpectedVersion          int64
+	RequestID                string
+	RequestedFromID          string
+	AdverselyAffectedUserIDs []string
+	Remedy                   *DisputeRemedyInput
 }
 
 type SupplementInput struct {
@@ -339,17 +455,15 @@ type SupplementInput struct {
 	GovernanceActionID     string
 	GovernanceVersion      int64
 	RestrictionEffectiveAt time.Time
+	EvidenceAssetIDs       []string
 }
 
 type DisputeParticipantActionInput struct {
 	DisputeID              string
 	ActorUserID            string
 	Action                 string
+	Decision               string
 	Body                   string
-	Resolution             string
-	AmountCNY              string
-	Terms                  string
-	ProposalID             string
 	Note                   string
 	Reason                 string
 	RequestID              string
@@ -357,6 +471,7 @@ type DisputeParticipantActionInput struct {
 	GovernanceActionID     string
 	GovernanceVersion      int64
 	RestrictionEffectiveAt time.Time
+	EvidenceAssetIDs       []string
 }
 
 func WithBusinessActor(input DisputeParticipantActionInput, actor auth.BusinessActor) DisputeParticipantActionInput {

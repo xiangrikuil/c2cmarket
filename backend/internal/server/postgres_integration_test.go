@@ -178,6 +178,9 @@ func TestPostgresDevPersonaSessionReadinessAndIdempotency(t *testing.T) {
 		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode %s persona response: %v", persona, err)
 		}
+		if payload.Audience != auth.SessionAudienceNormal {
+			t.Fatalf("prepare %s audience=%q, want %q", persona, payload.Audience, auth.SessionAudienceNormal)
+		}
 		return payload
 	}
 

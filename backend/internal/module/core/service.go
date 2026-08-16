@@ -2694,7 +2694,7 @@ func (s *Service) ReviewTransactionsByUserID(ctx context.Context, userID string)
 		items = append(items, transaction)
 	}
 	for _, order := range append(buyerOrders, sellerOrders...) {
-		if order.Status != apiorder.StatusCompleted || order.CompletedAt == nil {
+		if !review.IsReviewableAPIOrderOutcome(order.CommercialOutcome) || order.CommercialOutcomeUpdatedAt == nil {
 			continue
 		}
 		transaction := reviewTransactionFromAPIOrder(order)
@@ -2744,9 +2744,9 @@ func reviewTransactionFromCarpoolMembership(membership carpool.Membership) revie
 }
 
 func reviewTransactionFromAPIOrder(order apiorder.Order) review.Transaction {
-	completedAt := order.UpdatedAt
-	if order.CompletedAt != nil {
-		completedAt = *order.CompletedAt
+	commercialOutcomeAt := order.UpdatedAt
+	if order.CommercialOutcomeUpdatedAt != nil {
+		commercialOutcomeAt = *order.CommercialOutcomeUpdatedAt
 	}
 	return review.Transaction{
 		Type:              review.TransactionAPIOrder,
@@ -2758,8 +2758,10 @@ func reviewTransactionFromAPIOrder(order apiorder.Order) review.Transaction {
 		SellerUserID:      order.SellerUserID,
 		SellerUsername:    order.SellerUserID,
 		SellerDisplayName: order.SellerUserID,
-		CompletedAt:       completedAt,
-		ReviewDeadlineAt:  completedAt.Add(review.ReviewWindow),
+		CompletedAt:       commercialOutcomeAt,
+		ReviewDeadlineAt:  review.ReviewDeadlineForAPIOrder(commercialOutcomeAt),
+		CommercialOutcome: order.CommercialOutcome,
+		ReviewPaused:      apiorder.IsDisputeActive(order.DisputeStatus),
 	}
 }
 
@@ -2826,7 +2828,7 @@ func (s *Service) AdminDispute(ctx context.Context, user User, id string) (repor
 func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	var overdueRemedy *report.DisputeRemedy
 	var overdueSellerUserID string
-	if input.Action == "mark_overdue" && s.reputationService.TracksAPIOrderRemedyFactsInMemory() {
+	if input.Action == "confirm_lateness" && s.reputationService.TracksAPIOrderRemedyFactsInMemory() {
 		dispute, appErr := s.reportService.AdminDispute(ctx, user, input.ID)
 		if appErr != nil {
 			return IdempotencyCompletion{}, appErr
@@ -2846,8 +2848,8 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user Us
 		overdueAt := s.now()
 		if updated, readErr := s.reportService.AdminDispute(ctx, user, input.ID); readErr == nil {
 			for _, remedy := range updated.Remedies {
-				if remedy.ID == overdueRemedy.ID && remedy.OverdueAt != nil {
-					overdueAt = *remedy.OverdueAt
+				if remedy.ID == overdueRemedy.ID && remedy.LatenessDecidedAt != nil && remedy.LatenessStatus == report.RemedyLatenessLateConfirmed {
+					overdueAt = *remedy.LatenessDecidedAt
 					break
 				}
 			}
@@ -2994,7 +2996,7 @@ func (s *Service) AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, 
 		return IdempotencyCompletion{}, appErr
 	}
 	input.APIOrderDispute = dispute.TargetType == report.TargetAPIOrder
-	input.RemedyOverdueFact = input.APIOrderDispute && len(dispute.Remedies) > 0 && dispute.Remedies[0].Status == report.RemedyStatusOverdue
+	input.RemedyOverdueFact = input.APIOrderDispute && len(dispute.Remedies) > 0 && dispute.Remedies[0].LatenessStatus == report.RemedyLatenessLateConfirmed
 	if input.RemedyOverdueFact {
 		remedy := dispute.Remedies[0]
 		order, orderErr := s.apiOrder.AdminOrder(ctx, user, dispute.TargetID)
@@ -3003,7 +3005,7 @@ func (s *Service) AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, 
 		}
 		input.RemedyID = remedy.ID
 		input.RemedyResponsible = remedy.ResponsibleUserID
-		input.RemedyOverdueAt = remedy.OverdueAt
+		input.RemedyOverdueAt = remedy.LatenessDecidedAt
 		input.APIOrderSellerID = order.SellerUserID
 	}
 	return s.reputationService.CreateDisputeOutcomeWithIdempotency(ctx, reputation.AdminActor{UserID: user.ID, IsAdmin: user.IsAdmin}, routeKey, key, requestHash, input, buildCompletion)

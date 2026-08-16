@@ -147,6 +147,7 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	adminID := uuid.NewString()
 	subjectID := uuid.NewString()
 	otherParticipantID := uuid.NewString()
+	outsiderID := uuid.NewString()
 	disputeID := uuid.NewString()
 	for _, user := range []struct {
 		id       string
@@ -155,6 +156,7 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 		{id: adminID, username: "governance-admin-" + adminID[:8]},
 		{id: subjectID, username: "governance-subject-" + subjectID[:8]},
 		{id: otherParticipantID, username: "governance-other-" + otherParticipantID[:8]},
+		{id: outsiderID, username: "governance-outsider-" + outsiderID[:8]},
 	} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO users (id, username, display_name, account_status, created_at, updated_at, version)
@@ -202,10 +204,14 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	}
 
 	if _, err := pool.Exec(ctx, `
-		UPDATE dispute_cases
-		SET status = 'resolved', resolved_at = $2, updated_at = $2
-		WHERE id = $1
-	`, disputeID, baseTime); err != nil {
+			UPDATE dispute_cases
+			SET status = 'resolved', active = false, resolved_at = $2,
+			    final_reason = 'admin_resolved',
+			    appeal_expires_at = $2::timestamptz + interval '30 days',
+			    adversely_affected_user_ids = ARRAY[$3::uuid, $4::uuid],
+			    updated_at = $2
+			WHERE id = $1
+		`, disputeID, baseTime, subjectID, otherParticipantID); err != nil {
 		t.Fatalf("resolve governance dispute: %v", err)
 	}
 	blockingAppealID := uuid.NewString()
@@ -244,13 +250,48 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	); appErr != nil {
 		t.Fatalf("create resolved dispute outcome: %v", appErr)
 	}
+	otherOutcomeID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO dispute_reputation_outcomes (
+		  id, dispute_case_id, subject_user_id, responsibility, severity, role_scope,
+		  status, reason_code, public_reason, internal_reason,
+		  decided_by_admin_id, decided_at, created_at, updated_at, version
+		) VALUES ($1, $2, $3, 'shared', 'medium', 'all', 'active',
+		          'integration_other_subject', '另一主体裁定。', '多主体定向反转测试。',
+		          $4, $5, $5, $5, 1)
+	`, otherOutcomeID, disputeID, otherParticipantID, adminID, baseTime); err != nil {
+		t.Fatalf("insert second subject outcome: %v", err)
+	}
+	subjectRemedyID := uuid.NewString()
+	otherRemedyID := uuid.NewString()
+	for _, fixture := range []struct {
+		id            string
+		responsibleID string
+		beneficiaryID string
+	}{
+		{id: subjectRemedyID, responsibleID: subjectID, beneficiaryID: otherParticipantID},
+		{id: otherRemedyID, responsibleID: otherParticipantID, beneficiaryID: subjectID},
+	} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO api_order_dispute_remedies (
+			  id, dispute_case_id, action, responsible_user_id, beneficiary_user_id,
+			  instructions, status, due_at, lateness_status, late_at,
+			  lateness_decided_at, lateness_decided_by_admin_id, lateness_reason,
+			  created_by_admin_id, created_at, updated_at, version
+			) VALUES ($1, $2, 'full_refund', $3, $4, '多主体逾期申诉测试', 'cancelled',
+			          $5, 'late_confirmed', $5, $6, $7, '平台确认客观逾期', $7, $8, $6, 1)
+		`, fixture.id, disputeID, fixture.responsibleID, fixture.beneficiaryID,
+			baseTime.Add(-time.Hour), baseTime, adminID, baseTime.Add(-2*time.Hour)); err != nil {
+			t.Fatalf("insert subject remedy %s: %v", fixture.id, err)
+		}
+	}
 
 	var outcomeID, outcomeStatus string
 	if err := pool.QueryRow(ctx, `
 		SELECT id::text, status
 		FROM dispute_reputation_outcomes
-		WHERE dispute_case_id = $1
-	`, disputeID).Scan(&outcomeID, &outcomeStatus); err != nil {
+		WHERE dispute_case_id = $1 AND subject_user_id = $2
+	`, disputeID, subjectID).Scan(&outcomeID, &outcomeStatus); err != nil {
 		t.Fatalf("read dispute outcome: %v", err)
 	}
 	if outcomeStatus != reputation.OutcomeStatusActive {
@@ -335,6 +376,19 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	if appErr := reputationService.CheckActionAllowed(ctx, subjectID, reputation.RoleBuyer, reputation.ActionAPIOrderCreate); appErr == nil {
 		t.Fatal("appeal-linked restriction must block before appeal approval")
 	}
+	otherRestriction := createGovernanceRestrictionForTest(
+		t,
+		ctx,
+		reputationService,
+		adminID,
+		otherParticipantID,
+		otherOutcomeID,
+		1,
+		"other-subject-review",
+		reputation.RoleAll,
+		reputation.ActionReviewSubmit,
+		nil,
+	)
 	mismatchedAppealID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO appeals (
@@ -343,7 +397,7 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 		)
 		VALUES ($1, $2, $3, 'public_user', $4::text, '非裁定主体申诉',
 		        '该参与者不是信誉裁定主体。', 'submitted', $5, $5, 1)
-	`, mismatchedAppealID, otherParticipantID, disputeID, subjectID, currentTime); err != nil {
+	`, mismatchedAppealID, outsiderID, disputeID, subjectID, currentTime); err != nil {
 		t.Fatalf("insert mismatched reputation appeal: %v", err)
 	}
 	if _, appErr := reportService.AdminAppealActionWithIdempotency(
@@ -437,6 +491,27 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	}
 	if appErr := reputationService.CheckActionAllowed(ctx, subjectID, reputation.RoleBuyer, reputation.ActionAPIOrderCreate); appErr != nil {
 		t.Fatalf("appeal approval must revoke linked restriction: %#v", appErr)
+	}
+	var otherOutcomeStatus string
+	var otherRestrictionRevokedAt *time.Time
+	if err := pool.QueryRow(ctx, `SELECT status FROM dispute_reputation_outcomes WHERE id = $1`, otherOutcomeID).Scan(&otherOutcomeStatus); err != nil {
+		t.Fatalf("read non-appellant outcome: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT revoked_at FROM user_restrictions WHERE id = $1`, otherRestriction.ID).Scan(&otherRestrictionRevokedAt); err != nil {
+		t.Fatalf("read non-appellant restriction: %v", err)
+	}
+	if otherOutcomeStatus != reputation.OutcomeStatusActive || otherRestrictionRevokedAt != nil {
+		t.Fatalf("appellant reversal leaked to another subject: outcome=%q revokedAt=%v", otherOutcomeStatus, otherRestrictionRevokedAt)
+	}
+	var subjectRemedyAppealID, otherRemedyAppealID string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(lateness_reversal_appeal_id::text, '') FROM api_order_dispute_remedies WHERE id = $1`, subjectRemedyID).Scan(&subjectRemedyAppealID); err != nil {
+		t.Fatalf("read appellant remedy reversal: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(lateness_reversal_appeal_id::text, '') FROM api_order_dispute_remedies WHERE id = $1`, otherRemedyID).Scan(&otherRemedyAppealID); err != nil {
+		t.Fatalf("read non-appellant remedy reversal: %v", err)
+	}
+	if subjectRemedyAppealID != appealID || otherRemedyAppealID != "" {
+		t.Fatalf("lateness reversal was not subject-scoped: appellant=%q other=%q", subjectRemedyAppealID, otherRemedyAppealID)
 	}
 	postApprovalOutcomeInput := outcomeInput
 	postApprovalOutcomeInput.ExpectedVersion = 2

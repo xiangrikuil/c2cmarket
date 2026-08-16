@@ -3,11 +3,13 @@ package report
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"c2c-market/backend/internal/domain"
 )
 
 func TestResolveAppealSourceEnforcesEligibilityAndDerivesTarget(t *testing.T) {
+	appealExpiresAt := time.Now().Add(time.Hour)
 	reportSource := Report{
 		ID:                  "report-1",
 		ReporterUserID:      "reporter-1",
@@ -18,14 +20,17 @@ func TestResolveAppealSourceEnforcesEligibilityAndDerivesTarget(t *testing.T) {
 		Status:              ReportStatusRejected,
 	}
 	disputeSource := DisputeCase{
-		ID:                 "dispute-1",
-		ReportID:           reportSource.ID,
-		TargetType:         TargetAPIOrder,
-		TargetID:           "order-1",
-		PrimaryUserID:      "reporter-1",
-		CounterpartyUserID: "counterparty-1",
-		SubjectUserID:      "subject-1",
-		Status:             DisputeStatusResolved,
+		ID:                   "dispute-1",
+		ReportID:             reportSource.ID,
+		TargetType:           TargetAPIOrder,
+		TargetID:             "order-1",
+		PrimaryUserID:        "reporter-1",
+		CounterpartyUserID:   "counterparty-1",
+		SubjectUserID:        "subject-1",
+		Status:               DisputeStatusResolved,
+		FinalReason:          "admin_resolved",
+		AppealExpiresAt:      &appealExpiresAt,
+		AdverselyAffectedIDs: []string{"subject-1"},
 	}
 
 	source, appErr := ResolveAppealSource("subject-1", nil, &disputeSource)
@@ -84,13 +89,17 @@ func TestResolveAppealSourceAuthorizesBeforeComparingDualSourceLinks(t *testing.
 }
 
 func TestResolveAppealSourceAllowsEitherParticipantWhenDisputeHasNoSubject(t *testing.T) {
+	appealExpiresAt := time.Now().Add(time.Hour)
 	disputeSource := DisputeCase{
-		ID:                 "dispute-1",
-		TargetType:         TargetAPIOrder,
-		TargetID:           "order-1",
-		PrimaryUserID:      "primary-1",
-		CounterpartyUserID: "counterparty-1",
-		Status:             DisputeStatusClosed,
+		ID:                   "dispute-1",
+		TargetType:           TargetAPIOrder,
+		TargetID:             "order-1",
+		PrimaryUserID:        "primary-1",
+		CounterpartyUserID:   "counterparty-1",
+		Status:               DisputeStatusClosed,
+		FinalReason:          "admin_closed",
+		AppealExpiresAt:      &appealExpiresAt,
+		AdverselyAffectedIDs: []string{"primary-1", "counterparty-1"},
 	}
 	for _, userID := range []string{"primary-1", "counterparty-1"} {
 		if _, appErr := ResolveAppealSource(userID, nil, &disputeSource); appErr != nil {
@@ -130,6 +139,7 @@ func TestResolveAppealSourceEnforcesFinalSourceState(t *testing.T) {
 }
 
 func TestResolveAppealSourceRequiresBidirectionalCaseLink(t *testing.T) {
+	appealExpiresAt := time.Now().Add(time.Hour)
 	reportSource := Report{
 		ID:             "report-1",
 		DisputeID:      "dispute-1",
@@ -139,13 +149,16 @@ func TestResolveAppealSourceRequiresBidirectionalCaseLink(t *testing.T) {
 		Status:         ReportStatusDisputeOpened,
 	}
 	disputeSource := DisputeCase{
-		ID:            "dispute-1",
-		ReportID:      "report-1",
-		PrimaryUserID: "subject-1",
-		SubjectUserID: "subject-1",
-		TargetType:    TargetAPIOrder,
-		TargetID:      "order-1",
-		Status:        DisputeStatusResolved,
+		ID:                   "dispute-1",
+		ReportID:             "report-1",
+		PrimaryUserID:        "subject-1",
+		SubjectUserID:        "subject-1",
+		TargetType:           TargetAPIOrder,
+		TargetID:             "order-1",
+		Status:               DisputeStatusResolved,
+		FinalReason:          "admin_resolved",
+		AppealExpiresAt:      &appealExpiresAt,
+		AdverselyAffectedIDs: []string{"subject-1"},
 	}
 
 	if _, appErr := ResolveAppealSource("subject-1", &reportSource, &disputeSource); appErr != nil {
@@ -164,11 +177,15 @@ func TestResolveAppealSourceRequiresBidirectionalCaseLink(t *testing.T) {
 }
 
 func TestCanAppealDisputeMatchesCreationEligibility(t *testing.T) {
+	appealExpiresAt := time.Now().Add(time.Hour)
 	base := DisputeCase{
-		PrimaryUserID:      "primary-1",
-		CounterpartyUserID: "counterparty-1",
-		SubjectUserID:      "counterparty-1",
-		Status:             DisputeStatusResolved,
+		PrimaryUserID:        "primary-1",
+		CounterpartyUserID:   "counterparty-1",
+		SubjectUserID:        "counterparty-1",
+		Status:               DisputeStatusResolved,
+		FinalReason:          "admin_resolved",
+		AppealExpiresAt:      &appealExpiresAt,
+		AdverselyAffectedIDs: []string{"counterparty-1"},
 	}
 	for _, testCase := range []struct {
 		name   string
@@ -180,7 +197,12 @@ func TestCanAppealDisputeMatchesCreationEligibility(t *testing.T) {
 		{name: "non subject cannot appeal", item: base, userID: "primary-1", want: false},
 		{name: "outsider cannot appeal", item: base, userID: "outsider-1", want: false},
 		{name: "open dispute cannot be appealed", item: func() DisputeCase { item := base; item.Status = DisputeStatusOpen; return item }(), userID: "counterparty-1", want: false},
-		{name: "participant can appeal without subject", item: func() DisputeCase { item := base; item.SubjectUserID = ""; return item }(), userID: "primary-1", want: true},
+		{name: "participant can appeal without subject", item: func() DisputeCase {
+			item := base
+			item.SubjectUserID = ""
+			item.AdverselyAffectedIDs = []string{"primary-1"}
+			return item
+		}(), userID: "primary-1", want: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			if got := CanAppealDispute(testCase.item, testCase.userID); got != testCase.want {
@@ -192,13 +214,17 @@ func TestCanAppealDisputeMatchesCreationEligibility(t *testing.T) {
 
 func TestCreateAppealMemorySerializesSubmittedAppealCheck(t *testing.T) {
 	service := NewService(nil, nil, nil)
+	appealExpiresAt := time.Now().Add(time.Hour)
 	service.disputes["dispute-1"] = DisputeCase{
-		ID:            "dispute-1",
-		TargetType:    TargetAPIOrder,
-		TargetID:      "order-1",
-		PrimaryUserID: "subject-1",
-		SubjectUserID: "subject-1",
-		Status:        DisputeStatusResolved,
+		ID:                   "dispute-1",
+		TargetType:           TargetAPIOrder,
+		TargetID:             "order-1",
+		PrimaryUserID:        "subject-1",
+		SubjectUserID:        "subject-1",
+		Status:               DisputeStatusResolved,
+		FinalReason:          "admin_resolved",
+		AppealExpiresAt:      &appealExpiresAt,
+		AdverselyAffectedIDs: []string{"subject-1"},
 	}
 	input := CreateAppealInput{AppellantUserID: "subject-1", DisputeID: "dispute-1", Title: "复核", Statement: "请求复核纠纷结果。"}
 
@@ -254,5 +280,14 @@ func TestValidateAppealOutcomeSubject(t *testing.T) {
 				t.Fatalf("invalid subject mapping must be rejected, got %#v", appErr)
 			}
 		})
+	}
+}
+
+func TestValidateAppealAdverseSubject(t *testing.T) {
+	if appErr := ValidateAppealAdverseSubject(true); appErr != nil {
+		t.Fatalf("adversely affected appellant must be accepted: %v", appErr)
+	}
+	if appErr := ValidateAppealAdverseSubject(false); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("unaffected appellant must be rejected, got %#v", appErr)
 	}
 }

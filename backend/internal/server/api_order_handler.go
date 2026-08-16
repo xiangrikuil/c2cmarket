@@ -12,6 +12,7 @@ import (
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/report"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -40,11 +41,12 @@ type apiOrderReasonRequest struct {
 }
 
 type apiOrderDisputeRequest struct {
-	IssueCode           string `json:"issueCode"`
-	RequestedResolution string `json:"requestedResolution"`
-	RequestedAmountCNY  string `json:"requestedAmountCny"`
-	IssueOccurredAt     string `json:"issueOccurredAt"`
-	Reason              string `json:"reason"`
+	IssueCode           string   `json:"issueCode"`
+	RequestedResolution string   `json:"requestedResolution"`
+	RequestedAmountCNY  string   `json:"requestedAmountCny"`
+	IssueOccurredAt     string   `json:"issueOccurredAt"`
+	Reason              string   `json:"reason"`
+	EvidenceAssetIDs    []string `json:"evidenceAssetIds"`
 }
 
 type apiOrderPaymentIssueRequest struct {
@@ -70,6 +72,15 @@ type apiOrderResponse struct {
 	Status                        string                              `json:"status"`
 	DisputeStatus                 string                              `json:"disputeStatus"`
 	DisputeCaseID                 string                              `json:"disputeCaseId,omitempty"`
+	LatestDisputeCaseID           string                              `json:"latestDisputeCaseId,omitempty"`
+	HasDisputeHistory             bool                                `json:"hasDisputeHistory"`
+	DisputeNextActor              string                              `json:"disputeNextActor"`
+	DisputeDueAt                  *string                             `json:"disputeDueAt,omitempty"`
+	DisputeNeedsAction            bool                                `json:"disputeNeedsAction"`
+	DisputeResponseOverdue        bool                                `json:"disputeResponseOverdue"`
+	DisputeAvailableActions       []string                            `json:"disputeAvailableActions"`
+	ActiveRemedyAction            string                              `json:"activeRemedyAction,omitempty"`
+	ActiveRemedySource            string                              `json:"activeRemedySource,omitempty"`
 	ServiceTitleSnapshot          string                              `json:"serviceTitleSnapshot"`
 	ServiceVersionSnapshot        int64                               `json:"serviceVersionSnapshot"`
 	BillingModeSnapshot           string                              `json:"billingModeSnapshot"`
@@ -114,16 +125,23 @@ type apiOrderResponse struct {
 	PaymentSubmittedAt            *string                             `json:"paymentSubmittedAt,omitempty"`
 	MerchantConfirmDueAt          *string                             `json:"merchantConfirmDueAt,omitempty"`
 	MerchantConfirmOverdue        bool                                `json:"merchantConfirmOverdue"`
+	MerchantConfirmOverdueAt      *string                             `json:"merchantConfirmOverdueAt,omitempty"`
 	PaymentIssueReason            string                              `json:"paymentIssueReason,omitempty"`
 	PaymentIssueNote              string                              `json:"paymentIssueNote,omitempty"`
 	PaymentIssueReportedAt        *string                             `json:"paymentIssueReportedAt,omitempty"`
 	PaidConfirmedAt               *string                             `json:"paidConfirmedAt,omitempty"`
 	DeliveryDueAt                 *string                             `json:"deliveryDueAt,omitempty"`
 	DeliveryOverdue               bool                                `json:"deliveryOverdue"`
+	DeliveryOverdueAt             *string                             `json:"deliveryOverdueAt,omitempty"`
+	DeliveryDueRemindedAt         *string                             `json:"deliveryDueRemindedAt,omitempty"`
 	DeliveryNote                  string                              `json:"deliveryNote,omitempty"`
 	DeliverySubmittedAt           *string                             `json:"deliverySubmittedAt,omitempty"`
 	DeliveryReviewExpiresAt       *string                             `json:"deliveryReviewExpiresAt,omitempty"`
 	DeliveryCredential            *apiOrderDeliveryCredentialResponse `json:"deliveryCredential,omitempty"`
+	CommercialOutcome             string                              `json:"commercialOutcome"`
+	CommercialOutcomeUpdatedAt    *string                             `json:"commercialOutcomeUpdatedAt,omitempty"`
+	QuotaValidityIssueAt          *string                             `json:"quotaValidityIssueAt,omitempty"`
+	QuotaValidityIssueReason      string                              `json:"quotaValidityIssueReason,omitempty"`
 	CompletionSource              string                              `json:"completionSource,omitempty"`
 	CompletedAt                   *string                             `json:"completedAt,omitempty"`
 	CancelledAt                   *string                             `json:"cancelledAt,omitempty"`
@@ -220,6 +238,10 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
 	actor, appErr := s.requireBusinessActor(r, true, false)
 	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if appErr := validateAPIOrderListQuery(r); appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
@@ -505,6 +527,10 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 	if actor.Audience == auth.SessionAudienceNormal && !requireActorCapability(w, r, actor, auth.CapabilityAPIServicePublish) {
 		return
 	}
+	if appErr := validateAPIOrderListQuery(r); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 	orders, appErr := s.apiOrderContinuity.APIOrdersForActor(r.Context(), actor, "seller")
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -547,12 +573,6 @@ func (s *Server) handleReportAPIOrderPaymentIssue(w http.ResponseWriter, r *http
 func (s *Server) handleSubmitAPIOrderDelivery(w http.ResponseWriter, r *http.Request) {
 	s.handleContinuousAPIOrderAction(w, r, "seller", "submit-delivery", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
 		return s.apiOrderContinuity.SubmitAPIOrderDeliveryForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
-	})
-}
-
-func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
-	s.handleContinuousAPIOrderAction(w, r, "seller", "dispute", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.apiOrderContinuity.OpenAPIOrderDisputeForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
 	})
 }
 
@@ -629,6 +649,7 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 			RequestedAmountCNY:  req.RequestedAmountCNY,
 			IssueOccurredAt:     req.IssueOccurredAt,
 			Reason:              req.Reason,
+			EvidenceAssetIDs:    append([]string(nil), req.EvidenceAssetIDs...),
 		}, appErr
 	default:
 		body, _, appErr := decodeStrictJSON[emptyRequest](r)
@@ -657,10 +678,17 @@ func toAdminAPIOrderResponse(order apiorder.Order) apiOrderResponse {
 	response.BuyerUserID = order.BuyerUserID
 	response.SellerUserID = order.SellerUserID
 	response.DeliveryCredential = nil
+	response.DisputeNeedsAction = false
+	response.DisputeAvailableActions = []string{}
 	return response
 }
 
 func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential bool) apiOrderResponse {
+	viewerUserID := order.BuyerUserID
+	if ownerView {
+		viewerUserID = order.SellerUserID
+	}
+	disputeActions := apiOrderAvailableActions(order, viewerUserID, time.Now())
 	response := apiOrderResponse{
 		ID:                            order.ID,
 		OrderNo:                       order.OrderNo,
@@ -672,6 +700,15 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		Status:                        order.Status,
 		DisputeStatus:                 order.DisputeStatus,
 		DisputeCaseID:                 order.DisputeCaseID,
+		LatestDisputeCaseID:           order.LatestDisputeCaseID,
+		HasDisputeHistory:             order.HasDisputeHistory,
+		DisputeNextActor:              order.DisputeNextActor,
+		DisputeDueAt:                  formatOptionalTime(order.DisputeDueAt),
+		DisputeNeedsAction:            len(disputeActions) > 0,
+		DisputeResponseOverdue:        order.DisputeStatus == apiorder.DisputeStatusPendingSellerResponse && order.DisputeDueAt != nil && !time.Now().Before(*order.DisputeDueAt),
+		DisputeAvailableActions:       disputeActions,
+		ActiveRemedyAction:            order.ActiveRemedyAction,
+		ActiveRemedySource:            order.ActiveRemedySource,
 		ServiceTitleSnapshot:          order.ServiceTitleSnapshot,
 		ServiceVersionSnapshot:        order.ServiceVersionSnapshot,
 		BillingModeSnapshot:           order.BillingModeSnapshot,
@@ -717,14 +754,21 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		PaymentSubmittedAt:            formatOptionalTime(order.PaymentSubmittedAt),
 		MerchantConfirmDueAt:          formatOptionalTime(order.MerchantConfirmDueAt),
 		MerchantConfirmOverdue:        order.MerchantConfirmOverdue,
+		MerchantConfirmOverdueAt:      formatOptionalTime(order.MerchantConfirmOverdueAt),
 		PaymentIssueReason:            order.PaymentIssueReason,
 		PaymentIssueNote:              order.PaymentIssueNote,
 		PaymentIssueReportedAt:        formatOptionalTime(order.PaymentIssueReportedAt),
 		DeliveryDueAt:                 formatOptionalTime(order.DeliveryDueAt),
 		DeliveryOverdue:               order.DeliveryOverdue,
+		DeliveryOverdueAt:             formatOptionalTime(order.DeliveryOverdueAt),
+		DeliveryDueRemindedAt:         formatOptionalTime(order.DeliveryDueRemindedAt),
 		DeliveryNote:                  order.DeliveryNote,
 		DeliverySubmittedAt:           formatOptionalTime(order.DeliverySubmittedAt),
 		DeliveryReviewExpiresAt:       formatOptionalTime(order.DeliveryReviewExpiresAt),
+		CommercialOutcome:             order.CommercialOutcome,
+		CommercialOutcomeUpdatedAt:    formatOptionalTime(order.CommercialOutcomeUpdatedAt),
+		QuotaValidityIssueAt:          formatOptionalTime(order.QuotaValidityIssueAt),
+		QuotaValidityIssueReason:      order.QuotaValidityIssueReason,
 		CompletionSource:              order.CompletionSource,
 		CompletedAt:                   formatOptionalTime(order.CompletedAt),
 		CancelledAt:                   formatOptionalTime(order.CancelledAt),
@@ -759,6 +803,45 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		}
 	}
 	return response
+}
+
+func apiOrderAvailableActions(order apiorder.Order, viewerUserID string, now time.Time) []string {
+	actions := make([]string, 0, 3)
+	isBuyer := viewerUserID == order.BuyerUserID
+	isSeller := viewerUserID == order.SellerUserID
+	switch order.DisputeStatus {
+	case apiorder.DisputeStatusPendingSellerResponse:
+		if isSeller {
+			actions = append(actions, report.DisputeActionSellerDecision)
+		}
+		if isBuyer {
+			actions = append(actions, report.DisputeActionWithdraw)
+			if order.DisputeDueAt != nil && !now.Before(*order.DisputeDueAt) {
+				actions = append(actions, report.DisputeActionRequestPlatformIntervention)
+			}
+		}
+	case apiorder.DisputeStatusPendingApplicantDecision:
+		if isBuyer {
+			actions = append(actions, report.DisputeActionWithdraw, report.DisputeActionRequestPlatformIntervention)
+		}
+	case apiorder.DisputeStatusAwaitingFulfillment:
+		if order.DisputeNextUserID == viewerUserID {
+			actions = append(actions, report.DisputeRemedyActionClaim)
+		}
+		if isBuyer && order.ActiveRemedySource == report.RemedySourceSellerAcceptance && order.DisputeDueAt != nil && !now.Before(*order.DisputeDueAt) {
+			actions = append(actions, report.DisputeActionRequestPlatformIntervention)
+		}
+	case apiorder.DisputeStatusFulfillmentConfirmation:
+		if order.DisputeNextUserID == viewerUserID {
+			actions = append(actions, report.DisputeRemedyActionConfirm)
+			if order.ActiveRemedySource == report.RemedySourceSellerAcceptance {
+				actions = append(actions, report.DisputeActionRequestPlatformIntervention)
+			} else {
+				actions = append(actions, report.DisputeRemedyActionContest)
+			}
+		}
+	}
+	return actions
 }
 
 func toAPIOrderDeliveryCredentialResponse(credential apiorder.DeliveryCredential) *apiOrderDeliveryCredentialResponse {

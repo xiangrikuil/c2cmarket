@@ -126,17 +126,19 @@ describe('API 额度包市场视图', () => {
 
   test('固定额度包第一步不重复选择模型并明确美元面板额度', () => {
     assert.doesNotMatch(fixedPackageSectionSource, /支持模型|api-publish-model-chip|catalogById/)
-    assert.match(fixedPackageSectionSource, /美元额度[\s\S]*?>\$<\/span>[\s\S]*?selectedPackage\.panelAllowance/)
-    assert.match(fixedPackageSectionSource, /md:grid-cols-2/)
+    assert.match(fixedPackageSectionSource, /美元额度[\s\S]*?>\$<\/span>[\s\S]*?editingPackageDraft\.panelAllowance/)
+    assert.match(fixedPackageSectionSource, /sm:grid-cols-2/)
     assert.doesNotMatch(fixedPackageSectionSource, /xl:grid-cols-5/)
     assert.match(apiServicePublishPageSource, /item\.modelCatalogIds = \[\.\.\.enabledModelIds\]/)
   })
 
-  test('固定额度包使用有界摘要列表并只编辑当前套餐', () => {
+  test('固定额度包使用有界摘要列表和隔离草稿弹框', () => {
     assert.match(fixedPackageSectionSource, /max-h-\[284px\][\s\S]*?overflow-y-auto/)
-    assert.match(fixedPackageSectionSource, /const selectedPackageId = ref[\s\S]*?const selectedPackage = computed/)
-    assert.match(fixedPackageSectionSource, /props\.form\.packages\.push\(item\)[\s\S]*?selectedPackageId\.value = item\.id/)
-    assert.match(fixedPackageSectionSource, /v-if="selectedPackage"[\s\S]*?v-model="selectedPackage\.name"/)
+    assert.match(fixedPackageSectionSource, /const packageEditorOpen = ref\(false\)[\s\S]*?const editingPackageDraft = ref/)
+    assert.match(fixedPackageSectionSource, /props\.form\.packages\.push\(item\)[\s\S]*?openPackageEditor\(item\.id\)/)
+    assert.match(fixedPackageSectionSource, /<Dialog :open="packageEditorOpen"[\s\S]*?v-if="editingPackageDraft"[\s\S]*?v-model="editingPackageDraft\.name"/)
+    assert.match(fixedPackageSectionSource, /cloneApiServicePackageDraft\(item\)[\s\S]*?applyApiServicePackageDraft\(target, editingPackageDraft\.value\)/)
+    assert.match(fixedPackageSectionSource, /@click="setPackageEditorOpen\(false\)"[^>]*>取消<\/Button>/)
     assert.match(fixedPackageSectionSource, /draggable="true"[\s\S]*?<GripVertical/)
     assert.match(fixedPackageSectionSource, /class="sm:hidden"[\s\S]*?<ArrowUp/)
     assert.match(fixedPackageSectionSource, /<Package[\s\S]*?<Clock3[\s\S]*?<Boxes[\s\S]*?<Pencil[\s\S]*?<Trash2/)

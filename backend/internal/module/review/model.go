@@ -19,6 +19,7 @@ const (
 	StatusRemoved   = "removed"
 
 	CenterStatusReviewable = "reviewable"
+	CenterStatusPaused     = "paused"
 	CenterStatusExpired    = "expired"
 
 	DirectionPending  = "pending"
@@ -46,6 +47,28 @@ type TagDefinition struct {
 	Polarity string
 }
 
+const (
+	APIOrderOutcomeNormalFulfillment    = "normal_fulfillment"
+	APIOrderOutcomeFullRefund           = "full_refund"
+	APIOrderOutcomePartialRefund        = "partial_refund"
+	APIOrderOutcomeContinuedFulfillment = "continued_fulfillment"
+	APIOrderOutcomeLegacyFulfillment    = "legacy_fulfillment"
+)
+
+func IsReviewableAPIOrderOutcome(value string) bool {
+	switch value {
+	case APIOrderOutcomeNormalFulfillment, APIOrderOutcomeFullRefund,
+		APIOrderOutcomePartialRefund, APIOrderOutcomeContinuedFulfillment:
+		return true
+	default:
+		return false
+	}
+}
+
+func ReviewDeadlineForAPIOrder(commercialOutcomeAt time.Time) time.Time {
+	return commercialOutcomeAt.Add(ReviewWindow)
+}
+
 type Transaction struct {
 	Type              string
 	ID                string
@@ -58,6 +81,8 @@ type Transaction struct {
 	SellerDisplayName string
 	CompletedAt       time.Time
 	ReviewDeadlineAt  time.Time
+	CommercialOutcome string
+	ReviewPaused      bool
 }
 
 type Review struct {
@@ -74,6 +99,7 @@ type Review struct {
 	Note                string
 	Status              string
 	ReviewDeadlineAt    time.Time
+	CommercialOutcome   string
 	VisibleAt           *time.Time
 	FrozenAt            *time.Time
 	RemovedAt           *time.Time
@@ -106,6 +132,8 @@ type ReviewCenterRow struct {
 	Note                  string
 	CompletedAt           time.Time
 	ReviewDeadlineAt      time.Time
+	CommercialOutcome     string
+	ReviewPaused          bool
 	SubmittedAt           *time.Time
 	VisibleAt             *time.Time
 	FrozenAt              *time.Time
@@ -115,17 +143,18 @@ type ReviewCenterRow struct {
 }
 
 type PublicReview struct {
-	ID               string
-	ReviewerUsername string
-	Date             time.Time
-	ServiceType      string
-	TransactionType  string
-	ReviewerRole     string
-	RevieweeRole     string
-	Rating           int
-	Tags             []string
-	Note             string
-	Verified         bool
+	ID                string
+	ReviewerUsername  string
+	Date              time.Time
+	ServiceType       string
+	TransactionType   string
+	ReviewerRole      string
+	RevieweeRole      string
+	Rating            int
+	Tags              []string
+	Note              string
+	Verified          bool
+	CommercialOutcome string
 }
 
 type SubmitReviewInput struct {

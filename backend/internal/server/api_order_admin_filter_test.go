@@ -62,3 +62,18 @@ func TestParseAdminAPIOrderFilterTreatsEmptyDefaultsAsUnfiltered(t *testing.T) {
 		t.Fatalf("empty defaults produced filters: %+v", filter)
 	}
 }
+
+func TestValidateAPIOrderListQueryRejectsUnknownDisputeFilter(t *testing.T) {
+	for _, value := range []string{"", "all", "active", "none"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/me/api-orders?dispute="+value, nil)
+		if appErr := validateAPIOrderListQuery(request); appErr != nil {
+			t.Fatalf("dispute filter %q rejected: %+v", value, appErr)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/api-orders?dispute=open", nil)
+	appErr := validateAPIOrderListQuery(request)
+	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || appErr.Code != "VALIDATION_FAILED" || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "dispute" {
+		t.Fatalf("unexpected invalid dispute filter error: %+v", appErr)
+	}
+}

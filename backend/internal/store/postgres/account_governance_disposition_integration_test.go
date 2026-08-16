@@ -34,10 +34,13 @@ func TestPostgresRestrictedDisputeRequiresPreservedTargetDisposition(t *testing.
 	buyerID := fixture.actorID
 	sellerID := fixture.otherActorID
 	orderID := fixture.targetBySource["api_order"]
-	disputeID := insertLifecycleDispute(t, store, orderID, buyerID, sellerID, report.DisputeStatusNegotiating, now.Add(-90*time.Minute))
-	unlinkedDisputeID := insertLifecycleDispute(t, store, fixture.otherOrderID, buyerID, sellerID, report.DisputeStatusNegotiating, now.Add(-80*time.Minute))
-	if _, err := store.pool.Exec(ctx, `UPDATE api_orders SET dispute_status = 'negotiating', dispute_case_id = CASE id WHEN $1::uuid THEN $2::uuid ELSE $4::uuid END WHERE id IN ($1::uuid, $3::uuid)`, orderID, disputeID, fixture.otherOrderID, unlinkedDisputeID); err != nil {
+	disputeID := insertLifecycleDispute(t, store, orderID, sellerID, buyerID, report.DisputeStatusOpen, now.Add(-90*time.Minute))
+	unlinkedDisputeID := insertLifecycleDispute(t, store, fixture.otherOrderID, sellerID, buyerID, report.DisputeStatusOpen, now.Add(-80*time.Minute))
+	if _, err := store.pool.Exec(ctx, `UPDATE api_orders SET dispute_status = 'open', dispute_case_id = CASE id WHEN $1::uuid THEN $2::uuid ELSE $4::uuid END WHERE id IN ($1::uuid, $3::uuid)`, orderID, disputeID, fixture.otherOrderID, unlinkedDisputeID); err != nil {
 		t.Fatalf("link restricted disputes to orders: %v", err)
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE dispute_cases SET next_actor = 'respondent', due_at = $2 WHERE id = $1`, disputeID, now.Add(48*time.Hour)); err != nil {
+		t.Fatalf("prepare restricted dispute response window: %v", err)
 	}
 	actionID := uuid.NewString()
 	dispositionID := uuid.NewString()
@@ -95,16 +98,16 @@ func TestPostgresRestrictedDisputeRequiresPreservedTargetDisposition(t *testing.
 	if _, appErr := store.GetDisputeForActor(ctx, actor, unlinkedDisputeID); appErr == nil || appErr.Code != domain.CodeObjectNotFound {
 		t.Fatalf("unlinked restricted dispute was visible: %v", appErr)
 	}
-	entry := idempotency.Entry{UserID: buyerID, RouteKey: "restricted-dispute-message", Key: "restricted-dispute-message", RequestHash: "restricted-dispute-message", State: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	entry := idempotency.Entry{UserID: buyerID, RouteKey: "restricted-dispute-response", Key: "restricted-dispute-response", RequestHash: "restricted-dispute-response", State: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 	if _, err := store.pool.Exec(ctx, `INSERT INTO idempotency_keys (id, user_id, route_key, idempotency_key, request_hash, status, response_body_cache_allowed, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, 'processing', false, $6, $7)`, uuid.NewString(), entry.UserID, entry.RouteKey, entry.Key, entry.RequestHash, entry.ExpiresAt, now); err != nil {
 		t.Fatalf("insert restricted dispute idempotency: %v", err)
 	}
-	input := report.DisputeParticipantActionInput{DisputeID: disputeID, ActorUserID: buyerID, ActorAudience: auth.SessionAudienceRestrictedBusiness, GovernanceActionID: actionID, GovernanceVersion: 2, RestrictionEffectiveAt: effectiveAt, Action: report.DisputeMessageActionAppend, Body: "继续协商处理", RequestID: "restricted-dispute-message"}
+	input := report.DisputeParticipantActionInput{DisputeID: disputeID, ActorUserID: buyerID, ActorAudience: auth.SessionAudienceRestrictedBusiness, GovernanceActionID: actionID, GovernanceVersion: 2, RestrictionEffectiveAt: effectiveAt, Action: report.DisputeActionRespond, Body: "受限账号对保留纠纷提交正式答复。", RequestID: "restricted-dispute-response"}
 	updated, _, appErr := store.UpdateDisputeParticipantWithIdempotency(ctx, entry, input, now, func(value report.DisputeCase) (idempotency.Completion, *domain.AppError) {
 		return idempotency.Completion{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{}`), ResourceType: "dispute", ResourceID: value.ID}, nil
 	})
-	if appErr != nil || updated.ID != disputeID || len(updated.Messages) != 1 || updated.Messages[0].Body != "继续协商处理" {
-		t.Fatalf("restricted dispute message=%+v err=%v", updated, appErr)
+	if appErr != nil || updated.ID != disputeID || updated.RespondedByUserID != buyerID || updated.NextActor != report.DisputeNextActorAdmin || updated.DueAt != nil {
+		t.Fatalf("restricted dispute response=%+v err=%v", updated, appErr)
 	}
 	stale := actor
 	stale.GovernanceVersion = 1

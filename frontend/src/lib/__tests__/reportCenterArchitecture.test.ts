@@ -33,7 +33,7 @@ describe('举报与申诉中心前端闭环', () => {
     expect(pageSource).toContain('selectedRecord.source.publicSummary')
     expect(pageSource).toContain('selectedRecord.source.publicResult')
     expect(pageSource).toContain('canCreateAppeal(selectedRecord')
-    expect(pageSource).toContain('createAppealMutation.mutate(payload')
+    expect(pageSource).toContain('createAppealMutation.mutate({ ...payload, evidenceAssetIds:')
     expect(pageSource).not.toContain('处理时间线')
     expect(pageSource).not.toContain('追加材料')
     expect(pageSource).not.toContain('封禁账号申诉')

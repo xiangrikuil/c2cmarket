@@ -152,7 +152,7 @@ func (r *Runner) execute(ctx context.Context) {
 	}
 	r.stats.successTotal.Add(1)
 	r.logger.Printf(
-		"数据维护任务完成 duration=%s governance_suspensions_restored=%d governance_expiry_jobs_superseded=%d governance_disposition_resources=%d governance_disposition_jobs_completed=%d sessions=%d restricted_business_sessions=%d account_appeal_sessions=%d governance_oauth_states=%d verification_codes=%d idempotency=%d contact_sessions=%d api_order_payment_expired=%d api_order_review_reminders=%d api_orders_auto_completed=%d dispute_remedy_confirmations_expired=%d api_order_credentials_destroyed=%d api_quota_credentials_destroyed=%d api_probe_samples=%d notifications=%d domain_events=%d",
+		"数据维护任务完成 duration=%s governance_suspensions_restored=%d governance_expiry_jobs_superseded=%d governance_disposition_resources=%d governance_disposition_jobs_completed=%d sessions=%d restricted_business_sessions=%d account_appeal_sessions=%d governance_oauth_states=%d verification_codes=%d idempotency=%d contact_sessions=%d api_order_payment_expired=%d api_order_review_reminders=%d api_orders_auto_completed=%d dispute_remedy_confirmations_expired=%d after_sales_applications_expired=%d api_order_credentials_destroyed=%d api_quota_credentials_destroyed=%d api_probe_samples=%d notifications=%d domain_events=%d",
 		duration,
 		result.GovernanceSuspensionsRestored,
 		result.GovernanceExpiryJobsSuperseded,
@@ -169,6 +169,7 @@ func (r *Runner) execute(ctx context.Context) {
 		result.APIOrderReviewReminders,
 		result.APIOrdersAutoCompleted,
 		result.DisputeRemedyConfirmationsExpired,
+		result.AfterSalesApplicationsExpired,
 		result.APIOrderCredentialsDestroyed,
 		result.APIQuotaCredentialsDestroyed,
 		result.APIProbeSamplesDeleted,

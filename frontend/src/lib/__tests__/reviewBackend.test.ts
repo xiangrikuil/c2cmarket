@@ -47,6 +47,8 @@ function backendReviewRow(overrides: Record<string, unknown> = {}) {
     note: null,
     completedAt: '2026-07-23T08:00:00Z',
     reviewDeadlineAt: '2026-08-06T08:00:00Z',
+    commercialOutcome: 'normal_fulfillment',
+    reviewPaused: false,
     submittedAt: '2026-07-24T08:00:00Z',
     visibleAt: null,
     frozenAt: null,

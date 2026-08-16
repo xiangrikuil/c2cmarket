@@ -73,6 +73,9 @@ func (s *Store) SaveTransactionReviewWithIdempotency(ctx context.Context, entry 
 	if lockedTransaction.ID != transaction.ID || !now.Before(lockedTransaction.ReviewDeadlineAt) {
 		return review.MutationResult{}, idempotency.Completion{}, reviewWindowClosedStoreError()
 	}
+	if lockedTransaction.ReviewPaused {
+		return review.MutationResult{}, idempotency.Completion{}, reviewPausedStoreError()
+	}
 
 	current, currentFound, appErr := lockTransactionReviewForReviewer(ctx, tx, input.TransactionType, input.TransactionID, input.ReviewerUserID)
 	if appErr != nil {
@@ -358,8 +361,13 @@ func resolveTransactionForReview(ctx context.Context, q queryer, transactionType
 			       seller.id::text,
 			       seller.username,
 			       seller.display_name,
-			       api_order.status,
-			       api_order.completed_at
+			       api_order.commercial_outcome,
+			       api_order.commercial_outcome_updated_at,
+			       EXISTS (
+			         SELECT 1
+			         FROM dispute_cases dispute
+			         WHERE dispute.api_order_id = api_order.id AND dispute.active = true
+			       )
 			FROM api_orders api_order
 			JOIN users buyer ON buyer.id = api_order.buyer_user_id
 			JOIN users seller ON seller.id = api_order.seller_user_id
@@ -377,6 +385,7 @@ func resolveTransactionForReview(ctx context.Context, q queryer, transactionType
 			&transaction.SellerDisplayName,
 			&status,
 			&completedAt,
+			&transaction.ReviewPaused,
 		)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -385,8 +394,15 @@ func resolveTransactionForReview(ctx context.Context, q queryer, transactionType
 	if err != nil {
 		return review.Transaction{}, internalStoreError()
 	}
-	if status != "completed" || completedAt == nil {
-		return review.Transaction{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "只能评价已完成交易。")
+	if transactionType == review.TransactionCarpoolMembership {
+		if status != "completed" || completedAt == nil {
+			return review.Transaction{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "只能评价已完成交易。")
+		}
+	} else {
+		if !review.IsReviewableAPIOrderOutcome(status) || completedAt == nil {
+			return review.Transaction{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 订单商业结果不能评价。")
+		}
+		transaction.CommercialOutcome = status
 	}
 	var excluded bool
 	if err := q.QueryRow(ctx, `
@@ -567,6 +583,21 @@ func materializeExpiredTransactionReviewsInTx(ctx context.Context, tx pgx.Tx, pa
 		WHERE status = 'sealed'
 		  AND review_deadline_at <= $1
 		  AND (
+		    transaction_type <> 'api_order'
+		    OR EXISTS (
+		      SELECT 1
+		      FROM api_orders order_row
+		      WHERE order_row.id = transaction_reviews.api_order_id
+		        AND order_row.commercial_outcome IN ('normal_fulfillment', 'full_refund', 'partial_refund', 'continued_fulfillment')
+		        AND order_row.commercial_outcome_updated_at IS NOT NULL
+		        AND NOT EXISTS (
+		          SELECT 1
+		          FROM dispute_cases dispute
+		          WHERE dispute.api_order_id = order_row.id AND dispute.active = true
+		        )
+		    )
+		  )
+		  AND (
 		    $2::text = ''
 		    OR reviewer_user_id = NULLIF($2::text, '')::uuid
 		    OR reviewee_user_id = NULLIF($2::text, '')::uuid
@@ -600,6 +631,29 @@ func materializeExpiredTransactionReviewsInTx(ctx context.Context, tx pgx.Tx, pa
 		if appErr := insertTransactionReviewRevisionInTx(ctx, tx, after, "published", "", "review_deadline_elapsed", &before); appErr != nil {
 			return appErr
 		}
+	}
+	return nil
+}
+
+func refreshMutableAPIOrderReviewsInTx(ctx context.Context, tx pgx.Tx, orderID, commercialOutcome string, commercialOutcomeAt, now time.Time) *domain.AppError {
+	if !review.IsReviewableAPIOrderOutcome(commercialOutcome) {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE transaction_reviews
+		SET commercial_outcome = $2,
+		    review_deadline_at = $3,
+		    updated_at = $4,
+		    version = version + 1
+		WHERE api_order_id = $1
+		  AND status = 'sealed'
+		  AND frozen_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM dispute_cases dispute
+		    WHERE dispute.api_order_id = transaction_reviews.api_order_id AND dispute.active = true
+		  )
+	`, orderID, commercialOutcome, review.ReviewDeadlineForAPIOrder(commercialOutcomeAt), now); err != nil {
+		return internalStoreError()
 	}
 	return nil
 }
@@ -638,15 +692,17 @@ func insertTransactionReviewRevisionInTx(ctx context.Context, tx pgx.Tx, item re
 
 func transactionReviewSnapshot(item review.Review) map[string]any {
 	return map[string]any{
-		"rating":        item.Rating,
-		"tags":          append([]string{}, item.Tags...),
-		"note":          item.Note,
-		"status":        item.Status,
-		"visibleAt":     item.VisibleAt,
-		"frozenAt":      item.FrozenAt,
-		"removedAt":     item.RemovedAt,
-		"removalReason": item.RemovalReason,
-		"version":       item.Version,
+		"rating":            item.Rating,
+		"tags":              append([]string{}, item.Tags...),
+		"note":              item.Note,
+		"status":            item.Status,
+		"commercialOutcome": item.CommercialOutcome,
+		"reviewDeadlineAt":  item.ReviewDeadlineAt,
+		"visibleAt":         item.VisibleAt,
+		"frozenAt":          item.FrozenAt,
+		"removedAt":         item.RemovedAt,
+		"removalReason":     item.RemovalReason,
+		"version":           item.Version,
 	}
 }
 
@@ -671,13 +727,15 @@ func reviewCenterRowFromSaved(transaction review.Transaction, item review.Review
 		Status:                item.Status,
 		Visibility:            item.Status,
 		CounterpartySubmitted: item.Status == review.StatusPublished,
-		CanEdit:               item.Status == review.StatusSealed && now.Before(item.ReviewDeadlineAt),
+		CanEdit:               item.Status == review.StatusSealed && !transaction.ReviewPaused && now.Before(item.ReviewDeadlineAt),
 		ContentVisible:        item.Status != review.StatusRemoved,
 		Rating:                item.Rating,
 		Tags:                  append([]string{}, item.Tags...),
 		Note:                  item.Note,
 		CompletedAt:           transaction.CompletedAt,
 		ReviewDeadlineAt:      item.ReviewDeadlineAt,
+		CommercialOutcome:     item.CommercialOutcome,
+		ReviewPaused:          transaction.ReviewPaused,
 		SubmittedAt:           &submittedAt,
 		VisibleAt:             item.VisibleAt,
 		FrozenAt:              item.FrozenAt,
@@ -738,6 +796,8 @@ func scanReviewCenterRows(rows pgx.Rows) ([]review.ReviewCenterRow, *domain.AppE
 			&item.Note,
 			&item.CompletedAt,
 			&item.ReviewDeadlineAt,
+			&item.CommercialOutcome,
+			&item.ReviewPaused,
 			&item.SubmittedAt,
 			&item.VisibleAt,
 			&item.FrozenAt,
@@ -770,6 +830,7 @@ func transactionReviewScanTargets(item *review.Review) []any {
 		&item.Note,
 		&item.Status,
 		&item.ReviewDeadlineAt,
+		&item.CommercialOutcome,
 		&item.VisibleAt,
 		&item.FrozenAt,
 		&item.RemovedAt,
@@ -783,6 +844,10 @@ func transactionReviewScanTargets(item *review.Review) []any {
 
 func reviewWindowClosedStoreError() *domain.AppError {
 	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Review window closed", "评价窗口已截止。")
+}
+
+func reviewPausedStoreError() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Review paused", "活跃纠纷期间暂停创建、修改和公开评价。")
 }
 
 func reviewFrozenStoreError() *domain.AppError {
@@ -803,6 +868,7 @@ const transactionReviewColumns = `
 	note,
 	status,
 	review_deadline_at,
+	COALESCE(commercial_outcome, ''),
 	visible_at,
 	frozen_at,
 	removed_at,
@@ -825,8 +891,10 @@ WITH my_transactions AS (
     membership.owner_user_id AS seller_user_id,
     seller.username AS seller_username,
     seller.display_name AS seller_display_name,
-    COALESCE(membership.ended_at, membership.updated_at) AS completed_at,
-    COALESCE(membership.ended_at, membership.updated_at) + interval '14 days' AS review_deadline_at
+	    COALESCE(membership.ended_at, membership.updated_at) AS completed_at,
+	    COALESCE(membership.ended_at, membership.updated_at) + interval '14 days' AS review_deadline_at,
+	    ''::text AS commercial_outcome,
+	    false AS review_paused
   FROM carpool_memberships membership
   JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
   JOIN users buyer ON buyer.id = membership.buyer_user_id
@@ -853,13 +921,18 @@ WITH my_transactions AS (
     api_order.seller_user_id,
     seller.username,
     seller.display_name,
-    api_order.completed_at,
-    api_order.completed_at + interval '14 days'
+	    api_order.commercial_outcome_updated_at,
+	    api_order.commercial_outcome_updated_at + interval '14 days',
+	    api_order.commercial_outcome,
+	    EXISTS (
+	      SELECT 1 FROM dispute_cases dispute
+	      WHERE dispute.api_order_id = api_order.id AND dispute.active = true
+	    )
   FROM api_orders api_order
   JOIN users buyer ON buyer.id = api_order.buyer_user_id
   JOIN users seller ON seller.id = api_order.seller_user_id
-  WHERE api_order.status = 'completed'
-    AND api_order.completed_at IS NOT NULL
+	  WHERE api_order.commercial_outcome IN ('normal_fulfillment', 'full_refund', 'partial_refund', 'continued_fulfillment')
+	    AND api_order.commercial_outcome_updated_at IS NOT NULL
     AND $1 IN (api_order.buyer_user_id, api_order.seller_user_id)
     AND NOT EXISTS (
       SELECT 1
@@ -888,24 +961,24 @@ FROM (
     CASE WHEN $1 = transaction.buyer_user_id THEN transaction.seller_display_name ELSE transaction.buyer_display_name END,
     CASE WHEN $1 = transaction.buyer_user_id THEN 'buyer' ELSE 'seller' END,
     CASE WHEN $1 = transaction.buyer_user_id THEN 'seller' ELSE 'buyer' END,
-    CASE WHEN $2 < transaction.review_deadline_at THEN 'reviewable' ELSE 'expired' END,
+	    CASE
+	      WHEN transaction.review_paused THEN 'paused'
+	      WHEN $2 < transaction.review_deadline_at THEN 'reviewable'
+	      ELSE 'expired'
+	    END,
     'none'::text AS visibility,
-    EXISTS (
-      SELECT 1
-      FROM transaction_reviews_for_me counterparty_review
-      WHERE counterparty_review.transaction_type = transaction.transaction_type
-        AND COALESCE(counterparty_review.carpool_membership_id, counterparty_review.api_order_id) = transaction.transaction_id
-        AND counterparty_review.reviewer_user_id <> $1
-    ) AS counterparty_submitted,
-    ($2 < transaction.review_deadline_at) AS can_create,
+	    false AS counterparty_submitted,
+	    (NOT transaction.review_paused AND $2 < transaction.review_deadline_at) AS can_create,
     false AS can_edit,
     false AS content_visible,
     0 AS rating,
     '{}'::text[] AS tags,
     ''::text AS note,
-    transaction.completed_at,
-    transaction.review_deadline_at,
-    NULL::timestamptz AS submitted_at,
+	    transaction.completed_at,
+	    transaction.review_deadline_at,
+	    transaction.commercial_outcome,
+	    transaction.review_paused,
+	    NULL::timestamptz AS submitted_at,
     NULL::timestamptz AS visible_at,
     NULL::timestamptz AS frozen_at,
     transaction.completed_at AS created_at,
@@ -934,22 +1007,18 @@ FROM (
     own_review.reviewee_role,
     own_review.status,
     own_review.status,
-    EXISTS (
-      SELECT 1
-      FROM transaction_reviews_for_me counterparty_review
-      WHERE counterparty_review.transaction_type = transaction.transaction_type
-        AND COALESCE(counterparty_review.carpool_membership_id, counterparty_review.api_order_id) = transaction.transaction_id
-        AND counterparty_review.reviewer_user_id <> $1
-    ),
+	    own_review.status IN ('published', 'removed'),
     false,
-    (own_review.status = 'sealed' AND $2 < own_review.review_deadline_at),
+	    (own_review.status = 'sealed' AND NOT transaction.review_paused AND $2 < own_review.review_deadline_at),
     (own_review.status <> 'removed'),
     CASE WHEN own_review.status = 'removed' THEN 0 ELSE own_review.rating END,
     CASE WHEN own_review.status = 'removed' THEN '{}'::text[] ELSE own_review.tags END,
     CASE WHEN own_review.status = 'removed' THEN '' ELSE own_review.note END,
-    transaction.completed_at,
-    own_review.review_deadline_at,
-    own_review.created_at,
+	    transaction.completed_at,
+	    own_review.review_deadline_at,
+	    own_review.commercial_outcome,
+	    transaction.review_paused,
+	    own_review.created_at,
     own_review.visible_at,
     own_review.frozen_at,
     own_review.created_at,
@@ -982,9 +1051,11 @@ FROM (
     CASE WHEN received_review.status = 'published' THEN received_review.rating ELSE 0 END,
     CASE WHEN received_review.status = 'published' THEN received_review.tags ELSE '{}'::text[] END,
     CASE WHEN received_review.status = 'published' THEN received_review.note ELSE '' END,
-    transaction.completed_at,
-    received_review.review_deadline_at,
-    received_review.created_at,
+	    transaction.completed_at,
+	    received_review.review_deadline_at,
+	    received_review.commercial_outcome,
+	    transaction.review_paused,
+	    received_review.created_at,
     received_review.visible_at,
     received_review.frozen_at,
     received_review.created_at,
@@ -993,8 +1064,9 @@ FROM (
   FROM my_transactions transaction
   JOIN transaction_reviews_for_me received_review
     ON received_review.transaction_type = transaction.transaction_type
-   AND COALESCE(received_review.carpool_membership_id, received_review.api_order_id) = transaction.transaction_id
-   AND received_review.reviewee_user_id = $1
+	   AND COALESCE(received_review.carpool_membership_id, received_review.api_order_id) = transaction.transaction_id
+	   AND received_review.reviewee_user_id = $1
+	   AND received_review.status <> 'sealed'
 ) center_rows
 ORDER BY completed_at DESC,
          CASE direction WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 ELSE 2 END,

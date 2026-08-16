@@ -2,12 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, FileCheck2, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
-import ApiOrderDisputePanel from '@/components/api-order/ApiOrderDisputePanel.vue'
 import ApiRefundPolicyEvidence from '@/components/api-order/ApiRefundPolicyEvidence.vue'
+import DisputeEvidencePicker from '@/components/api-order/DisputeEvidencePicker.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import ReviewDialog from '@/components/review/ReviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -59,12 +59,14 @@ import {
 } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels, apiPaymentMethodRequiresQrCode } from '@/lib/apiPaymentSettings'
 import {
+  apiOrderCommercialOutcomeLabels,
   apiOrderDisputeIssueLabels,
   apiOrderDisputeResolutionLabels,
   type ApiOrderDisputeIssueCode,
   type ApiOrderDisputeResolution,
 } from '@/lib/apiOrderDispute'
 import { formatDecimal } from '@/lib/decimal'
+import type { DisputeEvidenceAsset } from '@/lib/disputeEvidenceBackend'
 import { functionalMotion } from '@/lib/motion'
 import {
   useApiOrder,
@@ -124,6 +126,7 @@ const disputeRequestedResolution = ref<ApiOrderDisputeResolution>('full_refund')
 const disputeRequestedAmount = ref('')
 const disputeIssueOccurredAt = ref('')
 const disputeReason = ref('')
+const disputeEvidence = ref<DisputeEvidenceAsset[]>([])
 const completionConfirmOpen = ref(false)
 const credentialProblemOpen = ref(false)
 const credentialProblemReason = ref<CredentialProblemReason | ''>('')
@@ -162,13 +165,11 @@ const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMer
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
+	&& !isMerchantView.value
 	&& (order.value.canOpenDispute ?? (order.value.status !== 'cancelled' && order.value.status !== 'completed' && (order.value.disputeStatus ?? 'none') === 'none')),
 ))
-const showDisputeStatus = computed(() => Boolean(order.value && (order.value.disputeStatus ?? 'none') !== 'none'))
-const disputeViewerUserId = computed(() => {
-  if (!order.value) return ''
-  return isMerchantView.value ? order.value.sellerId : order.value.buyerId
-})
+const showDisputeStatus = computed(() => Boolean(order.value?.hasDisputeHistory || (order.value?.disputeStatus ?? 'none') !== 'none'))
+const disputePanelId = computed(() => order.value?.disputeCaseId ?? order.value?.latestDisputeCaseId ?? '')
 const canSubmitDispute = computed(() => Boolean(
   disputeReason.value.trim()
 	&& (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim())
@@ -342,7 +343,7 @@ const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
 	if (order.value.catalogRiskHold?.status === 'active') return '关联模型目录被紧急阻断，付款、核款、交付、确认完成及自动超时均已暂停；仍可查看订单证据或发起纠纷。'
-	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请在下方纠纷区继续协商或等待处理。'
+	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请进入独立纠纷页面查看当前处理进度。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
@@ -483,6 +484,7 @@ async function submitOrderDispute() {
         requestedAmountCny: disputeRequestedResolution.value === 'partial_refund' ? disputeRequestedAmount.value.trim() : null,
 				issueOccurredAt: disputeIssueOccurredAt.value ? new Date(disputeIssueOccurredAt.value).toISOString() : null,
         reason: disputeReason.value.trim(),
+        evidenceAssetIds: disputeEvidence.value.map(item => item.id),
       },
       version: order.value.version,
       perspective: perspective.value,
@@ -491,8 +493,9 @@ async function submitOrderDispute() {
     disputeRequestedAmount.value = ''
 		disputeIssueOccurredAt.value = ''
     disputeReason.value = ''
+    disputeEvidence.value = []
     await refresh(order.value.id)
-    toast.success('订单纠纷已发起，双方可先协商处理。')
+    toast.success('售后申请已提交，等待卖家处理。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交订单问题失败。')
   }
@@ -705,7 +708,24 @@ onBeforeUnmount(() => {
     <Alert v-if="showDisputeStatus" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
       <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
       <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
-      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}</AlertDescription>
+      <AlertDescription>
+        <p>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) || '该订单有历史纠纷记录，可查看最近案件的终局与申诉期限。' }}</p>
+        <Button v-if="disputePanelId" class="mt-3" size="sm" variant="outline" @click="router.push({ path: `/my/disputes/${disputePanelId}`, query: { from: isMerchantView ? 'merchant' : 'buyer', orderId: order.id } })">
+          <Headphones class="h-4 w-4" />进入纠纷处理
+        </Button>
+      </AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.quotaValidityIssueAt" variant="destructive">
+      <Clock3 />
+      <AlertTitle>首次交付有效期不足</AlertTitle>
+      <AlertDescription>交付时额度剩余不足 60 分钟，系统已拒绝本次交付并记录异常；不会自动替换额度、延长有效期或恢复库存。</AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.commercialOutcome !== 'pending'">
+      <FileCheck2 />
+      <AlertTitle>{{ apiOrderCommercialOutcomeLabels[order.commercialOutcome] }}</AlertTitle>
+      <AlertDescription>该商业结果独立于订单履约状态，用于评价资格和售后事实，不代表平台代收、退款或验真。</AlertDescription>
     </Alert>
 
     <Alert v-if="order.catalogRiskHold?.status === 'active'" variant="destructive">
@@ -715,12 +735,6 @@ onBeforeUnmount(() => {
         {{ order.catalogRiskHold.reason }} 付款、核款、交付、确认完成和自动超时已暂停；订单证据与纠纷入口保持可用。
       </AlertDescription>
     </Alert>
-
-    <ApiOrderDisputePanel
-      v-if="order.disputeCaseId"
-      :dispute-id="order.disputeCaseId"
-      :viewer-user-id="disputeViewerUserId"
-    />
 
     <Alert v-if="isMerchantView && order.status === 'delivery_submitted'" class="border-success/35 bg-success/10">
       <CheckCircle2 class="text-success" />
@@ -838,7 +852,7 @@ onBeforeUnmount(() => {
       <Clock3 />
       <AlertTitle>商户处理已超时，订单不会自动取消</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
-        <span>你已提交付款状态，请勿重复付款。可发起订单纠纷，与商户在订单内协商处理。</span>
+        <span>你已提交付款状态，请勿重复付款。如需平台处理，可直接发起订单纠纷。</span>
         <Button v-if="canOpenDispute" size="sm" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       </AlertDescription>
     </Alert>
@@ -1068,7 +1082,7 @@ onBeforeUnmount(() => {
     </Collapsible>
 
     <div class="flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-4">
-      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">发起后先由双方协商；无法达成一致时再申请平台审核。</div></div>
+      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">买家提交售后申请后，由卖家先同意或拒绝；拒绝或超时后，买家可申请平台介入。</div></div>
       <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       <Badge v-else-if="showDisputeStatus" variant="status">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</Badge>
     </div>
@@ -1158,7 +1172,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>发起订单纠纷</DialogTitle>
-          <DialogDescription>提交后进入双方协商；任一方可在无法达成一致时申请平台审核。</DialogDescription>
+          <DialogDescription>提交后卖家有 24 小时同意或拒绝。卖家拒绝或响应超时后，你可以撤回申请或申请平台介入。</DialogDescription>
         </DialogHeader>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="block space-y-2">
@@ -1194,6 +1208,7 @@ onBeforeUnmount(() => {
           <Textarea v-model="disputeReason" class="min-h-32" maxlength="500" placeholder="请描述发生时间、当前状态和希望协助处理的事项。不要填写密码、API Key、验证码等敏感信息。" />
           <span class="block text-right text-xs text-muted-foreground">{{ disputeReason.length }} / 500</span>
         </label>
+        <DisputeEvidencePicker v-model="disputeEvidence" :order-id="order.id" />
         <Alert>
           <ShieldAlert />
           <AlertTitle>请勿提交敏感信息</AlertTitle>
@@ -1366,7 +1381,7 @@ onBeforeUnmount(() => {
             <Alert variant="destructive">
               <ShieldAlert />
               <AlertTitle>请确认尚未付款</AlertTitle>
-              <AlertDescription>如果已经付款，请不要取消订单。先通过微信或 linux.do 私信联系商户；双方沟通后仍未解决再申请平台介入。</AlertDescription>
+              <AlertDescription>如果已经付款，请不要取消订单。你可以通过微信或 linux.do 私信联系商户，也可以发起售后申请，由卖家先处理。</AlertDescription>
             </Alert>
 
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">

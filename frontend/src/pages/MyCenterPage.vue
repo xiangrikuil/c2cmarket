@@ -7,6 +7,7 @@ import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSet
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
 import ContactMethodCard from '@/components/contact-payment/ContactMethodCard.vue'
+import ContactUsageScopeSelector from '@/components/contact-payment/ContactUsageScopeSelector.vue'
 import PasswordVisibilityInput from '@/components/auth/PasswordInput.vue'
 import PersonalCenterDashboard from '@/components/personal-center/PersonalCenterDashboard.vue'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
-import { type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
+import { type AvatarMode, type ContactUsageScope, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
 import { ACCOUNT_RECOVERY_PATH, accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import { getBackupPasswordStrength, getBackupPasswordValidationMessage, getPasswordChecks } from '@/lib/passwordPolicy'
 import {
@@ -62,6 +63,13 @@ import {
 } from '@/queries/useMarketQueries'
 import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 import { backendErrorMessage, reauthenticatePassword, startLinuxDoLink } from '@/lib/backendClient'
+import {
+  buildContactMethodPayload,
+  CONTACT_USAGE_SCOPE_OPTIONS,
+  contactUsageScopeOptionsForCapabilities,
+  initialContactUsageScopes,
+  sameContactUsageScopes,
+} from '@/lib/contactUsageScopes'
 
 const route = useRoute()
 const router = useRouter()
@@ -119,13 +127,6 @@ type AccountSetupStepItem = {
   active: boolean
 }
 
-const usageScopeOptions: { value: ContactUsageScope, label: string }[] = [
-  { value: 'carpool_owner', label: '拼车车主' },
-  { value: 'api_merchant', label: 'API 商户' },
-  { value: 'buyer', label: '买家' },
-  { value: 'dispute', label: '纠纷联系' },
-]
-
 const activeSection = computed(() => {
   if (route.path === '/my/profile') return 'profile'
   if (route.path === '/my/contacts') return 'contacts'
@@ -156,6 +157,7 @@ const confirmPasswordTouched = ref(false)
 const emailForm = reactive({
   email: '',
   code: '',
+  usageScopes: [] as ContactUsageScope[],
 })
 
 const privacyForm = reactive<UserPrivacySettings>({
@@ -169,6 +171,7 @@ const privacyForm = reactive<UserPrivacySettings>({
 
 const wechatForm = reactive({
   displayValue: '',
+  usageScopes: [] as ContactUsageScope[],
 })
 
 const loadedContactDraftKeys = reactive({
@@ -176,12 +179,13 @@ const loadedContactDraftKeys = reactive({
   email: '',
 })
 
-const defaultContactUsageScopes = computed<ContactUsageScope[]>(() => [
-  ...(canPublishCarpool.value ? ['carpool_owner' as const] : []),
-  ...(canPublishApiService.value ? ['api_merchant' as const] : []),
-  'buyer',
-  'dispute',
-])
+const availableContactUsageScopeOptions = computed(() => contactUsageScopeOptionsForCapabilities({
+  canPublishCarpool: canPublishCarpool.value,
+  canPublishApiService: canPublishApiService.value,
+}))
+const defaultContactUsageScopes = computed<ContactUsageScope[]>(() => (
+  availableContactUsageScopeOptions.value.map(option => option.value)
+))
 
 const wechatContact = computed(() => (contacts.value ?? []).find(item => item.type === 'wechat') ?? null)
 const emailContact = computed(() => (contacts.value ?? []).find(item => item.type === 'email') ?? null)
@@ -336,12 +340,25 @@ const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailCo
 const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
 const emailBindingPending = computed(() => contactSaving.value || startEmailVerificationMutation.isPending.value || confirmEmailVerificationMutation.isPending.value || verifyContactMutation.isPending.value)
 const apiPaymentEditorDirty = ref(false)
+const wechatUsageScopesDirty = computed(() => !sameContactUsageScopes(
+  wechatForm.usageScopes,
+  initialContactUsageScopes(wechatContact.value, defaultContactUsageScopes.value),
+))
 const wechatContactDirty = computed(() => (
   wechatForm.displayValue.trim() !== (wechatContact.value?.displayValue ?? '').trim()
+  || wechatUsageScopesDirty.value
+))
+const emailValueDirty = computed(() => (
+  emailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? profile.value?.email ?? '').trim().toLowerCase()
+))
+const emailUsageScopesDirty = computed(() => !sameContactUsageScopes(
+  emailForm.usageScopes,
+  initialContactUsageScopes(emailContact.value, defaultContactUsageScopes.value),
 ))
 const emailContactDirty = computed(() => (
-  emailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? profile.value?.email ?? '').trim().toLowerCase()
+  emailValueDirty.value
   || Boolean(emailForm.code.trim())
+  || emailUsageScopesDirty.value
 ))
 const hasContactDraftChanges = computed(() => (
   wechatContactDirty.value || emailContactDirty.value || apiPaymentEditorDirty.value
@@ -525,6 +542,7 @@ watchEffect(() => {
   const wechatDraftKey = `${wechat?.id ?? 'empty'}:${wechat?.updatedAt ?? ''}`
   if (loadedContactDraftKeys.wechat !== wechatDraftKey) {
     wechatForm.displayValue = wechat?.displayValue ?? ''
+    wechatForm.usageScopes = initialContactUsageScopes(wechat, defaultContactUsageScopes.value)
     loadedContactDraftKeys.wechat = wechatDraftKey
   }
 
@@ -532,6 +550,7 @@ watchEffect(() => {
   const emailDraftKey = `${email?.id ?? profile.value.email ?? 'empty'}:${email?.updatedAt ?? profile.value.emailVerifiedAt ?? ''}`
   if (loadedContactDraftKeys.email !== emailDraftKey) {
     emailForm.email = email?.displayValue || profile.value.email || ''
+    emailForm.usageScopes = initialContactUsageScopes(email, defaultContactUsageScopes.value)
     loadedContactDraftKeys.email = emailDraftKey
   }
 
@@ -582,7 +601,7 @@ function setAccountRecoveryDialogOpen(open: boolean) {
 }
 
 function scopeLabels(scopes: ContactUsageScope[]) {
-  return scopes.map(scope => usageScopeOptions.find(item => item.value === scope)?.label ?? scope).join('、')
+  return scopes.map(scope => CONTACT_USAGE_SCOPE_OPTIONS.find(item => item.value === scope)?.label ?? scope).join('、')
 }
 
 function stopEmailVerificationTimer() {
@@ -700,25 +719,24 @@ function savePrivacy() {
   saveProfile()
 }
 
-function buildContactPayload(type: ContactMethodType, label: string, displayValue: string, current: UserContactMethod | null): SaveContactMethodRequest {
-  return {
-    type,
-    label,
-    displayValue: displayValue.trim(),
-    usageScopes: current?.usageScopes.length ? [...current.usageScopes] : [...defaultContactUsageScopes.value],
-    isDefault: current?.isDefault ?? false,
-    enabled: true,
-  }
-}
-
 function saveWechatContact() {
   const displayValue = wechatForm.displayValue.trim()
   if (!displayValue) {
     toast.warning('请先填写微信号。')
     return
   }
+  if (!wechatForm.usageScopes.length) {
+    toast.warning('请至少选择一个适用场景。')
+    return
+  }
   const current = wechatContact.value
-  const payload = buildContactPayload('wechat', '微信', displayValue, current)
+  const payload = buildContactMethodPayload({
+    type: 'wechat',
+    label: '微信',
+    displayValue,
+    usageScopes: wechatForm.usageScopes,
+    current,
+  })
   const mutationOptions = {
     onSuccess: () => {
       toast.success(current ? '微信联系方式已更新。' : '微信联系方式已绑定。')
@@ -749,8 +767,18 @@ function saveVerifiedEmailContact() {
     toast.warning('请先填写邮箱。')
     return
   }
+  if (!emailForm.usageScopes.length) {
+    toast.warning('请至少选择一个适用场景。')
+    return
+  }
   const current = emailContact.value
-  const payload = buildContactPayload('email', '邮箱', displayValue, current)
+  const payload = buildContactMethodPayload({
+    type: 'email',
+    label: '邮箱',
+    displayValue,
+    usageScopes: emailForm.usageScopes,
+    current,
+  })
   const mutationOptions = {
     onSuccess: markEmailContactVerified,
     onError: (error: Error) => toast.error(error.message),
@@ -760,6 +788,28 @@ function saveVerifiedEmailContact() {
     return
   }
   createContactMutation.mutate(payload, mutationOptions)
+}
+
+function saveEmailUsageScopes() {
+  const current = emailContact.value
+  if (!current || emailValueDirty.value) return
+  if (!emailForm.usageScopes.length) {
+    toast.warning('请至少选择一个适用场景。')
+    return
+  }
+  updateContactMutation.mutate({
+    contactId: current.id,
+    payload: buildContactMethodPayload({
+      type: 'email',
+      label: current.label || '邮箱',
+      displayValue: emailForm.email,
+      usageScopes: emailForm.usageScopes,
+      current,
+    }),
+  }, {
+    onSuccess: () => toast.success('邮箱适用场景已更新。'),
+    onError: (error: Error) => toast.error(error.message),
+  })
 }
 
 function confirmContactEmailVerification() {
@@ -1342,11 +1392,17 @@ function goToLogin() {
             </label>
             <Button
               class="sm:self-end"
-              :disabled="contactSaving || !wechatForm.displayValue.trim() || !wechatContactDirty"
+              :disabled="contactSaving || !wechatForm.displayValue.trim() || !wechatForm.usageScopes.length || !wechatContactDirty"
               @click="saveWechatContact"
             >
               <Save class="h-4 w-4" />保存微信
             </Button>
+          </div>
+          <div class="mt-4 border-t border-border pt-4">
+            <ContactUsageScopeSelector
+              v-model="wechatForm.usageScopes"
+              :options="availableContactUsageScopeOptions"
+            />
           </div>
         </ContactMethodCard>
 
@@ -1405,10 +1461,24 @@ function goToLogin() {
             </label>
             <Button
               class="sm:self-end"
-              :disabled="emailBindingPending || !emailForm.code.trim()"
+              :disabled="emailBindingPending || !emailForm.code.trim() || !emailForm.usageScopes.length"
               @click="confirmContactEmailVerification"
             >
               验证并绑定邮箱
+            </Button>
+          </div>
+          <div class="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <ContactUsageScopeSelector
+              v-model="emailForm.usageScopes"
+              :options="availableContactUsageScopeOptions"
+            />
+            <Button
+              v-if="emailContact"
+              variant="outline"
+              :disabled="contactSaving || emailValueDirty || !emailUsageScopesDirty || !emailForm.usageScopes.length"
+              @click="saveEmailUsageScopes"
+            >
+              <Save class="h-4 w-4" />保存适用场景
             </Button>
           </div>
         </ContactMethodCard>

@@ -271,8 +271,9 @@ func TestAPIOrderSanctionRecommendationCountsOverdueSellerFactsWithoutOutcomeSta
 	}
 	section := string(source)[start : start+end]
 	for _, required := range []string{
-		"remedy.status = 'overdue'",
-		"remedy.overdue_at >= $1",
+		"remedy.lateness_status = 'late_confirmed'",
+		"remedy.lateness_reversed_at IS NULL",
+		"remedy.lateness_decided_at >= $1",
 		"remedy.responsible_user_id = $2",
 		"order_row.seller_user_id = remedy.responsible_user_id",
 	} {
@@ -281,6 +282,19 @@ func TestAPIOrderSanctionRecommendationCountsOverdueSellerFactsWithoutOutcomeSta
 		}
 	}
 	if strings.Contains(section, "dispute_reputation_outcomes") || strings.Contains(section, "outcome.status") {
-		t.Fatal("historical overdue facts must keep counting after their outcomes are reversed")
+		t.Fatal("sanction count must use the remedy reversal fact without depending on outcome state")
+	}
+}
+
+func TestReputationAggregationExcludesAppealReversedLateness(t *testing.T) {
+	source, err := os.ReadFile("reputation.go")
+	if err != nil {
+		t.Fatalf("read reputation store: %v", err)
+	}
+	section := string(source)
+	for _, required := range []string{"remedy.lateness_reversed_at IS NULL", "outcome.status = 'active'"} {
+		if !strings.Contains(section, required) {
+			t.Fatalf("reputation aggregation missing reversed-lateness guard %q", required)
+		}
 	}
 }

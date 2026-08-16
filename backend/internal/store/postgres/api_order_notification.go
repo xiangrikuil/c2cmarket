@@ -46,6 +46,13 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 			Body:            apiOrderNotificationBody(order, "卖家已确认收到站外付款，接下来将准备交付。"),
 			TargetURL:       buyerTarget,
 		}, true
+	case apiorder.EventDeliveryDueReminder:
+		return apiOrderNotificationSpec{
+			RecipientUserID: order.SellerUserID,
+			Title:           "API 订单交付即将截止",
+			Body:            apiOrderNotificationBody(order, "交付截止时间将在 3 分钟内到达，请尽快提交买家专属接入信息。"),
+			TargetURL:       sellerTarget,
+		}, true
 	case apiorder.EventPaymentIssueReported:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,

@@ -53,6 +53,10 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 	if err != nil {
 		return maintenance.Result{}, internalStoreError()
 	}
+	result.AfterSalesApplicationsExpired, err = expireAfterSalesApplicantDecisionsInTx(ctx, tx, now, batchSize)
+	if err != nil {
+		return maintenance.Result{}, internalStoreError()
+	}
 
 	result.APIOrdersPaymentExpired, result.APIOrderReviewReminders, result.APIOrdersAutoCompleted, err = s.materializeAPIOrdersForMaintenanceInTx(ctx, tx, now, batchSize)
 	if err != nil {
@@ -446,12 +450,13 @@ type expiredDisputeRemedyCandidate struct {
 	OrderStatus   string
 	ResponsibleID string
 	BeneficiaryID string
+	Source        string
 }
 
 func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now time.Time, batchSize int) (int64, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT remedy.id::text, dispute.id::text, api_order.id::text, api_order.status,
-		       remedy.responsible_user_id::text, remedy.beneficiary_user_id::text
+		       remedy.responsible_user_id::text, remedy.beneficiary_user_id::text, remedy.source
 		FROM api_order_dispute_remedies remedy
 		JOIN dispute_cases dispute ON dispute.id = remedy.dispute_case_id
 		JOIN api_orders api_order
@@ -459,7 +464,7 @@ func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now ti
 		 AND api_order.dispute_case_id = dispute.id
 		WHERE remedy.status = 'claimed_fulfilled'
 		  AND remedy.confirmation_due_at <= $1
-		  AND dispute.status = 'resolved'
+		  AND dispute.status IN ('resolved', 'voluntary_fulfillment')
 		  AND api_order.dispute_status = 'fulfillment_confirmation'
 		ORDER BY remedy.confirmation_due_at, remedy.id
 		LIMIT $2
@@ -471,7 +476,7 @@ func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now ti
 	candidates := make([]expiredDisputeRemedyCandidate, 0)
 	for rows.Next() {
 		var candidate expiredDisputeRemedyCandidate
-		if err := rows.Scan(&candidate.RemedyID, &candidate.DisputeID, &candidate.OrderID, &candidate.OrderStatus, &candidate.ResponsibleID, &candidate.BeneficiaryID); err != nil {
+		if err := rows.Scan(&candidate.RemedyID, &candidate.DisputeID, &candidate.OrderID, &candidate.OrderStatus, &candidate.ResponsibleID, &candidate.BeneficiaryID, &candidate.Source); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -485,6 +490,12 @@ func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now ti
 
 	for _, candidate := range candidates {
 		requestID := "remedy-confirmation-timeout:" + candidate.RemedyID
+		finalReason := "remedy_confirmation_expired"
+		publicResult := report.RemedyConfirmationExpiredPublicResult
+		if candidate.Source == report.RemedySourceSellerAcceptance {
+			finalReason = "voluntary_confirmation_no_objection"
+			publicResult = "买家在确认期内未提出异议，售后申请已中性结束"
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE api_order_dispute_remedies
 			SET status = 'confirmation_expired', confirmation_expired_at = $2,
@@ -496,15 +507,24 @@ func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now ti
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE dispute_cases
-			SET status = 'closed', public_result = $2,
-			    closed_at = $3, updated_at = $3, version = version + 1
-			WHERE id = $1 AND status = 'resolved'
-		`, candidate.DisputeID, report.RemedyConfirmationExpiredPublicResult, now); err != nil {
+			SET status = 'closed', active = false, public_result = $2,
+			    closed_at = $3, final_reason = $4,
+			    appeal_expires_at = CASE WHEN $5 = 'seller_acceptance' THEN NULL ELSE $3::timestamptz + interval '30 days' END,
+			    adversely_affected_user_ids = CASE
+			      WHEN $5 = 'seller_acceptance' THEN '{}'::uuid[]
+			      ELSE ARRAY[subject_user_id]::uuid[]
+			    END,
+			    next_actor = 'none', due_at = NULL, updated_at = $3, version = version + 1
+			WHERE id = $1 AND status IN ('resolved', 'voluntary_fulfillment')
+		`, candidate.DisputeID, publicResult, now, finalReason, candidate.Source); err != nil {
 			return 0, err
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE api_orders
-			SET dispute_status = 'closed', updated_at = $2, version = version + 1
+			SET dispute_status = 'none', latest_dispute_case_id = dispute_case_id,
+			    dispute_case_id = NULL, active_remedy_action = '',
+			    commercial_outcome = 'closed_unverified', commercial_outcome_updated_at = $2,
+			    updated_at = $2, version = version + 1
 			WHERE id = $1 AND dispute_status = 'fulfillment_confirmation'
 		`, candidate.OrderID, now); err != nil {
 			return 0, err
@@ -529,6 +549,85 @@ func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now ti
 			return 0, err
 		}
 		if appErr := insertDisputeNotifications(ctx, tx, candidate.DisputeID, "dispute.remedy_confirmation_expired", "整改确认期已结束", "对方未在期限内反馈，流程已中性结案；平台未核验到账或履约事实。", candidate.RemedyID+":confirmation_expired", now, candidate.ResponsibleID, candidate.BeneficiaryID); appErr != nil {
+			return 0, errors.New(appErr.Detail)
+		}
+	}
+	return int64(len(candidates)), nil
+}
+
+type expiredAfterSalesApplicationCandidate struct {
+	DisputeID string
+	OrderID   string
+	BuyerID   string
+	SellerID  string
+}
+
+func expireAfterSalesApplicantDecisionsInTx(ctx context.Context, tx pgx.Tx, now time.Time, batchSize int) (int64, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT dispute.id::text, api_order.id::text,
+		       dispute.primary_user_id::text, dispute.counterparty_user_id::text
+		FROM dispute_cases dispute
+		JOIN api_orders api_order
+		  ON api_order.id = dispute.api_order_id
+		 AND api_order.dispute_case_id = dispute.id
+		WHERE dispute.active = true
+		  AND dispute.status = 'pending_applicant_decision'
+		  AND dispute.applicant_decision_due_at <= $1
+		  AND api_order.dispute_status = 'pending_applicant_decision'
+		ORDER BY dispute.applicant_decision_due_at, dispute.id
+		LIMIT $2
+		FOR UPDATE OF dispute, api_order SKIP LOCKED
+	`, now, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	candidates := make([]expiredAfterSalesApplicationCandidate, 0)
+	for rows.Next() {
+		var candidate expiredAfterSalesApplicationCandidate
+		if err := rows.Scan(&candidate.DisputeID, &candidate.OrderID, &candidate.BuyerID, &candidate.SellerID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	for _, candidate := range candidates {
+		requestID := "after-sales-applicant-timeout:" + candidate.DisputeID
+		if _, err := tx.Exec(ctx, `
+			UPDATE dispute_cases
+			SET status = 'closed', active = false,
+			    public_result = '买家未在决定期内申请平台介入，售后申请已中性结束',
+			    closed_at = $2, final_reason = 'applicant_decision_expired',
+			    next_actor = 'none', due_at = NULL,
+			    updated_at = $2, version = version + 1
+			WHERE id = $1 AND active = true AND status = 'pending_applicant_decision'
+		`, candidate.DisputeID, now); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE api_orders
+			SET dispute_status = 'none', latest_dispute_case_id = dispute_case_id,
+			    dispute_case_id = NULL, active_remedy_action = '',
+			    updated_at = $2, version = version + 1
+			WHERE id = $1 AND dispute_status = 'pending_applicant_decision'
+		`, candidate.OrderID, now); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO dispute_events (
+				entity_type, entity_id, action, actor_user_id, actor_role, reason, public, request_id, created_at
+			)
+			VALUES ('dispute', $1, 'applicant_decision_expired', NULL, 'system',
+			        '买家未在决定期内申请平台介入，售后申请已中性结束。', true, $2, $3)
+		`, candidate.DisputeID, requestID, now); err != nil {
+			return 0, err
+		}
+		if appErr := insertDisputeNotifications(ctx, tx, candidate.DisputeID, "dispute.applicant_decision_expired", "售后申请决定期已结束", "买家未申请平台介入，本次售后申请已中性结束。", candidate.DisputeID+":applicant_decision_expired", now, candidate.BuyerID, candidate.SellerID); appErr != nil {
 			return 0, errors.New(appErr.Detail)
 		}
 	}

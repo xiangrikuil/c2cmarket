@@ -509,6 +509,59 @@ core identity markers, seeds Grok/xAI, and persists independent API-order
 catalog risk holds. Its down migration refuses rollback after blocked state or
 risk-hold data has been used.
 
+Version 99 (`000099_api_order_active_dispute_history`) separates the current
+API-order dispute projection from immutable history, enforces one active case
+per order, and lets accepted participant settlements create auditable remedies
+before closure.
+
+Version 100 (`000100_api_order_remedy_progress_lateness`) separates remedy
+fulfillment progress from objective and administrator-reviewed lateness. A due
+timestamp or `late_unreviewed` fact does not itself create a sanction.
+
+Version 101 (`000101_api_order_appeal_governance`) freezes final reasons,
+30-day appeal deadlines, and adversely affected participant IDs while allowing
+one reversible reputation outcome per affected subject.
+
+Version 102 (`000102_api_order_commercial_outcome_reviews`) adds independent
+API-order commercial outcomes, freezes them into review rows, pauses mutable
+reviews during an active dispute, and derives the open review window from the
+final commercial outcome time plus 14 days.
+
+Version 103 (`000103_api_order_deadline_facts_reminders`) persists merchant and
+delivery overdue facts plus one idempotent delivery reminder in the final three
+minutes. These facts never cancel an order, release inventory, refund, or apply
+a restriction automatically.
+
+Version 104 (`000104_api_order_quota_validity_issue`) records a rejected first
+delivery whose frozen validity has less than 60 minutes remaining. It does not
+replace credentials, extend expiry, resurrect inventory, or reopen an order.
+
+Version 105 (`000105_api_order_evidence_assets`) adds private, append-only image
+evidence, binding authorization, quarantine, and bounded lifecycle cleanup for
+API-order disputes.
+
+Version 106 (`000106_api_order_platform_escalation_context`) records the actual
+off-site or in-site negotiation channels, confirms that bilateral negotiation
+has ended, freezes the final disagreement and requested platform action, and
+marks pending settlement proposals as superseded when platform intervention
+starts.
+
+Version 107 (`000107_api_order_platform_handling_simplification`) moves new API
+order disputes directly into platform handling. It freezes the applicant's
+statement and fact snapshot, permits one immutable respondent answer, records
+the current actor and deadline, adds applicant withdrawal and offline-resolution
+outcomes, and preserves old messages and settlement proposals as read-only
+history. Its down migration refuses to discard data written by the new flow.
+
+Version 108 (`000108_api_order_refund_style_disputes`) changes new API-order
+cases to a seller-first after-sales flow. The seller has 24 hours to accept or
+reject; rejection gives the buyer three days to request platform intervention,
+while acceptance creates a neutral voluntary remedy with separate fulfillment
+and confirmation deadlines. It also permits API-order platform intervention
+without recording off-site communication channels and allows voluntary closure
+without adverse facts or appeal eligibility. Its down migration refuses to
+discard seller decisions, applicant-decision deadlines, or voluntary remedies.
+
 ## Docker Compose
 
 The repository root `compose.yaml` provides a PostgreSQL service and a one-shot

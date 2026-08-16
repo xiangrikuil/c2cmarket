@@ -24,6 +24,7 @@ import (
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/devpersona"
+	"c2c-market/backend/internal/module/evidence"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/growth"
@@ -71,6 +72,7 @@ type ServerOptions struct {
 	MetricsBearerToken string
 	TurnstileVerifier  turnstile.Verifier
 	SentryEnabled      bool
+	Evidence           *evidence.Service
 }
 
 type OAuthOptions struct {
@@ -554,6 +556,7 @@ type Server struct {
 	apiOrderContinuity APIOrderContinuityService
 	carpoolContinuity  CarpoolContinuityService
 	disputeContinuity  DisputeContinuityService
+	evidence           *evidence.Service
 	devPersonas        DevPersonaSessionService
 	mux                chi.Router
 	enableDevAuth      bool
@@ -620,6 +623,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		apiOrderContinuity: service,
 		carpoolContinuity:  service,
 		disputeContinuity:  service,
+		evidence:           option.Evidence,
 		devPersonas:        service,
 		mux:                chi.NewRouter(),
 		enableDevAuth:      option.EnableDevAuth,

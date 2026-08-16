@@ -42,8 +42,9 @@ func ValidityExpiresAt(order Order) *time.Time {
 }
 
 func WithAfterSalesProjection(order Order, now time.Time) Order {
-	order.MerchantConfirmOverdue = order.Status == StatusPaymentSubmitted && order.MerchantConfirmDueAt != nil && !now.Before(*order.MerchantConfirmDueAt)
-	order.DeliveryOverdue = order.Status == StatusPaidConfirmed && order.DeliveryDueAt != nil && !now.Before(*order.DeliveryDueAt)
+	order.MerchantConfirmOverdue = order.MerchantConfirmOverdueAt != nil || order.Status == StatusPaymentSubmitted && order.MerchantConfirmDueAt != nil && !now.Before(*order.MerchantConfirmDueAt)
+	order.DeliveryOverdue = order.DeliveryOverdueAt != nil || order.Status == StatusPaidConfirmed && order.DeliveryDueAt != nil && !now.Before(*order.DeliveryDueAt)
+	order.HasDisputeHistory = order.LatestDisputeCaseID != ""
 	order.CanReportLatePayment = order.Status == StatusCancelled && order.CancelReason == "payment_timeout" &&
 		order.CancelledAt != nil && order.LatePaymentStatus == "" && now.Before(order.CancelledAt.Add(LatePaymentWindow))
 	validityExpiresAt := ValidityExpiresAt(order)

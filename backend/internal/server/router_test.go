@@ -194,7 +194,7 @@ func TestDevPersonaSessionPreparesStrictFixedPersonas(t *testing.T) {
 		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode %s persona session: %v", test.persona, err)
 		}
-		if string(payload.Persona) != test.persona || payload.User.Username != "dev-"+test.persona || payload.User.IsAdmin != test.admin {
+		if string(payload.Persona) != test.persona || payload.User.Username != "dev-"+test.persona || payload.User.IsAdmin != test.admin || payload.Audience != auth.SessionAudienceNormal {
 			t.Fatalf("unexpected %s persona session: %+v", test.persona, payload)
 		}
 		if payload.CSRFToken == "" || responseSessionCookie(response) == nil {
@@ -2417,21 +2417,30 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	disputeOrder := createAPIOrder(t, server, buyerSession, disputeIntent.ID, "wechat", "api-order-dispute-create")
 	disputePaid := apiOrderAction(t, server, buyerSession, "me", disputeOrder.ID, "submit-payment", disputeOrder.Version, "api-order-dispute-submit-payment", `{"paymentSummary":"已付款但站外确认存在争议。"}`)
 	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"issueCode":"not_delivered","requestedResolution":"full_refund","requestedAmountCny":"","reason":"付款后商户未按站外确认说明继续处理。"}`)
-	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "negotiating" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
+	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "pending_seller_response" || disputed.DisputeCaseID == "" || disputed.DisputeNextActor != "respondent" || disputed.DisputeDueAt == nil || !disputed.DisputeNeedsAction || disputed.Version != 3 ||
+		len(disputed.DisputeAvailableActions) != 1 || disputed.DisputeAvailableActions[0] != "withdraw" {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
 	}
 	buyerDisputeDetail := getMyDispute(t, server, buyerSession, disputed.DisputeCaseID)
 	ownerDisputeDetail := getMyDispute(t, server, ownerSession, disputed.DisputeCaseID)
-	if buyerDisputeDetail.IssueCode != "not_delivered" ||
+	if buyerDisputeDetail.ViewerUserID != buyerSession.userID ||
+		buyerDisputeDetail.IssueCode != "not_delivered" ||
 		buyerDisputeDetail.RequestedResolution != "full_refund" ||
 		buyerDisputeDetail.RequestedAmountCNY != "" ||
-		len(buyerDisputeDetail.Messages) != 1 ||
-		buyerDisputeDetail.Messages[0].SenderUserID != buyerSession.userID ||
-		buyerDisputeDetail.Messages[0].Body != "付款后商户未按站外确认说明继续处理。" {
+		buyerDisputeDetail.Status != "pending_seller_response" ||
+		buyerDisputeDetail.NextActor != "respondent" ||
+		buyerDisputeDetail.DueAt == nil ||
+		buyerDisputeDetail.ApplicantStatement != "付款后商户未按站外确认说明继续处理。" ||
+		len(buyerDisputeDetail.AvailableActions) != 1 ||
+		buyerDisputeDetail.AvailableActions[0] != "withdraw" ||
+		len(buyerDisputeDetail.Messages) != 0 {
 		t.Fatalf("unexpected buyer dispute detail: %+v", buyerDisputeDetail)
 	}
-	if ownerDisputeDetail.IssueCode != buyerDisputeDetail.IssueCode ||
+	if ownerDisputeDetail.ViewerUserID != ownerSession.userID ||
+		ownerDisputeDetail.IssueCode != buyerDisputeDetail.IssueCode ||
 		ownerDisputeDetail.RequestedResolution != buyerDisputeDetail.RequestedResolution ||
+		len(ownerDisputeDetail.AvailableActions) != 1 ||
+		ownerDisputeDetail.AvailableActions[0] != "seller_decision" ||
 		len(ownerDisputeDetail.Messages) != len(buyerDisputeDetail.Messages) {
 		t.Fatalf("participants must read the same dispute facts: buyer=%+v owner=%+v", buyerDisputeDetail, ownerDisputeDetail)
 	}
@@ -2469,30 +2478,35 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	assertProblemCode(t, outsiderDetailResponse, domain.CodeObjectNotFound)
 
-	withOwnerMessage := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "messages", "api-order-dispute-owner-message", `{"body":"已核对订单，当前交付仍需补充处理。"}`)
-	if len(withOwnerMessage.Messages) != 2 || withOwnerMessage.Messages[1].SenderUserID != ownerSession.userID {
-		t.Fatalf("expected immutable owner message in dispute history, got %+v", withOwnerMessage.Messages)
+	rejectedDispute := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "seller-decision", "api-order-dispute-owner-reject", `{"decision":"rejected","reason":"现有交付安排符合订单约定，不同意退款申请。"}`)
+	if rejectedDispute.Status != "pending_applicant_decision" || rejectedDispute.SellerDecision != "rejected" || rejectedDispute.SellerDecisionReason != "现有交付安排符合订单约定，不同意退款申请。" || rejectedDispute.SellerDecidedAt == nil || rejectedDispute.NextActor != "applicant" || rejectedDispute.ApplicantDecisionDueAt == nil || rejectedDispute.DueAt == nil {
+		t.Fatalf("seller rejection must wait for the applicant decision: %+v", rejectedDispute)
 	}
-	pendingProposal := disputeParticipantAction(t, server, buyerSession, disputed.DisputeCaseID, "settlement-proposals", "api-order-dispute-buyer-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"请商户继续完成本订单交付。"}`)
-	if len(pendingProposal.SettlementProposals) != 1 || pendingProposal.SettlementProposals[0].Status != "pending" {
-		t.Fatalf("expected pending buyer proposal, got %+v", pendingProposal.SettlementProposals)
+	duplicateResponseRequest := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputed.DisputeCaseID+"/seller-decision", `{"decision":"accepted","reason":"不能修改已经提交的卖家决定。"}`)
+	addAuth(duplicateResponseRequest, ownerSession, "api-order-dispute-owner-decision-again")
+	duplicateSellerDecision := httptest.NewRecorder()
+	server.ServeHTTP(duplicateSellerDecision, duplicateResponseRequest)
+	if duplicateSellerDecision.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate seller decision to fail, got %d body %s", duplicateSellerDecision.Code, duplicateSellerDecision.Body.String())
 	}
-	pendingProposalID := pendingProposal.SettlementProposals[0].ID
-	escalatedDispute := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "escalate", "api-order-dispute-owner-escalate", `{"reason":"双方对交付时点仍无法达成一致。"}`)
-	if escalatedDispute.Status != "open" || len(escalatedDispute.SettlementProposals) != 1 || escalatedDispute.SettlementProposals[0].Status != "superseded" {
-		t.Fatalf("platform escalation must preserve and supersede pending proposal history: %+v", escalatedDispute)
+	assertProblemCode(t, duplicateSellerDecision, domain.CodeInvalidStateTransition)
+
+	for _, removedPath := range []string{"response", "self-resolve", "messages", "settlement-proposals", "escalate"} {
+		request := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputed.DisputeCaseID+"/"+removedPath, `{}`)
+		addAuth(request, ownerSession, "api-order-dispute-removed-"+removedPath)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("expected removed route %s to return 404, got %d body %s", removedPath, response.Code, response.Body.String())
+		}
 	}
-	confirmAfterEscalation := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputed.DisputeCaseID+"/settlement-proposals/"+pendingProposalID+"/confirm", `{}`)
-	addAuth(confirmAfterEscalation, ownerSession, "api-order-dispute-confirm-after-escalation")
-	confirmAfterEscalationResponse := httptest.NewRecorder()
-	server.ServeHTTP(confirmAfterEscalationResponse, confirmAfterEscalation)
-	if confirmAfterEscalationResponse.Code != http.StatusConflict {
-		t.Fatalf("expected proposal confirmation after escalation to fail, got %d body %s", confirmAfterEscalationResponse.Code, confirmAfterEscalationResponse.Body.String())
+	escalatedDispute := disputeParticipantAction(t, server, buyerSession, disputed.DisputeCaseID, "platform-intervention", "api-order-dispute-buyer-intervention", `{"reason":"无法接受卖家的拒绝理由，请平台审核订单与交付事实。"}`)
+	if escalatedDispute.Status != "open" || escalatedDispute.NextActor != "admin" || escalatedDispute.DueAt != nil || escalatedDispute.EscalatedByUserID != buyerSession.userID || escalatedDispute.EscalatedAt == nil || escalatedDispute.PlatformInterventionReason != "无法接受卖家的拒绝理由，请平台审核订单与交付事实。" {
+		t.Fatalf("buyer intervention must move the case to administrator review: %+v", escalatedDispute)
 	}
-	assertProblemCode(t, confirmAfterEscalationResponse, domain.CodeInvalidStateTransition)
-	escalatedOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
-	if escalatedOrder.DisputeStatus != "open" || escalatedOrder.Status != disputed.Status || escalatedOrder.Version != disputed.Version+1 {
-		t.Fatalf("platform escalation must only advance the dispute projection: before=%+v after=%+v", disputed, escalatedOrder)
+	respondedOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
+	if respondedOrder.DisputeStatus != "open" || respondedOrder.DisputeNextActor != "admin" || respondedOrder.DisputeDueAt != nil || respondedOrder.DisputeNeedsAction || respondedOrder.Status != disputed.Status || respondedOrder.Version != disputed.Version+2 {
+		t.Fatalf("platform intervention must preserve the order lifecycle: before=%+v after=%+v", disputed, respondedOrder)
 	}
 
 	openAppealRequest := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
@@ -2516,10 +2530,10 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	addAuth(forbiddenAppeal, buyerSession, "api-order-dispute-non-subject-appeal")
 	forbiddenAppealResponse := httptest.NewRecorder()
 	server.ServeHTTP(forbiddenAppealResponse, forbiddenAppeal)
-	if forbiddenAppealResponse.Code != http.StatusForbidden {
-		t.Fatalf("expected non-subject appeal forbidden, got %d body %s", forbiddenAppealResponse.Code, forbiddenAppealResponse.Body.String())
+	if forbiddenAppealResponse.Code != http.StatusConflict {
+		t.Fatalf("expected open dispute appeal conflict, got %d body %s", forbiddenAppealResponse.Code, forbiddenAppealResponse.Body.String())
 	}
-	assertProblemCode(t, forbiddenAppealResponse, domain.CodePermissionDenied)
+	assertProblemCode(t, forbiddenAppealResponse, domain.CodeInvalidStateTransition)
 
 	outsiderAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
 		"disputeId":"`+disputed.DisputeCaseID+`",
@@ -2553,34 +2567,27 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
 	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
 	merchantDisputeBody := `{"issueCode":"payment_dispute","requestedResolution":"other","requestedAmountCny":"","reason":"收款记录与买家提交的信息不一致，需要双方协商核对。"}`
-	merchantDisputed := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
-	if merchantDisputed.DisputeStatus != "negotiating" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
-		t.Fatalf("unexpected merchant-opened API order dispute: %+v", merchantDisputed)
+	merchantDisputeRequest := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+merchantDisputePaid.ID+"/dispute", merchantDisputeBody)
+	addAuth(merchantDisputeRequest, merchantOwnerSession, "api-order-merchant-open-dispute")
+	merchantDisputeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(merchantDisputePaid.Version, 10)+`"`)
+	merchantDisputeResponse := httptest.NewRecorder()
+	server.ServeHTTP(merchantDisputeResponse, merchantDisputeRequest)
+	if merchantDisputeResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected seller-originated order dispute to be hidden, got %d body %s", merchantDisputeResponse.Code, merchantDisputeResponse.Body.String())
 	}
-	merchantDisputeReplay := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
-	if merchantDisputeReplay.DisputeCaseID != merchantDisputed.DisputeCaseID || merchantDisputeReplay.Version != merchantDisputed.Version {
-		t.Fatalf("expected idempotent merchant dispute replay, got %+v and %+v", merchantDisputed, merchantDisputeReplay)
+	unchangedMerchantOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID)
+	if unchangedMerchantOrder.Version != merchantDisputePaid.Version || unchangedMerchantOrder.DisputeStatus != "none" || unchangedMerchantOrder.DisputeCaseID != "" {
+		t.Fatalf("removed seller dispute route must not mutate the order: before=%+v after=%+v", merchantDisputePaid, unchangedMerchantOrder)
 	}
-	merchantProposal := disputeParticipantAction(t, server, merchantOwnerSession, merchantDisputed.DisputeCaseID, "settlement-proposals", "api-order-merchant-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"商户将在约定时间内继续完成交付。"}`)
-	if len(merchantProposal.SettlementProposals) != 1 || merchantProposal.SettlementProposals[0].ProposedByUserID != merchantOwnerSession.userID {
-		t.Fatalf("expected seller proposal, got %+v", merchantProposal.SettlementProposals)
+
+	buyerOpened := apiOrderAction(t, server, buyerSession, "me", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-buyer-open-withdrawable-dispute", merchantDisputeBody)
+	withdrawn := disputeParticipantAction(t, server, buyerSession, buyerOpened.DisputeCaseID, "withdraw", "api-order-buyer-withdraw-dispute", `{"reason":"申请有误，不再继续本次售后。"}`)
+	if withdrawn.Status != "withdrawn" || withdrawn.NextActor != "none" {
+		t.Fatalf("only the applicant withdrawal must close the dispute, got %+v", withdrawn)
 	}
-	merchantProposalID := merchantProposal.SettlementProposals[0].ID
-	selfConfirm := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+merchantDisputed.DisputeCaseID+"/settlement-proposals/"+merchantProposalID+"/confirm", `{}`)
-	addAuth(selfConfirm, merchantOwnerSession, "api-order-merchant-self-confirm")
-	selfConfirmResponse := httptest.NewRecorder()
-	server.ServeHTTP(selfConfirmResponse, selfConfirm)
-	if selfConfirmResponse.Code != http.StatusConflict {
-		t.Fatalf("expected proposal creator self-confirmation to fail, got %d body %s", selfConfirmResponse.Code, selfConfirmResponse.Body.String())
-	}
-	assertProblemCode(t, selfConfirmResponse, domain.CodeInvalidStateTransition)
-	merchantAgreement := disputeParticipantAction(t, server, buyerSession, merchantDisputed.DisputeCaseID, "settlement-proposals/"+merchantProposalID+"/confirm", "api-order-buyer-confirm-merchant-proposal", `{}`)
-	if merchantAgreement.Status != "closed" || len(merchantAgreement.SettlementProposals) != 1 || merchantAgreement.SettlementProposals[0].Status != "accepted" {
-		t.Fatalf("counterparty confirmation must close the agreed dispute, got %+v", merchantAgreement)
-	}
-	merchantAgreedOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", merchantDisputed.ID)
-	if merchantAgreedOrder.DisputeStatus != "closed" || merchantAgreedOrder.Status != merchantDisputed.Status || merchantAgreedOrder.Version != merchantDisputed.Version+1 {
-		t.Fatalf("agreement must only close the dispute projection: before=%+v after=%+v", merchantDisputed, merchantAgreedOrder)
+	withdrawnOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", buyerOpened.ID)
+	if withdrawnOrder.DisputeStatus != "none" || withdrawnOrder.Status != buyerOpened.Status || withdrawnOrder.Version != buyerOpened.Version+1 {
+		t.Fatalf("withdrawal must only close the dispute projection: before=%+v after=%+v", buyerOpened, withdrawnOrder)
 	}
 	adminDisputes := listAdminDisputes(t, server, adminSession)
 	foundDispute := false
@@ -2627,10 +2634,10 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	resolvedBuyerOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
 	resolvedOwnerOrder := getAPIOrder(t, server, ownerSession, "owner", disputed.ID)
-	if resolvedBuyerOrder.DisputeStatus != "closed" || resolvedOwnerOrder.DisputeStatus != "closed" {
-		t.Fatalf("resolved dispute must project closed to both participants: buyer=%+v owner=%+v", resolvedBuyerOrder, resolvedOwnerOrder)
+	if resolvedBuyerOrder.DisputeStatus != "none" || resolvedOwnerOrder.DisputeStatus != "none" {
+		t.Fatalf("resolved dispute must clear the active projection for both participants: buyer=%+v owner=%+v", resolvedBuyerOrder, resolvedOwnerOrder)
 	}
-	if resolvedBuyerOrder.Status != disputed.Status || resolvedOwnerOrder.Status != disputed.Status || resolvedBuyerOrder.Version != escalatedOrder.Version+1 || resolvedOwnerOrder.Version != escalatedOrder.Version+1 {
+	if resolvedBuyerOrder.Status != disputed.Status || resolvedOwnerOrder.Status != disputed.Status || resolvedBuyerOrder.Version != respondedOrder.Version+1 || resolvedOwnerOrder.Version != respondedOrder.Version+1 {
 		t.Fatalf("dispute projection must preserve order lifecycle and increment once: before=%+v buyer=%+v owner=%+v", disputed, resolvedBuyerOrder, resolvedOwnerOrder)
 	}
 	resolvedBuyerDisputes, _ := listMyDisputes(t, server, buyerSession)
@@ -2877,11 +2884,12 @@ func TestDisputeParticipantMutationsAuthenticateBeforeJSONDecoding(t *testing.T)
 	server := newTestServer(time.Now())
 	session := createSession(t, server, "dispute-auth-order", false)
 	paths := []string{
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/messages",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals/00000000-0000-4000-8000-000000000002/confirm",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals/00000000-0000-4000-8000-000000000002/reject",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/escalate",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/seller-decision",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/platform-intervention",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/withdraw",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/remedy/claim",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/remedy/confirm",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/remedy/contest",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -3737,6 +3745,12 @@ type createdAPIOrder struct {
 	Status                        string                             `json:"status"`
 	DisputeStatus                 string                             `json:"disputeStatus"`
 	DisputeCaseID                 string                             `json:"disputeCaseId"`
+	DisputeNextActor              string                             `json:"disputeNextActor"`
+	DisputeDueAt                  *string                            `json:"disputeDueAt"`
+	DisputeNeedsAction            bool                               `json:"disputeNeedsAction"`
+	DisputeResponseOverdue        bool                               `json:"disputeResponseOverdue"`
+	DisputeAvailableActions       []string                           `json:"disputeAvailableActions"`
+	ActiveRemedySource            string                             `json:"activeRemedySource"`
 	ServiceTitleSnapshot          string                             `json:"serviceTitleSnapshot"`
 	RequestedUSDAllowanceSnapshot string                             `json:"requestedUsdAllowanceSnapshot"`
 	CNYPerUSDAllowanceSnapshot    string                             `json:"cnyPerUsdAllowanceSnapshot"`
@@ -3773,31 +3787,52 @@ type createdAPIOrderDeliveryCredential struct {
 }
 
 type createdDispute struct {
-	ID                   string                      `json:"id"`
-	ReportID             string                      `json:"reportId"`
-	TargetType           string                      `json:"targetType"`
-	TargetID             string                      `json:"targetId"`
-	TargetLabel          string                      `json:"targetLabel"`
-	PrimaryUserID        string                      `json:"primaryUserId"`
-	PrimaryUsername      string                      `json:"primaryUsername"`
-	PrimaryDisplayName   string                      `json:"primaryDisplayName"`
-	CounterpartyUserID   string                      `json:"counterpartyUserId"`
-	CounterpartyUsername string                      `json:"counterpartyUsername"`
-	CounterpartyName     string                      `json:"counterpartyName"`
-	SubjectUserID        string                      `json:"subjectUserId"`
-	SubjectUsername      string                      `json:"subjectUsername"`
-	SubjectName          string                      `json:"subjectName"`
-	Status               string                      `json:"status"`
-	IssueCode            string                      `json:"issueCode"`
-	RequestedResolution  string                      `json:"requestedResolution"`
-	RequestedAmountCNY   string                      `json:"requestedAmountCny"`
-	PublicSummary        string                      `json:"publicSummary"`
-	PublicResult         string                      `json:"publicResult"`
-	OpenedByAdminID      string                      `json:"openedByAdminId"`
-	Version              int64                       `json:"version"`
-	CanAppeal            bool                        `json:"canAppeal"`
-	Messages             []createdDisputeMessage     `json:"messages"`
-	SettlementProposals  []createdSettlementProposal `json:"settlementProposals"`
+	ID                         string                      `json:"id"`
+	ReportID                   string                      `json:"reportId"`
+	TargetType                 string                      `json:"targetType"`
+	TargetID                   string                      `json:"targetId"`
+	TargetLabel                string                      `json:"targetLabel"`
+	PrimaryUserID              string                      `json:"primaryUserId"`
+	PrimaryUsername            string                      `json:"primaryUsername"`
+	PrimaryDisplayName         string                      `json:"primaryDisplayName"`
+	CounterpartyUserID         string                      `json:"counterpartyUserId"`
+	CounterpartyUsername       string                      `json:"counterpartyUsername"`
+	CounterpartyName           string                      `json:"counterpartyName"`
+	SubjectUserID              string                      `json:"subjectUserId"`
+	SubjectUsername            string                      `json:"subjectUsername"`
+	SubjectName                string                      `json:"subjectName"`
+	Status                     string                      `json:"status"`
+	NextActor                  string                      `json:"nextActor"`
+	DueAt                      *string                     `json:"dueAt"`
+	ApplicantStatement         string                      `json:"applicantStatement"`
+	RespondentResponse         string                      `json:"respondentResponse"`
+	RespondedByUserID          string                      `json:"respondedByUserId"`
+	RespondedAt                *string                     `json:"respondedAt"`
+	SellerDecision             string                      `json:"sellerDecision"`
+	SellerDecisionReason       string                      `json:"sellerDecisionReason"`
+	SellerDecidedAt            *string                     `json:"sellerDecidedAt"`
+	SellerResponseLate         bool                        `json:"sellerResponseLate"`
+	ResponseOverdue            bool                        `json:"responseOverdue"`
+	ApplicantDecisionDueAt     *string                     `json:"applicantDecisionDueAt"`
+	AvailableActions           []string                    `json:"availableActions"`
+	IssueCode                  string                      `json:"issueCode"`
+	RequestedResolution        string                      `json:"requestedResolution"`
+	RequestedAmountCNY         string                      `json:"requestedAmountCny"`
+	PublicSummary              string                      `json:"publicSummary"`
+	PublicResult               string                      `json:"publicResult"`
+	OpenedByAdminID            string                      `json:"openedByAdminId"`
+	Version                    int64                       `json:"version"`
+	CanAppeal                  bool                        `json:"canAppeal"`
+	ViewerUserID               string                      `json:"viewerUserId"`
+	NegotiationChannels        []string                    `json:"negotiationChannels"`
+	NegotiationEndedConfirmed  bool                        `json:"negotiationEndedConfirmed"`
+	NegotiationSummary         string                      `json:"negotiationSummary"`
+	RequestedPlatformAction    string                      `json:"requestedPlatformAction"`
+	PlatformInterventionReason string                      `json:"platformInterventionReason"`
+	EscalatedByUserID          string                      `json:"escalatedByUserId"`
+	EscalatedAt                *string                     `json:"escalatedAt"`
+	Messages                   []createdDisputeMessage     `json:"messages"`
+	SettlementProposals        []createdSettlementProposal `json:"settlementProposals"`
 }
 
 type createdDisputeMessage struct {
@@ -3813,6 +3848,7 @@ type createdSettlementProposal struct {
 	AmountCNY        string `json:"amountCny"`
 	Terms            string `json:"terms"`
 	Status           string `json:"status"`
+	SupersededReason string `json:"supersededReason"`
 }
 
 type createdAppeal struct {

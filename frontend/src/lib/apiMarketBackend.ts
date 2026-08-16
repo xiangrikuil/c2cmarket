@@ -67,7 +67,7 @@ import { backendCreateContact, backendMyContactMethods, backendMyMerchantProfile
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { apiOrderCommercialOutcomeLabels, apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
@@ -272,6 +272,15 @@ export type BackendAPIOrder = {
   status: string
 	disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  latestDisputeCaseId?: string
+  hasDisputeHistory: boolean
+  disputeNextActor?: ApiOrder['disputeNextActor']
+  disputeDueAt?: string | null
+  disputeNeedsAction?: boolean
+  disputeResponseOverdue?: boolean
+  disputeAvailableActions?: ApiOrderDisputeAction[]
+  activeRemedyAction?: ApiOrderDisputeResolution
+  activeRemedySource?: ApiOrderDisputeRemedySource
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -312,16 +321,23 @@ export type BackendAPIOrder = {
   paymentSubmittedAt?: string | null
   merchantConfirmDueAt?: string | null
   merchantConfirmOverdue: boolean
+  merchantConfirmOverdueAt?: string | null
   paymentIssueReason?: string
   paymentIssueNote?: string
   paymentIssueReportedAt?: string | null
   paidConfirmedAt?: string | null
   deliveryDueAt?: string | null
   deliveryOverdue: boolean
+  deliveryOverdueAt?: string | null
+  deliveryDueRemindedAt?: string | null
   deliveryNote?: string
   deliverySubmittedAt?: string | null
   deliveryReviewExpiresAt?: string | null
   deliveryCredential?: BackendAPIOrderDeliveryCredential | null
+  commercialOutcome: ApiOrderCommercialOutcome
+  commercialOutcomeUpdatedAt?: string | null
+  quotaValidityIssueAt?: string | null
+  quotaValidityIssueReason?: 'delivery_insufficient'
   completionSource?: string
   completedAt?: string | null
   cancelledAt?: string | null
@@ -1348,7 +1364,7 @@ export function mapBackendAdminAPIIntent(item: BackendAPIPurchaseIntent): AdminR
     targetType: 'api-intent',
     backendKind: 'api-purchase-intent',
     backendVersion: item.version,
-    detailItems: [
+			detailItems: [
       { label: '后端状态', value: item.status },
       { label: '服务', value: item.serviceTitleSnapshot },
       { label: '意向金额', value: `¥${numberFromDecimal(item.requestedCnyAmount)}` },
@@ -1431,7 +1447,10 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 			{ label: '购买额度', value: order.requestedUsdAllowanceSnapshot ? `${order.requestedUsdAllowanceSnapshot} 美元额度` : '不适用' },
 			{ label: '定价快照', value: order.cnyPerUsdAllowanceSnapshot ? `¥${order.cnyPerUsdAllowanceSnapshot} / $1` : '按套餐快照' },
 			{ label: '交付凭证', value: order.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
-			{ label: '核验截止', value: order.deliveryReviewExpiresAt ?? '不适用' },
+				{ label: '核验截止', value: order.deliveryReviewExpiresAt ?? '不适用' },
+				{ label: '商业结果', value: apiOrderCommercialOutcomeLabels[order.commercialOutcome] },
+				{ label: '历史纠纷', value: order.hasDisputeHistory ? '有历史案件' : '无' },
+				{ label: '额度有效期', value: order.quotaValidityIssueAt ? '首次交付时剩余不足 60 分钟' : '未记录异常' },
 			{ label: '完成方式', value: order.completionSource === 'auto_completed' ? '系统自动完成' : order.completionSource === 'buyer_confirmed' ? '买家主动确认' : '尚未完成' },
 			{ label: '最近更新', value: order.updatedAt },
 		],
@@ -1460,7 +1479,16 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     sellerUserId: order.sellerUserId,
     status: apiOrderStatus(order.status),
 		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
-    disputeCaseId: order.disputeCaseId,
+	    disputeCaseId: order.disputeCaseId,
+	    latestDisputeCaseId: order.latestDisputeCaseId,
+	    hasDisputeHistory: order.hasDisputeHistory,
+	    disputeNextActor: order.disputeNextActor,
+	    disputeDueAt: order.disputeDueAt ?? undefined,
+	    disputeNeedsAction: order.disputeNeedsAction,
+	    disputeResponseOverdue: order.disputeResponseOverdue,
+	    disputeAvailableActions: order.disputeAvailableActions ?? [],
+	    activeRemedyAction: order.activeRemedyAction,
+	    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitleSnapshot,
     billingModeSnapshot: order.billingModeSnapshot,
@@ -1474,16 +1502,23 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     paymentExpiresAt: order.paymentExpiresAt,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
     merchantConfirmDueAt: order.merchantConfirmDueAt ?? undefined,
-    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdueAt: order.merchantConfirmOverdueAt ?? undefined,
     paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
     deliveryDueAt: order.deliveryDueAt ?? undefined,
-    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdueAt: order.deliveryOverdueAt ?? undefined,
+	    deliveryDueRemindedAt: order.deliveryDueRemindedAt ?? undefined,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
-    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+	    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+	    commercialOutcome: order.commercialOutcome,
+	    commercialOutcomeUpdatedAt: order.commercialOutcomeUpdatedAt ?? undefined,
+	    quotaValidityIssueAt: order.quotaValidityIssueAt ?? undefined,
+	    quotaValidityIssueReason: order.quotaValidityIssueReason,
     completionSource: apiOrderCompletionSource(order.completionSource),
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
@@ -1794,8 +1829,17 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     buyerReputation: mapBackendReputationSummary(order.buyerReputation),
     sellerReputation: mapBackendReputationSummary(order.sellerReputation),
     status: apiOrderStatus(order.status),
-    disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
-    disputeCaseId: order.disputeCaseId,
+	    disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
+	    disputeCaseId: order.disputeCaseId,
+	    latestDisputeCaseId: order.latestDisputeCaseId,
+	    hasDisputeHistory: order.hasDisputeHistory,
+	    disputeNextActor: order.disputeNextActor,
+	    disputeDueAt: order.disputeDueAt ?? undefined,
+	    disputeNeedsAction: order.disputeNeedsAction,
+	    disputeResponseOverdue: order.disputeResponseOverdue,
+	    disputeAvailableActions: order.disputeAvailableActions ?? [],
+	    activeRemedyAction: order.activeRemedyAction,
+	    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
@@ -1808,17 +1852,24 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     paymentSummary: order.paymentSummary,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
     merchantConfirmDueAt: order.merchantConfirmDueAt ?? undefined,
-    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdueAt: order.merchantConfirmOverdueAt ?? undefined,
     paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
     deliveryDueAt: order.deliveryDueAt ?? undefined,
-    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdueAt: order.deliveryOverdueAt ?? undefined,
+	    deliveryDueRemindedAt: order.deliveryDueRemindedAt ?? undefined,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
-    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
-    deliveryCredential: mapDeliveryCredential(order.deliveryCredential),
+	    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+	    deliveryCredential: mapDeliveryCredential(order.deliveryCredential),
+	    commercialOutcome: order.commercialOutcome,
+	    commercialOutcomeUpdatedAt: order.commercialOutcomeUpdatedAt ?? undefined,
+	    quotaValidityIssueAt: order.quotaValidityIssueAt ?? undefined,
+	    quotaValidityIssueReason: order.quotaValidityIssueReason,
     completionSource: apiOrderCompletionSource(order.completionSource),
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
@@ -1950,14 +2001,14 @@ export async function backendConfirmAPIOrderComplete(id: string, version: number
   return mapBackendAPIOrder(response, 'buyer')
 }
 
-export function apiOrderDisputePath(id: string, perspective: 'buyer' | 'merchant') {
-  const scope = perspective === 'merchant' ? 'owner' : 'me'
-  return `/api/v1/${scope}/api-orders/${encodeURIComponent(id)}/dispute`
+export function apiOrderDisputePath(id: string) {
+  return `/api/v1/me/api-orders/${encodeURIComponent(id)}/dispute`
 }
 
 export async function backendOpenAPIOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
-  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id, perspective), input, {
-    idempotencyPrefix: `api-order-${perspective}-dispute`,
+  if (perspective !== 'buyer') throw new Error('只有买家可以发起订单售后申请。')
+  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id), input, {
+    idempotencyPrefix: 'api-order-buyer-dispute',
     ifMatch: version,
   })
   return mapBackendAPIOrder(response, perspective)
