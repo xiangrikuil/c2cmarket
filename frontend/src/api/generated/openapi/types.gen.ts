@@ -82,7 +82,12 @@ export type NavigationBadgeSummary = {
 };
 
 export type AnnouncementAudience = {
-    type: 'all';
+    type: 'all' | 'roles' | 'specific_users';
+    roles?: Array<'buyer' | 'merchant' | 'admin'>;
+    /**
+     * Administrator-only explicit recipient identifiers; omitted from user and public responses.
+     */
+    userIds?: Array<string>;
 };
 
 export type AnnouncementReceipt = {
@@ -91,6 +96,7 @@ export type AnnouncementReceipt = {
     firstSeenAt?: string;
     readAt?: string;
     dismissedAt?: string;
+    acknowledgedAt?: string;
 };
 
 export type Announcement = {
@@ -103,12 +109,13 @@ export type Announcement = {
      */
     contentMarkdown: string;
     category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
-    level: 'normal' | 'important';
+    level: 'normal' | 'important' | 'critical';
     status: 'draft' | 'scheduled' | 'published' | 'offline' | 'expired' | 'archived';
-    channels: Array<'message_center' | 'home_banner'>;
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
     audience: AnnouncementAudience;
     isPinned: boolean;
     isDismissible: boolean;
+    requiresAck: boolean;
     ctaLabel?: string;
     ctaUrl?: string;
     publishAt: string;
@@ -130,15 +137,44 @@ export type AnnouncementList = {
     nextCursor?: string | null;
 };
 
+export type PublicAnnouncement = {
+    id: string;
+    slug: string;
+    title: string;
+    summary: string;
+    contentMarkdown: string;
+    category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
+    level: 'important' | 'critical';
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
+    audience: {
+        type: 'all';
+    };
+    isPinned: boolean;
+    isDismissible: boolean;
+    requiresAck: boolean;
+    ctaLabel?: string;
+    ctaUrl?: string;
+    publishAt: string;
+    expireAt?: string;
+    contentUpdatedAt: string;
+    version: number;
+};
+
+export type PublicAnnouncementList = {
+    items: Array<PublicAnnouncement>;
+};
+
 export type AnnouncementFormRequest = {
     title: string;
     summary: string;
     contentMarkdown: string;
     category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
-    level: 'normal' | 'important';
-    channels: Array<'message_center' | 'home_banner'>;
+    level: 'normal' | 'important' | 'critical';
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
+    audience: AnnouncementAudience;
     isPinned: boolean;
     isDismissible: boolean;
+    requiresAck: boolean;
     ctaLabel?: string;
     ctaUrl?: string;
     publishAt: string;
@@ -6446,11 +6482,38 @@ export type ListAnnouncementsResponses = {
 
 export type ListAnnouncementsResponse = ListAnnouncementsResponses[keyof ListAnnouncementsResponses];
 
+export type ListPublicActiveAnnouncementsData = {
+    body?: never;
+    path?: never;
+    query: {
+        channel: 'global_bar' | 'modal';
+    };
+    url: '/api/v1/announcements/public-active';
+};
+
+export type ListPublicActiveAnnouncementsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListPublicActiveAnnouncementsError = ListPublicActiveAnnouncementsErrors[keyof ListPublicActiveAnnouncementsErrors];
+
+export type ListPublicActiveAnnouncementsResponses = {
+    /**
+     * Public global announcements without receipt, operator, or targeted-user data.
+     */
+    200: PublicAnnouncementList;
+};
+
+export type ListPublicActiveAnnouncementsResponse = ListPublicActiveAnnouncementsResponses[keyof ListPublicActiveAnnouncementsResponses];
+
 export type ListActiveAnnouncementsData = {
     body?: never;
     path?: never;
     query?: {
-        channel?: 'message_center' | 'home_banner';
+        channel?: 'message_center' | 'home_banner' | 'global_bar' | 'modal';
     };
     url: '/api/v1/announcements/active';
 };
@@ -9607,6 +9670,33 @@ export type DismissAnnouncementResponses = {
 };
 
 export type DismissAnnouncementResponse = DismissAnnouncementResponses[keyof DismissAnnouncementResponses];
+
+export type AcknowledgeAnnouncementData = {
+    body: EmptyRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/announcements/{id}/acknowledge';
+};
+
+export type AcknowledgeAnnouncementErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+};
+
+export type AcknowledgeAnnouncementError = AcknowledgeAnnouncementErrors[keyof AcknowledgeAnnouncementErrors];
+
+export type AcknowledgeAnnouncementResponses = {
+    /**
+     * Durable acknowledgement for the current critical announcement revision.
+     */
+    200: AnnouncementReceipt;
+};
+
+export type AcknowledgeAnnouncementResponse = AcknowledgeAnnouncementResponses[keyof AcknowledgeAnnouncementResponses];
 
 export type ListOwnerCarpoolApplicationsData = {
     body?: never;

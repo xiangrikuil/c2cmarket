@@ -40,7 +40,8 @@ func TestAnnouncementRepositoryUpdatesContentTimestampOnlyForVisibleContent(t *t
 		"contentUpdatedAt := before.ContentUpdatedAt",
 		"announcement.UserVisibleContentChanged(before, input.Form)",
 		"contentUpdatedAt = now",
-		"content_updated_at = $16",
+		"content_updated_at = $18",
+		"version = version + CASE WHEN $19 THEN 1 ELSE 0 END",
 	} {
 		if !strings.Contains(updateSection, required) {
 			t.Fatalf("announcement content update contract is missing %q", required)
@@ -54,8 +55,59 @@ func TestAnnouncementRepositoryUpdatesContentTimestampOnlyForVisibleContent(t *t
 
 	insertSection := announcementStoreFunction(t, source, "func (s *Store) insertAnnouncement", "func (s *Store) queryAnnouncements")
 	if !strings.Contains(insertSection, "created_at, updated_at, content_updated_at") ||
-		!strings.Contains(insertSection, "$17, $17, $17") {
+		!strings.Contains(insertSection, "$19, $19, $19") {
 		t.Fatal("create and duplicate inserts must initialize content_updated_at from the action time")
+	}
+}
+
+func TestAnnouncementRecipientAndReceiptContractsRemainTransactional(t *testing.T) {
+	source := readAnnouncementStoreSource(t)
+	publishSection := announcementStoreFunction(t, source, "func (s *Store) PublishAnnouncement", "func (s *Store) OfflineAnnouncement")
+	for _, required := range []string{
+		"FOR UPDATE OF a",
+		"version = version + 1",
+		"rebuildAnnouncementRecipients(ctx, tx, item, now)",
+		"tx.Commit(ctx)",
+	} {
+		if !strings.Contains(publishSection, required) {
+			t.Fatalf("publish recipient snapshot contract is missing %q", required)
+		}
+	}
+
+	updateSection := announcementStoreFunction(t, source, "func (s *Store) UpdateAnnouncement", "func (s *Store) PublishAnnouncement")
+	for _, required := range []string{
+		"beforeStatus == announcement.StatusPublished || beforeStatus == announcement.StatusScheduled",
+		"if deliveryChanged",
+		"rebuildAnnouncementRecipients(ctx, tx, item, now)",
+	} {
+		if !strings.Contains(updateSection, required) {
+			t.Fatalf("scheduled/published recipient rebuild contract is missing %q", required)
+		}
+	}
+
+	receiptSection := announcementStoreFunction(t, source, "func (s *Store) UpsertReceipt", "func (s *Store) AdminAnnouncements")
+	for _, required := range []string{
+		"FOR UPDATE OF a",
+		"nullableFirstSeenTime(input.Action, now)",
+		"announcement_version = EXCLUDED.announcement_version",
+		"acknowledged_at",
+	} {
+		if !strings.Contains(receiptSection, required) {
+			t.Fatalf("versioned receipt contract is missing %q", required)
+		}
+	}
+
+	recipientSection := announcementStoreFunction(t, source, "func (s *Store) rebuildAnnouncementRecipients", "func announcementAudienceFieldError")
+	for _, required := range []string{
+		"DELETE FROM announcement_recipients",
+		"student_email_claims",
+		"linux_do_bindings",
+		"user_permissions",
+		"announcement_version",
+	} {
+		if !strings.Contains(recipientSection, required) {
+			t.Fatalf("recipient resolver contract is missing %q", required)
+		}
 	}
 }
 

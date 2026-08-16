@@ -34,6 +34,7 @@ func (s *Server) routes() {
 	s.mux.Get("/metrics", s.handleMetrics)
 
 	s.mux.Route("/api/v1", func(r chi.Router) {
+		r.Get("/announcements/public-active", s.handlePublicActiveAnnouncements)
 		if s.enableDevAuth {
 			r.Post("/auth/dev-session", s.limitHandler("auth_dev_session", 60, s.handleDevSession))
 			r.Post("/auth/dev-persona-session", s.limitHandler("auth_dev_persona_session", 60, s.handleDevPersonaSession))
@@ -175,6 +176,7 @@ func (s *Server) routes() {
 		r.Post("/me/announcements/{id}/seen", s.handleMarkAnnouncementSeen)
 		r.Post("/me/announcements/{id}/read", s.handleMarkAnnouncementRead)
 		r.Post("/me/announcements/{id}/dismiss", s.handleDismissAnnouncement)
+		r.Post("/me/announcements/{id}/acknowledge", s.handleAcknowledgeAnnouncement)
 
 		r.Get("/owner/carpool-applications", s.handleOwnerCarpoolApplications)
 		r.Get("/owner/carpool-applications/{id}", s.handleOwnerCarpoolApplication)

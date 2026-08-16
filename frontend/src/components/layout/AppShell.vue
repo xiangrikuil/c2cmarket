@@ -290,7 +290,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
     class="min-h-screen bg-background lg:grid"
     :style="{ gridTemplateColumns: sidebarCollapsed ? '64px minmax(0, 1fr)' : '208px minmax(0, 1fr)' }"
   >
-    <aside class="sticky top-0 hidden h-screen overflow-hidden border-r border-sidebar-border bg-sidebar/95 text-sidebar-foreground backdrop-blur transition-[width] duration-200 lg:flex lg:flex-col">
+    <aside class="sticky top-[var(--global-announcement-height,0rem)] hidden h-[calc(100vh-var(--global-announcement-height,0rem))] overflow-hidden border-r border-sidebar-border bg-sidebar/95 text-sidebar-foreground backdrop-blur transition-[width] duration-200 lg:flex lg:flex-col">
       <RouterLink
         to="/"
         class="flex h-[60px] items-center border-b border-sidebar-border font-semibold tracking-tight"
@@ -444,7 +444,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
     </div>
 
     <div class="min-w-0">
-      <header class="sticky top-0 z-50 border-b border-border bg-card/88 backdrop-blur">
+      <header class="sticky top-[var(--global-announcement-height,0rem)] z-50 border-b border-border bg-card/88 backdrop-blur">
         <div class="flex h-[60px] items-center gap-4 px-4 sm:px-5 lg:px-5">
           <Button variant="ghost" size="icon" class="lg:hidden" aria-label="打开导航菜单" @click="menuOpen = true">
             <Menu class="h-4 w-4" />

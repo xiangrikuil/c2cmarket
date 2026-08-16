@@ -14,8 +14,10 @@ function validInput(overrides: Partial<AnnouncementFormInput> = {}): Announcemen
     category: 'platform',
     level: 'normal',
     channels: ['message_center'],
+    audience: { type: 'all' },
     isPinned: false,
     isDismissible: true,
+    requiresAck: false,
     publishAt: '2026-08-10T04:00:00.000Z',
     ...overrides,
   }

@@ -13,6 +13,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/announcement"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -22,12 +23,42 @@ func (s *Store) UserAnnouncements(ctx context.Context, userID string, now time.T
 		SELECT `+announcementColumns+`
 		FROM announcements a
 		LEFT JOIN announcement_receipts r ON r.announcement_id = a.id AND r.user_id = $1
+		WHERE a.audience_json->>'type' = 'all'
+		   OR EXISTS (
+		     SELECT 1 FROM announcement_recipients recipient
+		     WHERE recipient.announcement_id = a.id
+		       AND recipient.user_id = $1
+		       AND recipient.announcement_version = a.version
+		   )
 		ORDER BY a.publish_at DESC
 	`, userID)
 	if appErr != nil {
 		return nil, appErr
 	}
 	return filterUserVisible(items, now, ""), nil
+}
+
+func (s *Store) PublicActiveAnnouncements(ctx context.Context, channel string, now time.Time) ([]announcement.Announcement, *domain.AppError) {
+	items, appErr := s.queryAnnouncements(ctx, "", `
+		SELECT `+announcementColumns+`
+		FROM announcements a
+		LEFT JOIN announcement_receipts r ON false
+		WHERE a.audience_json->>'type' = 'all'
+		  AND array_position(a.channels, $1) IS NOT NULL
+		ORDER BY a.publish_at DESC
+	`, channel)
+	if appErr != nil {
+		return nil, appErr
+	}
+	result := make([]announcement.Announcement, 0, len(items))
+	for _, item := range items {
+		if announcement.DisplayStatus(item, now) == announcement.StatusPublished {
+			item.Receipt = nil
+			result = append(result, item)
+		}
+	}
+	announcement.SortByDeliveryPriority(result)
+	return result, nil
 }
 
 func (s *Store) ActiveAnnouncements(ctx context.Context, userID, channel string, now time.Time) ([]announcement.Announcement, *domain.AppError) {
@@ -42,6 +73,7 @@ func (s *Store) ActiveAnnouncements(ctx context.Context, userID, channel string,
 			result = append(result, item)
 		}
 	}
+	announcement.SortByDeliveryPriority(result)
 	return result, nil
 }
 
@@ -51,6 +83,14 @@ func (s *Store) HomeAnnouncement(ctx context.Context, userID string, now time.Ti
 		FROM announcements a
 		LEFT JOIN announcement_receipts r ON r.announcement_id = a.id AND r.user_id = $1
 		WHERE array_position(a.channels, 'home_banner') IS NOT NULL
+		  AND (
+		    a.audience_json->>'type' = 'all'
+		    OR EXISTS (
+		      SELECT 1 FROM announcement_recipients recipient
+		      WHERE recipient.announcement_id = a.id AND recipient.user_id = $1
+		        AND recipient.announcement_version = a.version
+		    )
+		  )
 		ORDER BY a.publish_at DESC
 	`, userID)
 	if appErr != nil {
@@ -75,6 +115,14 @@ func (s *Store) UserAnnouncementBySlug(ctx context.Context, userID, slug string,
 		FROM announcements a
 		LEFT JOIN announcement_receipts r ON r.announcement_id = a.id AND r.user_id = $1
 		WHERE a.slug = $2
+		  AND (
+		    a.audience_json->>'type' = 'all'
+		    OR EXISTS (
+		      SELECT 1 FROM announcement_recipients recipient
+		      WHERE recipient.announcement_id = a.id AND recipient.user_id = $1
+		        AND recipient.announcement_version = a.version
+		    )
+		  )
 	`, userID, strings.TrimSpace(strings.ToLower(slug)))
 	if errors.Is(err, pgx.ErrNoRows) || !announcement.IsUserVisible(item, now) {
 		return announcement.Announcement{}, announcementNotFound()
@@ -92,7 +140,7 @@ func (s *Store) AnnouncementUnreadCount(ctx context.Context, userID string, impo
 	}
 	count := 0
 	for _, item := range items {
-		if importantOnly && item.Level != announcement.LevelImportant {
+		if importantOnly && item.Level != announcement.LevelImportant && item.Level != announcement.LevelCritical {
 			continue
 		}
 		if announcement.IsUnread(item) {
@@ -114,6 +162,14 @@ func (s *Store) UpsertReceipt(ctx context.Context, input announcement.ReceiptInp
 		FROM announcements a
 		LEFT JOIN announcement_receipts r ON r.announcement_id = a.id AND r.user_id = $1
 		WHERE a.id = $2
+		  AND (
+		    a.audience_json->>'type' = 'all'
+		    OR EXISTS (
+		      SELECT 1 FROM announcement_recipients recipient
+		      WHERE recipient.announcement_id = a.id AND recipient.user_id = $1
+		        AND recipient.announcement_version = a.version
+		    )
+		  )
 		FOR UPDATE OF a
 	`, input.UserID, input.AnnouncementID)
 	if errors.Is(err, pgx.ErrNoRows) || !announcement.IsUserVisible(item, now) {
@@ -126,22 +182,31 @@ func (s *Store) UpsertReceipt(ctx context.Context, input announcement.ReceiptInp
 	firstSeenExpr := "COALESCE(announcement_receipts.first_seen_at, EXCLUDED.first_seen_at)"
 	readExpr := "announcement_receipts.read_at"
 	dismissedExpr := "announcement_receipts.dismissed_at"
+	acknowledgedExpr := "announcement_receipts.acknowledged_at"
 	switch input.Action {
 	case "seen":
 	case "read":
 		readExpr = "EXCLUDED.read_at"
 	case "dismiss":
+		if !item.IsDismissible {
+			return announcement.Receipt{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Announcement cannot be dismissed", "该公告不允许关闭。")
+		}
 		dismissedExpr = "EXCLUDED.dismissed_at"
+	case "acknowledge":
+		if item.Level != announcement.LevelCritical || !item.RequiresAck {
+			return announcement.Receipt{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Announcement acknowledgement not required", "该公告不需要确认知悉。")
+		}
+		acknowledgedExpr = "EXCLUDED.acknowledged_at"
 	default:
 		return announcement.Receipt{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid announcement receipt action", "公告 receipt 动作不支持。")
 	}
 
 	var receipt announcement.Receipt
 	err = tx.QueryRow(ctx, `
-		INSERT INTO announcement_receipts (
-		  announcement_id, user_id, announcement_version, first_seen_at, read_at, dismissed_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $4)
+			INSERT INTO announcement_receipts (
+			  announcement_id, user_id, announcement_version, first_seen_at, read_at, dismissed_at, acknowledged_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (announcement_id, user_id) DO UPDATE
 		SET announcement_version = EXCLUDED.announcement_version,
 		    first_seen_at = CASE
@@ -156,14 +221,19 @@ func (s *Store) UpsertReceipt(ctx context.Context, input announcement.ReceiptInp
 		      WHEN announcement_receipts.announcement_version = EXCLUDED.announcement_version THEN `+dismissedExpr+`
 		      ELSE EXCLUDED.dismissed_at
 		    END,
+		    acknowledged_at = CASE
+		      WHEN announcement_receipts.announcement_version = EXCLUDED.announcement_version THEN `+acknowledgedExpr+`
+		      ELSE EXCLUDED.acknowledged_at
+		    END,
 		    updated_at = EXCLUDED.updated_at
-		RETURNING announcement_id::text, announcement_version, first_seen_at, read_at, dismissed_at
-	`, input.AnnouncementID, input.UserID, item.Version, now, nullableActionTime(input.Action, "read", now), nullableActionTime(input.Action, "dismiss", now)).Scan(
+		RETURNING announcement_id::text, announcement_version, first_seen_at, read_at, dismissed_at, acknowledged_at
+	`, input.AnnouncementID, input.UserID, item.Version, nullableFirstSeenTime(input.Action, now), nullableActionTime(input.Action, "read", now), nullableActionTime(input.Action, "dismiss", now), nullableActionTime(input.Action, "acknowledge", now), now).Scan(
 		&receipt.AnnouncementID,
 		&receipt.AnnouncementVersion,
 		&receipt.FirstSeenAt,
 		&receipt.ReadAt,
 		&receipt.DismissedAt,
+		&receipt.AcknowledgedAt,
 	)
 	if err != nil {
 		return announcement.Receipt{}, internalStoreError()
@@ -241,22 +311,35 @@ func (s *Store) UpdateAnnouncement(ctx context.Context, input announcement.Updat
 	if announcement.UserVisibleContentChanged(before, input.Form) {
 		contentUpdatedAt = now
 	}
-	item, err := s.scanAnnouncement(ctx, tx, `
-		UPDATE announcements
-		SET title = $2, summary = $3, content_markdown = $4, category = $5, level = $6,
-		    channels = $7, is_pinned = $8, is_dismissible = $9, cta_label = $10, cta_url = $11,
-		    publish_at = $12, expire_at = $13, updated_by_user_id = $14, updated_at = $15,
-		    content_updated_at = $16, version = version + 1
-		WHERE id = $1
-		RETURNING `+announcementReturningColumns+`
-	`, input.ID, strings.TrimSpace(input.Form.Title), strings.TrimSpace(input.Form.Summary), strings.TrimSpace(input.Form.ContentMarkdown),
-		input.Form.Category, input.Form.Level, input.Form.Channels, input.Form.IsPinned, input.Form.IsDismissible,
-		nullText(input.Form.CTALabel), nullText(input.Form.CTAURL), input.Form.PublishAt, input.Form.ExpireAt,
-		input.OperatorID, now, contentUpdatedAt)
+	deliveryChanged := announcement.DeliveryRevisionChanged(before, input.Form)
+	audienceJSON, err := json.Marshal(input.Form.Audience)
 	if err != nil {
 		return announcement.Announcement{}, internalStoreError()
 	}
-	if announcement.DisplayStatus(before, now) == announcement.StatusPublished {
+	item, err := s.scanAnnouncement(ctx, tx, `
+		UPDATE announcements
+		SET title = $2, summary = $3, content_markdown = $4, category = $5, level = $6,
+		    channels = $7, audience_json = $8, is_pinned = $9, is_dismissible = $10, requires_ack = $11, cta_label = $12, cta_url = $13,
+		    publish_at = $14, expire_at = $15, updated_by_user_id = $16, updated_at = $17,
+		    content_updated_at = $18, version = version + CASE WHEN $19 THEN 1 ELSE 0 END
+		WHERE id = $1
+		RETURNING `+announcementReturningColumns+`
+	`, input.ID, strings.TrimSpace(input.Form.Title), strings.TrimSpace(input.Form.Summary), strings.TrimSpace(input.Form.ContentMarkdown),
+		input.Form.Category, input.Form.Level, input.Form.Channels, audienceJSON, input.Form.IsPinned, input.Form.IsDismissible, input.Form.RequiresAck,
+		nullText(input.Form.CTALabel), nullText(input.Form.CTAURL), input.Form.PublishAt, input.Form.ExpireAt,
+		input.OperatorID, now, contentUpdatedAt, deliveryChanged)
+	if err != nil {
+		return announcement.Announcement{}, internalStoreError()
+	}
+	beforeStatus := announcement.DisplayStatus(before, now)
+	if beforeStatus == announcement.StatusPublished || beforeStatus == announcement.StatusScheduled {
+		if deliveryChanged {
+			if appErr := s.rebuildAnnouncementRecipients(ctx, tx, item, now); appErr != nil {
+				return announcement.Announcement{}, appErr
+			}
+		}
+	}
+	if beforeStatus == announcement.StatusPublished {
 		if appErr := insertAnnouncementAudit(ctx, tx, announcement.AuditUpdated, item, input.OperatorID, input.OperatorName, "编辑已发布公告", now); appErr != nil {
 			return announcement.Announcement{}, appErr
 		}
@@ -306,6 +389,9 @@ func (s *Store) PublishAnnouncement(ctx context.Context, input announcement.Acti
 	if err != nil {
 		return announcement.Announcement{}, internalStoreError()
 	}
+	if appErr := s.rebuildAnnouncementRecipients(ctx, tx, item, now); appErr != nil {
+		return announcement.Announcement{}, appErr
+	}
 	if appErr := insertAnnouncementAudit(ctx, tx, announcement.AuditPublished, item, input.OperatorID, input.OperatorName, reason, now); appErr != nil {
 		return announcement.Announcement{}, appErr
 	}
@@ -344,10 +430,12 @@ func (s *Store) DuplicateAnnouncement(ctx context.Context, input announcement.Ac
 		Channels:        source.Channels,
 		IsPinned:        source.IsPinned,
 		IsDismissible:   source.IsDismissible,
+		RequiresAck:     source.RequiresAck,
 		CTALabel:        source.CTALabel,
 		CTAURL:          source.CTAURL,
 		PublishAt:       source.PublishAt,
 		ExpireAt:        source.ExpireAt,
+		Audience:        source.Audience,
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -400,7 +488,7 @@ func (s *Store) updateAnnouncementStatusWithAudit(ctx context.Context, input ann
 	defer rollback(ctx, tx)
 	item, err := s.scanAnnouncement(ctx, tx, `
 		UPDATE announcements
-		SET status = $2, updated_by_user_id = $3, updated_at = $4, version = version + 1
+		SET status = $2, updated_by_user_id = $3, updated_at = $4
 		WHERE id = $1
 		RETURNING `+announcementReturningColumns+`
 	`, input.ID, status, input.OperatorID, now)
@@ -425,13 +513,13 @@ func (s *Store) insertAnnouncement(ctx context.Context, q queryer, form announce
 		item, err := s.scanAnnouncement(ctx, q, `
 			INSERT INTO announcements (
 			  slug, title, summary, content_markdown, category, level, status, channels,
-			  audience_json, is_pinned, is_dismissible, cta_label, cta_url, publish_at, expire_at,
+			  audience_json, is_pinned, is_dismissible, requires_ack, cta_label, cta_url, publish_at, expire_at,
 			  created_by_user_id, updated_by_user_id, created_at, updated_at, content_updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{"type":"all"}'::jsonb, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17, $17)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $19, $19)
 			RETURNING `+announcementReturningColumns+`
 		`, slug, strings.TrimSpace(form.Title), strings.TrimSpace(form.Summary), strings.TrimSpace(form.ContentMarkdown),
-			form.Category, form.Level, status, form.Channels, form.IsPinned, form.IsDismissible,
+			form.Category, form.Level, status, form.Channels, mustJSON(form.Audience), form.IsPinned, form.IsDismissible, form.RequiresAck,
 			nullText(form.CTALabel), nullText(form.CTAURL), form.PublishAt, form.ExpireAt, createdBy, updatedBy, now)
 		if isUniqueViolation(err) {
 			slug = slugBase + "-" + strconv.Itoa(i)
@@ -442,6 +530,94 @@ func (s *Store) insertAnnouncement(ctx context.Context, q queryer, form announce
 		}
 		return item, nil
 	}
+}
+
+func (s *Store) rebuildAnnouncementRecipients(ctx context.Context, tx pgx.Tx, item announcement.Announcement, now time.Time) *domain.AppError {
+	if _, err := tx.Exec(ctx, `DELETE FROM announcement_recipients WHERE announcement_id = $1`, item.ID); err != nil {
+		return internalStoreError()
+	}
+
+	switch item.Audience.Type {
+	case "", announcement.AudienceAll:
+		return nil
+	case announcement.AudienceSpecificUsers:
+		userIDs := make([]uuid.UUID, 0, len(item.Audience.UserIDs))
+		for _, value := range item.Audience.UserIDs {
+			parsed, err := uuid.Parse(value)
+			if err != nil {
+				return announcementAudienceFieldError("audience.userIds", "指定用户 ID 格式无效。")
+			}
+			userIDs = append(userIDs, parsed)
+		}
+		var eligible int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*)::int
+			FROM users
+			WHERE id = ANY($1::uuid[]) AND account_status <> 'archived'
+		`, userIDs).Scan(&eligible); err != nil {
+			return internalStoreError()
+		}
+		if eligible != len(userIDs) {
+			return announcementAudienceFieldError("audience.userIds", "指定用户不存在或已归档。")
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO announcement_recipients (announcement_id, user_id, announcement_version, snapshotted_at)
+			SELECT $1, id, $2, $3 FROM users WHERE id = ANY($4::uuid[])
+		`, item.ID, item.Version, now, userIDs); err != nil {
+			return internalStoreError()
+		}
+		return nil
+	case announcement.AudienceRoles:
+		buyer := stringSliceContains(item.Audience.Roles, announcement.AudienceRoleBuyer)
+		merchant := stringSliceContains(item.Audience.Roles, announcement.AudienceRoleMerchant)
+		admin := stringSliceContains(item.Audience.Roles, announcement.AudienceRoleAdmin)
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO announcement_recipients (announcement_id, user_id, announcement_version, snapshotted_at)
+			SELECT $1, u.id, $2, $3
+			FROM users u
+			WHERE u.account_status <> 'archived'
+			  AND (
+			    ($4 AND (
+			      EXISTS (SELECT 1 FROM linux_do_bindings binding WHERE binding.user_id = u.id)
+			      OR EXISTS (SELECT 1 FROM student_email_claims claim WHERE claim.user_id = u.id)
+			    ))
+			    OR ($5 AND EXISTS (SELECT 1 FROM linux_do_bindings binding WHERE binding.user_id = u.id))
+			    OR ($6
+			      AND EXISTS (SELECT 1 FROM user_permissions permission WHERE permission.user_id = u.id AND permission.permission = 'admin')
+			      AND (
+			        NOT EXISTS (SELECT 1 FROM student_email_claims claim WHERE claim.user_id = u.id)
+			        OR EXISTS (SELECT 1 FROM linux_do_bindings binding WHERE binding.user_id = u.id)
+			      )
+			    )
+			  )
+		`, item.ID, item.Version, now, buyer, merchant, admin); err != nil {
+			return internalStoreError()
+		}
+		return nil
+	default:
+		return announcementAudienceFieldError("audience.type", "公告受众类型不支持。")
+	}
+}
+
+func announcementAudienceFieldError(field, message string) *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Announcement audience validation failed", "公告受众校验失败。", field, "invalid", message)
+}
+
+func stringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func mustJSON(value any) []byte {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }
 
 func (s *Store) queryAnnouncements(ctx context.Context, userID string, sql string, args ...any) ([]announcement.Announcement, *domain.AppError) {
@@ -476,6 +652,7 @@ func scanAnnouncementRow(row scanner) (announcement.Announcement, error) {
 	var firstSeenAt *time.Time
 	var readAt *time.Time
 	var dismissedAt *time.Time
+	var acknowledgedAt *time.Time
 	var ctaLabel *string
 	var ctaURL *string
 	var createdBy *string
@@ -483,9 +660,9 @@ func scanAnnouncementRow(row scanner) (announcement.Announcement, error) {
 	err := row.Scan(
 		&item.ID, &item.Slug, &item.Title, &item.Summary, &item.ContentMarkdown,
 		&item.Category, &item.Level, &item.Status, &item.Channels, &audienceText,
-		&item.IsPinned, &item.IsDismissible, &ctaLabel, &ctaURL, &item.PublishAt, &item.ExpireAt,
+		&item.IsPinned, &item.IsDismissible, &item.RequiresAck, &ctaLabel, &ctaURL, &item.PublishAt, &item.ExpireAt,
 		&item.ContentUpdatedAt, &item.Version, &createdBy, &updatedBy, &item.CreatedAt, &item.UpdatedAt,
-		&receiptID, &receiptVersion, &firstSeenAt, &readAt, &dismissedAt,
+		&receiptID, &receiptVersion, &firstSeenAt, &readAt, &dismissedAt, &acknowledgedAt,
 	)
 	if err != nil {
 		return announcement.Announcement{}, err
@@ -504,6 +681,7 @@ func scanAnnouncementRow(row scanner) (announcement.Announcement, error) {
 			FirstSeenAt:         firstSeenAt,
 			ReadAt:              readAt,
 			DismissedAt:         dismissedAt,
+			AcknowledgedAt:      acknowledgedAt,
 		}
 	}
 	return item, nil
@@ -541,6 +719,13 @@ func nullableActionTime(action, target string, now time.Time) any {
 	return nil
 }
 
+func nullableFirstSeenTime(action string, now time.Time) any {
+	if action == "seen" || action == "dismiss" || action == "acknowledge" {
+		return now
+	}
+	return nil
+}
+
 func announcementNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Announcement not found", "公告不存在或当前不可见。")
 }
@@ -565,17 +750,17 @@ func stringFromPtr(value *string) string {
 const announcementColumns = `
 	a.id::text, a.slug, a.title, a.summary, a.content_markdown,
 	a.category, a.level, a.status, a.channels, a.audience_json::text,
-	a.is_pinned, a.is_dismissible, a.cta_label, a.cta_url, a.publish_at, a.expire_at,
+	a.is_pinned, a.is_dismissible, a.requires_ack, a.cta_label, a.cta_url, a.publish_at, a.expire_at,
 	a.content_updated_at, a.version, a.created_by_user_id::text, a.updated_by_user_id::text, a.created_at, a.updated_at,
-	r.announcement_id::text, r.announcement_version, r.first_seen_at, r.read_at, r.dismissed_at
+	r.announcement_id::text, r.announcement_version, r.first_seen_at, r.read_at, r.dismissed_at, r.acknowledged_at
 `
 
 const announcementReturningColumns = `
 	id::text, slug, title, summary, content_markdown,
 	category, level, status, channels, audience_json::text,
-	is_pinned, is_dismissible, cta_label, cta_url, publish_at, expire_at,
+	is_pinned, is_dismissible, requires_ack, cta_label, cta_url, publish_at, expire_at,
 	content_updated_at, version, created_by_user_id::text, updated_by_user_id::text, created_at, updated_at,
-	NULL::text, NULL::bigint, NULL::timestamptz, NULL::timestamptz, NULL::timestamptz
+	NULL::text, NULL::bigint, NULL::timestamptz, NULL::timestamptz, NULL::timestamptz, NULL::timestamptz
 `
 
 var announcementSlugPattern = regexp.MustCompile(`[^a-z0-9\p{Han}]+`)

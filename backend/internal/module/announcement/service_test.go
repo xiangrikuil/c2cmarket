@@ -188,6 +188,202 @@ func TestContentUpdatedAtOnlyTracksNormalizedUserVisibleContent(t *testing.T) {
 	}
 }
 
+func TestCriticalAnnouncementValidationMatrix(t *testing.T) {
+	valid := FormInput{
+		Title:           "紧急服务通知",
+		Summary:         "用于验证紧急公告渠道和确认知悉约束。",
+		ContentMarkdown: "## 紧急服务通知\n\n请确认当前服务状态。",
+		Category:        CategoryRisk,
+		Level:           LevelCritical,
+		Channels:        []string{ChannelMessageCenter, ChannelGlobalBar, ChannelModal},
+		Audience:        Audience{Type: AudienceAll},
+		IsDismissible:   false,
+		RequiresAck:     true,
+		PublishAt:       time.Date(2026, 8, 16, 4, 0, 0, 0, time.UTC),
+	}
+	if appErr := validateForm(valid); appErr != nil {
+		t.Fatalf("valid critical form: %v", appErr)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*FormInput)
+		field  string
+	}{
+		{name: "missing modal", mutate: func(form *FormInput) { form.Channels = []string{ChannelMessageCenter, ChannelGlobalBar} }, field: "level"},
+		{name: "missing acknowledgement", mutate: func(form *FormInput) { form.RequiresAck = false }, field: "level"},
+		{name: "dismissible", mutate: func(form *FormInput) { form.IsDismissible = true }, field: "level"},
+		{name: "important modal", mutate: func(form *FormInput) { form.Level = LevelImportant; form.RequiresAck = false }, field: "channels"},
+		{name: "normal global", mutate: func(form *FormInput) { form.Level = LevelNormal; form.RequiresAck = false; form.IsDismissible = true }, field: "level"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := valid
+			form.Channels = append([]string(nil), valid.Channels...)
+			tc.mutate(&form)
+			appErr := validateForm(form)
+			if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != tc.field {
+				t.Fatalf("expected %s validation error, got %#v", tc.field, appErr)
+			}
+		})
+	}
+}
+
+func TestAnnouncementReceiptActionsRemainDistinctAndVersioned(t *testing.T) {
+	now := time.Date(2026, 8, 16, 4, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	admin := announcementTestAdmin()
+	item := createCriticalAnnouncement(t, service, admin, now.Add(-time.Hour))
+	item, appErr := service.PublishAnnouncement(context.Background(), admin, item.ID)
+	if appErr != nil {
+		t.Fatalf("publish critical announcement: %v", appErr)
+	}
+	user := auth.User{ID: "announcement-user"}
+
+	now = now.Add(time.Minute)
+	read, appErr := service.MarkRead(context.Background(), user, item.ID)
+	if appErr != nil {
+		t.Fatalf("mark read: %v", appErr)
+	}
+	if read.ReadAt == nil || read.FirstSeenAt != nil || read.AcknowledgedAt != nil {
+		t.Fatalf("read action conflated receipt timestamps: %+v", read)
+	}
+
+	now = now.Add(time.Minute)
+	acknowledged, appErr := service.Acknowledge(context.Background(), user, item.ID)
+	if appErr != nil {
+		t.Fatalf("acknowledge critical announcement: %v", appErr)
+	}
+	if acknowledged.ReadAt == nil || acknowledged.FirstSeenAt == nil || acknowledged.AcknowledgedAt == nil {
+		t.Fatalf("acknowledgement did not preserve read and record delivery: %+v", acknowledged)
+	}
+	if _, appErr := service.Dismiss(context.Background(), user, item.ID); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("critical announcement dismiss should fail, got %#v", appErr)
+	}
+}
+
+func TestAnnouncementDeliveryRevisionIgnoresManagementAndOrderingChanges(t *testing.T) {
+	now := time.Date(2026, 8, 16, 4, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	admin := announcementTestAdmin()
+	item := createCriticalAnnouncement(t, service, admin, now.Add(-time.Hour))
+	item, appErr := service.PublishAnnouncement(context.Background(), admin, item.ID)
+	if appErr != nil {
+		t.Fatalf("publish critical announcement: %v", appErr)
+	}
+	user := auth.User{ID: "announcement-user"}
+	if _, appErr := service.Acknowledge(context.Background(), user, item.ID); appErr != nil {
+		t.Fatalf("acknowledge critical announcement: %v", appErr)
+	}
+
+	now = now.Add(time.Hour)
+	management := formFromAnnouncement(item)
+	management.IsPinned = true
+	management.Channels = []string{ChannelModal, ChannelGlobalBar, ChannelMessageCenter}
+	updated, appErr := service.UpdateAnnouncement(context.Background(), admin, item.ID, management)
+	if appErr != nil {
+		t.Fatalf("management update: %v", appErr)
+	}
+	if updated.Version != item.Version {
+		t.Fatalf("management update changed delivery revision from %d to %d", item.Version, updated.Version)
+	}
+
+	rows, appErr := service.UserAnnouncements(context.Background(), user)
+	if appErr != nil {
+		t.Fatalf("read user announcements: %v", appErr)
+	}
+	current := findAnnouncementByID(t, rows, item.ID)
+	if !IsAcknowledged(current) {
+		t.Fatal("management update invalidated acknowledgement")
+	}
+
+	now = now.Add(time.Hour)
+	material := formFromAnnouncement(updated)
+	material.Title += "（更新）"
+	revised, appErr := service.UpdateAnnouncement(context.Background(), admin, item.ID, material)
+	if appErr != nil {
+		t.Fatalf("material update: %v", appErr)
+	}
+	if revised.Version != item.Version+1 {
+		t.Fatalf("material update revision = %d, want %d", revised.Version, item.Version+1)
+	}
+	rows, _ = service.UserAnnouncements(context.Background(), user)
+	if IsAcknowledged(findAnnouncementByID(t, rows, item.ID)) {
+		t.Fatal("material update retained stale acknowledgement")
+	}
+}
+
+func TestAnnouncementAudienceMatchingAndDeliveryOrdering(t *testing.T) {
+	linuxDO := auth.User{ID: "linuxdo", LinuxDoBinding: &auth.LinuxDoBinding{Bound: true}}
+	student := auth.User{ID: "student", StudentClaim: &auth.StudentEmailClaim{}}
+	admin := auth.User{ID: "admin", IsAdmin: true}
+	studentAdmin := auth.User{ID: "student-admin", IsAdmin: true, StudentClaim: &auth.StudentEmailClaim{}}
+
+	cases := []struct {
+		name     string
+		audience Audience
+		user     auth.User
+		want     bool
+	}{
+		{name: "linuxdo buyer", audience: Audience{Type: AudienceRoles, Roles: []string{AudienceRoleBuyer}}, user: linuxDO, want: true},
+		{name: "student buyer", audience: Audience{Type: AudienceRoles, Roles: []string{AudienceRoleBuyer}}, user: student, want: true},
+		{name: "linuxdo merchant", audience: Audience{Type: AudienceRoles, Roles: []string{AudienceRoleMerchant}}, user: linuxDO, want: true},
+		{name: "student not merchant", audience: Audience{Type: AudienceRoles, Roles: []string{AudienceRoleMerchant}}, user: student, want: false},
+		{name: "durable admin", audience: Audience{Type: AudienceRoles, Roles: []string{AudienceRoleAdmin}}, user: admin, want: true},
+		{name: "student-only admin excluded", audience: Audience{Type: AudienceRoles, Roles: []string{AudienceRoleAdmin}}, user: studentAdmin, want: false},
+		{name: "specific match", audience: Audience{Type: AudienceSpecificUsers, UserIDs: []string{"linuxdo"}}, user: linuxDO, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := audienceMatchesUser(tc.audience, tc.user); got != tc.want {
+				t.Fatalf("audienceMatchesUser() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+
+	publishedAt := time.Date(2026, 8, 16, 4, 0, 0, 0, time.UTC)
+	items := []Announcement{
+		{ID: "important", Level: LevelImportant, IsPinned: true, PublishAt: publishedAt.Add(time.Hour)},
+		{ID: "critical-b", Level: LevelCritical, PublishAt: publishedAt},
+		{ID: "critical-a", Level: LevelCritical, PublishAt: publishedAt},
+	}
+	SortByDeliveryPriority(items)
+	if items[0].ID != "critical-a" || items[1].ID != "critical-b" || items[2].ID != "important" {
+		t.Fatalf("unexpected delivery order: %v", []string{items[0].ID, items[1].ID, items[2].ID})
+	}
+}
+
+func createCriticalAnnouncement(t *testing.T, service *Service, admin auth.User, publishAt time.Time) Announcement {
+	t.Helper()
+	item, appErr := service.CreateAnnouncement(context.Background(), admin, FormInput{
+		Title:           "紧急服务通知",
+		Summary:         "用于验证紧急公告强触达和确认回执。",
+		ContentMarkdown: "## 紧急服务通知\n\n请确认当前服务状态。",
+		Category:        CategoryRisk,
+		Level:           LevelCritical,
+		Channels:        []string{ChannelMessageCenter, ChannelGlobalBar, ChannelModal},
+		Audience:        Audience{Type: AudienceAll},
+		IsDismissible:   false,
+		RequiresAck:     true,
+		PublishAt:       publishAt,
+	})
+	if appErr != nil {
+		t.Fatalf("create critical announcement: %v", appErr)
+	}
+	return item
+}
+
+func findAnnouncementByID(t *testing.T, items []Announcement, id string) Announcement {
+	t.Helper()
+	for _, item := range items {
+		if item.ID == id {
+			return item
+		}
+	}
+	t.Fatalf("announcement %s not found", id)
+	return Announcement{}
+}
+
 func createAnnouncementForPublishTest(t *testing.T, service *Service, admin auth.User, publishAt time.Time, expireAt *time.Time) Announcement {
 	t.Helper()
 	item, appErr := service.CreateAnnouncement(context.Background(), admin, FormInput{
@@ -215,8 +411,10 @@ func formFromAnnouncement(item Announcement) FormInput {
 		Category:        item.Category,
 		Level:           item.Level,
 		Channels:        append([]string(nil), item.Channels...),
+		Audience:        item.Audience,
 		IsPinned:        item.IsPinned,
 		IsDismissible:   item.IsDismissible,
+		RequiresAck:     item.RequiresAck,
 		CTALabel:        item.CTALabel,
 		CTAURL:          item.CTAURL,
 		PublishAt:       item.PublishAt,

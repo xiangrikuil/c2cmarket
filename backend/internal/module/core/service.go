@@ -2481,6 +2481,10 @@ func (s *Service) ActiveAnnouncements(ctx context.Context, user User, channel st
 	return s.announcement.ActiveAnnouncements(ctx, user, channel)
 }
 
+func (s *Service) PublicActiveAnnouncements(ctx context.Context, channel string) ([]Announcement, *domain.AppError) {
+	return s.announcement.PublicActiveAnnouncements(ctx, channel)
+}
+
 func (s *Service) HomeAnnouncement(ctx context.Context, user User) (*Announcement, *domain.AppError) {
 	return s.announcement.HomeAnnouncement(ctx, user)
 }
@@ -2503,6 +2507,10 @@ func (s *Service) MarkAnnouncementRead(ctx context.Context, user User, id string
 
 func (s *Service) DismissAnnouncement(ctx context.Context, user User, id string) (AnnouncementReceipt, *domain.AppError) {
 	return s.announcement.Dismiss(ctx, user, id)
+}
+
+func (s *Service) AcknowledgeAnnouncement(ctx context.Context, user User, id string) (AnnouncementReceipt, *domain.AppError) {
+	return s.announcement.Acknowledge(ctx, user, id)
 }
 
 func (s *Service) AdminAnnouncements(ctx context.Context, user User) ([]Announcement, *domain.AppError) {
