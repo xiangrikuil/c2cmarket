@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { CAPABILITY, type Capability } from './lib/capabilities'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from './lib/featureFlags'
 
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
@@ -62,6 +63,28 @@ const ForbiddenPage = () => import('@/pages/ForbiddenPage.vue')
 const userAuthMeta = { auth: 'user' } as const
 const capabilityAuthMeta = (capability: Capability) => ({ auth: 'user', capability } as const)
 const adminAuthMeta = { auth: 'admin', capability: CAPABILITY.adminAccess } as const
+const apiQuotaRushPublishRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLED
+  ? {
+      path: '/api-market/quota/new',
+      name: 'api-quota-rush-new',
+      component: ApiQuotaRushPublishPage,
+      meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
+  : {
+      path: '/api-market/quota/new',
+      name: 'api-quota-rush-new',
+      redirect: { path: '/api-market', query: { view: 'free' } },
+      meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
+
+export type WorkspaceNavKey =
+  | 'personal-center'
+  | 'account-settings'
+  | 'reputation-rights'
+  | 'support-center'
+  | 'message-center'
+
+const workspaceUserAuthMeta = (workspaceNavKey: WorkspaceNavKey) => ({ ...userAuthMeta, workspaceNavKey } as const)
 
 const adminChildren = [
   ['carpools', '车源管理', '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。'],
@@ -90,15 +113,15 @@ export const routes: RouteRecordRaw[] = [
     { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
     { path: '/api-market', name: 'api-market', component: ApiMarketPage },
-    { path: '/api-market/quota/new', name: 'api-quota-rush-new', component: ApiQuotaRushPublishPage, meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish) },
+    apiQuotaRushPublishRoute,
     { path: '/api-market/detail', redirect: '/api-market/a1' },
     { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/api-market/:id', name: 'api-detail', component: ApiServiceDetailPage },
-    { path: '/my', name: 'my', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/profile', name: 'my-profile', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/contacts', name: 'my-contacts', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: userAuthMeta },
+    { path: '/my', name: 'my', component: MyCenterPage, meta: workspaceUserAuthMeta('personal-center') },
+    { path: '/my/profile', name: 'my-profile', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/contacts', name: 'my-contacts', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
     { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/carpools/:id/edit', name: 'my-carpool-edit', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage, meta: userAuthMeta },
@@ -117,13 +140,13 @@ export const routes: RouteRecordRaw[] = [
     { path: '/merchant/api-orders/:id', name: 'merchant-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/my/favorites', name: 'my-favorites', component: MyFavoritesPage, meta: userAuthMeta },
     { path: '/my/reviews', name: 'my-reviews', component: MyReviewsPage, meta: userAuthMeta },
-    { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: userAuthMeta },
-    { path: '/my/promotion-benefits', name: 'my-promotion-benefits', component: MyPromotionBenefitsPage, meta: userAuthMeta },
-    { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage, meta: userAuthMeta },
-    { path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: userAuthMeta },
-    { path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: userAuthMeta },
-    { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage, meta: userAuthMeta },
-    { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage, meta: userAuthMeta },
+    { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: workspaceUserAuthMeta('reputation-rights') },
+    { path: '/my/promotion-benefits', name: 'my-promotion-benefits', component: MyPromotionBenefitsPage, meta: workspaceUserAuthMeta('reputation-rights') },
+    { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage, meta: workspaceUserAuthMeta('message-center') },
+    { path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: workspaceUserAuthMeta('support-center') },
+    { path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: workspaceUserAuthMeta('support-center') },
+    { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage, meta: workspaceUserAuthMeta('support-center') },
+    { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage, meta: workspaceUserAuthMeta('support-center') },
     { path: '/announcements/:slug', name: 'announcement-detail', component: AnnouncementDetailPage },
     { path: '/u/:username', name: 'public-user', component: PublicUserPage },
     { path: '/admin', name: 'admin', component: AdminPage, meta: adminAuthMeta },

@@ -43,6 +43,7 @@ import {
   type OwnerApiService,
 } from '@/lib/api'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 import {
   usePagedMyApiServices,
   usePauseApiServiceMutation,
@@ -52,9 +53,9 @@ import {
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
 const route = useRoute()
-const quotaPublishIntent = computed(() => route.query.intent === 'quota')
+const quotaPublishIntent = computed(() => LIMITED_API_QUOTA_OFFERS_ENABLED && route.query.intent === 'quota')
 // 筛选只按首次入口设置，后续查询参数变化不覆盖卖家手动选择。
-const salesView = ref<ApiServiceSalesView>(getInitialApiServiceSalesView(route.query.intent))
+const salesView = ref<ApiServiceSalesView>(getInitialApiServiceSalesView(quotaPublishIntent.value ? 'quota' : undefined))
 const pagination = useCursorPagination([salesView])
 const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
 const pageQuery = usePagedMyApiServices(salesView, pageRequest)
@@ -98,6 +99,12 @@ function probeStatus(item: OwnerApiService) {
 
 function channelStatus(channel: ApiServiceSalesChannel) {
   return getApiServiceSalesStatus(channel.state)
+}
+
+function visibleSalesChannels(item: OwnerApiService) {
+  return LIMITED_API_QUOTA_OFFERS_ENABLED
+    ? item.salesSummary.channels
+    : item.salesSummary.channels.filter(channel => channel.kind !== 'limited_quota')
 }
 
 function hasExpiredLimitedQuota(item: OwnerApiService) {
@@ -191,7 +198,7 @@ function resumeService(id: string) {
         <h2 class="text-sm font-semibold">{{ selectedSalesView.label }}</h2>
         <p class="mt-1 text-xs text-muted-foreground">{{ selectedSalesView.description }}</p>
       </div>
-      <p class="text-xs text-muted-foreground">限时包过期不会删除长期 API 服务或历史订单。</p>
+      <p class="text-xs text-muted-foreground">销售配置变化不会删除长期 API 服务或历史订单。</p>
     </div>
 
     <SkeletonTable v-if="isLoading" :rows="5" :columns="6" />
@@ -228,9 +235,9 @@ function resumeService(id: string) {
           </div>
         </td>
           <td class="align-top">
-            <div v-if="item.salesSummary.channels.length" class="flex max-w-36 flex-wrap gap-1.5">
+            <div v-if="visibleSalesChannels(item).length" class="flex max-w-36 flex-wrap gap-1.5">
               <Badge
-                v-for="channel in item.salesSummary.channels"
+                v-for="channel in visibleSalesChannels(item)"
                 :key="channel.kind"
                 variant="secondary"
               >
@@ -240,9 +247,9 @@ function resumeService(id: string) {
             <Badge v-else variant="outline">暂无销售方式</Badge>
           </td>
           <td class="align-top">
-            <div v-if="item.salesSummary.channels.length" class="grid min-w-44 gap-2">
+            <div v-if="visibleSalesChannels(item).length" class="grid min-w-44 gap-2">
               <div
-                v-for="channel in item.salesSummary.channels"
+                v-for="channel in visibleSalesChannels(item)"
                 :key="channel.kind"
                 class="flex items-center gap-2"
               >
@@ -260,15 +267,16 @@ function resumeService(id: string) {
               </div>
             </div>
             <StatusBadge
-              v-else
+              v-else-if="LIMITED_API_QUOTA_OFFERS_ENABLED"
               :status="item.salesSummary.overallState"
               :label="getApiServiceSalesStatus(item.salesSummary.overallState).label"
               :tone="getApiServiceSalesStatus(item.salesSummary.overallState).tone"
             />
+            <span v-else class="text-xs text-muted-foreground">未开放销售</span>
           </td>
           <td class="align-top">
-            <div v-if="item.salesSummary.channels.length" class="grid min-w-44 gap-2 text-xs">
-              <div v-for="channel in item.salesSummary.channels" :key="channel.kind">
+            <div v-if="visibleSalesChannels(item).length" class="grid min-w-44 gap-2 text-xs">
+              <div v-for="channel in visibleSalesChannels(item)" :key="channel.kind">
                 <div class="text-muted-foreground">{{ getApiServiceSalesChannelLabel(channel.kind) }}</div>
                 <div class="mt-0.5">{{ getApiServiceSalesTimeSummary(channel) }}</div>
               </div>
@@ -340,13 +348,13 @@ function resumeService(id: string) {
                   管理探针连接
                 </RouterLink>
               </Button>
-              <Button v-if="!quotaPublishIntent" size="sm" as-child>
+              <Button v-if="LIMITED_API_QUOTA_OFFERS_ENABLED && !quotaPublishIntent" size="sm" as-child>
                 <RouterLink :to="`/my/api-services/${item.id}#quota-offers`">
                   <Settings2 class="h-4 w-4" />
                   高级管理
                 </RouterLink>
               </Button>
-              <Button v-if="!quotaPublishIntent && hasExpiredLimitedQuota(item)" size="sm" variant="outline" as-child>
+              <Button v-if="LIMITED_API_QUOTA_OFFERS_ENABLED && !quotaPublishIntent && hasExpiredLimitedQuota(item)" size="sm" variant="outline" as-child>
                 <RouterLink :to="`/api-market/quota/new?serviceId=${item.id}`">
                   <PackagePlus class="h-4 w-4" />
                   重新发布限时包
@@ -397,9 +405,9 @@ function resumeService(id: string) {
             />
           </div>
 
-          <div v-if="item.salesSummary.channels.length" class="grid gap-3">
+          <div v-if="visibleSalesChannels(item).length" class="grid gap-3">
             <div
-              v-for="channel in item.salesSummary.channels"
+              v-for="channel in visibleSalesChannels(item)"
               :key="channel.kind"
               class="grid min-w-0 gap-1.5"
             >
@@ -420,6 +428,7 @@ function resumeService(id: string) {
           <div v-else class="flex flex-wrap items-center gap-2">
             <Badge variant="outline">暂无销售方式</Badge>
             <StatusBadge
+              v-if="LIMITED_API_QUOTA_OFFERS_ENABLED"
               :status="item.salesSummary.overallState"
               :label="getApiServiceSalesStatus(item.salesSummary.overallState).label"
               :tone="getApiServiceSalesStatus(item.salesSummary.overallState).tone"
@@ -485,13 +494,13 @@ function resumeService(id: string) {
                 管理探针连接
               </RouterLink>
             </Button>
-            <Button v-if="!quotaPublishIntent" size="sm" as-child>
+            <Button v-if="LIMITED_API_QUOTA_OFFERS_ENABLED && !quotaPublishIntent" size="sm" as-child>
               <RouterLink :to="`/my/api-services/${item.id}#quota-offers`">
                 <Settings2 class="h-4 w-4" />
                 高级管理
               </RouterLink>
             </Button>
-            <Button v-if="!quotaPublishIntent && hasExpiredLimitedQuota(item)" size="sm" variant="outline" as-child>
+            <Button v-if="LIMITED_API_QUOTA_OFFERS_ENABLED && !quotaPublishIntent && hasExpiredLimitedQuota(item)" size="sm" variant="outline" as-child>
               <RouterLink :to="`/api-market/quota/new?serviceId=${item.id}`">
                 <PackagePlus class="h-4 w-4" />
                 重新发布限时包

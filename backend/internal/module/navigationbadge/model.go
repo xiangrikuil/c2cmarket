@@ -25,6 +25,7 @@ type Summary struct {
 	NotificationUnread          int
 	ImportantAnnouncementUnread int
 	FeedbackUnread              int
+	SupportActionCount          int
 	Buyer                       RoleActions
 	Merchant                    RoleActions
 	Admin                       *AdminCounts

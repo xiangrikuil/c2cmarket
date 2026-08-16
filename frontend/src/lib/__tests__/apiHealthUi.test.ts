@@ -89,7 +89,7 @@ describe('共享探针连接前端边界', () => {
   it('独立 Owner 路由与导航存在，管理员审批入口已删除', () => {
     expect(router).toContain("path: '/my/api-probe-connections'")
     expect(router).not.toContain("path: '/admin/api-health-probes'")
-    expect(appShell).toContain("{ label: '探针连接', to: '/my/api-probe-connections'")
+    expect(appShell).toContain("{ key: 'api-probe-connections', label: '探针连接', to: '/my/api-probe-connections'")
     expect(adminShell).not.toContain('API 探针授权')
     expect(adminShell).toContain("to: '/admin/api-health'")
   })

@@ -1882,3 +1882,69 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 62: 公告分级强触达与回执闭环
+
+**Date**: 2026-08-16
+**Task**: 公告分级强触达与回执闭环
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+完成 critical 公告全站触达、强制确认、受众快照与回执闭环，补齐管理端配置、迁移、OpenAPI、测试和浏览器验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54a8cf0` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 63: Consolidate workspace navigation
+
+**Date**: 2026-08-16
+**Task**: Consolidate workspace navigation
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+Consolidated message, reputation, and support workspace entries; added authoritative support badges; preserved deep links and announcement delivery; passed full automated and responsive browser verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `59c89c4` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 64: API 市场卡片身份、模型与图标修复
+
+**Date**: 2026-08-16
+**Task**: API 市场卡片身份、模型与图标修复
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+修复免费服务商户头像透传，按模型目录新鲜度排序商户声明模型，增加最多两项加可访问 Tooltip，并统一三类 API 卡片白色近满版产品图标。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bfdffae` | (see git log) |
+
+### Status
+
+[OK] **Completed**

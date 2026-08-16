@@ -7,6 +7,7 @@ import type {
   AnnouncementChannel,
   AnnouncementFormInput,
   AnnouncementLevel,
+  AnnouncementDelivery,
   AnnouncementReceipt,
   AnnouncementReceiptMap,
   AnnouncementStatus,
@@ -25,6 +26,7 @@ export const announcementCategoryLabels: Record<AnnouncementCategory, string> = 
 export const announcementLevelLabels: Record<AnnouncementLevel, string> = {
   normal: '普通',
   important: '重要',
+  critical: '紧急',
 }
 
 export const announcementStatusLabels: Record<AnnouncementStatus, string> = {
@@ -39,6 +41,8 @@ export const announcementStatusLabels: Record<AnnouncementStatus, string> = {
 export const announcementChannelLabels: Record<AnnouncementChannel, string> = {
   message_center: '公告中心',
   home_banner: '首页公告条',
+  global_bar: '全站通知条',
+  modal: '紧急弹窗',
 }
 
 export const announcementAuditActionLabels: Record<AnnouncementAuditAction, string> = {
@@ -61,6 +65,8 @@ export function createDefaultAnnouncementFormInput(): AnnouncementFormInput {
     channels: ['message_center'],
     isPinned: false,
     isDismissible: true,
+    requiresAck: false,
+    audience: { type: 'all' },
     publishAt: new Date().toISOString(),
     expireAt: undefined,
     ctaLabel: undefined,
@@ -78,6 +84,8 @@ export function announcementToFormInput(announcement: Announcement): Announcemen
     channels: [...announcement.channels],
     isPinned: announcement.isPinned,
     isDismissible: announcement.isDismissible,
+    requiresAck: announcement.requiresAck,
+    audience: structuredClone(announcement.audience),
     publishAt: announcement.publishAt,
     expireAt: announcement.expireAt,
     ctaLabel: announcement.ctaLabel,
@@ -159,13 +167,45 @@ export function isAnnouncementUnread(announcement: Announcement, receipt?: Annou
   return !effectiveReceipt || effectiveReceipt.announcementVersion !== announcement.version || !effectiveReceipt.readAt
 }
 
-export function isAnnouncementDismissed(announcement: Announcement, receipt?: AnnouncementReceipt) {
+export function isAnnouncementDismissed(announcement: AnnouncementDelivery, receipt?: AnnouncementReceipt) {
   const effectiveReceipt = announcementReceipt(announcement, receipt)
   return Boolean(effectiveReceipt && effectiveReceipt.announcementVersion === announcement.version && effectiveReceipt.dismissedAt)
 }
 
-function announcementReceipt(announcement: Announcement, fallback?: AnnouncementReceipt) {
-  return announcement.receipt ?? fallback
+export function isAnnouncementAcknowledged(announcement: AnnouncementDelivery, receipt?: AnnouncementReceipt) {
+  const effectiveReceipt = announcementReceipt(announcement, receipt)
+  return Boolean(effectiveReceipt && effectiveReceipt.announcementVersion === announcement.version && effectiveReceipt.acknowledgedAt)
+}
+
+export function sortAnnouncementsForDelivery<T extends AnnouncementDelivery>(announcements: T[]): T[] {
+  const rank: Record<AnnouncementLevel, number> = { normal: 1, important: 2, critical: 3 }
+  return [...announcements].sort((a, b) => {
+    if (rank[a.level] !== rank[b.level]) return rank[b.level] - rank[a.level]
+    const aPinned = 'isPinned' in a && a.isPinned
+    const bPinned = 'isPinned' in b && b.isPinned
+    if (aPinned !== bPinned) return aPinned ? -1 : 1
+    const timeDifference = new Date(b.publishAt).getTime() - new Date(a.publishAt).getTime()
+    return timeDifference || a.id.localeCompare(b.id)
+  })
+}
+
+export function selectGlobalAnnouncementDeliveries<T extends AnnouncementDelivery>(
+  announcements: T[],
+  receipts: AnnouncementReceiptMap = {},
+) {
+  const sorted = sortAnnouncementsForDelivery(announcements)
+  const critical = sorted
+    .filter(item => item.level === 'critical' && item.requiresAck && item.channels.includes('modal'))
+    .find(item => !isAnnouncementAcknowledged(item, receipts[item.id]))
+  const bar = sorted
+    .filter(item => item.channels.includes('global_bar'))
+    .filter(item => item.id !== critical?.id)
+    .find(item => !isAnnouncementDismissed(item, receipts[item.id]))
+  return { critical, bar }
+}
+
+function announcementReceipt(announcement: AnnouncementDelivery, fallback?: AnnouncementReceipt) {
+  return ('receipt' in announcement ? announcement.receipt : undefined) ?? fallback
 }
 
 export function sanitizeAnnouncementUrl(url?: string) {
@@ -214,6 +254,17 @@ export function validateAnnouncementFormInput(input: AnnouncementFormInput): Ann
   if (content.length < 10) errors.contentMarkdown = '正文不少于 10 个字符。'
   if (!input.channels.includes('message_center')) errors.channels = '展示渠道必须包含公告中心。'
   if (input.channels.length === 0) errors.channels = '至少选择公告中心。'
+  if (input.level === 'normal' && (input.channels.includes('global_bar') || input.channels.includes('modal') || input.requiresAck)) {
+    errors.level = '普通公告不能使用全站通知条、紧急弹窗或确认知悉。'
+  }
+  if (input.level === 'important' && (input.channels.includes('modal') || input.requiresAck)) {
+    errors.channels = '重要公告不能使用紧急弹窗或确认知悉。'
+  }
+  if (input.level === 'critical' && (!input.channels.includes('global_bar') || !input.channels.includes('modal') || !input.requiresAck || input.isDismissible)) {
+    errors.level = '紧急公告必须使用全站通知条和弹窗、要求确认知悉且不可关闭。'
+  }
+  if (input.audience.type === 'roles' && input.audience.roles.length === 0) errors['audience.roles'] = '至少选择一个用户角色。'
+  if (input.audience.type === 'specific_users' && input.audience.userIds.length === 0) errors['audience.userIds'] = '至少选择一个指定用户。'
   if (!input.publishAt || Number.isNaN(new Date(input.publishAt).getTime())) errors.publishAt = '发布时间不能为空。'
   if (input.expireAt && Number.isNaN(new Date(input.expireAt).getTime())) errors.expireAt = '结束时间格式无效。'
   if (input.publishAt && input.expireAt && new Date(input.expireAt).getTime() <= new Date(input.publishAt).getTime()) {

@@ -1016,6 +1016,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AnnouncementList"
+  /api/v1/announcements/public-active:
+    get:
+      operationId: listPublicActiveAnnouncements
+      tags: [Announcements]
+      security: []
+      summary: List active all-user global announcements.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [global_bar, modal]
+      responses:
+        "200":
+          description: Public global announcements without receipt, operator, or targeted-user data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAnnouncementList"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/announcements/active:
     get:
       operationId: listActiveAnnouncements
@@ -1026,7 +1048,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [message_center, home_banner]
+            enum: [message_center, home_banner, global_bar, modal]
       responses:
         "200":
           description: Active published announcements, optionally filtered by channel.
@@ -3498,6 +3520,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AnnouncementReceipt"
+  /api/v1/me/announcements/{id}/acknowledge:
+    post:
+      operationId: acknowledgeAnnouncement
+      tags: [Announcements]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Durable acknowledgement for the current critical announcement revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnnouncementReceipt"
+        "409":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/carpool-applications:
     get:
       operationId: listOwnerCarpoolApplications
@@ -8497,23 +8543,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContactMethod"
-  /api/v1/contact-methods/{id}/verify:
+  /api/v1/contact-methods/{id}/email-verification/start:
     post:
-      operationId: verifyContactMethod
+      operationId: startContactEmailVerification
       tags: [ContactMethods]
+      summary: Send an ownership code to the current transaction-contact email.
+      description: The challenge is independent from the account recovery email and is bound to the current immutable contact-method version.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Contact email verification challenge created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactEmailVerificationChallenge"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/contact-methods/{id}/email-verification/confirm:
+    post:
+      operationId: confirmContactEmailVerification
+      tags: [ContactMethods]
+      summary: Confirm ownership of the current transaction-contact email version.
       security:
         - sessionCookie: []
           csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmContactEmailVerificationRequest"
       responses:
         "200":
-          description: Contact method marked verified.
+          description: Contact method marked verified without changing the account email.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContactMethod"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/dev/contact-sessions:
     post:
       x-dev-only: true
@@ -9169,7 +9254,7 @@ components:
           minimum: 0
     NavigationBadgeSummary:
       type: object
-      required: [generatedAt, notificationUnread, importantAnnouncementUnread, feedbackUnread, buyer, merchant, admin]
+      required: [generatedAt, notificationUnread, importantAnnouncementUnread, feedbackUnread, supportActionCount, buyer, merchant, admin]
       properties:
         generatedAt:
           type: string
@@ -9183,6 +9268,10 @@ components:
         feedbackUnread:
           type: integer
           minimum: 0
+        supportActionCount:
+          type: integer
+          minimum: 0
+          description: Current-user feedback tickets with an unread administrator reply or needs_user_info status, counted once per ticket, plus open moderation information requests assigned to the current user.
         buyer:
           $ref: "#/components/schemas/NavigationBadgeRoleSummary"
         merchant:
@@ -9197,7 +9286,18 @@ components:
       properties:
         type:
           type: string
-          enum: [all]
+          enum: [all, roles, specific_users]
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [buyer, merchant, admin]
+        userIds:
+          type: array
+          description: Administrator-only explicit recipient identifiers; omitted from user and public responses.
+          items:
+            type: string
+            format: uuid
     AnnouncementReceipt:
       type: object
       required: [announcementId, announcementVersion]
@@ -9216,6 +9316,9 @@ components:
         dismissedAt:
           type: string
           format: date-time
+        acknowledgedAt:
+          type: string
+          format: date-time
     Announcement:
       type: object
       required:
@@ -9231,6 +9334,7 @@ components:
         - audience
         - isPinned
         - isDismissible
+        - requiresAck
         - publishAt
         - contentUpdatedAt
         - version
@@ -9256,7 +9360,7 @@ components:
           enum: [platform, rules, maintenance, feature, risk, operation]
         level:
           type: string
-          enum: [normal, important]
+          enum: [normal, important, critical]
         status:
           type: string
           enum: [draft, scheduled, published, offline, expired, archived]
@@ -9264,12 +9368,14 @@ components:
           type: array
           items:
             type: string
-            enum: [message_center, home_banner]
+            enum: [message_center, home_banner, global_bar, modal]
         audience:
           $ref: "#/components/schemas/AnnouncementAudience"
         isPinned:
           type: boolean
         isDismissible:
+          type: boolean
+        requiresAck:
           type: boolean
         ctaLabel:
           type: string
@@ -9309,10 +9415,54 @@ components:
             $ref: "#/components/schemas/Announcement"
         nextCursor:
           type: [string, "null"]
+    PublicAnnouncement:
+      type: object
+      required: [id, slug, title, summary, contentMarkdown, category, level, channels, audience, isPinned, isDismissible, requiresAck, publishAt, contentUpdatedAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        contentMarkdown: { type: string }
+        category:
+          type: string
+          enum: [platform, rules, maintenance, feature, risk, operation]
+        level:
+          type: string
+          enum: [important, critical]
+        channels:
+          type: array
+          items:
+            type: string
+            enum: [message_center, home_banner, global_bar, modal]
+        audience:
+          type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [all]
+        isPinned: { type: boolean }
+        isDismissible: { type: boolean }
+        requiresAck: { type: boolean }
+        ctaLabel: { type: string }
+        ctaUrl: { type: string }
+        publishAt: { type: string, format: date-time }
+        expireAt: { type: string, format: date-time }
+        contentUpdatedAt: { type: string, format: date-time }
+        version: { type: integer }
+    PublicAnnouncementList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicAnnouncement"
     AnnouncementFormRequest:
       type: object
       additionalProperties: false
-      required: [title, summary, contentMarkdown, category, level, channels, isPinned, isDismissible, publishAt]
+      required: [title, summary, contentMarkdown, category, level, channels, audience, isPinned, isDismissible, requiresAck, publishAt]
       properties:
         title:
           type: string
@@ -9330,15 +9480,19 @@ components:
           enum: [platform, rules, maintenance, feature, risk, operation]
         level:
           type: string
-          enum: [normal, important]
+          enum: [normal, important, critical]
         channels:
           type: array
           items:
             type: string
-            enum: [message_center, home_banner]
+            enum: [message_center, home_banner, global_bar, modal]
+        audience:
+          $ref: "#/components/schemas/AnnouncementAudience"
         isPinned:
           type: boolean
         isDismissible:
+          type: boolean
+        requiresAck:
           type: boolean
         ctaLabel:
           type: string
@@ -18891,6 +19045,35 @@ components:
     ContactUsageScope:
       type: string
       enum: [carpool_owner, api_merchant, buyer, dispute]
+    ContactEmailVerificationChallenge:
+      type: object
+      additionalProperties: false
+      required: [contactMethodId, contactMethodVersionId, email, expiresAt]
+      properties:
+        contactMethodId:
+          type: string
+          format: uuid
+        contactMethodVersionId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        expiresAt:
+          type: string
+          format: date-time
+        devCode:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Present only in development/test local automation responses.
+    ConfirmContactEmailVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
     ContactMethodList:
       type: object
       required: [items]

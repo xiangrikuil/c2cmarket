@@ -39,7 +39,7 @@ const modelSummary = [
       <div class="api-product-card__header">
         <div class="flex min-w-0 items-start gap-2.5">
           <span class="api-product-card__icon">
-            <img v-if="productIconSrc" :src="productIconSrc" :alt="`${row.service.title} 图标`" class="h-6 w-6 object-contain" />
+            <img v-if="productIconSrc" :src="productIconSrc" :alt="`${row.service.title} 图标`" />
             <PackageOpen v-else class="h-5 w-5" />
           </span>
           <div class="min-w-0 flex-1">

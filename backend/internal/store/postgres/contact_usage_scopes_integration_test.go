@@ -180,10 +180,6 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 		t.Fatalf("rollback scope lookup transaction: %v", err)
 	}
 
-	verified, _, changed, appErr := service.VerifyMethodWithIdempotency(ctx, userID, "contact-verify", "contact-verify-key", "contact-verify-hash", created.ID, "contact-verify", buildCompletion)
-	if appErr != nil || !changed || !slices.Equal(verified.UsageScopes, []string{contact.UsageScopeBuyer}) {
-		t.Fatalf("verified method lost scopes: method=%+v changed=%t error=%v", verified, changed, appErr)
-	}
 	deleted, _, changed, appErr := service.DeleteMethodWithIdempotency(ctx, userID, "contact-disable", "contact-disable-key", "contact-disable-hash", created.ID, "contact-disable", buildCompletion)
 	if appErr != nil || !changed || !slices.Equal(deleted.UsageScopes, []string{contact.UsageScopeBuyer}) {
 		t.Fatalf("deleted method lost scopes: method=%+v changed=%t error=%v", deleted, changed, appErr)
@@ -213,7 +209,7 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 		}
 		actions = append(actions, action)
 	}
-	wantActions := []string{"contact_method.created", "contact_method.updated", "contact_method.updated", "contact_method.default_changed", "contact_method.verified", "contact_method.disabled"}
+	wantActions := []string{"contact_method.created", "contact_method.updated", "contact_method.updated", "contact_method.default_changed", "contact_method.disabled"}
 	if !slices.Equal(actions, wantActions) {
 		t.Fatalf("contact audit actions = %v, want %v", actions, wantActions)
 	}

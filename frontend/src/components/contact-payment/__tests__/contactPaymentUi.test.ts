@@ -66,11 +66,20 @@ describe('联系方式与收款设置 UI', () => {
     expect(contactUsageScopeSelector).toContain('请至少选择一个适用场景')
     expect(myCenter.match(/<ContactUsageScopeSelector/g)).toHaveLength(2)
     expect(myCenter).toContain('availableContactUsageScopeOptions')
-    expect(myCenter).toContain('wechatUsageScopesDirty')
+    expect(myCenter).toContain('wechatContactSnapshot')
     expect(myCenter).toContain('emailUsageScopesDirty')
     expect(myCenter).toContain('usageScopes: wechatForm.usageScopes')
-    expect(myCenter).toContain('usageScopes: emailForm.usageScopes')
+    expect(myCenter).toContain('usageScopes: contactEmailForm.usageScopes')
     expect(publishPage).toContain("contact.enabled && contact.usageScopes.includes('api_merchant')")
+  })
+
+  it('账号恢复邮箱与交易联系邮箱使用独立草稿和挑战状态', () => {
+    expect(myCenter).toContain('const accountEmailForm = reactive')
+    expect(myCenter).toContain('const contactEmailForm = reactive')
+    expect(myCenter).toContain('accountEmailForm.email = currentProfile.email ||')
+    expect(myCenter).toContain("contactEmailForm.email = contact?.displayValue ?? ''")
+    expect(myCenter).toContain('contactEmailVerificationChallengeEmail')
+    expect(myCenter).not.toContain('email?.displayValue || profile.value.email')
   })
 
   it('显示未保存状态并在离开页面前保护草稿', () => {
@@ -80,9 +89,10 @@ describe('联系方式与收款设置 UI', () => {
     expect(paymentSettingsEditor).toContain('savedSnapshot')
     expect(paymentSettingsEditor).toContain('cloneApiPaymentAccountSettings')
     expect(myCenter).toContain('useUnsavedChangesGuard')
-    expect(myCenter).toContain('contactSettingsDirty')
+    expect(myCenter).toContain('currentSettingsDirty')
     expect(myCenter).toContain('apiPaymentEditorDirty')
-    expect(myCenter).toContain('联系方式与收款设置尚未保存')
+    expect(myCenter).toContain('|| Boolean(contactEmailVerificationChallengeEmail.value)')
+    expect(myCenter).toContain('当前账户设置尚未保存')
   })
 
   it('删除收款码经过确认且确认后只修改草稿', () => {

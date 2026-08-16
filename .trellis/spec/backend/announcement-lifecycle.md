@@ -117,3 +117,153 @@ if UserVisibleContentChanged(item, form) {
 }
 item.UpdatedAt = now
 ```
+
+## Scenario: Deliver Important And Critical Announcements Globally
+
+### 1. Scope / Trigger
+
+- Trigger: any change to announcement severity, channels, audience, receipt
+  actions, public projections, global delivery UI, or delivery revision rules.
+- This contract keeps anonymous, authenticated, Mock, PostgreSQL, OpenAPI, and
+  root-layout behavior aligned without adding another realtime transport.
+
+### 2. Signatures
+
+```http
+GET /api/v1/announcements/public-active?channel=global_bar|modal
+POST /api/v1/me/announcements/{id}/seen
+POST /api/v1/me/announcements/{id}/read
+POST /api/v1/me/announcements/{id}/dismiss
+POST /api/v1/me/announcements/{id}/acknowledge
+```
+
+```go
+type Audience struct {
+	Type    string
+	Roles   []string
+	UserIDs []string
+}
+
+type Receipt struct {
+	AnnouncementVersion int64
+	FirstSeenAt         *time.Time
+	ReadAt              *time.Time
+	DismissedAt         *time.Time
+	AcknowledgedAt      *time.Time
+}
+```
+
+Migration 109 adds `announcements.requires_ack`,
+`announcement_receipts.acknowledged_at`, and the
+`announcement_recipients(announcement_id, user_id, announcement_version,
+snapshotted_at)` publication snapshot.
+
+### 3. Contracts
+
+- Valid levels are `normal`, `important`, and `critical`; valid channels are
+  `message_center`, `home_banner`, `global_bar`, and `modal`.
+- `message_center` is mandatory. Normal announcements cannot use global or
+  acknowledgement channels. Important announcements may use `global_bar` but
+  not `modal` or acknowledgement. Critical announcements require
+  `global_bar + modal + requiresAck=true + isDismissible=false`.
+- Audiences are exactly `{type:"all"}`, `{type:"roles",roles:[buyer|merchant|admin]}`,
+  or `{type:"specific_users",userIds:[uuid...]}`. Targeted audiences resolve
+  into `announcement_recipients` when scheduled or published. A published
+  audience edit rebuilds the snapshot atomically at the new delivery revision.
+- Public active reads return only all-user important or critical announcements
+  for the requested global channel. Public DTOs include `isPinned` because the
+  anonymous client must reproduce the server's delivery order, but omit target
+  IDs, receipts, operators, and audit metadata.
+- Delivery order is severity descending, pinned first, publication time
+  descending, then ID ascending. Only one unacknowledged critical modal renders
+  at a time. The global bar excludes the item currently in the modal.
+- `seen` records the first successful bar/modal render; `read` records detail
+  access; `dismiss` closes a dismissible bar; `acknowledge` is the only action
+  that satisfies a required acknowledgement. Read alone never records seen.
+- Anonymous acknowledgement and dismissal are browser-local by announcement ID
+  plus delivery revision. Login ignores anonymous acknowledgement and requires
+  the durable backend receipt.
+- The delivery `version` advances for normalized user-visible content,
+  delivery-channel, acknowledgement, dismissibility, audience, or publish
+  changes. Pin, schedule, expiry, operator, and offline-only changes preserve
+  it. `contentUpdatedAt` retains its narrower content-only contract.
+- The root `GlobalAnnouncementLayer` owns all routes. Receipt failures keep the
+  surface visible and retain the exact failed action (`seen` or `dismiss`) for
+  retry. Shells reserve `--global-announcement-height` so the bar never covers
+  navigation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result | Mutation |
+|---|---|---|
+| Normal uses `global_bar`, `modal`, or acknowledgement | `422 VALIDATION_FAILED` | None |
+| Important uses `modal` or acknowledgement | `422 VALIDATION_FAILED` | None |
+| Critical omits a required channel/ack or is dismissible | `422 VALIDATION_FAILED` | None |
+| Role audience has no valid roles | `422 VALIDATION_FAILED`, `audience.roles` | None |
+| Specific-user audience is empty or contains an unknown user | `422 VALIDATION_FAILED`, `audience.userIds` | None |
+| Public request asks for a non-global channel | `422 VALIDATION_FAILED`, `channel` | None |
+| Non-recipient reads or acknowledges a targeted announcement | Existing not-found/visibility error | None |
+| Dismiss a non-dismissible announcement | `422 VALIDATION_FAILED` | None |
+| Acknowledge a non-critical/non-required announcement | `422 VALIDATION_FAILED` | None |
+| Receipt request carries a stale delivery revision in storage | Current revision replaces effective receipt state | Current revision only |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a pinned critical all-user announcement is the first anonymous and
+  authenticated modal on every route; Escape, outside click, and detail
+  navigation do not acknowledge it.
+- Good: acknowledging critical A advances to critical B; refresh does not show A
+  again for that authenticated user and revision.
+- Base: an important global bar can be dismissed and stays dismissed for its
+  current revision; a failed write leaves it visible with retry.
+- Good targeting: a scheduled buyer announcement snapshots buyer recipients at
+  publication time and never leaks explicit user IDs through user/public DTOs.
+- Bad: sorting a public DTO without `isPinned` silently changes anonymous modal
+  order even when the PostgreSQL query returned the correct order.
+- Bad: incrementing the delivery revision for a pin-only edit makes an already
+  acknowledged critical notice falsely pending again.
+
+### 6. Tests Required
+
+- Service tests cover the level/channel matrix, audience matching, deterministic
+  ordering, receipt action meanings, and material versus management-only
+  revision changes.
+- Store and migration tests cover migration 109, current-version receipt upsert,
+  recipient snapshot creation/rebuild, and targeted visibility.
+- Handler/OpenAPI tests cover the public endpoint, `isPinned` ordering metadata,
+  acknowledgement action, and absence of target IDs/receipts/admin fields.
+- Frontend tests cover Mock parity, local receipt revision invalidation, serial
+  critical selection, exact retry action, public detail reuse, and editor
+  invariants.
+- Browser checks cover anonymous detail, authenticated acknowledgement across
+  refresh, serial modals, dismiss failure/retry, admin audience controls, and
+  shell overlap at 390x844, 1440x900, and 1920x1080.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+// Public items omit isPinned, so equal-time announcements reorder by ID.
+sortAnnouncementsForDelivery(publicItems)
+```
+
+#### Correct
+
+```typescript
+// PublicAnnouncement includes isPinned and uses the shared deterministic order.
+sortAnnouncementsForDelivery(publicItems)
+```
+
+#### Wrong
+
+```go
+receipt.ReadAt = &now
+receipt.FirstSeenAt = &now // Detail access falsely claims the global surface rendered.
+```
+
+#### Correct
+
+```go
+receipt.ReadAt = &now // Only seen/dismiss/acknowledge may initialize FirstSeenAt.
+```

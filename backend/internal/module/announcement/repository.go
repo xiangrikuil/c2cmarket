@@ -10,6 +10,7 @@ import (
 type Repository interface {
 	UserAnnouncements(ctx context.Context, userID string, now time.Time) ([]Announcement, *domain.AppError)
 	ActiveAnnouncements(ctx context.Context, userID, channel string, now time.Time) ([]Announcement, *domain.AppError)
+	PublicActiveAnnouncements(ctx context.Context, channel string, now time.Time) ([]Announcement, *domain.AppError)
 	HomeAnnouncement(ctx context.Context, userID string, now time.Time) (*Announcement, *domain.AppError)
 	UserAnnouncementBySlug(ctx context.Context, userID, slug string, now time.Time) (Announcement, *domain.AppError)
 	AnnouncementUnreadCount(ctx context.Context, userID string, importantOnly bool, now time.Time) (int, *domain.AppError)

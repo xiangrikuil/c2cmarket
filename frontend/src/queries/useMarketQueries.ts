@@ -105,7 +105,7 @@ import {
   pauseApiService,
   publishApiService,
   searchMarket,
-  sendContactVerification,
+  startContactEmailVerification,
   setBackupPassword,
   setDefaultContactMethod,
   startEmailVerification,
@@ -121,7 +121,7 @@ import {
   updateMyProfile,
   toggleFavorite,
   useLinuxDoAvatar,
-  verifyContactMethod,
+  confirmContactEmailVerification,
   type AdminSection,
   type AdminSectionPageFilters,
   type ApiOrderFilters,
@@ -468,11 +468,12 @@ export function useInfiniteApiQuotaOffers(
   })
 }
 
-export function useApiQuotaSaleSlots() {
+export function useApiQuotaSaleSlots(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: ['api-quota-sale-slots'],
     queryFn: getApiQuotaSaleSlots,
     refetchOnMount: 'always',
+    enabled: computed(() => valueOf(enabled)),
   })
 }
 
@@ -756,14 +757,14 @@ export function useSetDefaultContactMethodMutation() {
   })
 }
 
-export function useSendContactVerificationMutation() {
-  return useMutation({ mutationFn: (contactId: string) => sendContactVerification(contactId) })
+export function useStartContactEmailVerificationMutation() {
+  return useMutation({ mutationFn: (contactId: string) => startContactEmailVerification(contactId) })
 }
 
-export function useVerifyContactMethodMutation() {
+export function useConfirmContactEmailVerificationMutation() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (contactId: string) => verifyContactMethod(contactId),
+    mutationFn: ({ contactId, code }: { contactId: string, code: string }) => confirmContactEmailVerification(contactId, code),
     onSuccess() {
       queryClient.invalidateQueries({ queryKey: myContactMethodsQueryKey() })
     },

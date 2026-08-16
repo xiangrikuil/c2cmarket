@@ -1192,10 +1192,11 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	var serviceOrderable bool
 	var declaredMaxConcurrency int
 	var performanceConfirmedAt *time.Time
+	var promptAuditEnabled *bool
 	err = tx.QueryRow(ctx, `
 		SELECT s.title, s.distribution_system, (`+apiServiceFulfillmentReadyPredicate("s")+`),
 		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0),
-		       s.performance_confirmed_at
+		       s.performance_confirmed_at, s.prompt_audit_enabled
 		FROM api_services s
 		WHERE s.id = $1 AND s.owner_user_id = $2
 		FOR UPDATE OF s
@@ -1206,6 +1207,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 		&declaredTTFTBand,
 		&declaredMaxConcurrency,
 		&performanceConfirmedAt,
+		&promptAuditEnabled,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, quotaNotFound("API 服务不存在。")
@@ -1219,8 +1221,11 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, publication.Batch.OwnerUserID, now); appErr != nil {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, appErr
 	}
-	if declaredTTFTBand == "" || declaredMaxConcurrency < 1 || performanceConfirmedAt == nil {
-		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、商户声明最大并发和最近确认时间。")
+	if declaredMaxConcurrency < 1 {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Maximum concurrency required", "发布额度包前必须填写商户声明最大并发。", "declaredMaxConcurrency", "required", "请输入大于 0 的最大并发。")
+	}
+	if promptAuditEnabled == nil {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Prompt audit selection required", "发布额度包前必须声明是否开启提示词审计。", "promptAuditEnabled", "required", "请选择是否开启提示词审计。")
 	}
 	var flexibleQuotaSaleOpen bool
 	if err := tx.QueryRow(ctx, `
@@ -1261,6 +1266,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	publication.Batch.DeclaredTTFTBand = declaredTTFTBand
 	publication.Batch.DeclaredMaxConcurrency = declaredMaxConcurrency
 	publication.Batch.PerformanceConfirmedAt = performanceConfirmedAt
+	publication.Batch.PromptAuditEnabled = promptAuditEnabled
 	publication.Offer.DistributionSystem = distributionSystem
 
 	_, err = tx.Exec(ctx, `

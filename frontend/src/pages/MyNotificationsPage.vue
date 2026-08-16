@@ -50,7 +50,7 @@ const stats = computed(() => [
 ])
 
 watch(() => route.query.tab, tab => {
-  if (tab && !['todo', 'transactions', 'system', 'business', 'announcements'].includes(String(tab))) router.replace({ query: { ...route.query, tab: 'todo' } })
+  if (tab && !['todo', 'transactions', 'system', 'announcements'].includes(String(tab))) router.replace({ query: { ...route.query, tab: 'todo' } })
 }, { immediate: true })
 
 function iconFor(type: string, title: string) {
@@ -88,7 +88,7 @@ function setTab(tab: NotificationTab) {
   <div class="notification-reference-page space-y-5">
     <div class="notification-reference-heading rounded-xl border px-5 py-4">
       <PageTitle
-        :title="activeTab === 'announcements' ? '平台公告' : '通知中心'"
+        title="消息中心"
         :description="activeTab === 'announcements' ? '查看平台规则、功能更新与治理公告。' : '查看后端记录的站内业务通知。'"
       />
     </div>
@@ -96,8 +96,8 @@ function setTab(tab: NotificationTab) {
     <CompactStats :items="stats" />
 
     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <Tabs :model-value="activeTab" @update:model-value="value => setTab(value as NotificationTab)">
-        <TabsList>
+      <Tabs class="max-w-full overflow-x-auto" :model-value="activeTab" @update:model-value="value => setTab(value as NotificationTab)">
+        <TabsList class="w-max">
           <TabsTrigger value="todo">待办 {{ todoCount }}</TabsTrigger>
           <TabsTrigger value="transactions">交易 {{ transactionCount }}</TabsTrigger>
           <TabsTrigger value="system">系统 {{ systemCount }}</TabsTrigger>

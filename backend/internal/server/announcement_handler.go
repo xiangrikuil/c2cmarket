@@ -23,6 +23,7 @@ type announcementDTO struct {
 	Audience         announcementAudienceDTO `json:"audience"`
 	IsPinned         bool                    `json:"isPinned"`
 	IsDismissible    bool                    `json:"isDismissible"`
+	RequiresAck      bool                    `json:"requiresAck"`
 	CTALabel         *string                 `json:"ctaLabel,omitempty"`
 	CTAURL           *string                 `json:"ctaUrl,omitempty"`
 	PublishAt        string                  `json:"publishAt"`
@@ -37,7 +38,9 @@ type announcementDTO struct {
 }
 
 type announcementAudienceDTO struct {
-	Type string `json:"type"`
+	Type    string   `json:"type"`
+	Roles   []string `json:"roles,omitempty"`
+	UserIDs []string `json:"userIds,omitempty"`
 }
 
 type announcementReceiptDTO struct {
@@ -46,21 +49,24 @@ type announcementReceiptDTO struct {
 	FirstSeenAt         *string `json:"firstSeenAt,omitempty"`
 	ReadAt              *string `json:"readAt,omitempty"`
 	DismissedAt         *string `json:"dismissedAt,omitempty"`
+	AcknowledgedAt      *string `json:"acknowledgedAt,omitempty"`
 }
 
 type announcementFormRequest struct {
-	Title           string   `json:"title"`
-	Summary         string   `json:"summary"`
-	ContentMarkdown string   `json:"contentMarkdown"`
-	Category        string   `json:"category"`
-	Level           string   `json:"level"`
-	Channels        []string `json:"channels"`
-	IsPinned        bool     `json:"isPinned"`
-	IsDismissible   bool     `json:"isDismissible"`
-	CTALabel        string   `json:"ctaLabel"`
-	CTAURL          string   `json:"ctaUrl"`
-	PublishAt       string   `json:"publishAt"`
-	ExpireAt        string   `json:"expireAt"`
+	Title           string                  `json:"title"`
+	Summary         string                  `json:"summary"`
+	ContentMarkdown string                  `json:"contentMarkdown"`
+	Category        string                  `json:"category"`
+	Level           string                  `json:"level"`
+	Channels        []string                `json:"channels"`
+	IsPinned        bool                    `json:"isPinned"`
+	IsDismissible   bool                    `json:"isDismissible"`
+	RequiresAck     bool                    `json:"requiresAck"`
+	Audience        announcementAudienceDTO `json:"audience"`
+	CTALabel        string                  `json:"ctaLabel"`
+	CTAURL          string                  `json:"ctaUrl"`
+	PublishAt       string                  `json:"publishAt"`
+	ExpireAt        string                  `json:"expireAt"`
 }
 
 type announcementOfflineRequest struct {
@@ -69,6 +75,27 @@ type announcementOfflineRequest struct {
 
 type countResponse struct {
 	Count int `json:"count"`
+}
+
+type publicAnnouncementDTO struct {
+	ID               string                  `json:"id"`
+	Slug             string                  `json:"slug"`
+	Title            string                  `json:"title"`
+	Summary          string                  `json:"summary"`
+	ContentMarkdown  string                  `json:"contentMarkdown"`
+	Category         string                  `json:"category"`
+	Level            string                  `json:"level"`
+	Channels         []string                `json:"channels"`
+	Audience         announcementAudienceDTO `json:"audience"`
+	IsPinned         bool                    `json:"isPinned"`
+	IsDismissible    bool                    `json:"isDismissible"`
+	RequiresAck      bool                    `json:"requiresAck"`
+	CTALabel         *string                 `json:"ctaLabel,omitempty"`
+	CTAURL           *string                 `json:"ctaUrl,omitempty"`
+	PublishAt        string                  `json:"publishAt"`
+	ExpireAt         *string                 `json:"expireAt,omitempty"`
+	ContentUpdatedAt string                  `json:"contentUpdatedAt"`
+	Version          int64                   `json:"version"`
 }
 
 type announcementAuditLogDTO struct {
@@ -108,6 +135,19 @@ func (s *Server) handleActiveAnnouncements(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, listResponse[announcementDTO]{Items: toAnnouncementDTOs(items)})
+}
+
+func (s *Server) handlePublicActiveAnnouncements(w http.ResponseWriter, r *http.Request) {
+	items, appErr := s.app.PublicActiveAnnouncements(r.Context(), r.URL.Query().Get("channel"))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	result := make([]publicAnnouncementDTO, 0, len(items))
+	for _, item := range items {
+		result = append(result, toPublicAnnouncementDTO(item))
+	}
+	writeJSON(w, http.StatusOK, listResponse[publicAnnouncementDTO]{Items: result})
 }
 
 func (s *Server) handleHomeAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +216,10 @@ func (s *Server) handleDismissAnnouncement(w http.ResponseWriter, r *http.Reques
 	s.handleAnnouncementReceipt(w, r, "dismiss")
 }
 
+func (s *Server) handleAcknowledgeAnnouncement(w http.ResponseWriter, r *http.Request) {
+	s.handleAnnouncementReceipt(w, r, "acknowledge")
+}
+
 func (s *Server) handleAnnouncementReceipt(w http.ResponseWriter, r *http.Request, action string) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -190,6 +234,8 @@ func (s *Server) handleAnnouncementReceipt(w http.ResponseWriter, r *http.Reques
 		receipt, appErr = s.app.MarkAnnouncementRead(r.Context(), user, chi.URLParam(r, "id"))
 	case "dismiss":
 		receipt, appErr = s.app.DismissAnnouncement(r.Context(), user, chi.URLParam(r, "id"))
+	case "acknowledge":
+		receipt, appErr = s.app.AcknowledgeAnnouncement(r.Context(), user, chi.URLParam(r, "id"))
 	}
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -209,7 +255,7 @@ func (s *Server) handleAdminAnnouncements(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAnnouncementDTOs(filterAdminAnnouncements(r, items)))
+	writePaginatedJSON(w, r, toAdminAnnouncementDTOs(filterAdminAnnouncements(r, items)))
 }
 
 func (s *Server) handleAdminAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +269,7 @@ func (s *Server) handleAdminAnnouncement(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAnnouncementDTO(item))
+	writeJSON(w, http.StatusOK, toAdminAnnouncementDTO(item))
 }
 
 func (s *Server) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +293,7 @@ func (s *Server) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toAnnouncementDTO(item))
+	writeJSON(w, http.StatusCreated, toAdminAnnouncementDTO(item))
 }
 
 func (s *Server) handleUpdateAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +317,7 @@ func (s *Server) handleUpdateAnnouncement(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAnnouncementDTO(item))
+	writeJSON(w, http.StatusOK, toAdminAnnouncementDTO(item))
 }
 
 func (s *Server) handlePublishAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +331,7 @@ func (s *Server) handlePublishAnnouncement(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAnnouncementDTO(item))
+	writeJSON(w, http.StatusOK, toAdminAnnouncementDTO(item))
 }
 
 func (s *Server) handleOfflineAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +350,7 @@ func (s *Server) handleOfflineAnnouncement(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAnnouncementDTO(item))
+	writeJSON(w, http.StatusOK, toAdminAnnouncementDTO(item))
 }
 
 func (s *Server) handleDuplicateAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +364,7 @@ func (s *Server) handleDuplicateAnnouncement(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toAnnouncementDTO(item))
+	writeJSON(w, http.StatusCreated, toAdminAnnouncementDTO(item))
 }
 
 func (s *Server) handleAnnouncementAuditLogs(w http.ResponseWriter, r *http.Request) {
@@ -361,10 +407,16 @@ func announcementFormFromRequest(req announcementFormRequest) (announcement.Form
 		Channels:        req.Channels,
 		IsPinned:        req.IsPinned,
 		IsDismissible:   req.IsDismissible,
-		CTALabel:        req.CTALabel,
-		CTAURL:          req.CTAURL,
-		PublishAt:       publishAt,
-		ExpireAt:        expireAt,
+		RequiresAck:     req.RequiresAck,
+		Audience: announcement.Audience{
+			Type:    req.Audience.Type,
+			Roles:   req.Audience.Roles,
+			UserIDs: req.Audience.UserIDs,
+		},
+		CTALabel:  req.CTALabel,
+		CTAURL:    req.CTAURL,
+		PublishAt: publishAt,
+		ExpireAt:  expireAt,
 	}, nil
 }
 
@@ -372,6 +424,14 @@ func toAnnouncementDTOs(items []announcement.Announcement) []announcementDTO {
 	result := make([]announcementDTO, 0, len(items))
 	for _, item := range items {
 		result = append(result, toAnnouncementDTO(item))
+	}
+	return result
+}
+
+func toAdminAnnouncementDTOs(items []announcement.Announcement) []announcementDTO {
+	result := make([]announcementDTO, 0, len(items))
+	for _, item := range items {
+		result = append(result, toAdminAnnouncementDTO(item))
 	}
 	return result
 }
@@ -387,9 +447,10 @@ func toAnnouncementDTO(item announcement.Announcement) announcementDTO {
 		Level:            item.Level,
 		Status:           item.Status,
 		Channels:         item.Channels,
-		Audience:         announcementAudienceDTO{Type: item.Audience.Type},
+		Audience:         announcementAudienceDTO{Type: item.Audience.Type, Roles: item.Audience.Roles},
 		IsPinned:         item.IsPinned,
 		IsDismissible:    item.IsDismissible,
+		RequiresAck:      item.RequiresAck,
 		CTALabel:         optionalString(item.CTALabel),
 		CTAURL:           optionalString(item.CTAURL),
 		PublishAt:        item.PublishAt.UTC().Format(time.RFC3339),
@@ -401,6 +462,24 @@ func toAnnouncementDTO(item announcement.Announcement) announcementDTO {
 		CreatedAt:        item.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        item.UpdatedAt.UTC().Format(time.RFC3339),
 		Receipt:          toAnnouncementReceiptDTOPtr(item.Receipt),
+	}
+}
+
+func toAdminAnnouncementDTO(item announcement.Announcement) announcementDTO {
+	dto := toAnnouncementDTO(item)
+	dto.Audience.UserIDs = item.Audience.UserIDs
+	return dto
+}
+
+func toPublicAnnouncementDTO(item announcement.Announcement) publicAnnouncementDTO {
+	return publicAnnouncementDTO{
+		ID: item.ID, Slug: item.Slug, Title: item.Title, Summary: item.Summary,
+		ContentMarkdown: item.ContentMarkdown, Category: item.Category, Level: item.Level,
+		Channels: item.Channels, Audience: announcementAudienceDTO{Type: announcement.AudienceAll},
+		IsPinned: item.IsPinned, IsDismissible: item.IsDismissible, RequiresAck: item.RequiresAck,
+		CTALabel: optionalString(item.CTALabel), CTAURL: optionalString(item.CTAURL),
+		PublishAt: item.PublishAt.UTC().Format(time.RFC3339), ExpireAt: formatOptionalTime(item.ExpireAt),
+		ContentUpdatedAt: item.ContentUpdatedAt.UTC().Format(time.RFC3339), Version: item.Version,
 	}
 }
 
@@ -418,6 +497,7 @@ func toAnnouncementReceiptDTOPtr(receipt *announcement.Receipt) *announcementRec
 		FirstSeenAt:         formatOptionalTime(receipt.FirstSeenAt),
 		ReadAt:              formatOptionalTime(receipt.ReadAt),
 		DismissedAt:         formatOptionalTime(receipt.DismissedAt),
+		AcknowledgedAt:      formatOptionalTime(receipt.AcknowledgedAt),
 	}
 }
 

@@ -157,6 +157,134 @@ WHERE user_id = $user
   AND status = 'processing';
 ```
 
+## Scenario: Independent Transaction Contact Email Verification
+
+### 1. Scope / Trigger
+
+- Trigger: changing email contact CRUD, contact verification routes, challenge
+  persistence, account-email binding, or the profile contact editor.
+- Owners: migration 110, `internal/module/contact`,
+  `internal/store/postgres/contact.go`, contact HTTP handlers/OpenAPI, and the
+  frontend profile adapters and Mock facade.
+
+### 2. Signatures
+
+```text
+POST /api/v1/contact-methods/{id}/email-verification/start
+POST /api/v1/contact-methods/{id}/email-verification/confirm
+Idempotency-Key: required on confirm
+```
+
+```go
+StartEmailVerification(ctx, userID, methodID)
+ConfirmEmailVerificationWithIdempotency(
+    ctx, userID, routeKey, key, requestHash, methodID, code, requestID,
+    buildCompletion,
+)
+```
+
+```text
+contact digest = HMAC-SHA256(
+  EMAIL_VERIFICATION_PEPPER,
+  purpose="contact_email",
+  subject=userID + ":" + contactMethodID + ":" + contactMethodVersionID,
+  normalizedEmail,
+  code
+)
+```
+
+### 3. Contracts
+
+- Account recovery email and transaction contact email are independent. A
+  successful contact confirmation updates only `contact_methods.verified_at`;
+  it never updates `users.email` or `users.email_verified_at`.
+- A challenge binds the authenticated user, contact method, immutable current
+  version, normalized email, purpose, and code. Migration 110 enforces this
+  shape with composite ownership foreign keys and one active challenge per
+  contact method.
+- Updating only label, usage scopes, default, or enabled state preserves the
+  current contact version and verification timestamp. Changing type or value
+  creates a new version and clears verification, even if the value is later
+  changed back.
+- Confirmation locks the contact method before the active challenge. Start,
+  confirm, and contact updates must keep the same parent-before-child lock
+  order. A successful confirmation atomically consumes the challenge, marks
+  the method verified, writes one safe audit event, and completes idempotency.
+- Wrong attempts increment atomically; attempt five consumes the challenge.
+  Expired, consumed, stale-version, and mismatched-email challenges share the
+  stable invalid-code response.
+- The proofless `/contact-methods/{id}/verify` route is forbidden. Frontend
+  contact flows must never call `/me/email-verification/*`; explicitly using
+  the verified account email only prefills a contact draft and still requires
+  independent contact verification.
+- PostgreSQL, in-memory service, frontend Mock, OpenAPI, and generated types
+  must preserve the same version-bound lifecycle.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Contact is missing, disabled, or owned by another user | `404 OBJECT_NOT_FOUND` without ownership disclosure |
+| Contact exists but is not email | `422 VALIDATION_FAILED` on `contactMethodId` |
+| Code is not six digits | `422 VERIFICATION_CODE_INVALID` on `code` |
+| Challenge is wrong, expired, consumed, exhausted, or version-stale | `422 VERIFICATION_CODE_INVALID` on `code` |
+| Confirm omits `Idempotency-Key` | Existing mutation idempotency validation error |
+| Completed confirm is replayed with the same key and hash | Stored completion; no new verification event |
+| The same key is reused with another request hash | `409 IDEMPOTENCY_KEY_REUSED` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a user independently verifies `trade@example.com`, then changes the
+  account recovery email; the contact value and verification remain intact.
+- Base: a verified email contact changes only its label and buyer/dispute
+  scopes; its current version and `verified_at` remain unchanged.
+- Good: two correct concurrent confirmations produce one verified update, one
+  audit event, and one completed mutation result.
+- Bad: a contact value changes after start, then changes back, and an adapter
+  accepts the old code because it compares only the email string.
+- Bad: start locks method then challenge while confirm locks challenge then
+  method, creating a PostgreSQL lock-order inversion.
+- Bad: contact confirmation delegates to the account-email confirm mutation.
+
+### 6. Tests Required
+
+- Contact service tests cover success, malformed/wrong/expired/exhausted code,
+  disabled/foreign/missing/non-email targets, metadata preservation, value/type
+  invalidation, version drift, and concurrent confirmation.
+- PostgreSQL integration asserts account/contact isolation, method-before-code
+  lock order, atomic audit/idempotency effects, replay, and one concurrent
+  winner.
+- Migration gates apply `1 -> current`, exercise `109 -> 110 -> 109 -> 110`,
+  and assert `dirty=false`, purpose shape, composite foreign keys, and the
+  partial active-challenge index.
+- Frontend real-adapter tests assert contact endpoints never call account-email
+  endpoints. Mock tests must include change-away/change-back version drift and
+  five-attempt lockout.
+- OpenAPI route and generated-type drift checks must pass after removing the
+  proofless endpoint.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+confirm: lock email_verification_codes -> lock contact_methods
+start:   lock contact_methods -> lock email_verification_codes
+```
+
+The opposing lock order can deadlock concurrent start and confirm requests.
+
+#### Correct
+
+```text
+start:   lock contact_methods -> consume/insert challenge
+confirm: lock contact_methods -> lock challenge -> verify -> audit -> complete
+```
+
+The method row is the parent lock for every contact mutation. Verification
+must also bind the immutable `contact_method_version_id`; matching the current
+email text alone is insufficient.
+
 ## Scenario: API Delivery Credential Physical Destruction
 
 ### 1. Scope / Trigger

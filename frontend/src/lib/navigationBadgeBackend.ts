@@ -19,6 +19,7 @@ export type NavigationBadgeSummary = {
   notificationUnread: number
   importantAnnouncementUnread: number
   feedbackUnread: number
+  supportActionCount: number
   buyer: NavigationBadgeRoleSummary
   merchant: NavigationBadgeRoleSummary
   admin: NavigationBadgeAdminSummary | null

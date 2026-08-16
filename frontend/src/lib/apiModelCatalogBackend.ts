@@ -638,6 +638,9 @@ function toPublicModel(item: AdminApiModel): ModelCatalogItem {
     officialCachedInputPricePerMillion: priceToNumber(item.cachedInputPricePerMillion),
     officialOutputPricePerMillion: priceToNumber(item.outputPricePerMillion),
     active: item.active,
+    sortOrder: item.sortOrder,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   }
 }
 

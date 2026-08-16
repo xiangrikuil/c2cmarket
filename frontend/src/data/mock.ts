@@ -608,6 +608,9 @@ export type ModelCatalogItem = {
   officialCachedInputPricePerMillion: number | null
   officialOutputPricePerMillion: number | null
   active: boolean
+  sortOrder?: number
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type ApiContactChannel = {
@@ -741,7 +744,7 @@ export type ApiService = {
   merchantDisplayName: string
   merchantAvatarUrl?: string
   trustLevel: number | null
-  merchantType: '个人车主' | '商户' | '可信新车主'
+  merchantType: '个人车主' | '个人卖家' | '商户' | '可信新车主'
   models: string[]
   modelMultipliers: ApiModelMultiplier[]
   rate: string

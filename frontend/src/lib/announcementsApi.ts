@@ -21,13 +21,16 @@ import {
   shouldUseRealBackend,
 } from '@/lib/backendClient'
 import { collectCursorPages, normalizeNextCursor, paginateCursorItems, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
+import { getMockIdentity } from '@/lib/mockAuth'
 import type {
   Announcement,
+  AnnouncementAudience,
   AnnouncementAuditAction,
   AnnouncementAuditLog,
   AnnouncementChannel,
   AnnouncementFormInput,
   AnnouncementStatus,
+  PublicAnnouncement,
 } from '@/types/announcement'
 
 const announcementStorageKey = 'marketplace.announcement.admin-drafts'
@@ -58,6 +61,7 @@ export async function getAnnouncements(): Promise<Announcement[]> {
   await wait()
   return clone(announcementStore
     .filter(item => isAnnouncementUserVisible(item))
+    .filter(matchesCurrentMockAudience)
     .sort(compareAnnouncementsByTimeDesc))
 }
 
@@ -71,9 +75,24 @@ export async function getActiveAnnouncements(channel?: AnnouncementChannel): Pro
   await wait()
   return clone(announcementStore
     .filter(item => isAnnouncementActive(item))
+    .filter(matchesCurrentMockAudience)
     .filter(item => !channel || item.channels.includes(channel))
     .filter(item => channel !== 'home_banner' || !isAnnouncementDismissed(item, readAnnouncementReceipts()[item.id]))
     .sort(compareAnnouncementsByTimeDesc))
+}
+
+export async function getPublicActiveAnnouncements(channel: 'global_bar' | 'modal'): Promise<PublicAnnouncement[]> {
+  if (shouldUseRealBackend()) {
+    const response = await backendRequest<ListResponse<PublicAnnouncement>>(`/api/v1/announcements/public-active?channel=${encodeURIComponent(channel)}`, {}, { affectsSessionCache: false })
+    return response.items
+  }
+  await wait()
+  return clone(announcementStore
+    .filter(item => item.audience.type === 'all')
+    .filter(item => item.level === 'important' || item.level === 'critical')
+    .filter(item => isAnnouncementActive(item) && item.channels.includes(channel))
+    .sort(compareAnnouncementsByTimeDesc)
+    .map(toPublicAnnouncement))
 }
 
 export async function getActiveHomeAnnouncement(): Promise<Announcement | null> {
@@ -86,6 +105,7 @@ export async function getActiveHomeAnnouncement(): Promise<Announcement | null> 
   const candidates = announcementStore
     .filter(item => item.channels.includes('home_banner'))
     .filter(item => isAnnouncementActive(item))
+    .filter(matchesCurrentMockAudience)
     .filter(item => !isAnnouncementDismissed(item, receipts[item.id]))
 
   return clone(sortAnnouncementsForHome(candidates, receipts)[0] ?? null)
@@ -98,7 +118,7 @@ export async function getAnnouncementBySlug(slug: string): Promise<Announcement 
   }
   await wait()
   const announcement = announcementStore.find(item => item.slug === slug)
-  if (!announcement || !isAnnouncementUserVisible(announcement)) return null
+  if (!announcement || !isAnnouncementUserVisible(announcement) || !matchesCurrentMockAudience(announcement)) return null
   return clone(announcement)
 }
 
@@ -110,7 +130,7 @@ export async function markAnnouncementRead(announcementId: string): Promise<void
   }
   await wait()
   const announcement = findUserVisibleAnnouncement(announcementId)
-  upsertAnnouncementReceipt(announcement, { readAt: nowIso() })
+  if (!upsertAnnouncementReceipt(announcement, { readAt: nowIso() })) throw new Error('公告已读状态保存失败。')
 }
 
 export async function dismissAnnouncement(announcementId: string): Promise<void> {
@@ -121,7 +141,7 @@ export async function dismissAnnouncement(announcementId: string): Promise<void>
   }
   await wait()
   const announcement = findUserVisibleAnnouncement(announcementId)
-  upsertAnnouncementReceipt(announcement, { dismissedAt: nowIso() })
+  if (!upsertAnnouncementReceipt(announcement, { firstSeenAt: nowIso(), dismissedAt: nowIso() })) throw new Error('公告关闭状态保存失败。')
 }
 
 export async function markAnnouncementSeen(announcementId: string): Promise<void> {
@@ -132,7 +152,20 @@ export async function markAnnouncementSeen(announcementId: string): Promise<void
   }
   await wait()
   const announcement = findUserVisibleAnnouncement(announcementId)
-  upsertAnnouncementReceipt(announcement, { firstSeenAt: nowIso() })
+  if (!upsertAnnouncementReceipt(announcement, { firstSeenAt: nowIso() })) throw new Error('公告展示状态保存失败。')
+}
+
+export async function acknowledgeAnnouncement(announcementId: string): Promise<void> {
+  if (shouldUseRealBackend()) {
+    await requireBackendSession()
+    await backendMutation(`/api/v1/me/announcements/${encodeURIComponent(announcementId)}/acknowledge`, {})
+    return
+  }
+  await wait()
+  const announcement = findUserVisibleAnnouncement(announcementId)
+  if (announcement.level !== 'critical' || !announcement.requiresAck) throw new Error('该公告不需要确认知悉。')
+  const acknowledgedAt = nowIso()
+  if (!upsertAnnouncementReceipt(announcement, { firstSeenAt: acknowledgedAt, acknowledgedAt })) throw new Error('公告确认状态保存失败。')
 }
 
 export async function getAnnouncementUnreadCount(): Promise<number> {
@@ -145,6 +178,7 @@ export async function getAnnouncementUnreadCount(): Promise<number> {
   const receipts = readAnnouncementReceipts()
   return announcementStore
     .filter(item => isAnnouncementUserVisible(item))
+    .filter(matchesCurrentMockAudience)
     .filter(item => isAnnouncementUnread(item, receipts[item.id]))
     .length
 }
@@ -159,7 +193,8 @@ export async function getImportantAnnouncementUnreadCount(): Promise<number> {
   const receipts = readAnnouncementReceipts()
   return announcementStore
     .filter(item => isAnnouncementUserVisible(item))
-    .filter(item => item.level === 'important')
+    .filter(matchesCurrentMockAudience)
+    .filter(item => item.level === 'important' || item.level === 'critical')
     .filter(item => isAnnouncementUnread(item, receipts[item.id]))
     .length
 }
@@ -224,7 +259,6 @@ export async function createAnnouncement(input: AnnouncementFormInput): Promise<
     slug: createSlug(normalized.title),
     ...normalized,
     status: 'draft',
-    audience: { type: 'all' },
     version: 1,
     createdBy: currentAdminId,
     updatedBy: currentAdminId,
@@ -251,11 +285,12 @@ export async function updateAnnouncement(id: string, input: AnnouncementFormInpu
   const normalized = normalizeAnnouncementInput(input)
   const actionTime = nowIso()
   const contentChanged = hasUserVisibleContentChanged(announcement, normalized)
+  const deliveryChanged = hasDeliveryRevisionChanged(announcement, normalized)
   const next: Announcement = {
     ...announcement,
     ...normalized,
     slug: announcement.slug,
-    version: announcement.version + 1,
+    version: announcement.version + (deliveryChanged ? 1 : 0),
     updatedBy: currentAdminId,
     contentUpdatedAt: contentChanged ? actionTime : announcement.contentUpdatedAt,
     updatedAt: actionTime,
@@ -312,7 +347,6 @@ export async function offlineAnnouncement(id: string, reason: string): Promise<A
   const next: Announcement = {
     ...announcement,
     status: 'offline',
-    version: announcement.version + 1,
     updatedBy: currentAdminId,
     updatedAt: nowIso(),
   }
@@ -367,13 +401,22 @@ function normalizeAnnouncementInput(input: AnnouncementFormInput): AnnouncementF
     title: input.title.trim(),
     summary: input.summary.trim(),
     contentMarkdown: input.contentMarkdown.trim(),
-    channels: Array.from(new Set(['message_center', ...input.channels])),
+    channels: normalizeChannels(input.channels),
+    audience: normalizeAudience(input.audience),
     ctaLabel: input.ctaLabel?.trim() || undefined,
     ctaUrl: sanitizeAnnouncementUrl(input.ctaUrl),
     expireAt: input.expireAt?.trim() || undefined,
   }
   assertValidAnnouncementFormInput(normalized)
   return normalized
+}
+
+function hasDeliveryRevisionChanged(announcement: Announcement, input: AnnouncementFormInput) {
+  return hasUserVisibleContentChanged(announcement, input)
+    || JSON.stringify(announcement.channels) !== JSON.stringify(input.channels)
+    || JSON.stringify(announcement.audience) !== JSON.stringify(input.audience)
+    || announcement.isDismissible !== input.isDismissible
+    || announcement.requiresAck !== input.requiresAck
 }
 
 function hasUserVisibleContentChanged(announcement: Announcement, input: AnnouncementFormInput) {
@@ -390,6 +433,8 @@ function normalizeStoredAnnouncement(announcement: Announcement): Announcement {
   return {
     ...announcement,
     contentUpdatedAt: announcement.contentUpdatedAt || announcement.publishAt,
+    requiresAck: announcement.requiresAck ?? false,
+    audience: announcement.audience ?? { type: 'all' },
   }
 }
 
@@ -418,8 +463,62 @@ function findAnnouncement(id: string) {
 
 function findUserVisibleAnnouncement(id: string) {
   const announcement = findAnnouncement(id)
-  if (!isAnnouncementUserVisible(announcement)) throw new Error('公告当前不可见。')
+  if (!isAnnouncementUserVisible(announcement) || !matchesCurrentMockAudience(announcement)) throw new Error('公告当前不可见。')
   return announcement
+}
+
+function matchesCurrentMockAudience(announcement: Announcement) {
+  const identity = getMockIdentity()
+  if (!identity) return false
+  switch (announcement.audience.type) {
+    case 'all':
+      return true
+    case 'specific_users':
+      return announcement.audience.userIds.includes(identity.id)
+    case 'roles': {
+      const roles = announcement.audience.roles
+      const buyer = Boolean(identity.studentClaim || identity.linuxDoBinding.bound)
+      const merchant = identity.linuxDoBinding.bound
+      const admin = identity.persona === 'admin'
+      return (buyer && roles.includes('buyer'))
+        || (merchant && roles.includes('merchant'))
+        || (admin && roles.includes('admin'))
+    }
+  }
+}
+
+function normalizeChannels(channels: AnnouncementChannel[]): AnnouncementChannel[] {
+  const selected = new Set<AnnouncementChannel>(['message_center', ...channels])
+  return (['message_center', 'home_banner', 'global_bar', 'modal'] as const).filter(channel => selected.has(channel))
+}
+
+function normalizeAudience(audience: AnnouncementAudience): AnnouncementAudience {
+  if (audience.type === 'roles') return { type: 'roles', roles: [...new Set(audience.roles)].sort() }
+  if (audience.type === 'specific_users') return { type: 'specific_users', userIds: [...new Set(audience.userIds)].sort() }
+  return { type: 'all' }
+}
+
+function toPublicAnnouncement(item: Announcement): PublicAnnouncement {
+  return {
+    id: item.id,
+    slug: item.slug,
+    title: item.title,
+    summary: item.summary,
+    contentMarkdown: item.contentMarkdown,
+    category: item.category,
+    level: item.level === 'critical' ? 'critical' : 'important',
+    channels: [...item.channels],
+    audience: { type: 'all' },
+    isPinned: item.isPinned,
+    isDismissible: item.isDismissible,
+    requiresAck: item.requiresAck,
+    ctaLabel: item.ctaLabel,
+    ctaUrl: item.ctaUrl,
+    publishAt: item.publishAt,
+    expireAt: item.expireAt,
+    contentUpdatedAt: item.contentUpdatedAt,
+    version: item.version,
+  }
 }
 
 function readSessionStore<T>(key: string, seed: T): T {

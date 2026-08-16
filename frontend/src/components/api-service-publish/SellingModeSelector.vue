@@ -2,20 +2,23 @@
 import { Boxes, CircleDollarSign, Clock3, PackageOpen, TimerReset } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 import { sellingModeLabels, type SellingMode } from './types'
 
 const emit = defineEmits<{
   select: [value: SellingMode]
 }>()
 
-const modes: Array<{
+type SellingModeOption = {
   value: SellingMode
   title: string
   description: string
   facts: string[]
   icon: typeof CircleDollarSign
   iconClass: string
-}> = [
+}
+
+const allModes: SellingModeOption[] = [
   {
     value: 'free',
     title: sellingModeLabels.free,
@@ -41,6 +44,7 @@ const modes: Array<{
     iconClass: 'bg-orange-500 text-white',
   },
 ]
+const modes = allModes.filter(mode => mode.value !== 'limited' || LIMITED_API_QUOTA_OFFERS_ENABLED)
 </script>
 
 <template>
@@ -50,10 +54,10 @@ const modes: Array<{
         <Boxes class="h-5 w-5" />
       </div>
       <h2 id="selling-mode-title" class="mt-3 text-lg font-semibold">选择销售模式</h2>
-      <p class="mt-1 text-sm text-muted-foreground">三种模式独立发布，选择后再填写对应配置。</p>
+      <p class="mt-1 text-sm text-muted-foreground">{{ modes.length }} 种模式独立发布，选择后再填写对应配置。</p>
     </div>
 
-    <div class="grid gap-3 md:grid-cols-3">
+    <div class="grid gap-3" :class="modes.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'">
       <Card
         v-for="mode in modes"
         :key="mode.value"

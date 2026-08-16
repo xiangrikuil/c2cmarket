@@ -105,6 +105,7 @@ versions:
 | `000096_api_order_launch_hardening` | immutable merchant-confirm and delivery deadlines, constrained late-payment recovery, buyer pending-order capacity, and rush-round fulfillment confirmation |
 | `000097_dynamic_catalog_lifecycle` | three-state catalog lifecycle, Grok/xAI seed data, immutable core identity, and API-order catalog risk holds |
 | `000098_password_reset` | purpose-isolated active password-reset challenge uniqueness for immutable student-email recovery |
+| `000109_announcement_critical_delivery` | critical global delivery, acknowledgement receipts, and publish-time recipient snapshots |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -561,6 +562,19 @@ and confirmation deadlines. It also permits API-order platform intervention
 without recording off-site communication channels and allows voluntary closure
 without adverse facts or appeal eligibility. Its down migration refuses to
 discard seller decisions, applicant-decision deadlines, or voluntary remedies.
+
+Version 109 (`000109_announcement_critical_delivery`) adds critical announcement
+delivery through global bars and required-acknowledgement dialogs, stores durable
+acknowledgement receipts, and snapshots role or explicit-user audiences at the
+current delivery revision. Its down migration degrades critical notices to
+important notices and removes global-only delivery state.
+
+Version 110 (`000110_contact_email_verification`) gives transaction-contact
+email addresses an ownership challenge independent from the account recovery
+email. Each active challenge is purpose-isolated and bound to the current user,
+contact method, immutable contact-method version, and normalized email. The
+down migration removes only contact-email challenges before restoring the
+previous purpose constraint.
 
 ## Docker Compose
 

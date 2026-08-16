@@ -76,13 +76,22 @@ export type NavigationBadgeSummary = {
     notificationUnread: number;
     importantAnnouncementUnread: number;
     feedbackUnread: number;
+    /**
+     * Current-user feedback tickets with an unread administrator reply or needs_user_info status, counted once per ticket, plus open moderation information requests assigned to the current user.
+     */
+    supportActionCount: number;
     buyer: NavigationBadgeRoleSummary;
     merchant: NavigationBadgeRoleSummary;
     admin: NavigationBadgeAdminSummary | null;
 };
 
 export type AnnouncementAudience = {
-    type: 'all';
+    type: 'all' | 'roles' | 'specific_users';
+    roles?: Array<'buyer' | 'merchant' | 'admin'>;
+    /**
+     * Administrator-only explicit recipient identifiers; omitted from user and public responses.
+     */
+    userIds?: Array<string>;
 };
 
 export type AnnouncementReceipt = {
@@ -91,6 +100,7 @@ export type AnnouncementReceipt = {
     firstSeenAt?: string;
     readAt?: string;
     dismissedAt?: string;
+    acknowledgedAt?: string;
 };
 
 export type Announcement = {
@@ -103,12 +113,13 @@ export type Announcement = {
      */
     contentMarkdown: string;
     category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
-    level: 'normal' | 'important';
+    level: 'normal' | 'important' | 'critical';
     status: 'draft' | 'scheduled' | 'published' | 'offline' | 'expired' | 'archived';
-    channels: Array<'message_center' | 'home_banner'>;
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
     audience: AnnouncementAudience;
     isPinned: boolean;
     isDismissible: boolean;
+    requiresAck: boolean;
     ctaLabel?: string;
     ctaUrl?: string;
     publishAt: string;
@@ -130,15 +141,44 @@ export type AnnouncementList = {
     nextCursor?: string | null;
 };
 
+export type PublicAnnouncement = {
+    id: string;
+    slug: string;
+    title: string;
+    summary: string;
+    contentMarkdown: string;
+    category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
+    level: 'important' | 'critical';
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
+    audience: {
+        type: 'all';
+    };
+    isPinned: boolean;
+    isDismissible: boolean;
+    requiresAck: boolean;
+    ctaLabel?: string;
+    ctaUrl?: string;
+    publishAt: string;
+    expireAt?: string;
+    contentUpdatedAt: string;
+    version: number;
+};
+
+export type PublicAnnouncementList = {
+    items: Array<PublicAnnouncement>;
+};
+
 export type AnnouncementFormRequest = {
     title: string;
     summary: string;
     contentMarkdown: string;
     category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
-    level: 'normal' | 'important';
-    channels: Array<'message_center' | 'home_banner'>;
+    level: 'normal' | 'important' | 'critical';
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
+    audience: AnnouncementAudience;
     isPinned: boolean;
     isDismissible: boolean;
+    requiresAck: boolean;
     ctaLabel?: string;
     ctaUrl?: string;
     publishAt: string;
@@ -4777,6 +4817,21 @@ export type ContactMethod = {
 
 export type ContactUsageScope = 'carpool_owner' | 'api_merchant' | 'buyer' | 'dispute';
 
+export type ContactEmailVerificationChallenge = {
+    contactMethodId: string;
+    contactMethodVersionId: string;
+    email: string;
+    expiresAt: string;
+    /**
+     * Present only in development/test local automation responses.
+     */
+    devCode?: string;
+};
+
+export type ConfirmContactEmailVerificationRequest = {
+    code: string;
+};
+
 export type ContactMethodList = {
     items: Array<ContactMethod>;
     nextCursor?: string | null;
@@ -6446,11 +6501,38 @@ export type ListAnnouncementsResponses = {
 
 export type ListAnnouncementsResponse = ListAnnouncementsResponses[keyof ListAnnouncementsResponses];
 
+export type ListPublicActiveAnnouncementsData = {
+    body?: never;
+    path?: never;
+    query: {
+        channel: 'global_bar' | 'modal';
+    };
+    url: '/api/v1/announcements/public-active';
+};
+
+export type ListPublicActiveAnnouncementsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListPublicActiveAnnouncementsError = ListPublicActiveAnnouncementsErrors[keyof ListPublicActiveAnnouncementsErrors];
+
+export type ListPublicActiveAnnouncementsResponses = {
+    /**
+     * Public global announcements without receipt, operator, or targeted-user data.
+     */
+    200: PublicAnnouncementList;
+};
+
+export type ListPublicActiveAnnouncementsResponse = ListPublicActiveAnnouncementsResponses[keyof ListPublicActiveAnnouncementsResponses];
+
 export type ListActiveAnnouncementsData = {
     body?: never;
     path?: never;
     query?: {
-        channel?: 'message_center' | 'home_banner';
+        channel?: 'message_center' | 'home_banner' | 'global_bar' | 'modal';
     };
     url: '/api/v1/announcements/active';
 };
@@ -9607,6 +9689,33 @@ export type DismissAnnouncementResponses = {
 };
 
 export type DismissAnnouncementResponse = DismissAnnouncementResponses[keyof DismissAnnouncementResponses];
+
+export type AcknowledgeAnnouncementData = {
+    body: EmptyRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/announcements/{id}/acknowledge';
+};
+
+export type AcknowledgeAnnouncementErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+};
+
+export type AcknowledgeAnnouncementError = AcknowledgeAnnouncementErrors[keyof AcknowledgeAnnouncementErrors];
+
+export type AcknowledgeAnnouncementResponses = {
+    /**
+     * Durable acknowledgement for the current critical announcement revision.
+     */
+    200: AnnouncementReceipt;
+};
+
+export type AcknowledgeAnnouncementResponse = AcknowledgeAnnouncementResponses[keyof AcknowledgeAnnouncementResponses];
 
 export type ListOwnerCarpoolApplicationsData = {
     body?: never;
@@ -16883,8 +16992,43 @@ export type SetDefaultContactMethodResponses = {
 
 export type SetDefaultContactMethodResponse = SetDefaultContactMethodResponses[keyof SetDefaultContactMethodResponses];
 
-export type VerifyContactMethodData = {
+export type StartContactEmailVerificationData = {
     body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/contact-methods/{id}/email-verification/start';
+};
+
+export type StartContactEmailVerificationErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type StartContactEmailVerificationError = StartContactEmailVerificationErrors[keyof StartContactEmailVerificationErrors];
+
+export type StartContactEmailVerificationResponses = {
+    /**
+     * Contact email verification challenge created.
+     */
+    200: ContactEmailVerificationChallenge;
+};
+
+export type StartContactEmailVerificationResponse = StartContactEmailVerificationResponses[keyof StartContactEmailVerificationResponses];
+
+export type ConfirmContactEmailVerificationData = {
+    body: ConfirmContactEmailVerificationRequest;
     headers: {
         'Idempotency-Key': string;
     };
@@ -16892,17 +17036,38 @@ export type VerifyContactMethodData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/contact-methods/{id}/verify';
+    url: '/api/v1/contact-methods/{id}/email-verification/confirm';
 };
 
-export type VerifyContactMethodResponses = {
+export type ConfirmContactEmailVerificationErrors = {
     /**
-     * Contact method marked verified.
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ConfirmContactEmailVerificationError = ConfirmContactEmailVerificationErrors[keyof ConfirmContactEmailVerificationErrors];
+
+export type ConfirmContactEmailVerificationResponses = {
+    /**
+     * Contact method marked verified without changing the account email.
      */
     200: ContactMethod;
 };
 
-export type VerifyContactMethodResponse = VerifyContactMethodResponses[keyof VerifyContactMethodResponses];
+export type ConfirmContactEmailVerificationResponse = ConfirmContactEmailVerificationResponses[keyof ConfirmContactEmailVerificationResponses];
 
 export type CreateDevContactSessionData = {
     body: CreateDevContactSessionRequest;

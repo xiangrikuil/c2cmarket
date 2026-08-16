@@ -12,6 +12,7 @@ const (
 
 	LevelNormal    = "normal"
 	LevelImportant = "important"
+	LevelCritical  = "critical"
 
 	StatusDraft     = "draft"
 	StatusScheduled = "scheduled"
@@ -22,6 +23,16 @@ const (
 
 	ChannelMessageCenter = "message_center"
 	ChannelHomeBanner    = "home_banner"
+	ChannelGlobalBar     = "global_bar"
+	ChannelModal         = "modal"
+
+	AudienceAll           = "all"
+	AudienceRoles         = "roles"
+	AudienceSpecificUsers = "specific_users"
+
+	AudienceRoleBuyer    = "buyer"
+	AudienceRoleMerchant = "merchant"
+	AudienceRoleAdmin    = "admin"
 
 	AuditCreated    = "announcement_created"
 	AuditUpdated    = "announcement_updated"
@@ -31,7 +42,9 @@ const (
 )
 
 type Audience struct {
-	Type string `json:"type"`
+	Type    string   `json:"type"`
+	Roles   []string `json:"roles,omitempty"`
+	UserIDs []string `json:"userIds,omitempty"`
 }
 
 type Receipt struct {
@@ -40,6 +53,7 @@ type Receipt struct {
 	FirstSeenAt         *time.Time
 	ReadAt              *time.Time
 	DismissedAt         *time.Time
+	AcknowledgedAt      *time.Time
 }
 
 type Announcement struct {
@@ -55,6 +69,7 @@ type Announcement struct {
 	Audience         Audience
 	IsPinned         bool
 	IsDismissible    bool
+	RequiresAck      bool
 	CTALabel         string
 	CTAURL           string
 	PublishAt        time.Time
@@ -81,6 +96,8 @@ type FormInput struct {
 	CTAURL          string
 	PublishAt       time.Time
 	ExpireAt        *time.Time
+	Audience        Audience
+	RequiresAck     bool
 }
 
 type CreateInput struct {

@@ -178,10 +178,13 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 		catalogService:     catalog.NewService(repositories.Catalog, idempotencyService, modelsdev.NewClient(15*time.Second), now),
 		announcement:       announcement.NewService(repositories.Announcement, now),
 		notification:       notification.NewService(repositories.Notification, now),
-		contactService:     contactmodule.NewService(repositories.Contact, now),
-		growthService:      growth.NewService(repositories.Growth, now),
-		accountGovernance:  accountgovernance.NewService(repositories.AccountGovernance, now),
-		promotionRewards:   promotionreward.NewService(repositories.PromotionReward, idempotencyService, now),
+		contactService: contactmodule.NewServiceWithOptions(repositories.Contact, now, contactmodule.ServiceOptions{
+			EmailVerificationPepper: options.EmailVerificationPepper,
+			EmailSender:             emailSender,
+		}),
+		growthService:     growth.NewService(repositories.Growth, now),
+		accountGovernance: accountgovernance.NewService(repositories.AccountGovernance, now),
+		promotionRewards:  promotionreward.NewService(repositories.PromotionReward, idempotencyService, now),
 		profileService: profile.NewServiceWithOptions(repositories.Profile, now, emailSender, profile.ServiceOptions{
 			EmailVerificationPepper: options.EmailVerificationPepper,
 		}),
@@ -2144,12 +2147,12 @@ func (s *Service) SetDefaultContactMethodWithIdempotency(ctx context.Context, us
 	return completion, appErr
 }
 
-func (s *Service) VerifyContactMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
-	return s.contactService.VerifyMethod(ctx, userID, methodID)
+func (s *Service) StartContactEmailVerification(ctx context.Context, userID, methodID string) (contactmodule.ContactEmailVerificationChallenge, *domain.AppError) {
+	return s.contactService.StartEmailVerification(ctx, userID, methodID)
 }
 
-func (s *Service) VerifyContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	_, completion, _, appErr := s.contactService.VerifyMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, methodID, requestID, buildCompletion)
+func (s *Service) ConfirmContactEmailVerificationWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash, methodID, code, requestID string, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	_, completion, _, appErr := s.contactService.ConfirmEmailVerificationWithIdempotency(ctx, user.ID, routeKey, key, requestHash, methodID, code, requestID, buildCompletion)
 	return completion, appErr
 }
 
@@ -2481,6 +2484,10 @@ func (s *Service) ActiveAnnouncements(ctx context.Context, user User, channel st
 	return s.announcement.ActiveAnnouncements(ctx, user, channel)
 }
 
+func (s *Service) PublicActiveAnnouncements(ctx context.Context, channel string) ([]Announcement, *domain.AppError) {
+	return s.announcement.PublicActiveAnnouncements(ctx, channel)
+}
+
 func (s *Service) HomeAnnouncement(ctx context.Context, user User) (*Announcement, *domain.AppError) {
 	return s.announcement.HomeAnnouncement(ctx, user)
 }
@@ -2503,6 +2510,10 @@ func (s *Service) MarkAnnouncementRead(ctx context.Context, user User, id string
 
 func (s *Service) DismissAnnouncement(ctx context.Context, user User, id string) (AnnouncementReceipt, *domain.AppError) {
 	return s.announcement.Dismiss(ctx, user, id)
+}
+
+func (s *Service) AcknowledgeAnnouncement(ctx context.Context, user User, id string) (AnnouncementReceipt, *domain.AppError) {
+	return s.announcement.Acknowledge(ctx, user, id)
 }
 
 func (s *Service) AdminAnnouncements(ctx context.Context, user User) ([]Announcement, *domain.AppError) {

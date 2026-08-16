@@ -147,6 +147,7 @@ export type PublishTaskKey =
   | 'openingChannel'
   | 'paymentMethods'
   | 'distribution'
+  | 'riskAcknowledgement'
   | 'rulesNote'
 
 export type PublishSectionKey =

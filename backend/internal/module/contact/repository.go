@@ -18,8 +18,8 @@ type Repository interface {
 	DeleteContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, userID, methodID, requestID string, now time.Time, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, *domain.AppError)
 	SetDefaultContactMethod(ctx context.Context, userID, methodID, requestID string, now time.Time) (ContactMethod, *domain.AppError)
 	SetDefaultContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, userID, methodID, requestID string, now time.Time, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, *domain.AppError)
-	VerifyContactMethod(ctx context.Context, userID, methodID, requestID string, verifiedAt time.Time) (ContactMethod, *domain.AppError)
-	VerifyContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, userID, methodID, requestID string, verifiedAt time.Time, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, *domain.AppError)
+	CreateContactEmailVerificationCode(ctx context.Context, challenge ContactEmailVerificationCode) *domain.AppError
+	ConfirmContactEmailVerificationWithIdempotency(ctx context.Context, entry idempotency.Entry, input ConfirmContactEmailInput, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, *domain.AppError)
 	CreateContactSession(ctx context.Context, input CreateContactSessionInput, session ContactSession, now time.Time) (ContactSession, *domain.AppError)
 	ContactSessionViewerRole(ctx context.Context, sessionID, viewerUserID string) (string, *domain.AppError)
 	ReadContactSession(ctx context.Context, sessionID, viewerUserID, requestID string, now time.Time) (ContactSessionView, *domain.AppError)

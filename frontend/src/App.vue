@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useHead, useRuntimeConfig, useSeoMeta } from '#app'
 import { ConfigProvider } from 'reka-ui'
 import AppShell from '@/components/layout/AppShell.vue'
+import GlobalAnnouncementLayer from '@/components/announcements/GlobalAnnouncementLayer.vue'
 import { Toaster } from '@/components/ui/sonner'
 import { breadcrumbItems, resolveRouteSeo } from '@/seo/routeSeo'
 
@@ -69,6 +70,7 @@ useHead(() => ({
 <template>
   <ConfigProvider :use-id="useRekaId">
     <NuxtLoadingIndicator color="var(--primary)" />
+    <GlobalAnnouncementLayer />
     <NuxtPage v-if="standaloneLayout" />
 
     <AdminShell v-else-if="adminLayout">

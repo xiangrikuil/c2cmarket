@@ -55,7 +55,7 @@ describe('API 纠纷发布与身份联系方式约束', () => {
       'profile-contact-update',
       'profile-contact-delete',
       'profile-contact-default',
-      'profile-contact-verify',
+      'profile-contact-email-confirm',
     ]) {
       expect(profileBackendSource).toContain(`idempotencyPrefix: '${prefix}'`)
     }

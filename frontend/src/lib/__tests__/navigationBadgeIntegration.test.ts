@@ -8,6 +8,7 @@ const realtimeSyncSource = readFileSync(new URL('../../composables/useRealtimeSy
 const apiServiceDetailSource = readFileSync(new URL('../../pages/ApiServiceDetailPage.vue', import.meta.url), 'utf8')
 const merchantCarpoolSource = readFileSync(new URL('../../pages/MerchantCarpoolApplicationsPage.vue', import.meta.url), 'utf8')
 const carpoolDetailSource = readFileSync(new URL('../../pages/CarpoolApplicationDetailPage.vue', import.meta.url), 'utf8')
+const apiFacadeSource = readFileSync(new URL('../api.ts', import.meta.url), 'utf8')
 
 describe('实时通知与导航徽标接入', () => {
   it('由统一摘要驱动导航且不再保留演示管理数字', () => {
@@ -26,6 +27,9 @@ describe('实时通知与导航徽标接入', () => {
     expect(appShellSource).toContain('查看全部通知')
     expect(appShellSource).toContain('unreadBusinessCount')
     expect(appShellSource).toContain('importantAnnouncementUnreadCount')
+    expect(appShellSource).toContain('messageCenterCount')
+    expect(appShellSource).toContain('navigationBadges.value?.supportActionCount')
+    expect(apiFacadeSource).toContain("item.status === 'needs_user_info' || feedbackUnread(item)")
   })
 
   it('致命断开后持续重连且畸形事件不会中断同步', () => {

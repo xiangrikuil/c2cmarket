@@ -3229,7 +3229,20 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		t.Fatalf("expected updated contact default, got %s", updateContactResponse.Body.String())
 	}
 
-	verifyContact := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/verify", `{}`)
+	startContactVerification := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/email-verification/start", `{}`)
+	addAuth(startContactVerification, session, "")
+	startContactVerificationResponse := httptest.NewRecorder()
+	server.ServeHTTP(startContactVerificationResponse, startContactVerification)
+	if startContactVerificationResponse.Code != http.StatusOK {
+		t.Fatalf("start contact verification status %d body %s", startContactVerificationResponse.Code, startContactVerificationResponse.Body.String())
+	}
+	var contactChallenge struct {
+		DevCode string `json:"devCode"`
+	}
+	if err := json.NewDecoder(startContactVerificationResponse.Body).Decode(&contactChallenge); err != nil || contactChallenge.DevCode == "" {
+		t.Fatalf("decode contact verification challenge: challenge=%+v error=%v", contactChallenge, err)
+	}
+	verifyContact := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/email-verification/confirm", `{"code":"`+contactChallenge.DevCode+`"}`)
 	addAuth(verifyContact, session, "verify-profile-contact")
 	verifyContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(verifyContactResponse, verifyContact)
