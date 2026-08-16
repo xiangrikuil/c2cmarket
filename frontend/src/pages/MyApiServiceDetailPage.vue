@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { backendErrorMessage } from '@/lib/backendClient'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 import {
   useMyApiService,
   usePauseApiServiceMutation,
@@ -44,7 +45,7 @@ const readyProbeConnections = computed(() => probeConnections.value.filter(conne
 const currentProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === service.value?.probeConnectionId) ?? null)
 const selectedProbeConnectionReady = computed(() => readyProbeConnections.value.some(connection => connection.id === selectedProbeConnectionId.value))
 const probeSelectionChanged = computed(() => selectedProbeConnectionId.value !== (service.value?.probeConnectionId ?? ''))
-const ownerSectionHashes = new Set(['#quota-offers'])
+const ownerSectionHashes = new Set(LIMITED_API_QUOTA_OFFERS_ENABLED ? ['#quota-offers'] : [])
 
 async function scrollToOwnerSection() {
   if (!import.meta.client || !ownerSectionHashes.has(route.hash) || !service.value) return
@@ -165,6 +166,6 @@ async function unbindProbeConnection() {
       <p v-else-if="!probeConnectionsQuery.isLoading.value && !probeConnectionsQuery.error.value && readyProbeConnections.length === 0" class="text-xs text-warning">暂无已验证且启用的连接，请先前往探针连接页面创建或重新验证。</p>
     </section>
 
-    <ApiQuotaOwnerManager :api-service-id="service.id" :distribution-system="service.delivery" :default-multiplier="service.defaultMultiplier" />
+    <ApiQuotaOwnerManager v-if="LIMITED_API_QUOTA_OFFERS_ENABLED" :api-service-id="service.id" :distribution-system="service.delivery" :default-multiplier="service.defaultMultiplier" />
   </main>
 </template>

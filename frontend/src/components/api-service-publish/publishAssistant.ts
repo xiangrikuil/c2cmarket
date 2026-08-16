@@ -1,4 +1,5 @@
 import type { SellingMode } from './types'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 
 export type ApiPublishCompletenessStatus = 'done' | 'pending' | 'conflict'
 
@@ -39,9 +40,9 @@ const firstQueryValue = (value: unknown) => Array.isArray(value) ? value[0] : va
 export const apiPublishModeFromQuery = (mode: unknown, after: unknown): SellingMode | null => {
   const normalizedMode = firstQueryValue(mode)
   if (mode !== undefined && mode !== null) {
-    return normalizedMode === 'free' || normalizedMode === 'package' || normalizedMode === 'limited'
+    return normalizedMode === 'free' || normalizedMode === 'package' || (normalizedMode === 'limited' && LIMITED_API_QUOTA_OFFERS_ENABLED)
       ? normalizedMode
       : null
   }
-  return firstQueryValue(after) === 'quota' ? 'limited' : null
+  return firstQueryValue(after) === 'quota' && LIMITED_API_QUOTA_OFFERS_ENABLED ? 'limited' : null
 }

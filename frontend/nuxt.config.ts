@@ -104,7 +104,12 @@ export default defineNuxtConfig({
           path: route.path,
           name: typeof route.name === 'string' ? route.name : undefined,
           ...(componentName ? { file: resolve(process.cwd(), 'src/pages', `${componentName}.vue`) } : {}),
-          ...(typeof route.redirect === 'string' ? { redirect: route.redirect } : {}),
+          ...(
+            typeof route.redirect === 'string'
+            || (route.redirect !== null && typeof route.redirect === 'object')
+              ? { redirect: route.redirect }
+              : {}
+          ),
           ...(route.meta ? { meta: route.meta } : {}),
         }
       }))

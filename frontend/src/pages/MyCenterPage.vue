@@ -65,6 +65,7 @@ import {
 } from '@/queries/useMarketQueries'
 import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 import { backendErrorMessage, reauthenticatePassword, startLinuxDoLink } from '@/lib/backendClient'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 import {
   buildContactMethodPayload,
   CONTACT_USAGE_SCOPE_OPTIONS,
@@ -426,7 +427,8 @@ const accountRecoveryMissingItems = computed(() => profile.value ? accountRecove
 const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
 const canConfigureBackupPassword = computed(() => Boolean(profile.value?.linuxDoBinding.bound))
 const accountRecoveryReturnTo = computed(() => sanitizeAccountRecoveryReturnTo(route.query.returnTo))
-const quotaPublishRecovery = computed(() => accountRecoveryReturnTo.value === '/api-market/quota/new' || accountRecoveryReturnTo.value === '/my/api-services?intent=quota')
+const quotaPublishRecovery = computed(() => LIMITED_API_QUOTA_OFFERS_ENABLED
+  && (accountRecoveryReturnTo.value === '/api-market/quota/new' || accountRecoveryReturnTo.value === '/my/api-services?intent=quota'))
 const accountRecoveryDialogTitle = computed(() => {
   if (accountRecoveryComplete.value) return quotaPublishRecovery.value ? '账号设置完成' : '账号设置'
   return quotaPublishRecovery.value ? '发布限量额度包前先完成账号设置' : '完善账号安全'

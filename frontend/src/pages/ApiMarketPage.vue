@@ -51,6 +51,7 @@ import { useApiPromotions, useApiQuotaSaleSlots, useCreateApiQuotaOrderMutation,
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { CAPABILITY, hasCapability } from '@/lib/capabilities'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 
 type AvailabilityFilter = 'all' | 'available'
 type SaleModeFilter = ApiQuotaSaleMode | 'all'
@@ -230,7 +231,7 @@ const quotaFilters = computed<ApiQuotaOfferFilters>(() => ({
   excludeSystemSlots: true,
   sort: limitedSort.value,
 }))
-const limitedViewEnabled = computed(() => activeView.value === 'limited')
+const limitedViewEnabled = computed(() => LIMITED_API_QUOTA_OFFERS_ENABLED && activeView.value === 'limited')
 const serviceViewEnabled = computed(() => activeView.value === 'packages' || activeView.value === 'free')
 const serviceFilters = computed<ApiServiceFilters>(() => ({
   online: true,
@@ -247,7 +248,7 @@ const serviceFilters = computed<ApiServiceFilters>(() => ({
   sort: activeView.value === 'packages' ? packageSort.value : freeSort.value,
 }))
 const quotaQuery = useInfiniteApiQuotaOffers(quotaFilters, limitedViewEnabled)
-const slotQuery = useApiQuotaSaleSlots()
+const slotQuery = useApiQuotaSaleSlots(limitedViewEnabled)
 const rushFilters = computed<ApiQuotaOfferFilters>(() => ({ slotKey: selectedSlotKey.value }))
 const rushQuery = useInfiniteApiQuotaOffers(rushFilters, computed(() => limitedViewEnabled.value && Boolean(selectedSlotKey.value)))
 const freeServicesQuery = useInfiniteApiServices(serviceFilters, serviceViewEnabled, activeView)
@@ -468,6 +469,7 @@ watch(displayedSlots, selectDisplayedSlot, { immediate: true })
 
 if (import.meta.server) {
   onServerPrefetch(async () => {
+    if (!limitedViewEnabled.value) return
     await slotQuery.suspense()
     selectDisplayedSlot(displayedSlots.value)
     if (limitedViewEnabled.value && selectedSlotKey.value) await rushQuery.suspense()
@@ -643,13 +645,13 @@ onBeforeUnmount(() => {
     </div>
 
     <Tabs :model-value="activeView" @update:model-value="setView">
-      <TabsList class="api-market-view-tabs grid h-11 w-full grid-cols-3 lg:hidden">
-        <TabsTrigger class="min-h-11 px-2" value="limited">限量额度包</TabsTrigger>
+      <TabsList class="api-market-view-tabs grid h-11 w-full lg:hidden" :class="LIMITED_API_QUOTA_OFFERS_ENABLED ? 'grid-cols-3' : 'grid-cols-2'">
+        <TabsTrigger v-if="LIMITED_API_QUOTA_OFFERS_ENABLED" class="min-h-11 px-2" value="limited">限量额度包</TabsTrigger>
         <TabsTrigger class="min-h-11 px-2" value="packages">短期流量包</TabsTrigger>
         <TabsTrigger class="min-h-11 px-2" value="free">自选额度</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="limited" class="mt-4 space-y-4">
+      <TabsContent v-if="LIMITED_API_QUOTA_OFFERS_ENABLED" value="limited" class="mt-4 space-y-4">
         <section class="overflow-hidden border-y border-border bg-card">
           <div class="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-end sm:justify-between">
             <div>

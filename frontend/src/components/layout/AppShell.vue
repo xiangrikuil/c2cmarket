@@ -45,8 +45,10 @@ import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { loginRoute } from '@/lib/authNavigation'
+import { apiMarketViewFromQuery } from '@/lib/apiQuotaOfferUi'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 import { logoutCurrentSession } from '@/lib/sessionActions'
 import type { WorkspaceNavKey } from '@/router'
 
@@ -87,7 +89,7 @@ const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
 const apiMarketNavItems = [
-  { label: '限量额度包', view: 'limited' },
+  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited' } as const] : []),
   { label: '短期流量包', view: 'packages' },
   { label: '自选额度', view: 'free' },
 ] as const
@@ -185,8 +187,8 @@ const activeNavItem = computed(() => {
 
 const currentTitle = computed(() => {
   if (route.path === '/api-market') {
-    const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
-    return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '限量额度包'}`
+    const currentView = apiMarketViewFromQuery(route.query.view)
+    return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '自选额度'}`
   }
   return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
 })
@@ -204,7 +206,7 @@ function matchesRoute(item: NavigationGroup['items'][number]) {
 
 function isApiMarketViewActive(view: typeof apiMarketNavItems[number]['view']) {
   if (route.path !== '/api-market') return false
-  const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
+  const currentView = apiMarketViewFromQuery(route.query.view)
   return currentView === view
 }
 

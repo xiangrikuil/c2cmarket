@@ -468,11 +468,12 @@ export function useInfiniteApiQuotaOffers(
   })
 }
 
-export function useApiQuotaSaleSlots() {
+export function useApiQuotaSaleSlots(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: ['api-quota-sale-slots'],
     queryFn: getApiQuotaSaleSlots,
     refetchOnMount: 'always',
+    enabled: computed(() => valueOf(enabled)),
   })
 }
 

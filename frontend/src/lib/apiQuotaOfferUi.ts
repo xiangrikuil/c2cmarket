@@ -1,11 +1,13 @@
 import { BackendProblemError } from '@/lib/backendClient'
 import type { PublicApiQuotaOffer } from '@/lib/api'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 
 export type ApiMarketView = 'limited' | 'packages' | 'free'
 
 export function apiMarketViewFromQuery(value: unknown): ApiMarketView {
   if (value === 'free' || value === 'packages') return value
-  return 'limited'
+  if (value === 'limited' && LIMITED_API_QUOTA_OFFERS_ENABLED) return value
+  return 'free'
 }
 
 export function withApiMarketViewQuery<T extends Record<string, unknown>>(query: T, view: ApiMarketView) {

@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { CAPABILITY, type Capability } from './lib/capabilities'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from './lib/featureFlags'
 
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
@@ -62,6 +63,19 @@ const ForbiddenPage = () => import('@/pages/ForbiddenPage.vue')
 const userAuthMeta = { auth: 'user' } as const
 const capabilityAuthMeta = (capability: Capability) => ({ auth: 'user', capability } as const)
 const adminAuthMeta = { auth: 'admin', capability: CAPABILITY.adminAccess } as const
+const apiQuotaRushPublishRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLED
+  ? {
+      path: '/api-market/quota/new',
+      name: 'api-quota-rush-new',
+      component: ApiQuotaRushPublishPage,
+      meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
+  : {
+      path: '/api-market/quota/new',
+      name: 'api-quota-rush-new',
+      redirect: { path: '/api-market', query: { view: 'free' } },
+      meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
 
 export type WorkspaceNavKey =
   | 'personal-center'
@@ -99,7 +113,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
     { path: '/api-market', name: 'api-market', component: ApiMarketPage },
-    { path: '/api-market/quota/new', name: 'api-quota-rush-new', component: ApiQuotaRushPublishPage, meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish) },
+    apiQuotaRushPublishRoute,
     { path: '/api-market/detail', redirect: '/api-market/a1' },
     { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/api-market/:id', name: 'api-detail', component: ApiServiceDetailPage },

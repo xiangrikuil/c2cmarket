@@ -53,18 +53,20 @@ const wechatMarkSource = readFileSync(new URL('../../../public/wechat-mark.svg',
 const alipayMarkSource = readFileSync(new URL('../../../public/alipay-mark.svg', import.meta.url), 'utf8')
 
 describe('API 额度包市场视图', () => {
-  test('默认进入限量额度包并用侧栏子菜单与移动端分段切换视图', () => {
-    assert.equal(apiMarketViewFromQuery(undefined), 'limited')
-    assert.equal(apiMarketViewFromQuery('unknown'), 'limited')
+  test('关闭限量额度包后默认进入自选额度并保留短期流量包切换', () => {
+    assert.equal(apiMarketViewFromQuery(undefined), 'free')
+    assert.equal(apiMarketViewFromQuery('unknown'), 'free')
+    assert.equal(apiMarketViewFromQuery('limited'), 'free')
     assert.equal(apiMarketViewFromQuery('packages'), 'packages')
     assert.equal(apiMarketViewFromQuery('free'), 'free')
     assert.deepEqual(withApiMarketViewQuery({ category: 'api' }, 'free'), { category: 'api', view: 'free' })
     assert.match(marketPageSource, /<TabsList[^>]*lg:hidden[^>]*>/)
-    assert.match(marketPageSource, /<TabsTrigger[^>]*value="limited"[^>]*>限量额度包<\/TabsTrigger>/)
+    assert.match(marketPageSource, /<TabsTrigger v-if="LIMITED_API_QUOTA_OFFERS_ENABLED"[^>]*value="limited"[^>]*>限量额度包<\/TabsTrigger>/)
     assert.match(marketPageSource, /<TabsTrigger[^>]*value="packages"[^>]*>短期流量包<\/TabsTrigger>/)
     assert.match(marketPageSource, /<TabsTrigger[^>]*value="free"[^>]*>自选额度<\/TabsTrigger>/)
     assert.match(marketPageSource, /router\.replace\(\{ query \}\)/)
-    assert.match(appShellSource, /apiMarketNavItems[\s\S]*?限量额度包[\s\S]*?短期流量包[\s\S]*?自选额度/)
+    assert.match(appShellSource, /LIMITED_API_QUOTA_OFFERS_ENABLED \? \[\{ label: '限量额度包'/)
+    assert.match(appShellSource, /apiMarketNavItems[\s\S]*?短期流量包[\s\S]*?自选额度/)
     assert.match(appShellSource, /isApiMarketViewActive\(child\.view\)/)
   })
 
