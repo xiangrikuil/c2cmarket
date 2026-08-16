@@ -121,7 +121,7 @@ describe('个人、经营与管理工作区一致性', () => {
 
   it('联系与收款按真实能力分组，并使用统一表单组件', () => {
     expect(myCenter).toContain('contact-payment-main-grid')
-    expect(myCenter).toContain("label: canPublishApiService.value ? '联系方式与收款设置' : '联系方式'")
+    expect(myCenter).toContain(":contact-label=\"canPublishApiService ? '联系与收款' : '联系方式'\"")
     expect(myCenter).toContain('<ContactMethodCard')
     expect(myCenter).toContain('<ApiPaymentSettingsEditor')
     expect(myCenter).toContain('v-if="canPublishApiService"')
@@ -129,7 +129,7 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(myCenter).toContain('<ConfigurationProgressCard')
     expect(myCenter).toContain('<BuyerPreviewDrawer')
     expect(myCenter).toContain(':show-payment="canPublishApiService"')
-    expect(myCenter).toContain('联系方式与收款设置')
+    expect(myCenter).toContain('联系与收款')
     expect(myCenter).toContain('当前真实支持微信和验证邮箱')
     expect(paymentSettingsEditor).toContain('API 收款设置')
     expect(contactMethodCard).toContain('<Card')

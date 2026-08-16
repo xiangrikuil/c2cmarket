@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { routes } from '../../router'
 
 const appShellSource = readFileSync(new URL('../../components/layout/AppShell.vue', import.meta.url), 'utf8')
 const routerSource = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
@@ -31,8 +32,8 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain("{ label: '个人中心', to: '/my'")
     expect(appShellSource).toContain("{ label: '推广权益', to: '/my/promotion-benefits'")
     expect(appShellSource).toContain('promotionRewardConfig.value?.programEnabled')
-    expect(appShellSource).toContain("label: canPublishApiService.value ? '联系与收款' : '联系方式'")
-    expect(appShellSource).toContain("{ label: '安全设置', to: '/my/account'")
+    expect(appShellSource).toContain("{ label: '账户设置', to: '/my/profile'")
+    expect(appShellSource).not.toContain("{ label: '安全设置', to: '/my/account'")
     expect(appShellSource).not.toContain('/my/demands')
     expect(appShellSource).toContain("{ label: '进入管理台', to: '/admin'")
     expect(appShellSource).toContain('const groups: NavigationGroup[] = [browseGroup]')
@@ -72,17 +73,35 @@ describe('个人与经营中心导航', () => {
   })
 
   it('将账户设置合并为共享页签并保留深链接', () => {
-    expect(myCenterSource).toContain('const sectionLinks = computed(() => [')
-    expect(myCenterSource).toContain("{ label: '账户概览', to: '/my'")
-    expect(myCenterSource).toContain("{ label: '个人资料', to: '/my/profile'")
-    expect(myCenterSource).toContain("label: canPublishApiService.value ? '联系方式与收款设置' : '联系方式'")
-    expect(myCenterSource).toContain("{ label: '账号与认证', to: '/my/account'")
-    expect(myCenterSource).toContain('class="my-center-settings-nav"')
-    expect(myCenterSource).toContain("isSectionActive(item.to) ? 'is-active' : ''")
-    expect(routerSource).toContain("path: '/my', name: 'my', component: MyCenterPage")
-    expect(routerSource).toContain("path: '/my/profile', name: 'my-profile', component: MyCenterPage")
-    expect(routerSource).toContain("path: '/my/contacts', name: 'my-contacts', component: MyCenterPage")
-    expect(routerSource).toContain("path: '/my/account', name: 'my-account', component: MyCenterPage")
+    const workspaceKey = (path: string) => routes.find(route => route.path === path)?.meta?.workspaceNavKey
+
+    expect(workspaceKey('/my')).toBe('personal-center')
+    for (const path of ['/my/profile', '/my/contacts', '/my/account', '/my/privacy']) {
+      expect(workspaceKey(path)).toBe('account-settings')
+    }
+    expect(workspaceKey('/my/favorites')).toBeUndefined()
+    expect(appShellSource).toContain("workspaceNavKey: 'account-settings' as const")
+    expect(appShellSource).not.toContain('accountSettingsPaths')
+    expect(myCenterSource).toContain('<AccountSettingsShell')
+    expect(myCenterSource).not.toContain('my-center-settings-nav')
+  })
+
+  it('在 API 市场深链保持市场入口和二级目录可见', () => {
+    expect(appShellSource).toContain("item.to === '/api-market' && matchesRoute(item)")
+    expect(appShellSource).not.toContain("item.to === '/api-market' && route.path === '/api-market'")
+  })
+
+  it('独立保存资料与隐私，并在草稿变脏时拒绝查询回填覆盖', () => {
+    expect(myCenterSource).toContain('const profileSettingsDirty = computed')
+    expect(myCenterSource).toContain('const privacySettingsDirty = computed')
+    expect(myCenterSource).toContain("if (activeSection.value === 'contacts') return hasContactDraftChanges.value")
+    expect(myCenterSource).toContain('useUnsavedChangesGuard(currentSettingsDirty')
+    expect(myCenterSource).toContain('privacy: profile.value.privacy')
+    expect(myCenterSource).toMatch(/function savePrivacy\(\)[\s\S]*?displayName: profile\.value\.displayName[\s\S]*?privacy: privacyForm/)
+    expect(myCenterSource).toContain('if (!profileSettingsDirty.value) syncProfileDraft(currentProfile)')
+    expect(myCenterSource).toContain('if (!privacySettingsDirty.value) syncPrivacyDraft(currentProfile)')
+    expect(myCenterSource).toMatch(/onSuccess: updatedProfile => \{[\s\S]*?syncProfileDraft\(updatedProfile\)/)
+    expect(myCenterSource).toMatch(/function savePrivacy\(\)[\s\S]*?onSuccess: updatedProfile => \{[\s\S]*?syncPrivacyDraft\(updatedProfile\)/)
   })
 
   it('只允许 linux.do 账号配置备用密码', () => {

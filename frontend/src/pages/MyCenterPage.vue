@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, CheckCircle2, ChevronRight, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { Bell, CheckCircle2, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
+import AccountSettingsShell from '@/components/account-settings/AccountSettingsShell.vue'
 import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSettingsEditor.vue'
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
@@ -21,8 +22,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
-import { type AvatarMode, type ContactUsageScope, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
-import { ACCOUNT_RECOVERY_PATH, accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
+import { type AvatarMode, type ContactUsageScope, type UserContactMethod, type UserPrivacySettings, type UserProfile } from '@/lib/api'
+import { accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import { getBackupPasswordStrength, getBackupPasswordValidationMessage, getPasswordChecks } from '@/lib/passwordPolicy'
 import {
   createEmptyApiPaymentAccountSettings,
@@ -109,16 +110,6 @@ const updateContactMutation = useUpdateContactMethodMutation()
 const deleteContactMutation = useDeleteContactMethodMutation()
 const setDefaultContactMutation = useSetDefaultContactMethodMutation()
 
-const sectionLinks = computed(() => [
-  { label: '账户概览', to: '/my', key: 'overview' },
-  { label: '个人资料', to: '/my/profile', key: 'profile' },
-  { label: canPublishApiService.value ? '联系方式与收款设置' : '联系方式', to: '/my/contacts', key: 'contacts' },
-  { label: '账号与认证', to: '/my/account', key: 'account' },
-  { label: '隐私设置', to: '/my/privacy', key: 'privacy' },
-  { label: '我的收藏', to: '/my/favorites', key: 'favorites' },
-  { label: '通知设置', to: '/my/notifications', key: 'notifications' },
-] as const)
-
 type AccountSetupDialogMode = 'required' | 'password' | 'email'
 type AccountSetupStep = 'email' | 'password' | 'complete'
 type AccountSetupStepItem = {
@@ -134,8 +125,6 @@ const activeSection = computed(() => {
   if (route.path === '/my/contacts') return 'contacts'
   if (route.path === '/my/account') return 'account'
   if (route.path === '/my/privacy') return 'privacy'
-  if (route.path === '/my/favorites') return 'favorites'
-  if (route.path === '/my/notifications') return 'notifications'
   return 'overview'
 })
 
@@ -176,15 +165,56 @@ const privacyForm = reactive<UserPrivacySettings>({
   allowPublicProfileReport: true,
 })
 
+const profileSnapshot = ref('')
+const privacySnapshot = ref('')
+
+function profileFormSignature() {
+  return JSON.stringify({
+    displayName: profileForm.displayName,
+    username: profileForm.username,
+    bio: profileForm.bio,
+    regionCode: profileForm.regionCode,
+    timezone: profileForm.timezone,
+    avatarMode: profileForm.avatarMode,
+    avatarUrl: profileForm.avatarUrl,
+  })
+}
+
+function privacyFormSignature() {
+  return JSON.stringify({
+    showCreatedAt: privacyForm.showCreatedAt,
+    showLastActiveAt: privacyForm.showLastActiveAt,
+    showCompletionStats: privacyForm.showCompletionStats,
+    showResponseMedian: privacyForm.showResponseMedian,
+    showResolvedDisputeSummary: privacyForm.showResolvedDisputeSummary,
+    allowPublicProfileReport: privacyForm.allowPublicProfileReport,
+  })
+}
+
+const profileSettingsDirty = computed(() => Boolean(profileSnapshot.value) && profileFormSignature() !== profileSnapshot.value)
+const privacySettingsDirty = computed(() => Boolean(privacySnapshot.value) && privacyFormSignature() !== privacySnapshot.value)
+
 const wechatForm = reactive({
   displayValue: '',
   usageScopes: [] as ContactUsageScope[],
 })
 
-const loadedContactDraftKeys = reactive({
-  wechat: '',
-  email: '',
-})
+const wechatContactSnapshot = ref('')
+const emailContactSnapshot = ref('')
+
+function wechatFormSignature() {
+  return JSON.stringify({
+    displayValue: wechatForm.displayValue.trim(),
+    usageScopes: [...wechatForm.usageScopes].sort(),
+  })
+}
+
+function emailContactFormSignature() {
+  return JSON.stringify({
+    email: contactEmailForm.email.trim().toLowerCase(),
+    usageScopes: [...contactEmailForm.usageScopes].sort(),
+  })
+}
 
 const availableContactUsageScopeOptions = computed(() => contactUsageScopeOptionsForCapabilities({
   canPublishCarpool: canPublishCarpool.value,
@@ -347,30 +377,25 @@ const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailCo
 const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
 const emailBindingPending = computed(() => contactSaving.value || startContactEmailVerificationMutation.isPending.value || confirmContactEmailVerificationMutation.isPending.value)
 const apiPaymentEditorDirty = ref(false)
-const wechatUsageScopesDirty = computed(() => !sameContactUsageScopes(
-  wechatForm.usageScopes,
-  initialContactUsageScopes(wechatContact.value, defaultContactUsageScopes.value),
-))
-const wechatContactDirty = computed(() => (
-  wechatForm.displayValue.trim() !== (wechatContact.value?.displayValue ?? '').trim()
-  || wechatUsageScopesDirty.value
-))
+const wechatContactDirty = computed(() => Boolean(wechatContactSnapshot.value) && wechatFormSignature() !== wechatContactSnapshot.value)
 const emailValueDirty = computed(() => (
   contactEmailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? '').trim().toLowerCase()
 ))
-const emailUsageScopesDirty = computed(() => !sameContactUsageScopes(
-  contactEmailForm.usageScopes,
-  initialContactUsageScopes(emailContact.value, defaultContactUsageScopes.value),
-))
+const emailUsageScopesDirty = computed(() => !sameContactUsageScopes(contactEmailForm.usageScopes, initialContactUsageScopes(emailContact.value, defaultContactUsageScopes.value)))
 const emailContactDirty = computed(() => (
-  emailValueDirty.value
+  (Boolean(emailContactSnapshot.value) && emailContactFormSignature() !== emailContactSnapshot.value)
   || Boolean(contactEmailForm.code.trim())
-  || emailUsageScopesDirty.value
+  || Boolean(contactEmailVerificationChallengeEmail.value)
 ))
 const hasContactDraftChanges = computed(() => (
   wechatContactDirty.value || emailContactDirty.value || apiPaymentEditorDirty.value
 ))
-const contactSettingsDirty = computed(() => activeSection.value === 'contacts' && hasContactDraftChanges.value)
+const currentSettingsDirty = computed(() => {
+  if (activeSection.value === 'profile') return profileSettingsDirty.value
+  if (activeSection.value === 'contacts') return hasContactDraftChanges.value
+  if (activeSection.value === 'privacy') return privacySettingsDirty.value
+  return false
+})
 const completedContactSettingsCount = computed(() => (
   Number(wechatBound.value) + Number(emailBound.value) + (canPublishApiService.value ? Number(savedApiPaymentComplete.value) : 0)
 ))
@@ -383,7 +408,7 @@ const savedApiPaymentOptions = computed(() => (
   (apiPaymentSettings.value?.paymentOptions ?? []).filter(option => option.enabled && isApiPaymentOptionComplete(option))
 ))
 const buyerPreviewOpen = ref(false)
-useUnsavedChangesGuard(contactSettingsDirty, '联系方式与收款设置尚未保存，确认离开当前页面？')
+useUnsavedChangesGuard(currentSettingsDirty, '当前账户设置尚未保存，确认离开此页面？')
 
 watch(
   [profile, () => route.query.linuxdoLinked],
@@ -553,36 +578,51 @@ watch(accountRecoveryComplete, complete => {
   }
 })
 
-watchEffect(() => {
-  if (!profile.value) return
-  profileForm.displayName = profile.value.displayName
-  profileForm.username = profile.value.username
-  profileForm.bio = profile.value.bio ?? ''
-  profileForm.regionCode = profile.value.regionCode ?? ''
-  profileForm.timezone = profile.value.timezone ?? 'Asia/Shanghai'
-  profileForm.avatarMode = profile.value.avatarMode
-  profileForm.avatarUrl = profile.value.customAvatarUrl ?? ''
-  if (!accountEmailForm.email) accountEmailForm.email = profile.value.email || ''
-  Object.assign(privacyForm, profile.value.privacy)
+function syncProfileDraft(currentProfile: UserProfile) {
+  profileForm.displayName = currentProfile.displayName
+  profileForm.username = currentProfile.username
+  profileForm.bio = currentProfile.bio ?? ''
+  profileForm.regionCode = currentProfile.regionCode ?? ''
+  profileForm.timezone = currentProfile.timezone ?? 'Asia/Shanghai'
+  profileForm.avatarMode = currentProfile.avatarMode
+  profileForm.avatarUrl = currentProfile.customAvatarUrl ?? ''
+  profileSnapshot.value = profileFormSignature()
+}
 
-  const wechat = wechatContact.value
-  const wechatDraftKey = `${wechat?.id ?? 'empty'}:${wechat?.updatedAt ?? ''}`
-  if (loadedContactDraftKeys.wechat !== wechatDraftKey) {
-    wechatForm.displayValue = wechat?.displayValue ?? ''
-    wechatForm.usageScopes = initialContactUsageScopes(wechat, defaultContactUsageScopes.value)
-    loadedContactDraftKeys.wechat = wechatDraftKey
-  }
+function syncPrivacyDraft(currentProfile: UserProfile) {
+  Object.assign(privacyForm, currentProfile.privacy)
+  privacySnapshot.value = privacyFormSignature()
+}
 
-  const email = emailContact.value
-  const emailDraftKey = `${email?.id ?? 'empty'}:${email?.updatedAt ?? ''}`
-  if (loadedContactDraftKeys.email !== emailDraftKey) {
-    contactEmailForm.email = email?.displayValue ?? ''
-    contactEmailForm.code = ''
-    contactEmailForm.usageScopes = initialContactUsageScopes(email, defaultContactUsageScopes.value)
-    loadedContactDraftKeys.email = emailDraftKey
-  }
+function syncWechatDraft(contact: UserContactMethod | null) {
+  wechatForm.displayValue = contact?.displayValue ?? ''
+  wechatForm.usageScopes = initialContactUsageScopes(contact, defaultContactUsageScopes.value)
+  wechatContactSnapshot.value = wechatFormSignature()
+}
 
-})
+function syncEmailContactDraft(contact: UserContactMethod | null) {
+  contactEmailForm.email = contact?.displayValue ?? ''
+  contactEmailForm.code = ''
+  contactEmailForm.usageScopes = initialContactUsageScopes(contact, defaultContactUsageScopes.value)
+  emailContactSnapshot.value = emailContactFormSignature()
+}
+
+watch(profile, currentProfile => {
+  if (!currentProfile) return
+  if (!profileSettingsDirty.value) syncProfileDraft(currentProfile)
+  if (!privacySettingsDirty.value) syncPrivacyDraft(currentProfile)
+  if (!accountEmailForm.email) accountEmailForm.email = currentProfile.email || ''
+}, { immediate: true })
+
+watch([wechatContact, defaultContactUsageScopes], ([contact]) => {
+  if (wechatContactDirty.value) return
+  syncWechatDraft(contact)
+}, { immediate: true })
+
+watch([emailContact, defaultContactUsageScopes], ([contact]) => {
+  if (emailContactDirty.value) return
+  syncEmailContactDraft(contact)
+}, { immediate: true })
 
 const avatarText = computed(() => (profile.value?.displayName || profile.value?.username || '我').slice(0, 1).toUpperCase())
 const profileErrorMessage = computed(() => {
@@ -590,17 +630,7 @@ const profileErrorMessage = computed(() => {
   return error instanceof Error ? error.message : '无法读取个人资料，请登录后重试。'
 })
 
-function isSectionActive(to: string) {
-  return route.path === to
-}
-
-function isSectionLocked(to: string) {
-  return !accountRecoveryComplete.value && to !== ACCOUNT_RECOVERY_PATH
-}
-
-function handleSectionLinkClick(to: string, event: MouseEvent) {
-  if (!isSectionLocked(to)) return
-  event.preventDefault()
+function handleBlockedSettingsNavigation() {
   openAccountSetupDialog('required')
 }
 
@@ -670,6 +700,7 @@ onUnmounted(() => {
 })
 
 function saveProfile() {
+  if (!profile.value) return
   updateProfileMutation.mutate({
     displayName: profileForm.displayName,
     username: profileForm.username,
@@ -678,9 +709,13 @@ function saveProfile() {
     timezone: profileForm.timezone || null,
     avatarMode: profileForm.avatarMode,
     avatarUrl: profileForm.avatarMode === 'custom_url' ? profileForm.avatarUrl.trim() : null,
-    privacy: privacyForm,
+    privacy: profile.value.privacy,
   }, {
-    onSuccess: () => toast.success('个人资料已保存。'),
+    onSuccess: updatedProfile => {
+      syncProfileDraft(updatedProfile)
+      if (!privacySettingsDirty.value) syncPrivacyDraft(updatedProfile)
+      toast.success('个人资料已保存。')
+    },
     onError: error => toast.error(error instanceof Error ? error.message : '保存失败'),
   })
 }
@@ -763,7 +798,23 @@ function confirmEmailVerification() {
 
 function savePrivacy() {
   if (!profile.value) return
-  saveProfile()
+  updateProfileMutation.mutate({
+    displayName: profile.value.displayName,
+    username: profile.value.username,
+    bio: profile.value.bio,
+    regionCode: profile.value.regionCode,
+    timezone: profile.value.timezone,
+    avatarMode: profile.value.avatarMode,
+    avatarUrl: profile.value.customAvatarUrl,
+    privacy: privacyForm,
+  }, {
+    onSuccess: updatedProfile => {
+      syncPrivacyDraft(updatedProfile)
+      if (!profileSettingsDirty.value) syncProfileDraft(updatedProfile)
+      toast.success('隐私设置已保存。')
+    },
+    onError: error => toast.error(error instanceof Error ? error.message : '保存失败'),
+  })
 }
 
 function saveWechatContact() {
@@ -785,7 +836,8 @@ function saveWechatContact() {
     current,
   })
   const mutationOptions = {
-    onSuccess: () => {
+    onSuccess: (savedContact: UserContactMethod) => {
+      syncWechatDraft(savedContact)
       toast.success(current ? '微信联系方式已更新。' : '微信联系方式已绑定。')
     },
     onError: (error: Error) => toast.error(error.message),
@@ -816,7 +868,10 @@ function persistEmailContactForVerification(onSaved: (contact: UserContactMethod
     current,
   })
   const mutationOptions = {
-    onSuccess: onSaved,
+    onSuccess: (savedContact: UserContactMethod) => {
+      syncEmailContactDraft(savedContact)
+      onSaved(savedContact)
+    },
     onError: (error: Error) => toast.error(error.message),
   }
   if (current && !emailValueDirty.value && !emailUsageScopesDirty.value) {
@@ -866,7 +921,10 @@ function saveEmailUsageScopes() {
       current,
     }),
   }, {
-    onSuccess: () => toast.success('邮箱适用场景已更新。'),
+    onSuccess: savedContact => {
+      syncEmailContactDraft(savedContact)
+      toast.success('邮箱适用场景已更新。')
+    },
     onError: (error: Error) => toast.error(error.message),
   })
 }
@@ -885,12 +943,12 @@ function confirmContactEmailVerification() {
     contactId: current.id,
     code: contactEmailForm.code,
   }, {
-    onSuccess: () => {
-      contactEmailForm.code = ''
+    onSuccess: savedContact => {
       contactEmailVerificationDevCode.value = ''
       contactEmailVerificationChallengeEmail.value = ''
       stopContactEmailVerificationTimer()
       contactEmailVerificationResendAvailableAt.value = null
+      syncEmailContactDraft(savedContact)
       toast.success('交易联系邮箱已验证。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '交易联系邮箱验证失败。'),
@@ -917,6 +975,8 @@ function removeContact(contact: UserContactMethod) {
         contactEmailForm.code = ''
         contactEmailVerificationChallengeEmail.value = ''
       }
+      if (contact.type === 'wechat') syncWechatDraft(null)
+      if (contact.type === 'email') syncEmailContactDraft(null)
       toast.success('联系方式已解除绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '删除失败'),
@@ -1296,18 +1356,7 @@ function goToLogin() {
       @update:open="buyerPreviewOpen = $event"
     />
 
-    <header v-if="activeSection !== 'overview'" class="my-center-page-heading">
-      <div>
-        <p>个人中心 / {{ sectionLinks.find(item => item.key === activeSection)?.label }}</p>
-        <h1>{{ sectionLinks.find(item => item.key === activeSection)?.label }}</h1>
-        <p v-if="activeSection === 'contacts'" class="my-center-page-subtitle">{{ canPublishApiService ? '完善联系方式与 API 收款信息，只向有效交易参与方展示必要资料。' : '完善联系方式，只向有效交易参与方展示必要资料。' }}</p>
-      </div>
-      <Button v-if="activeSection === 'contacts'" variant="outline" @click="buyerPreviewOpen = true">
-        <Eye class="h-4 w-4" />预览买家看到的信息
-      </Button>
-      <Button v-else variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
-    </header>
-    <header v-else class="my-center-overview-heading"><h1>个人中心</h1><p>管理交易、发布内容与账户资料</p></header>
+    <header v-if="activeSection === 'overview'" class="my-center-overview-heading"><h1>个人中心</h1><p>管理交易、发布内容与账户资料</p></header>
 
     <PersonalCenterDashboard
       v-if="activeSection === 'overview'"
@@ -1338,20 +1387,23 @@ function goToLogin() {
       @retry-completeness="retryDashboardCompleteness"
     />
 
-    <section v-else-if="activeSection === 'profile'" class="my-center-settings-layout">
-      <aside class="my-center-settings-nav">
-        <Card class="p-2">
-          <RouterLink
-            v-for="item in sectionLinks"
-            :key="item.to"
-            :to="item.to"
-            :aria-disabled="isSectionLocked(item.to)"
-            :class="[isSectionActive(item.to) ? 'is-active' : '', isSectionLocked(item.to) ? 'opacity-65' : '']"
-            @click.capture="handleSectionLinkClick(item.to, $event)"
-          ><span>{{ item.label }}</span><ChevronRight class="h-4 w-4" /></RouterLink>
-        </Card>
-      </aside>
+    <AccountSettingsShell
+      v-else
+      :contact-label="canPublishApiService ? '联系与收款' : '联系方式'"
+      :locked="!accountRecoveryComplete"
+      @blocked-navigation="handleBlockedSettingsNavigation"
+    >
+      <template v-if="activeSection === 'contacts'" #description>
+        <p class="my-center-page-subtitle">{{ canPublishApiService ? '完善联系方式与 API 收款信息，只向有效交易参与方展示必要资料。' : '完善联系方式，只向有效交易参与方展示必要资料。' }}</p>
+      </template>
+      <template #actions>
+        <Button v-if="activeSection === 'contacts'" variant="outline" @click="buyerPreviewOpen = true">
+          <Eye class="h-4 w-4" />预览买家看到的信息
+        </Button>
+        <Button v-else variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
+      </template>
 
+    <section v-if="activeSection === 'profile'" class="my-center-settings-layout">
       <main class="min-w-0">
       <Card class="p-5">
         <h2 class="font-semibold">个人资料设置</h2>
@@ -1377,7 +1429,7 @@ function goToLogin() {
             </Select>
           </label>
         </div>
-        <Button class="mt-5" :disabled="updateProfileMutation.isPending.value" @click="saveProfile"><Save class="h-4 w-4" />保存个人资料</Button>
+        <Button class="mt-5" :disabled="updateProfileMutation.isPending.value || !profileSettingsDirty" @click="saveProfile"><Save class="h-4 w-4" />保存个人资料</Button>
       </Card>
       </main>
 
@@ -1665,7 +1717,7 @@ function goToLogin() {
           <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-resolved-disputes">展示已处理纠纷摘要</span><Switch v-model="privacyForm.showResolvedDisputeSummary" aria-labelledby="privacy-resolved-disputes" /></div>
           <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-public-report">允许他人从公开主页举报</span><Switch v-model="privacyForm.allowPublicProfileReport" aria-labelledby="privacy-public-report" /></div>
         </div>
-        <Button class="mt-5" @click="savePrivacy"><Save class="h-4 w-4" />保存隐私设置</Button>
+        <Button class="mt-5" :disabled="updateProfileMutation.isPending.value || !privacySettingsDirty" @click="savePrivacy"><Save class="h-4 w-4" />保存隐私设置</Button>
       </Card>
       <Card class="p-5">
         <h2 class="font-semibold">不能关闭的公开信号</h2>
@@ -1677,5 +1729,6 @@ function goToLogin() {
         </div>
       </Card>
     </section>
+    </AccountSettingsShell>
   </div>
 </template>

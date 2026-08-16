@@ -63,6 +63,15 @@ const userAuthMeta = { auth: 'user' } as const
 const capabilityAuthMeta = (capability: Capability) => ({ auth: 'user', capability } as const)
 const adminAuthMeta = { auth: 'admin', capability: CAPABILITY.adminAccess } as const
 
+export type WorkspaceNavKey =
+  | 'personal-center'
+  | 'account-settings'
+  | 'reputation-rights'
+  | 'support-center'
+  | 'message-center'
+
+const workspaceUserAuthMeta = (workspaceNavKey: WorkspaceNavKey) => ({ ...userAuthMeta, workspaceNavKey } as const)
+
 const adminChildren = [
   ['carpools', '车源管理', '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。'],
   ['api-services', 'API 服务管理', '巡查公开服务，并处理遗留待审、下架和其他异常记录。'],
@@ -94,11 +103,11 @@ export const routes: RouteRecordRaw[] = [
     { path: '/api-market/detail', redirect: '/api-market/a1' },
     { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/api-market/:id', name: 'api-detail', component: ApiServiceDetailPage },
-    { path: '/my', name: 'my', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/profile', name: 'my-profile', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/contacts', name: 'my-contacts', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: userAuthMeta },
+    { path: '/my', name: 'my', component: MyCenterPage, meta: workspaceUserAuthMeta('personal-center') },
+    { path: '/my/profile', name: 'my-profile', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/contacts', name: 'my-contacts', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
     { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/carpools/:id/edit', name: 'my-carpool-edit', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage, meta: userAuthMeta },

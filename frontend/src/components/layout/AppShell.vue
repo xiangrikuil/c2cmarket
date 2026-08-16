@@ -56,6 +56,7 @@ import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQuer
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
 import { logoutCurrentSession } from '@/lib/sessionActions'
+import type { WorkspaceNavKey } from '@/router'
 
 const route = useRoute()
 const router = useRouter()
@@ -91,7 +92,6 @@ const canManageApiProbe = computed(() => hasCapability(myProfile.value, CAPABILI
 const canViewAdminNav = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
 const canPublishAnything = computed(() => canPublishCarpool.value || canPublishApiService.value)
 const announcementCenterTo = '/my/notifications?tab=announcements'
-const accountSettingsPaths = ['/my/profile', '/my/contacts', '/my/account'] as const
 const currentLoginTo = computed(() => loginRoute(route.fullPath))
 const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
@@ -109,7 +109,7 @@ const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value
 
 type NavigationGroup = {
   title: string
-  items: Array<{ label: string, to: string, count: number | null, icon: Component }>
+  items: Array<{ label: string, to: string, count: number | null, icon: Component, workspaceNavKey?: WorkspaceNavKey }>
 }
 
 const navGroups = computed(() => {
@@ -162,11 +162,10 @@ const navGroups = computed(() => {
   const accountGroup = {
     title: '账户',
     items: [
-      { label: '个人中心', to: '/my', count: null, icon: UserRound },
-      { label: canPublishApiService.value ? '联系与收款' : '联系方式', to: '/my/contacts', count: null, icon: MessageSquarePlus },
+      { label: '个人中心', to: '/my', count: null, icon: UserRound, workspaceNavKey: 'personal-center' as const },
+      { label: '账户设置', to: '/my/profile', count: null, icon: MessageSquarePlus, workspaceNavKey: 'account-settings' as const },
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
       ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
-      { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
       { label: '举报与申诉', to: '/my/reports', count: null, icon: Siren },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],
@@ -193,7 +192,7 @@ const topNotifications = computed(() => (notifications.value ?? []).slice(0, 4))
 const activeNavItem = computed(() => {
   return navGroups.value
     .flatMap(group => group.items)
-    .filter(item => matchesRoute(item.to))
+    .filter(item => matchesRoute(item))
     .sort((a, b) => b.to.length - a.to.length)[0]
 })
 
@@ -209,9 +208,10 @@ function isActive(to: string) {
   return activeNavItem.value?.to === to
 }
 
-function matchesRoute(to: string) {
+function matchesRoute(item: NavigationGroup['items'][number]) {
+  const { to, workspaceNavKey } = item
+  if (workspaceNavKey) return route.meta.workspaceNavKey === workspaceNavKey
   if (to === '/') return route.path === '/'
-  if (to === '/my/profile') return accountSettingsPaths.includes(route.path as typeof accountSettingsPaths[number])
   if (to === announcementCenterTo) return route.path === '/my/notifications' && route.query.tab === 'announcements'
   if (to === '/my/notifications') return route.path === to && route.query.tab !== 'announcements'
   return route.path === to || route.path.startsWith(`${to}/`)
@@ -328,7 +328,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
               </RouterLink>
               <div
-                v-if="item.to === '/api-market' && matchesRoute('/api-market') && !sidebarCollapsed"
+                v-if="item.to === '/api-market' && matchesRoute(item) && !sidebarCollapsed"
                 class="ml-5 mt-1 grid gap-0.5 border-l border-sidebar-border pl-3"
               >
                 <RouterLink
