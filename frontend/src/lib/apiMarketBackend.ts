@@ -426,6 +426,9 @@ type BackendAPIModel = {
   inputPricePerMillion?: string
   cachedInputPricePerMillion?: string
   outputPricePerMillion?: string
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
 }
 
 function numberFromDecimal(value: string | undefined, fallback = 0) {
@@ -1192,6 +1195,9 @@ function mapBackendModel(model: BackendAPIModel): ModelCatalogItem {
     officialCachedInputPricePerMillion: model.cachedInputPricePerMillion ? numberFromDecimal(model.cachedInputPricePerMillion) : null,
     officialOutputPricePerMillion: model.outputPricePerMillion ? numberFromDecimal(model.outputPricePerMillion) : null,
     active: true,
+    sortOrder: model.sortOrder,
+    createdAt: model.createdAt,
+    updatedAt: model.updatedAt,
   }
 }
 

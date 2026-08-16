@@ -12,7 +12,7 @@ import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
 import ApiQuotaOfferCard from '@/components/api-market/ApiQuotaOfferCard.vue'
 import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
 import ApiMarketActiveFilters from '@/components/api-market/ApiMarketActiveFilters.vue'
-import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
+import { orderSellerDeclaredApiModels, type ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
 import { usePromotionImpression, type PromotionAnalyticsProperties } from '@/composables/usePromotionImpression'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -539,7 +539,7 @@ function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
   return {
     title: service.title,
     delivery: service.delivery,
-    models: service.models,
+    models: orderSellerDeclaredApiModels(service.models, modelCatalogQuery.data.value ?? []),
     category,
     categoryLabel: getProductCategoryLabel(category),
     iconSrc: freeServiceIconSrc(service),
@@ -553,6 +553,8 @@ function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
     promptAuditEnabled: service.promptAuditEnabled ?? null,
     paymentWindowMinutes: service.expectedResponseMinutes,
     merchantName: getApiMerchantDisplayName(service),
+    merchantIdentityMode: service.merchantIdentityMode,
+    merchantAvatarUrl: service.merchantAvatarUrl,
     merchantType: service.merchantType,
     expiresAt: service.expiresAt,
     accountPoolLabel: service.accountPoolLabel ?? '',

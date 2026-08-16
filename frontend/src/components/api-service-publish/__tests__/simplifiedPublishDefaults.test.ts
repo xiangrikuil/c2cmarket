@@ -10,7 +10,7 @@ import {
   merchantNoteTemplate,
 } from '../utils.ts'
 import type { ApiServicePublishForm } from '../types.ts'
-import { compactApiServiceModels } from '../../api-market/apiFreeServiceCard'
+import { compactApiServiceModels, orderSellerDeclaredApiModels } from '../../api-market/apiFreeServiceCard'
 import { beijingDateTimeInputToISOString } from '@/lib/apiQuotaExpiration'
 
 test('applies simplified API quota publish defaults', () => {
@@ -159,4 +159,20 @@ test('compacts one, two, and many model labels for the market card', () => {
     visibleModels: ['gpt-5-mini', 'gpt-5'],
     hiddenModelCount: 2,
   })
+})
+
+test('orders only seller-declared models by authoritative catalog freshness', () => {
+  const ordered = orderSellerDeclaredApiModels(
+    ['gpt-4.1-mini', 'gpt-5.6-sol', 'gpt-4o', 'custom-model'],
+    [
+      { name: 'gpt-4.1-mini', sortOrder: 20, updatedAt: '2026-06-01T00:00:00Z' },
+      { name: 'gpt-5.6-sol', sortOrder: 80, updatedAt: '2026-08-16T00:00:00Z' },
+      { name: 'gpt-4o', sortOrder: 10, updatedAt: '2026-05-01T00:00:00Z' },
+      { name: 'probe-only-model', sortOrder: 999, updatedAt: '2026-08-16T00:00:00Z' },
+    ],
+  )
+
+  assert.deepEqual(ordered, ['gpt-5.6-sol', 'gpt-4.1-mini', 'gpt-4o', 'custom-model'])
+  assert.equal(ordered.includes('probe-only-model'), false)
+  assert.deepEqual(orderSellerDeclaredApiModels(['first', 'second'], []), ['first', 'second'])
 })

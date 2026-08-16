@@ -911,8 +911,15 @@ html[data-theme="minimal-modern"] .account-security-side {
   place-items: center;
   border: 1px solid color-mix(in oklab, var(--api-product-accent, #2563eb) 22%, #e2e8f0);
   border-radius: 6px;
-  background: color-mix(in oklab, var(--api-product-accent, #2563eb) 8%, #ffffff);
+  overflow: hidden;
+  background: #ffffff;
   color: var(--api-product-accent, #2563eb);
+}
+
+.api-product-card__icon > img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
 }
 
 .api-product-card__category {

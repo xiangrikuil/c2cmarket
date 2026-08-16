@@ -608,6 +608,9 @@ export type ModelCatalogItem = {
   officialCachedInputPricePerMillion: number | null
   officialOutputPricePerMillion: number | null
   active: boolean
+  sortOrder?: number
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type ApiContactChannel = {

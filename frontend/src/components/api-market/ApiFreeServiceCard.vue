@@ -5,8 +5,10 @@ import ReputationInlineSummary from '@/components/reputation/ReputationInlineSum
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDecimal } from '@/lib/decimal'
 import { compactApiServiceModels, type ApiFreeServiceCardData } from './apiFreeServiceCard'
+import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 
 const props = withDefaults(defineProps<{
@@ -21,13 +23,14 @@ const emit = defineEmits<{ activate: [] }>()
 
 const compactModels = computed(() => compactApiServiceModels(props.card.models))
 const modelTitle = computed(() => props.card.models.join(' / ') || '模型待选择')
-const modelSummary = computed(() => {
-  const parts = [...compactModels.value.visibleModels]
-  if (compactModels.value.hiddenModelCount) parts.push(`+${compactModels.value.hiddenModelCount} 个`)
-  return parts.join(' / ') || '模型待选择'
-})
+const visibleModelSummary = computed(() => compactModels.value.visibleModels.join(' / ') || '模型待选择')
 const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && props.card.sellerReputation.state !== 'active'))
-const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1).toUpperCase() || '店')
+const merchantIdentity = computed(() => ({
+  merchant: props.card.merchantName,
+  merchantIdentityMode: props.card.merchantIdentityMode,
+  merchantDisplayName: props.card.merchantName,
+  merchantAvatarUrl: props.card.merchantAvatarUrl,
+}))
 </script>
 
 <template>
@@ -44,7 +47,7 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
       <div class="api-product-card__header">
         <div class="flex items-start gap-2.5">
           <span class="api-free-service-card__icon api-product-card__icon">
-            <img v-if="card.iconSrc" :src="card.iconSrc" alt="" class="h-6 w-6 object-contain" />
+            <img v-if="card.iconSrc" :src="card.iconSrc" alt="" />
             <Code2 v-else class="h-5 w-5" />
           </span>
           <div class="min-w-0 flex-1">
@@ -54,9 +57,26 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
               <Badge variant="verified">可购买</Badge>
             </div>
             <h2 class="mt-1.5 truncate text-sm font-semibold text-slate-950" :title="card.title">{{ card.title }}</h2>
-            <p class="truncate text-xs text-muted-foreground" :title="`${card.delivery} · ${modelTitle}`">
-              {{ card.delivery }} · {{ modelSummary }}
-            </p>
+            <div class="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+              <span class="min-w-0 truncate">{{ card.delivery }} · {{ visibleModelSummary }}</span>
+              <TooltipProvider v-if="compactModels.hiddenModelCount" :delay-duration="150">
+                <Tooltip>
+                  <TooltipTrigger as-child>
+                    <Button
+                      type="button"
+                      variant="link"
+                      class="h-auto shrink-0 rounded-sm p-0 text-xs font-medium underline decoration-dotted underline-offset-2"
+                      :aria-label="`查看全部 ${card.models.length} 个支持模型`"
+                    >
+                      +{{ compactModels.hiddenModelCount }}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" class="max-w-80">
+                    <p class="text-xs leading-5">{{ modelTitle }}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </div>
         </div>
 
@@ -97,7 +117,7 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
 
       <div class="api-product-card__merchant">
         <div class="flex min-w-0 items-center gap-2">
-          <span class="api-product-card__merchant-avatar" aria-hidden="true">{{ merchantInitial }}</span>
+          <ApiMerchantAvatar :service="merchantIdentity" class="api-product-card__merchant-avatar" />
           <div class="min-w-0 flex-1">
             <div class="truncate text-xs font-semibold" :title="card.merchantName">{{ card.merchantName }}</div>
             <div class="mt-0.5 text-[10px] text-muted-foreground">{{ card.merchantType }} · API 商家</div>
