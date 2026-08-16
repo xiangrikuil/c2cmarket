@@ -6,6 +6,11 @@ export const appThemes = [
     label: '深蓝紫',
     swatch: '#5B4FE9',
   },
+  {
+    value: 'aqua-console',
+    label: '水色控制台',
+    swatch: 'oklch(0.704 0.123 182.5)',
+  },
 ] as const
 
 export type AppTheme = typeof appThemes[number]['value']
