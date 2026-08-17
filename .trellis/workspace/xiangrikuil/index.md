@@ -7,9 +7,9 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-1.md`
-- **Total Sessions**: 66
-- **Last Active**: 2026-08-17
+- **Active File**: `journal-2.md`
+- **Total Sessions**: 67
+- **Last Active**: 2026-08-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1994 | Active |
+| `journal-2.md` | ~29 | Active |
+| `journal-1.md` | ~1994 | Archived |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 67 | 2026-08-18 | 修复 API 服务排序参数 422 | `9c8aa43` | `staging` |
 | 66 | 2026-08-17 | 完善 API 市场排序筛选 | `10a37bf` | `staging` |
 | 65 | 2026-08-17 | 拼车一次性撮合与完整车源条件 | `667f213` | `codex/carpool-lightweight-matching` |
 | 64 | 2026-08-16 | API 市场卡片身份、模型与图标修复 | `bfdffae` | `staging` |
