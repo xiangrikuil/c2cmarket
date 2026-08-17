@@ -3200,9 +3200,9 @@ export type CreateCarpoolListingRequest = {
      */
     accessArrangement: string;
     /**
-     * Public listing distribution method. Describes whether the owner supports Sub2API-managed use or another off-platform arrangement.
+     * Public non-sensitive distribution method. Account login describes an off-platform login arrangement; the platform never collects credentials.
      */
-    distributionMethod: 'sub2api' | 'other';
+    distributionMethod: 'sub2api' | 'account_login' | 'other';
     /**
      * Public non-sensitive distribution note. Required when distributionMethod is other. Must not contain account credentials, panel URLs, passwords, keys, tokens, sessions, cookies, or owner credentials.
      */
@@ -3229,13 +3229,13 @@ export type CreateCarpoolListingRequest = {
      */
     serviceMultiplier: DecimalString;
     /**
-     * Per-member daily maximum spend in USD.
+     * Per-member daily maximum spend in USD. Null means unlimited.
      */
-    dailySpendLimitUsd: DecimalString;
+    dailySpendLimitUsd: string | null;
     /**
-     * Per-member weekly maximum spend in USD.
+     * Per-member weekly maximum spend in USD. Null means unlimited.
      */
-    weeklySpendLimitUsd: DecimalString;
+    weeklySpendLimitUsd: string | null;
     /**
      * Whether the declared quota follows the official provider reset schedule.
      */
@@ -3243,11 +3243,11 @@ export type CreateCarpoolListingRequest = {
     /**
      * Owner-declared VPS region free text. It is informational and is not a catalog filter.
      */
-    vpsRegion: string;
+    vpsRegion?: string | null;
     /**
      * Whether the owner declares that the access path supports direct connection from mainland China.
      */
-    supportsMainlandChinaDirectConnection: boolean;
+    supportsMainlandChinaDirectConnection?: boolean | null;
     openingChannelCode: 'web' | 'ios_app_store' | 'google_play' | 'team_seat' | 'other';
     /**
      * Required only when openingChannelCode is other.
@@ -3306,7 +3306,7 @@ export type CarpoolListing = {
     title: string;
     summary: string;
     accessArrangement: string;
-    distributionMethod: 'sub2api' | 'other';
+    distributionMethod: 'sub2api' | 'account_login' | 'other';
     distributionMethodNote: string;
     providesAdminAccount: boolean;
     regionCode: string;
@@ -3315,7 +3315,7 @@ export type CarpoolListing = {
     priceMonthlyCny: DecimalString;
     serviceMultiplier: DecimalString;
     dailySpendLimitUsd: string | null;
-    weeklySpendLimitUsd: DecimalString;
+    weeklySpendLimitUsd: string | null;
     followsOfficialQuotaReset: boolean | null;
     vpsRegion: string | null;
     supportsMainlandChinaDirectConnection: boolean | null;
@@ -4566,19 +4566,19 @@ export type CarpoolListingConditionsSnapshot = {
     title: string;
     priceMonthlyCny: DecimalString;
     dailySpendLimitUsd: string | null;
-    weeklySpendLimitUsd: DecimalString;
+    weeklySpendLimitUsd: string | null;
     followsOfficialQuotaReset: boolean;
     buyerSeatCapacity: number;
     offlineOccupiedSeats: number;
     regionCode: string;
     regionName: string;
-    vpsRegion: string;
-    supportsMainlandChinaDirectConnection: boolean;
+    vpsRegion: string | null;
+    supportsMainlandChinaDirectConnection: boolean | null;
     openingChannelCode: string;
     customOpeningChannel: string;
     paymentMethodCode: string;
     customPaymentMethod: string;
-    distributionMethod: string;
+    distributionMethod: 'sub2api' | 'account_login' | 'other';
     distributionMethodNote: string;
     providesAdminAccount: boolean;
     accessArrangement: string;

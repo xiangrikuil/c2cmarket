@@ -1205,6 +1205,57 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Owner Carpool TG "+suffix, "@pg_owner_carpool_"+suffix)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG Buyer Carpool TG "+suffix, "@pg_buyer_carpool_"+suffix)
 
+	unlimitedBody := carpoolPayloadWithRiskAck(ownerContact.ID)
+	unlimitedBody = strings.Replace(unlimitedBody, `"distributionMethod":"sub2api"`, `"distributionMethod":"account_login"`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"dailySpendLimitUsd":"50.00"`, `"dailySpendLimitUsd":null`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"weeklySpendLimitUsd":"200.00"`, `"weeklySpendLimitUsd":null`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"vpsRegion":"香港"`, `"vpsRegion":null`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"supportsMainlandChinaDirectConnection":true`, `"supportsMainlandChinaDirectConnection":null`, 1)
+	unlimitedRequest := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", unlimitedBody)
+	addAuth(unlimitedRequest, ownerSession, "pg-carpool-unlimited-"+suffix)
+	unlimitedResponse := httptest.NewRecorder()
+	server.ServeHTTP(unlimitedResponse, unlimitedRequest)
+	if unlimitedResponse.Code != http.StatusCreated {
+		t.Fatalf("postgres unlimited carpool status %d body %s", unlimitedResponse.Code, unlimitedResponse.Body.String())
+	}
+	var unlimitedListing createdCarpool
+	if err := json.NewDecoder(unlimitedResponse.Body).Decode(&unlimitedListing); err != nil {
+		t.Fatalf("decode postgres unlimited carpool: %v", err)
+	}
+	if unlimitedListing.DistributionMethod != "account_login" || unlimitedListing.ProvidesAdminAccount || unlimitedListing.DailyQuotaAmount != nil || unlimitedListing.WeeklyQuotaAmount != nil || unlimitedListing.VPSRegion != nil || unlimitedListing.SupportsMainlandChinaDirectConnection != nil {
+		t.Fatalf("unexpected postgres unlimited carpool response: %+v", unlimitedListing)
+	}
+	unlimitedRead := httptest.NewRequest(http.MethodGet, "/api/v1/carpools/"+unlimitedListing.ID, nil)
+	unlimitedReadResponse := httptest.NewRecorder()
+	server.ServeHTTP(unlimitedReadResponse, unlimitedRead)
+	if unlimitedReadResponse.Code != http.StatusOK {
+		t.Fatalf("read postgres unlimited carpool status %d body %s", unlimitedReadResponse.Code, unlimitedReadResponse.Body.String())
+	}
+	var persistedUnlimitedListing createdCarpool
+	if err := json.NewDecoder(unlimitedReadResponse.Body).Decode(&persistedUnlimitedListing); err != nil {
+		t.Fatalf("decode persisted postgres unlimited carpool: %v", err)
+	}
+	if persistedUnlimitedListing.DistributionMethod != "account_login" || persistedUnlimitedListing.ProvidesAdminAccount || persistedUnlimitedListing.DailyQuotaAmount != nil || persistedUnlimitedListing.WeeklyQuotaAmount != nil || persistedUnlimitedListing.VPSRegion != nil || persistedUnlimitedListing.SupportsMainlandChinaDirectConnection != nil {
+		t.Fatalf("unexpected persisted postgres unlimited carpool: %+v", persistedUnlimitedListing)
+	}
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+	var storedDistributionMethod string
+	var storedProvidesAdminAccount bool
+	var storedDailyUnlimited, storedWeeklyUnlimited, storedVPSUndeclared, storedDirectUndeclared bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT distribution_method, provides_admin_account,
+		       daily_spend_limit_usd IS NULL, weekly_spend_limit_usd IS NULL,
+		       vps_region IS NULL, supports_mainland_china_direct_connection IS NULL
+		FROM carpool_listings
+		WHERE id = $1
+	`, unlimitedListing.ID).Scan(&storedDistributionMethod, &storedProvidesAdminAccount, &storedDailyUnlimited, &storedWeeklyUnlimited, &storedVPSUndeclared, &storedDirectUndeclared); err != nil {
+		t.Fatalf("inspect persisted unlimited carpool: %v", err)
+	}
+	if storedDistributionMethod != "account_login" || storedProvidesAdminAccount || !storedDailyUnlimited || !storedWeeklyUnlimited || !storedVPSUndeclared || !storedDirectUndeclared {
+		t.Fatalf("unexpected persisted unlimited carpool columns: distribution=%s admin=%t daily_null=%t weekly_null=%t vps_null=%t direct_null=%t", storedDistributionMethod, storedProvidesAdminAccount, storedDailyUnlimited, storedWeeklyUnlimited, storedVPSUndeclared, storedDirectUndeclared)
+	}
+
 	studentUsername := "pgstudent" + strings.ReplaceAll(suffix, ".", "")
 	student := createStudentSession(t, server, studentUsername)
 	studentCreateKey := "pg-carpool-student-create-" + suffix
@@ -1223,7 +1274,7 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	if published.Status != app.CarpoolListingStatusActive || published.AvailableSeats != 1 {
 		t.Fatalf("expected one available seat after publish, got %+v", published)
 	}
-	if published.ServiceMultiplier != "1.0000" || published.DailyQuotaAmount == nil || *published.DailyQuotaAmount != "50.00" || published.WeeklyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
+	if published.ServiceMultiplier != "1.0000" || published.DailyQuotaAmount == nil || *published.DailyQuotaAmount != "50.00" || published.WeeklyQuotaAmount == nil || *published.WeeklyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
 		t.Fatalf("expected postgres multiplier and quota fields after publish, got %+v", published)
 	}
 	if published.RegionCode != "other" || published.RegionName != "印度区" {

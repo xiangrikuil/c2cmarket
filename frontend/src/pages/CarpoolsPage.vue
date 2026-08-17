@@ -184,17 +184,18 @@ type CarpoolListSeatRow = {
   seatSummary?: {
     totalSeats: number
     activeMemberCount: number
+    occupiedSeatCount: number
     availableSeats: number
   }
   applicationEligibility?: { code: string, canApply: boolean, reason: string }
 }
 
-function activeSeatsForList(row: CarpoolListSeatRow) {
-  return row.seatSummary?.activeMemberCount ?? row.currentConfirmedMembers
+function occupiedSeatsForList(row: CarpoolListSeatRow) {
+  return row.seatSummary?.occupiedSeatCount ?? row.currentConfirmedMembers
 }
 
 function availableSeatsForList(row: CarpoolListSeatRow) {
-  return row.seatSummary?.availableSeats ?? Math.max(row.maxMembers - activeSeatsForList(row), 0)
+  return row.seatSummary?.availableSeats ?? Math.max(row.maxMembers - occupiedSeatsForList(row), 0)
 }
 
 function totalSeatsForList(row: CarpoolListSeatRow) {
@@ -255,7 +256,7 @@ function statusToneClass(status: string) {
 }
 
 function seatProgress(row: CarpoolListSeatRow) {
-  const occupiedSeats = activeSeatsForList(row)
+  const occupiedSeats = occupiedSeatsForList(row)
   return `${Math.min(Math.round((occupiedSeats / Math.max(totalSeatsForList(row), 1)) * 100), 100)}%`
 }
 
@@ -382,7 +383,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
         </td>
         <td>
           <div class="flex items-center justify-between gap-2 text-sm">
-            <span class="font-medium">已上车 {{ activeSeatsForList(row) }}/{{ totalSeatsForList(row) }} 人</span>
+            <span class="font-medium">已上车 {{ occupiedSeatsForList(row) }}/{{ totalSeatsForList(row) }} 人</span>
             <span class="text-xs text-muted-foreground">可申请 {{ availableSeatsForList(row) }} 位</span>
           </div>
           <div class="carpool-seat-meter mt-2" aria-hidden="true">
@@ -393,8 +394,8 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
           <div class="whitespace-nowrap text-sm font-semibold text-slate-900">{{ formatDailyWeeklyQuota(row) }}</div>
           <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span>{{ quotaResetLabel(row.followsOfficialQuotaReset) }}</span>
-            <span aria-hidden="true">·</span>
-            <span>{{ adminAccountLabel(row.providesAdminAccount) }}</span>
+            <span v-if="row.distributionMethod !== 'account_login'" aria-hidden="true">·</span>
+            <span v-if="row.distributionMethod !== 'account_login'">{{ adminAccountLabel(row.providesAdminAccount) }}</span>
             <Popover>
               <PopoverTrigger as-child>
                 <Button

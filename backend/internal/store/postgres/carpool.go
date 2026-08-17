@@ -522,13 +522,16 @@ func (s *Store) updateCarpoolListingInTx(ctx context.Context, tx pgx.Tx, input c
 	listing.DistributionMethod = strings.TrimSpace(input.DistributionMethod)
 	listing.DistributionMethodNote = strings.TrimSpace(input.DistributionMethodNote)
 	listing.ProvidesAdminAccount = input.ProvidesAdminAccount
+	if listing.DistributionMethod == carpool.ListingDistributionMethodAccountLogin {
+		listing.ProvidesAdminAccount = false
+	}
 	listing.RegionCode = strings.TrimSpace(input.RegionCode)
 	listing.RegionName = strings.TrimSpace(input.RegionName)
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
 	listing.DailyQuotaAmount = nullStringPointer(input.DailyQuotaAmount)
-	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
+	listing.WeeklyQuotaAmount = nullStringPointer(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = nullStringPointer(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -1696,6 +1699,7 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	var cycleTermID string
 	var cycleTerm carpool.CycleTerm
 	var dailyQuotaAmount *string
+	var weeklyQuotaAmount *string
 	var followsOfficialQuotaReset *bool
 	var vpsRegion *string
 	var supportsMainlandChinaDirectConnection *bool
@@ -1732,7 +1736,7 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		&listing.PriceMonthlyCNY,
 		&listing.ServiceMultiplier,
 		&dailyQuotaAmount,
-		&listing.WeeklyQuotaAmount,
+		&weeklyQuotaAmount,
 		&followsOfficialQuotaReset,
 		&vpsRegion,
 		&supportsMainlandChinaDirectConnection,
@@ -1764,6 +1768,7 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		return err
 	}
 	listing.DailyQuotaAmount = dailyQuotaAmount
+	listing.WeeklyQuotaAmount = weeklyQuotaAmount
 	listing.FollowsOfficialQuotaReset = followsOfficialQuotaReset
 	listing.VPSRegion = vpsRegion
 	listing.SupportsMainlandChinaDirectConnection = supportsMainlandChinaDirectConnection

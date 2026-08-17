@@ -36,8 +36,9 @@ const (
 	OwnerListingViewHistory    = "history"
 	OwnerListingViewNeedsEdit  = "needs_edit"
 
-	ListingDistributionMethodSub2API = "sub2api"
-	ListingDistributionMethodOther   = "other"
+	ListingDistributionMethodSub2API      = "sub2api"
+	ListingDistributionMethodAccountLogin = "account_login"
+	ListingDistributionMethodOther        = "other"
 
 	ListingOpeningChannelWeb         = "web"
 	ListingOpeningChannelIOSAppStore = "ios_app_store"
@@ -80,7 +81,7 @@ type Listing struct {
 	PriceMonthlyCNY                       string
 	ServiceMultiplier                     string
 	DailyQuotaAmount                      *string
-	WeeklyQuotaAmount                     string
+	WeeklyQuotaAmount                     *string
 	FollowsOfficialQuotaReset             *bool
 	VPSRegion                             *string
 	SupportsMainlandChinaDirectConnection *bool
@@ -183,14 +184,14 @@ type ListingConditionsSnapshot struct {
 	Title                                 string     `json:"title"`
 	PriceMonthlyCNY                       string     `json:"priceMonthlyCny"`
 	DailySpendLimitUSD                    *string    `json:"dailySpendLimitUsd"`
-	WeeklySpendLimitUSD                   string     `json:"weeklySpendLimitUsd"`
+	WeeklySpendLimitUSD                   *string    `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             bool       `json:"followsOfficialQuotaReset"`
 	BuyerSeatCapacity                     int        `json:"buyerSeatCapacity"`
 	OfflineOccupiedSeats                  int        `json:"offlineOccupiedSeats"`
 	RegionCode                            string     `json:"regionCode"`
 	RegionName                            string     `json:"regionName"`
-	VPSRegion                             string     `json:"vpsRegion"`
-	SupportsMainlandChinaDirectConnection bool       `json:"supportsMainlandChinaDirectConnection"`
+	VPSRegion                             *string    `json:"vpsRegion"`
+	SupportsMainlandChinaDirectConnection *bool      `json:"supportsMainlandChinaDirectConnection"`
 	OpeningChannelCode                    string     `json:"openingChannelCode"`
 	CustomOpeningChannel                  string     `json:"customOpeningChannel"`
 	PaymentMethodCode                     string     `json:"paymentMethodCode"`

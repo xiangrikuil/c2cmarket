@@ -185,14 +185,14 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 		AccessArrangement:                     strings.TrimSpace(input.AccessArrangement),
 		DistributionMethod:                    strings.TrimSpace(input.DistributionMethod),
 		DistributionMethodNote:                strings.TrimSpace(input.DistributionMethodNote),
-		ProvidesAdminAccount:                  input.ProvidesAdminAccount,
+		ProvidesAdminAccount:                  normalizedProvidesAdminAccount(input.DistributionMethod, input.ProvidesAdminAccount),
 		RegionCode:                            strings.TrimSpace(input.RegionCode),
 		RegionName:                            strings.TrimSpace(input.RegionName),
 		SourceURL:                             strings.TrimSpace(input.SourceURL),
 		PriceMonthlyCNY:                       strings.TrimSpace(input.PriceMonthlyCNY),
 		ServiceMultiplier:                     strings.TrimSpace(input.ServiceMultiplier),
 		DailyQuotaAmount:                      optionalString(input.DailyQuotaAmount),
-		WeeklyQuotaAmount:                     strings.TrimSpace(input.WeeklyQuotaAmount),
+		WeeklyQuotaAmount:                     optionalString(input.WeeklyQuotaAmount),
 		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
 		VPSRegion:                             optionalString(input.VPSRegion),
 		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
@@ -373,14 +373,14 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	listing.AccessArrangement = strings.TrimSpace(input.AccessArrangement)
 	listing.DistributionMethod = strings.TrimSpace(input.DistributionMethod)
 	listing.DistributionMethodNote = strings.TrimSpace(input.DistributionMethodNote)
-	listing.ProvidesAdminAccount = input.ProvidesAdminAccount
+	listing.ProvidesAdminAccount = normalizedProvidesAdminAccount(input.DistributionMethod, input.ProvidesAdminAccount)
 	listing.RegionCode = strings.TrimSpace(input.RegionCode)
 	listing.RegionName = strings.TrimSpace(input.RegionName)
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
 	listing.DailyQuotaAmount = optionalString(input.DailyQuotaAmount)
-	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
+	listing.WeeklyQuotaAmount = optionalString(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = optionalString(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -1796,8 +1796,8 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if method == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method required", "必须选择分发方式。", "distributionMethod", "required", "必须选择分发方式。")
 	}
-	if method != ListingDistributionMethodSub2API && method != ListingDistributionMethodOther {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method invalid", "分发方式不正确。", "distributionMethod", "invalid", "分发方式只能选择 Sub2API 或其他。")
+	if method != ListingDistributionMethodSub2API && method != ListingDistributionMethodAccountLogin && method != ListingDistributionMethodOther {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method invalid", "分发方式不正确。", "distributionMethod", "invalid", "分发方式只能选择 Sub2API、账号登录或其他。")
 	}
 	if strings.TrimSpace(input.DistributionMethodNote) == "" && method == ListingDistributionMethodOther {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution note required", "选择其他分发方式时必须填写说明。", "distributionMethodNote", "required", "请填写其他分发方式说明。")
@@ -1831,23 +1831,23 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if multiplier, ok := parseNonNegativeDecimal(input.ServiceMultiplier); !ok || multiplier.Cmp(big.NewRat(1, 1)) != 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service multiplier invalid", "拼车倍率固定为 1。", "serviceMultiplier", "fixed_value", "拼车倍率必须为 1。")
 	}
-	if quota, ok := parseNonNegativeDecimal(input.DailyQuotaAmount); !ok || quota.Sign() <= 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Daily spend limit invalid", "每日最大花费额度格式不正确。", "dailyQuotaAmount", "invalid", "每日最大花费额度必须是大于 0 的数字。")
+	if strings.TrimSpace(input.DailyQuotaAmount) != "" {
+		if quota, ok := parseNonNegativeDecimal(input.DailyQuotaAmount); !ok || quota.Sign() <= 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Daily spend limit invalid", "每日最大花费额度格式不正确。", "dailySpendLimitUsd", "invalid", "每日最大花费额度必须是大于 0 的数字。")
+		}
 	}
-	if quota, ok := parseNonNegativeDecimal(input.WeeklyQuotaAmount); !ok || quota.Sign() <= 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Weekly spend limit invalid", "每周最大花费额度格式不正确。", "weeklyQuotaAmount", "invalid", "每周最大花费额度必须是大于 0 的数字。")
+	if strings.TrimSpace(input.WeeklyQuotaAmount) != "" {
+		if quota, ok := parseNonNegativeDecimal(input.WeeklyQuotaAmount); !ok || quota.Sign() <= 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Weekly spend limit invalid", "每周最大花费额度格式不正确。", "weeklySpendLimitUsd", "invalid", "每周最大花费额度必须是大于 0 的数字。")
+		}
 	}
 	if input.FollowsOfficialQuotaReset == nil {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Official quota reset selection required", "必须选择额度是否跟随官方重置。", "followsOfficialQuotaReset", "required", "请选择额度是否跟随官方重置。")
 	}
-	if strings.TrimSpace(input.VPSRegion) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "VPS region required", "必须填写 VPS 区域。", "vpsRegion", "required", "请填写 VPS 区域。")
-	}
-	if err := validateListingText("vpsRegion", input.VPSRegion, 64); err != nil {
-		return err
-	}
-	if input.SupportsMainlandChinaDirectConnection == nil {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Mainland direct connection selection required", "必须选择是否支持国内直连。", "supportsMainlandChinaDirectConnection", "required", "请选择是否支持国内直连。")
+	if strings.TrimSpace(input.VPSRegion) != "" {
+		if err := validateListingText("vpsRegion", input.VPSRegion, 64); err != nil {
+			return err
+		}
 	}
 	if err := validateListingChoice("openingChannelCode", input.OpeningChannelCode, input.CustomOpeningChannel, validOpeningChannelCodes()); err != nil {
 		return err
@@ -2033,20 +2033,22 @@ func newApplication(input CreateApplicationInput, listing Listing, now time.Time
 
 func NewListingConditionsSnapshot(listing Listing) ListingConditionsSnapshot {
 	snapshot := ListingConditionsSnapshot{
-		Title:                  listing.Title,
-		PriceMonthlyCNY:        listing.PriceMonthlyCNY,
-		DailySpendLimitUSD:     listing.DailyQuotaAmount,
-		WeeklySpendLimitUSD:    listing.WeeklyQuotaAmount,
-		BuyerSeatCapacity:      listing.BuyerSeatCapacity,
-		OfflineOccupiedSeats:   listing.OfflineOccupiedSeats,
-		RegionCode:             listing.RegionCode,
-		RegionName:             listing.RegionName,
-		DistributionMethod:     listing.DistributionMethod,
-		DistributionMethodNote: listing.DistributionMethodNote,
-		ProvidesAdminAccount:   listing.ProvidesAdminAccount,
-		AccessArrangement:      listing.AccessArrangement,
-		PolicyVersion:          listing.PolicyVersion,
-		RiskNoticeCode:         listing.RiskNoticeCode,
+		Title:                                 listing.Title,
+		PriceMonthlyCNY:                       listing.PriceMonthlyCNY,
+		DailySpendLimitUSD:                    listing.DailyQuotaAmount,
+		WeeklySpendLimitUSD:                   listing.WeeklyQuotaAmount,
+		BuyerSeatCapacity:                     listing.BuyerSeatCapacity,
+		OfflineOccupiedSeats:                  listing.OfflineOccupiedSeats,
+		RegionCode:                            listing.RegionCode,
+		RegionName:                            listing.RegionName,
+		VPSRegion:                             listing.VPSRegion,
+		SupportsMainlandChinaDirectConnection: listing.SupportsMainlandChinaDirectConnection,
+		DistributionMethod:                    listing.DistributionMethod,
+		DistributionMethodNote:                listing.DistributionMethodNote,
+		ProvidesAdminAccount:                  listing.ProvidesAdminAccount,
+		AccessArrangement:                     listing.AccessArrangement,
+		PolicyVersion:                         listing.PolicyVersion,
+		RiskNoticeCode:                        listing.RiskNoticeCode,
 	}
 	if listing.CycleTerm != nil {
 		term := *listing.CycleTerm
@@ -2054,12 +2056,6 @@ func NewListingConditionsSnapshot(listing Listing) ListingConditionsSnapshot {
 	}
 	if listing.FollowsOfficialQuotaReset != nil {
 		snapshot.FollowsOfficialQuotaReset = *listing.FollowsOfficialQuotaReset
-	}
-	if listing.VPSRegion != nil {
-		snapshot.VPSRegion = *listing.VPSRegion
-	}
-	if listing.SupportsMainlandChinaDirectConnection != nil {
-		snapshot.SupportsMainlandChinaDirectConnection = *listing.SupportsMainlandChinaDirectConnection
 	}
 	if listing.OpeningChannelCode != nil {
 		snapshot.OpeningChannelCode = *listing.OpeningChannelCode
@@ -2169,6 +2165,13 @@ func optionalString(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func normalizedProvidesAdminAccount(distributionMethod string, value bool) bool {
+	if strings.TrimSpace(distributionMethod) == ListingDistributionMethodAccountLogin {
+		return false
+	}
+	return value
 }
 
 func validOpeningChannelCodes() map[string]struct{} {

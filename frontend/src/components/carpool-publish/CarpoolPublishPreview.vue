@@ -63,7 +63,8 @@ const arrangementLabel = computed(() => {
   if (props.form.accessArrangementMode === 'other_off_platform') return '站外安排'
   return '需调整'
 })
-function quotaText(amount: number | null, period: '每天' | '每周') {
+function quotaText(amount: number | null, mode: CarpoolPublishForm['dailyQuotaMode'], period: '每天' | '每周') {
+  if (mode === 'unlimited') return `${period}不限`
   if (!amount || amount <= 0) return '待确认'
   return `${period} $${formatQuotaAmount(amount)}`
 }
@@ -71,11 +72,11 @@ const regionText = computed(() => regionDisplayName(props.form, props.regionsByC
 const distributionText = computed(() => distributionMethodLabel(props.form.distributionMethod))
 const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdminAccount))
 const dailyQuotaText = computed(() => {
-  return quotaText(props.form.dailyQuotaAmount, '每天')
+  return quotaText(props.form.dailyQuotaAmount, props.form.dailyQuotaMode, '每天')
 })
-const weeklyQuotaText = computed(() => quotaText(props.form.weeklyQuotaAmount, '每周'))
+const weeklyQuotaText = computed(() => quotaText(props.form.weeklyQuotaAmount, props.form.weeklyQuotaMode, '每周'))
 const resetText = computed(() => props.form.followsOfficialQuotaReset === null ? '待选择' : props.form.followsOfficialQuotaReset ? '跟随官方重置' : '不跟随官方重置')
-const directConnectionText = computed(() => props.form.supportsMainlandChinaDirectConnection === null ? '待选择' : props.form.supportsMainlandChinaDirectConnection ? '支持国内直连' : '不支持国内直连')
+const directConnectionText = computed(() => props.form.supportsMainlandChinaDirectConnection === null ? '未声明' : props.form.supportsMainlandChinaDirectConnection ? '支持国内直连' : '不支持国内直连')
 </script>
 
 <template>
@@ -93,7 +94,7 @@ const directConnectionText = computed(() => props.form.supportsMainlandChinaDire
         <div class="mt-4 flex flex-wrap gap-1.5">
         <Badge variant="capability">{{ openingText }}</Badge>
         <Badge variant="capability">{{ distributionText }}</Badge>
-        <Badge variant="capability">{{ adminAccountText }}</Badge>
+        <Badge v-if="form.distributionMethod !== 'account_login'" variant="capability">{{ adminAccountText }}</Badge>
         <Badge variant="capability">{{ dailyQuotaText }}</Badge>
         <Badge variant="capability">{{ weeklyQuotaText }}</Badge>
         <Badge variant="capability">{{ resetText }}</Badge>
@@ -110,11 +111,11 @@ const directConnectionText = computed(() => props.form.supportsMainlandChinaDire
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每日最大花费额度</dt><dd class="font-semibold">{{ dailyQuotaText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每周最大花费额度</dt><dd class="font-semibold">{{ weeklyQuotaText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">额度重置</dt><dd class="font-semibold">{{ resetText }}</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">VPS 区域</dt><dd class="font-semibold">{{ form.vpsRegion || '待填写' }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">VPS 区域</dt><dd class="font-semibold">{{ form.vpsRegion || '未声明' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">国内直连</dt><dd class="font-semibold">{{ directConnectionText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">付款方式</dt><dd class="text-right font-semibold">{{ paymentText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">分发方式</dt><dd class="text-right font-semibold">{{ distributionText }}</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">管理员账号</dt><dd class="text-right font-semibold">{{ adminAccountText }}</dd></div>
+        <div v-if="form.distributionMethod !== 'account_login'" class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">管理员账号</dt><dd class="text-right font-semibold">{{ adminAccountText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">访问安排</dt><dd class="text-right font-semibold">{{ form.accessArrangementNote || '待填写' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">总名额</dt><dd class="font-semibold">{{ form.totalSeats }} 人车 · 已上车 {{ form.occupiedSeats }} 人</dd></div>
       </dl>

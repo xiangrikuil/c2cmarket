@@ -89,9 +89,9 @@ const applyDisabledReason = computed(() => {
 })
 
 const totalSeats = computed(() => seatSummary.value?.totalSeats ?? carpool.value?.maxMembers ?? 0)
-const activeSeats = computed(() => seatSummary.value?.activeMemberCount ?? carpool.value?.currentConfirmedMembers ?? 0)
+const occupiedSeats = computed(() => seatSummary.value?.occupiedSeatCount ?? carpool.value?.currentConfirmedMembers ?? 0)
 const availableSeats = computed(() => seatSummary.value?.availableSeats ?? (carpool.value ? getRemainingSeats(carpool.value) : 0))
-const occupiedPercent = computed(() => getSeatPercent(activeSeats.value, totalSeats.value))
+const occupiedPercent = computed(() => getSeatPercent(occupiedSeats.value, totalSeats.value))
 const availablePercent = computed(() => getSeatPercent(availableSeats.value, totalSeats.value))
 const applyStatusText = computed(() => applicationEligibility.value?.reason ?? applyDisabledReason.value)
 const seatAvailabilityLabel = computed(() => applicationEligibility.value?.canApply ? '可申请' : '剩余名额')
@@ -324,12 +324,12 @@ async function shareCarpool() {
           </div>
           <div class="mt-5 h-3 overflow-hidden rounded-full bg-muted">
             <div class="flex h-full w-full">
-              <div v-if="activeSeats" class="h-full bg-primary" :style="{ width: occupiedPercent }" />
+              <div v-if="occupiedSeats" class="h-full bg-primary" :style="{ width: occupiedPercent }" />
               <div v-if="availableSeats" class="h-full bg-emerald-500" :style="{ width: availablePercent }" />
             </div>
           </div>
           <div class="mt-3 grid grid-cols-2 gap-2 text-center text-xs">
-            <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ activeSeats }}</div><div class="text-muted-foreground">已上车</div></div>
+            <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ occupiedSeats }}</div><div class="text-muted-foreground">已上车</div></div>
             <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ availableSeats }}</div><div class="text-muted-foreground">{{ seatAvailabilityLabel }}</div></div>
           </div>
           <Button v-if="canApplyToCarpool" class="mt-5 w-full" :variant="applyDisabledReason ? 'secondary' : 'default'" :disabled="Boolean(applyDisabledReason)" @click="applyDialogOpen = true">
@@ -396,7 +396,7 @@ async function shareCarpool() {
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">开通渠道</span><span>{{ openingChannelText }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">付款方式</span><span>{{ paymentMethodText }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">分发方式</span><span>{{ distributionMethodLabel(carpool.distributionMethod) }}</span></div>
-          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">管理员账号</span><span>{{ adminAccountLabel(carpool.providesAdminAccount) }}</span></div>
+          <div v-if="carpool.distributionMethod !== 'account_login'" class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">管理员账号</span><span>{{ adminAccountLabel(carpool.providesAdminAccount) }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">开通区</span><span>{{ carpool.region }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">开通方式</span><span>{{ carpool.openingMethod }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">车主承诺</span><span>{{ carpool.warranty }} · 平台不担保、不代赔</span></div>

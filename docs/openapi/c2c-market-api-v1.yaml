@@ -15733,7 +15733,7 @@ components:
     CreateCarpoolListingRequest:
       type: object
       additionalProperties: false
-      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, dailySpendLimitUsd, weeklySpendLimitUsd, followsOfficialQuotaReset, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, paymentMethodCode, buyerSeatCapacity, offlineOccupiedSeats]
+      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, dailySpendLimitUsd, weeklySpendLimitUsd, followsOfficialQuotaReset, openingChannelCode, paymentMethodCode, buyerSeatCapacity, offlineOccupiedSeats]
       properties:
         productPlanId:
           type: string
@@ -15756,8 +15756,8 @@ components:
           maxLength: 2000
         distributionMethod:
           type: string
-          enum: [sub2api, other]
-          description: Public listing distribution method. Describes whether the owner supports Sub2API-managed use or another off-platform arrangement.
+          enum: [sub2api, account_login, other]
+          description: Public non-sensitive distribution method. Account login describes an off-platform login arrangement; the platform never collects credentials.
         distributionMethodNote:
           type: string
           description: Public non-sensitive distribution note. Required when distributionMethod is other. Must not contain account credentials, panel URLs, passwords, keys, tokens, sessions, cookies, or owner credentials.
@@ -15784,21 +15784,22 @@ components:
           pattern: '^1(?:\.0+)?$'
           description: System-fixed carpool multiplier. Clients must send 1; owners cannot edit it.
         dailySpendLimitUsd:
-          $ref: "#/components/schemas/DecimalString"
-          description: Per-member daily maximum spend in USD.
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]+)?$'
+          description: Per-member daily maximum spend in USD. Null means unlimited.
         weeklySpendLimitUsd:
-          $ref: "#/components/schemas/DecimalString"
-          description: Per-member weekly maximum spend in USD.
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]+)?$'
+          description: Per-member weekly maximum spend in USD. Null means unlimited.
         followsOfficialQuotaReset:
           type: boolean
           description: Whether the declared quota follows the official provider reset schedule.
         vpsRegion:
-          type: string
-          minLength: 1
+          type: [string, "null"]
           maxLength: 64
           description: Owner-declared VPS region free text. It is informational and is not a catalog filter.
         supportsMainlandChinaDirectConnection:
-          type: boolean
+          type: [boolean, "null"]
           description: Whether the owner declares that the access path supports direct connection from mainland China.
         openingChannelCode:
           type: string
@@ -15950,7 +15951,7 @@ components:
           type: string
         distributionMethod:
           type: string
-          enum: [sub2api, other]
+          enum: [sub2api, account_login, other]
         distributionMethodNote:
           type: string
         providesAdminAccount:
@@ -15969,7 +15970,8 @@ components:
           type: [string, "null"]
           pattern: '^[0-9]+(?:\.[0-9]+)?$'
         weeklySpendLimitUsd:
-          $ref: "#/components/schemas/DecimalString"
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]+)?$'
         followsOfficialQuotaReset:
           type: [boolean, "null"]
         vpsRegion:
@@ -18337,7 +18339,7 @@ components:
         dailySpendLimitUsd:
           type: [string, "null"]
         weeklySpendLimitUsd:
-          $ref: "#/components/schemas/DecimalString"
+          type: [string, "null"]
         followsOfficialQuotaReset:
           type: boolean
         buyerSeatCapacity:
@@ -18349,9 +18351,9 @@ components:
         regionName:
           type: string
         vpsRegion:
-          type: string
+          type: [string, "null"]
         supportsMainlandChinaDirectConnection:
-          type: boolean
+          type: [boolean, "null"]
         openingChannelCode:
           type: string
         customOpeningChannel:
@@ -18362,6 +18364,7 @@ components:
           type: string
         distributionMethod:
           type: string
+          enum: [sub2api, account_login, other]
         distributionMethodNote:
           type: string
         providesAdminAccount:

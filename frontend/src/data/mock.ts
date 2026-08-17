@@ -117,7 +117,7 @@ export type CarpoolAccessArrangementMode =
   | 'other_off_platform'
   | 'not_allowed'
 
-export type CarpoolDistributionMethod = 'sub2api' | 'other'
+export type CarpoolDistributionMethod = 'sub2api' | 'account_login' | 'other'
 
 export type CarpoolApplicationStatus =
   | 'pending_owner'
@@ -142,6 +142,7 @@ export type CarpoolSeatSummary = {
   carpoolId: string
   totalSeats: number
   activeMemberCount: number
+  occupiedSeatCount: number
   availableSeats: number
 }
 

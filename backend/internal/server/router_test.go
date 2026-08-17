@@ -1525,7 +1525,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	if listing.Status != app.CarpoolListingStatusDraft || listing.Version != 1 {
 		t.Fatalf("unexpected created listing: %+v", listing)
 	}
-	if listing.ServiceMultiplier != "1.0000" || listing.DailyQuotaAmount == nil || *listing.DailyQuotaAmount != "50.00" || listing.WeeklyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
+	if listing.ServiceMultiplier != "1.0000" || listing.DailyQuotaAmount == nil || *listing.DailyQuotaAmount != "50.00" || listing.WeeklyQuotaAmount == nil || *listing.WeeklyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
 		t.Fatalf("expected structured multiplier and quota fields, got %+v", listing)
 	}
 	if listing.RegionCode != "other" || listing.RegionName != "印度区" {
@@ -1783,6 +1783,82 @@ func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
 		t.Fatalf("expected missing distribution note failure, got %d body %s", response.Code, response.Body.String())
 	}
 	assertProblemCode(t, response, "VALIDATION_FAILED")
+}
+
+func TestCarpoolAccountLoginAcceptsUnlimitedSpendAndOptionalNetworkDetails(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "account-login-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Account Login TG", "@account_login_owner")
+
+	body := carpoolPayloadWithRiskAck(ownerContact.ID)
+	body = strings.Replace(body, `"distributionMethod":"sub2api"`, `"distributionMethod":"account_login"`, 1)
+	body = strings.Replace(body, `"dailySpendLimitUsd":"50.00"`, `"dailySpendLimitUsd":null`, 1)
+	body = strings.Replace(body, `"weeklySpendLimitUsd":"200.00"`, `"weeklySpendLimitUsd":null`, 1)
+	body = strings.Replace(body, `"vpsRegion":"香港",`, "", 1)
+	body = strings.Replace(body, `"supportsMainlandChinaDirectConnection":true,`, "", 1)
+	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", body)
+	addAuth(request, ownerSession, "carpool-account-login-unlimited")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("account login publish status %d body %s", response.Code, response.Body.String())
+	}
+	var listing struct {
+		DistributionMethod                    string  `json:"distributionMethod"`
+		ProvidesAdminAccount                  bool    `json:"providesAdminAccount"`
+		DailySpendLimitUSD                    *string `json:"dailySpendLimitUsd"`
+		WeeklySpendLimitUSD                   *string `json:"weeklySpendLimitUsd"`
+		VPSRegion                             *string `json:"vpsRegion"`
+		SupportsMainlandChinaDirectConnection *bool   `json:"supportsMainlandChinaDirectConnection"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&listing); err != nil {
+		t.Fatalf("decode account login listing: %v", err)
+	}
+	if listing.DistributionMethod != "account_login" || listing.ProvidesAdminAccount {
+		t.Fatalf("expected account login with normalized admin flag, got %+v", listing)
+	}
+	if listing.DailySpendLimitUSD != nil || listing.WeeklySpendLimitUSD != nil || listing.VPSRegion != nil || listing.SupportsMainlandChinaDirectConnection != nil {
+		t.Fatalf("expected unlimited spend and undeclared network details, got %+v", listing)
+	}
+}
+
+func TestCarpoolSpendLimitsAllowIndependentUnlimitedValuesAndRejectInvalidAmounts(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "spend-limit-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Spend Limit TG", "@spend_limit_owner")
+
+	tests := []struct {
+		name           string
+		oldValue       string
+		newValue       string
+		wantStatus     int
+		wantErrorField string
+	}{
+		{name: "daily unlimited", oldValue: `"dailySpendLimitUsd":"50.00"`, newValue: `"dailySpendLimitUsd":null`, wantStatus: http.StatusCreated},
+		{name: "weekly unlimited", oldValue: `"weeklySpendLimitUsd":"200.00"`, newValue: `"weeklySpendLimitUsd":null`, wantStatus: http.StatusCreated},
+		{name: "zero daily", oldValue: `"dailySpendLimitUsd":"50.00"`, newValue: `"dailySpendLimitUsd":"0"`, wantStatus: http.StatusUnprocessableEntity, wantErrorField: "dailySpendLimitUsd"},
+		{name: "negative weekly", oldValue: `"weeklySpendLimitUsd":"200.00"`, newValue: `"weeklySpendLimitUsd":"-1"`, wantStatus: http.StatusUnprocessableEntity, wantErrorField: "weeklySpendLimitUsd"},
+		{name: "malformed daily", oldValue: `"dailySpendLimitUsd":"50.00"`, newValue: `"dailySpendLimitUsd":"not-a-number"`, wantStatus: http.StatusUnprocessableEntity, wantErrorField: "dailySpendLimitUsd"},
+	}
+
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := strings.Replace(carpoolPayloadWithRiskAck(ownerContact.ID), test.oldValue, test.newValue, 1)
+			request := newJSONRequest(http.MethodPost, "/api/v1/carpools", body)
+			addAuth(request, ownerSession, fmt.Sprintf("carpool-spend-limit-%d", index))
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status %d body %s", response.Code, response.Body.String())
+			}
+			if test.wantErrorField != "" {
+				if !strings.Contains(response.Body.String(), `"field":"`+test.wantErrorField+`"`) {
+					t.Fatalf("expected field %q in body %s", test.wantErrorField, response.Body.String())
+				}
+				assertProblemCode(t, response, "VALIDATION_FAILED")
+			}
+		})
+	}
 }
 
 func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testing.T) {
@@ -3493,7 +3569,7 @@ type createdCarpool struct {
 	RegionName                            string                    `json:"regionName"`
 	ServiceMultiplier                     string                    `json:"serviceMultiplier"`
 	DailyQuotaAmount                      *string                   `json:"dailySpendLimitUsd"`
-	WeeklyQuotaAmount                     string                    `json:"weeklySpendLimitUsd"`
+	WeeklyQuotaAmount                     *string                   `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             *bool                     `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                   `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                     `json:"supportsMainlandChinaDirectConnection"`

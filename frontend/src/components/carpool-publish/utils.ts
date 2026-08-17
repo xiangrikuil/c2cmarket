@@ -34,6 +34,7 @@ export const paymentMethodLabels: Record<PaymentMethodCode, string> = {
 
 export const distributionMethodLabels: Record<CarpoolDistributionMethod, string> = {
   sub2api: 'Sub2API',
+  account_login: '账号登录',
   other: '其他分发',
 }
 
@@ -51,6 +52,7 @@ export function adminAccountLabel(value: boolean | null | undefined) {
 export function distributionFieldsComplete(form: Pick<CarpoolPublishForm, 'distributionMethod' | 'distributionMethodNote' | 'providesAdminAccount'>) {
   if (!form.distributionMethod) return false
   if (form.distributionMethod === 'other' && !form.distributionMethodNote.trim()) return false
+  if (form.distributionMethod === 'account_login') return true
   return form.providesAdminAccount !== null
 }
 
@@ -175,11 +177,9 @@ export function canBuildCarpoolShareText(
     && form.occupiedSeats <= form.totalSeats
     && openingChannelDisplayName(form.openingChannelCode, channelsByCode, form.customOpeningChannel)
     && paymentMethodDisplayName(form.paymentMethodCode, methodsByCode, form.customPaymentMethod)
-    && form.dailyQuotaAmount
-    && form.weeklyQuotaAmount
+    && (form.dailyQuotaMode === 'unlimited' || Boolean(form.dailyQuotaAmount && form.dailyQuotaAmount > 0))
+    && (form.weeklyQuotaMode === 'unlimited' || Boolean(form.weeklyQuotaAmount && form.weeklyQuotaAmount > 0))
     && form.followsOfficialQuotaReset !== null
-    && form.vpsRegion.trim()
-    && form.supportsMainlandChinaDirectConnection !== null
     && distributionFieldsComplete(form)
     && form.accessArrangementMode !== 'not_allowed'
     && form.accessArrangementNote.trim().length >= 8
@@ -204,8 +204,8 @@ export function buildCarpoolShareText(
   const distributionText = form.distributionMethod === 'other'
     ? `${distributionMethodLabel(form.distributionMethod)}：${form.distributionMethodNote.trim() || '待确认'}`
     : distributionMethodLabel(form.distributionMethod)
-  const dailyQuota = form.dailyQuotaAmount ? `$${formatQuotaAmount(form.dailyQuotaAmount)}` : '待确认'
-  const weeklyQuota = form.weeklyQuotaAmount ? `$${formatQuotaAmount(form.weeklyQuotaAmount)}` : '待确认'
+  const dailyQuota = form.dailyQuotaMode === 'unlimited' ? '不限' : form.dailyQuotaAmount ? `$${formatQuotaAmount(form.dailyQuotaAmount)}` : '待确认'
+  const weeklyQuota = form.weeklyQuotaMode === 'unlimited' ? '不限' : form.weeklyQuotaAmount ? `$${formatQuotaAmount(form.weeklyQuotaAmount)}` : '待确认'
   const priceText = form.monthlyPriceCny ? `¥${form.monthlyPriceCny}/月` : '价格待确认'
 
   return [
@@ -218,12 +218,12 @@ export function buildCarpoolShareText(
     `每日最大花费额度：${dailyQuota}`,
     `每周最大花费额度：${weeklyQuota}`,
     `额度重置：${form.followsOfficialQuotaReset === null ? '待确认' : form.followsOfficialQuotaReset ? '跟随官方重置' : '不跟随官方重置'}`,
-    `VPS 区域：${form.vpsRegion.trim() || '待确认'}`,
-    `国内直连：${form.supportsMainlandChinaDirectConnection === null ? '待确认' : form.supportsMainlandChinaDirectConnection ? '支持' : '不支持'}`,
+    `VPS 区域：${form.vpsRegion.trim() || '未声明'}`,
+    `国内直连：${form.supportsMainlandChinaDirectConnection === null ? '未声明' : form.supportsMainlandChinaDirectConnection ? '支持' : '不支持'}`,
     `开通渠道：${openingChannel}`,
     `付款方式：${paymentMethod}`,
     `分发方式：${distributionText}`,
-    `管理员账号：${adminAccountLabel(form.providesAdminAccount)}`,
+    ...(form.distributionMethod === 'account_login' ? [] : [`管理员账号：${adminAccountLabel(form.providesAdminAccount)}`]),
     `访问安排：${form.accessArrangementNote.trim() || '待确认'}`,
     `售后说明：${warrantyPostText(form.warranty)}`,
     '买家须知：',

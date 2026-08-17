@@ -97,7 +97,7 @@ function ownerListing(overrides: Record<string, unknown> = {}) {
     quotaPeriod: 'monthly',
     buyerSeatCapacity: 5,
     offlineOccupiedSeats: 2,
-    platformActiveSeats: 1,
+    activeBuyerMembers: 1,
     reservedSeats: 0,
     availableSeats: 2,
     status: 'changes_requested',
@@ -271,6 +271,36 @@ test('real carpool adapter never treats a source URL as author verification', as
   assert.equal(listing.supportsMainlandChinaDirectConnection, true)
   assert.equal(listing.openingChannelCode, 'web')
   assert.equal(listing.paymentMethodCode, 'u_card')
+})
+
+test('real carpool adapter projects public occupied seats from offline and active seats', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(productPlan())))
+  const { mapBackendCarpoolListing } = await import('../carpoolBackend')
+
+  const listing = await mapBackendCarpoolListing(ownerListing({
+    buyerSeatCapacity: 5,
+    offlineOccupiedSeats: 3,
+    activeBuyerMembers: 0,
+    availableSeats: 2,
+  }))
+
+  assert.equal(listing.currentConfirmedMembers, 0)
+  assert.equal(listing.seats, '3/5')
+  assert.deepEqual(listing.seatSummary, {
+    carpoolId: 'listing-id',
+    totalSeats: 5,
+    activeMemberCount: 0,
+    occupiedSeatCount: 3,
+    availableSeats: 2,
+  })
+
+  const fullListing = await mapBackendCarpoolListing(ownerListing({
+    buyerSeatCapacity: 5,
+    offlineOccupiedSeats: 4,
+    activeBuyerMembers: 3,
+    availableSeats: 0,
+  }))
+  assert.equal(fullListing.seatSummary?.occupiedSeatCount, 5)
 })
 
 test('contact reveal analytics fires only after authoritative disclosure succeeds', async () => {
@@ -537,6 +567,64 @@ test('owner carpool update uses If-Match and submits with the patched version', 
   assert.equal(submitInit?.method, 'POST')
   assert.equal(new Headers(submitInit?.headers).get('If-Match'), '"12"')
   assert.match(new Headers(submitInit?.headers).get('Idempotency-Key') ?? '', /^carpool-submit-review-/)
+})
+
+test('owner carpool update preserves unlimited limits and normalizes account login fields', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(backendSession()))
+    .mockResolvedValueOnce(jsonResponse(productPlan()))
+    .mockResolvedValueOnce(jsonResponse(ownerListing({
+      distributionMethod: 'account_login',
+      providesAdminAccount: false,
+      dailySpendLimitUsd: null,
+      weeklySpendLimitUsd: null,
+      vpsRegion: null,
+      supportsMainlandChinaDirectConnection: null,
+      version: 12,
+    })))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const { backendUpdateOwnerCarpool } = await import('../carpoolBackend')
+  await backendUpdateOwnerCarpool('listing-id', {
+    productId: 'plan-id', customProductName: null, regionCode: 'other', customRegionName: '新加坡二区',
+    monthlyPriceCny: 88.5, serviceMultiplier: 1, dailyQuotaAmount: null, weeklyQuotaAmount: null,
+    followsOfficialQuotaReset: true, vpsRegion: '', supportsMainlandChinaDirectConnection: null,
+    totalSeats: 5, occupiedSeats: 2, openingChannelCode: 'web', customOpeningChannel: '',
+    paymentMethodCode: 'credit_card', customPaymentMethod: '', distributionMethod: 'account_login',
+    distributionMethodNote: '', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation',
+    accessArrangementNote: '通过官方邀请加入', riskAcknowledged: true, policyVersion: 7,
+    riskNoticeCode: 'shared-account-risk', warranty: { mode: 'no_warranty', fixedWarrantyDays: null, compensationMethod: null, exclusions: null },
+    rulesNote: '不得转售', status: 'draft',
+  }, 11, 'contact-id', false)
+
+  const body = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))
+  assert.equal(body.dailySpendLimitUsd, null)
+  assert.equal(body.weeklySpendLimitUsd, null)
+  assert.equal(body.vpsRegion, null)
+  assert.equal(body.supportsMainlandChinaDirectConnection, null)
+  assert.equal(body.distributionMethod, 'account_login')
+  assert.equal(body.providesAdminAccount, false)
+})
+
+test('owner carpool edit data preserves unlimited daily and weekly limits', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(backendSession()))
+    .mockResolvedValueOnce(jsonResponse(ownerListing({
+      dailySpendLimitUsd: null,
+      weeklySpendLimitUsd: null,
+    })))
+    .mockResolvedValueOnce(jsonResponse(productPlan()))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const { backendOwnerCarpoolForEdit } = await import('../carpoolBackend')
+  const editData = await backendOwnerCarpoolForEdit('listing-id')
+
+  assert.equal(editData.payload.dailyQuotaAmount, null)
+  assert.equal(editData.payload.weeklyQuotaAmount, null)
 })
 
 test('owner carpool pages bind real tabs, edit routing, and version conflict recovery', () => {

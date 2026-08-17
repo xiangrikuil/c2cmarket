@@ -34,12 +34,13 @@ application status:         pending_owner | joined | rejected | cancelled_by_buy
 membership status:          active | left | removed
 
 Create/Patch spend fields:
-  dailySpendLimitUsd: decimal string
-  weeklySpendLimitUsd: decimal string
+  dailySpendLimitUsd: decimal string | null
+  weeklySpendLimitUsd: decimal string | null
   followsOfficialQuotaReset: boolean
 
 backend/migrations/000111_carpool_lightweight_matching.{up,down}.sql
-database.ExpectedMigrationVersion = 111
+backend/migrations/000112_carpool_optional_spend_limits_account_login.{up,down}.sql
+database.ExpectedMigrationVersion = 112
 ```
 
 Migration 111 owns `carpool_listing_condition_versions`, `carpool_application_condition_acceptances`, nullable `contact_sessions.ends_at`, listing `conditions_version`, `governance_status`, `recruitment_stop_reason`, `offline_occupied_seats`, and the application/membership condition snapshots. Its down migration restores the pre-launch schema only when no carpool listings, applications, memberships, condition versions, or open-ended contact sessions exist. Deleted workflow data remains backup-only and must never be fabricated by a down migration.
@@ -49,10 +50,12 @@ Migration 111 owns `carpool_listing_condition_versions`, `carpool_application_co
 - Owner acceptance locks the application and listing, rechecks current conditions and capacity, changes the application to `joined`, creates one `active` membership, freezes the accepted conditions, opens a membership-duration contact session, and completes events, notifications, and idempotency in one transaction.
 - A membership contact session has `ends_at = NULL` while active. Leaving or removal revokes it and records an end time; the historical application pointer remains.
 - Capacity is `buyer_seat_capacity - offline_occupied_seats - active membership seats`. Accepting the last seat changes recruitment to `stopped` with reason `full` in the same transaction.
+- Public occupied-seat presentation is `clamp(offline_occupied_seats + active_buyer_members, 0, buyer_seat_capacity)`. Public list/detail views show that combined count without exposing the offline source and continue to use `available_seats` for application availability. Owner operational views may still distinguish platform members from offline occupied seats.
 - Leaving or removal releases capacity but never resumes recruitment. Only the owner `resume-recruiting` action may make a stopped listing active again, and only when governance is clear and capacity exists.
 - Owner recruitment intent and administrator governance are independent. Administrator restore changes only governance status and never overwrites `draft|active|stopped`.
 - Published listings may be edited, but their product plan is immutable. Critical condition changes append a new normalized condition version. Pending buyers must confirm the current version before acceptance; existing active members retain their joined snapshot.
-- Daily and weekly values mean per-member maximum spend in USD. The publish UI and API expose no currency selector and no independent extra-quota description. `followsOfficialQuotaReset` remains required and versioned.
+- Daily and weekly values mean per-member maximum spend in USD. Each field is independently nullable, where `null` means unlimited; zero and negative supplied amounts remain invalid. The publish UI and API expose no currency selector and no independent extra-quota description. `followsOfficialQuotaReset` remains required and versioned.
+- VPS region and mainland direct-connect support are optional declarations and preserve missing values as `null`. Distribution supports `sub2api`, `account_login`, and `other`. Account-login listings normalize `provides_admin_account` to false and never collect credentials; clients omit the administrator-account signal for that mode.
 - Carpool applications and memberships never create review eligibility, public completion counts, ratings, or reputation facts. Reports, disputes, audits, governance disposition, and account restrictions still accept `carpool_membership` where their own contracts require it.
 - Removed routes must stay absent: carpool `confirm-join`, carpool `confirm-complete`, `withdraw-acceptance`, and carpool review creation/edit compatibility routes. API-order `confirm-complete` remains valid.
 
@@ -68,7 +71,7 @@ Migration 111 owns `carpool_listing_condition_versions`, `carpool_application_co
 | Buyer applies while recruitment is stopped, governance is removed, or capacity is zero | public not-found behavior |
 | Published listing changes `productPlanId` | `409 INVALID_STATE_TRANSITION` |
 | Total seats are below offline occupied plus active membership seats | `422 VALIDATION_FAILED` |
-| Daily/weekly maximum spend is not a positive decimal | `422 VALIDATION_FAILED` on the matching spend field |
+| A supplied daily/weekly maximum spend is not a positive decimal | `422 VALIDATION_FAILED` on the matching spend field |
 | `followsOfficialQuotaReset` is missing | `422 VALIDATION_FAILED` |
 | Resume has no capacity or governance is removed | `409 INVALID_STATE_TRANSITION` |
 | Leave/remove targets a non-active membership | `409 MEMBERSHIP_NOT_ACTIVE` |
@@ -87,8 +90,8 @@ Migration 111 owns `carpool_listing_condition_versions`, `carpool_application_co
 - Unit and router tests must cover direct acceptance, idempotent replay, stale versions, current-condition confirmation, removed-route absence, leave/remove, and stop/resume authorization.
 - PostgreSQL tests must cover concurrent acceptance of the last seat, atomic membership/contact/event/idempotency effects, full auto-stop, no auto-resume, immutable product plan, condition version history, and frozen application/member snapshots.
 - Review and reputation regressions must prove carpool sources are excluded while API-order review and public reputation behavior remains unchanged.
-- OpenAPI/generated types must contain the spend/condition/governance contracts and omit removed routes and fields.
-- Frontend tests must cover the narrowed statuses, direct activation, condition diff confirmation, active-only contact disclosure, recruitment controls, USD labels, and absence of carpool reviews.
+- OpenAPI/generated types must contain nullable spend/network values, account-login distribution, the condition/governance contracts, and omit removed routes and fields.
+- Frontend tests must cover the narrowed statuses, direct activation, condition diff confirmation, active-only contact disclosure, recruitment controls, independent unlimited spend modes, account-login presentation, combined occupied-seat presentation, USD labels, and absence of carpool reviews.
 - Smoke must run against PostgreSQL and prove publish -> apply -> accept -> contacts -> full stop -> leave -> still stopped -> explicit resume.
 - Required commands: `go test ./... -count=1`, `go vet ./...`, frontend Vitest/typecheck/build, OpenAPI type/route checks, migration documentation check, and `git diff --check`.
 

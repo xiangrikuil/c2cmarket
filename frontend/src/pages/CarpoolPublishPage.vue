@@ -117,7 +117,9 @@ const form = reactive<CarpoolPublishForm>({
   customRegionName: null,
   monthlyPriceCny: null,
   serviceMultiplier: 1,
+  dailyQuotaMode: 'amount',
   dailyQuotaAmount: null,
+  weeklyQuotaMode: 'amount',
   weeklyQuotaAmount: null,
   followsOfficialQuotaReset: null,
   vpsRegion: '',
@@ -181,6 +183,8 @@ watch(() => editQuery.data.value, async detail => {
 	editVersion.value = detail.version
 	editOwnerContactMethodId.value = detail.ownerContactMethodId
 	Object.assign(form, detail.payload, { warranty: { ...detail.payload.warranty } })
+	form.dailyQuotaMode = detail.payload.dailyQuotaAmount === null ? 'unlimited' : 'amount'
+	form.weeklyQuotaMode = detail.payload.weeklyQuotaAmount === null ? 'unlimited' : 'amount'
 	submittedId.value = detail.id
 	formDirty.value = false
 	editInitialized.value = true
@@ -328,10 +332,10 @@ function taskComplete(key: PublishTaskKey) {
   if (key === 'product') return Boolean(form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()))
   if (key === 'region') return Boolean(form.regionCode && finalRegionName.value)
   if (key === 'monthlyPrice') return Boolean(form.monthlyPriceCny && form.monthlyPriceCny > 0)
-  if (key === 'dailyQuota') return Boolean(form.dailyQuotaAmount && form.dailyQuotaAmount > 0)
-  if (key === 'weeklyQuota') return Boolean(form.weeklyQuotaAmount && form.weeklyQuotaAmount > 0)
+  if (key === 'dailyQuota') return form.dailyQuotaMode === 'unlimited' || Boolean(form.dailyQuotaAmount && form.dailyQuotaAmount > 0)
+  if (key === 'weeklyQuota') return form.weeklyQuotaMode === 'unlimited' || Boolean(form.weeklyQuotaAmount && form.weeklyQuotaAmount > 0)
   if (key === 'quotaReset') return form.followsOfficialQuotaReset !== null
-  if (key === 'connection') return Boolean(form.vpsRegion.trim() && form.supportsMainlandChinaDirectConnection !== null)
+  if (key === 'connection') return true
   if (key === 'openingChannel') return Boolean(form.openingChannelCode && (form.openingChannelCode !== 'other' || form.customOpeningChannel.trim()))
   if (key === 'paymentMethods') return Boolean(form.paymentMethodCode && (form.paymentMethodCode !== 'other' || form.customPaymentMethod.trim()))
   if (key === 'distribution') return distributionFieldsComplete(form)
@@ -400,16 +404,6 @@ const publishTasks = computed<PublishTask[]>(() => [
     description: '额度与重置',
     complete: taskComplete('quotaReset'),
     error: fieldErrorForTask('quotaReset'),
-  },
-  {
-    key: 'connection',
-    label: '填写 VPS 与直连信息',
-    shortLabel: '网络接入',
-    section: 'basic',
-    fieldId: publishTaskFieldIds.connection,
-    description: 'VPS 区域与国内直连',
-    complete: taskComplete('connection'),
-    error: fieldErrorForTask('connection'),
   },
   {
     key: 'openingChannel',
@@ -511,7 +505,7 @@ const basicFieldStates = computed<Partial<Record<string, PublishFieldState>>>(()
   dailyQuota: stateForTask('dailyQuota'),
   weeklyQuota: stateForTask('weeklyQuota'),
   quotaReset: stateForTask('quotaReset'),
-  connection: stateForTask('connection'),
+  connection: 'idle',
   distribution: stateForTask('distribution'),
 }))
 
@@ -620,11 +614,13 @@ watch(() => form.monthlyPriceCny, () => {
   if (taskComplete('monthlyPrice')) clearError('monthlyPriceCny')
 })
 
-watch(() => form.weeklyQuotaAmount, () => {
+watch(() => [form.weeklyQuotaMode, form.weeklyQuotaAmount], ([mode]) => {
+  if (mode === 'unlimited') form.weeklyQuotaAmount = null
   if (taskComplete('weeklyQuota')) clearError('weeklyQuota')
 })
 
-watch(() => form.dailyQuotaAmount, () => {
+watch(() => [form.dailyQuotaMode, form.dailyQuotaAmount], ([mode]) => {
+  if (mode === 'unlimited') form.dailyQuotaAmount = null
   if (taskComplete('dailyQuota')) clearError('dailyQuota')
 })
 
@@ -653,7 +649,13 @@ watch(() => [form.paymentMethodCode, form.customPaymentMethod], ([code]) => {
   if (!hasSensitiveText.value) clearError('sensitive')
 })
 
-watch(() => [form.distributionMethod, form.distributionMethodNote, form.providesAdminAccount], () => {
+watch(() => [form.distributionMethod, form.distributionMethodNote, form.providesAdminAccount] as const, ([method], [previousMethod]) => {
+  if (method === 'account_login') {
+    form.distributionMethodNote = ''
+    form.providesAdminAccount = false
+  } else if (previousMethod === 'account_login') {
+    form.providesAdminAccount = null
+  }
   if (taskComplete('distribution')) clearError('distribution')
   if (!hasSensitiveText.value) clearError('sensitive')
 })
@@ -685,13 +687,11 @@ function validate(requireComplete: boolean) {
   if (!form.regionCode) next.region = '请选择开通区。'
   else if (!finalRegionName.value) next.region = '请填写自定义开通区。'
   if (!Number.isFinite(form.monthlyPriceCny) || !form.monthlyPriceCny || form.monthlyPriceCny <= 0) next.monthlyPriceCny = '月费必须大于 0。'
-  if (!Number.isFinite(form.dailyQuotaAmount) || !form.dailyQuotaAmount || form.dailyQuotaAmount <= 0) next.dailyQuota = '每日最大花费额度必须大于 0。'
-  if (!Number.isFinite(form.weeklyQuotaAmount) || !form.weeklyQuotaAmount || form.weeklyQuotaAmount <= 0) {
+  if (form.dailyQuotaMode === 'amount' && (!Number.isFinite(form.dailyQuotaAmount) || !form.dailyQuotaAmount || form.dailyQuotaAmount <= 0)) next.dailyQuota = '每日最大花费额度必须大于 0，或选择不限。'
+  if (form.weeklyQuotaMode === 'amount' && (!Number.isFinite(form.weeklyQuotaAmount) || !form.weeklyQuotaAmount || form.weeklyQuotaAmount <= 0)) {
     next.weeklyQuota = '每周最大花费额度必须大于 0。'
   }
   if (form.followsOfficialQuotaReset === null) next.quotaReset = '请选择额度是否跟随官方重置。'
-  if (!form.vpsRegion.trim()) next.connection = '请填写 VPS 区域。'
-  else if (form.supportsMainlandChinaDirectConnection === null) next.connection = '请选择是否支持国内直连。'
   if (form.totalSeats < 1 || form.totalSeats > 20 || form.occupiedSeats < 0 || form.occupiedSeats > form.totalSeats) next.seats = '名额必须满足总名额 1-20，且已上车人数不超过总名额。'
   if (!form.openingChannelCode) next.openingChannelCode = '请选择开通渠道。'
   else if (form.openingChannelCode === 'other' && !form.customOpeningChannel.trim()) next.openingChannelCode = '请填写其他开通渠道。'
@@ -701,7 +701,7 @@ function validate(requireComplete: boolean) {
     next.distribution = '请选择分发方式。'
   } else if (form.distributionMethod === 'other' && !form.distributionMethodNote.trim()) {
     next.distribution = '选择其他分发方式时必须填写说明。'
-  } else if (form.providesAdminAccount === null) {
+  } else if (form.distributionMethod !== 'account_login' && form.providesAdminAccount === null) {
     next.distribution = '请选择是否提供管理员账号。'
   } else if (hasForbiddenCredentialSharingText(form.distributionMethodNote)) {
     next.distribution = '分发方式说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。'
@@ -764,8 +764,8 @@ function toPayload(status: 'draft' | 'reviewing') {
     customRegionName: form.regionCode === 'other' ? form.customRegionName?.trim() || null : null,
     monthlyPriceCny: form.monthlyPriceCny,
     serviceMultiplier: 1,
-    dailyQuotaAmount: form.dailyQuotaAmount,
-    weeklyQuotaAmount: form.weeklyQuotaAmount,
+    dailyQuotaAmount: form.dailyQuotaMode === 'unlimited' ? null : form.dailyQuotaAmount,
+    weeklyQuotaAmount: form.weeklyQuotaMode === 'unlimited' ? null : form.weeklyQuotaAmount,
     followsOfficialQuotaReset: form.followsOfficialQuotaReset,
     vpsRegion: form.vpsRegion.trim(),
     supportsMainlandChinaDirectConnection: form.supportsMainlandChinaDirectConnection,
@@ -777,7 +777,7 @@ function toPayload(status: 'draft' | 'reviewing') {
     customPaymentMethod: form.paymentMethodCode === 'other' ? form.customPaymentMethod.trim() : '',
     distributionMethod: form.distributionMethod,
     distributionMethodNote: form.distributionMethodNote,
-    providesAdminAccount: form.providesAdminAccount,
+    providesAdminAccount: form.distributionMethod === 'account_login' ? false : form.providesAdminAccount,
     accessArrangementMode: form.accessArrangementMode,
     accessArrangementNote: form.accessArrangementNote,
     riskAcknowledged: form.riskAcknowledged,
@@ -816,7 +816,6 @@ const completeness = computed<CompletenessItem[]>(() => [
   form.monthlyPriceCny && form.monthlyPriceCny > 0 ? { label: '月费', status: 'done' } : { label: '月费', status: 'pending' },
   taskComplete('dailyQuota') && taskComplete('weeklyQuota') ? { label: '每日 / 每周最大花费额度', status: 'done' } : { label: '每日 / 每周最大花费额度', status: 'pending' },
   taskComplete('quotaReset') ? { label: '额度重置', status: 'done' } : { label: '额度重置', status: 'pending' },
-  taskComplete('connection') ? { label: 'VPS 与国内直连', status: 'done' } : { label: 'VPS 与国内直连', status: 'pending' },
   form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats < form.totalSeats ? { label: '名额', status: 'done' } : { label: '名额', status: 'conflict' },
   form.openingChannelCode ? { label: '开通渠道', status: 'done' } : { label: '开通渠道', status: 'pending' },
   taskComplete('paymentMethods') ? { label: '付款方式', status: 'done' } : { label: '付款方式', status: 'pending' },

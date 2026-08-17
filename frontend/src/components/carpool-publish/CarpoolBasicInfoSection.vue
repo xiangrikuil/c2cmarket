@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import type { CarpoolProductCatalogItem, CarpoolPublishForm, PublishFieldState, RegionOption } from './types'
@@ -24,6 +25,11 @@ function selectedBoolean(value: unknown) {
   if (value === 'true') return true
   if (value === 'false') return false
   return null
+}
+
+function optionalBooleanSelectValue(value: boolean | null) {
+  if (value === null) return 'undeclared'
+  return value ? 'true' : 'false'
 }
 
 function fieldState(key: string): PublishFieldState {
@@ -128,7 +134,11 @@ function stateLabelClass(key: string) {
           <span>每日最大花费额度（美元） <span class="text-xs text-primary">必填</span></span>
           <span v-if="stateLabel('dailyQuota')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('dailyQuota')">{{ stateLabel('dailyQuota') }}</span>
         </span>
-        <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_80px]">
+        <div class="grid grid-cols-2 rounded-md border bg-muted/40 p-1" aria-label="每日额度模式">
+          <Button type="button" size="sm" variant="ghost" class="h-8 rounded-sm" :class="form.dailyQuotaMode === 'amount' ? 'bg-background text-foreground shadow-sm hover:bg-background' : 'text-muted-foreground'" :aria-pressed="form.dailyQuotaMode === 'amount'" @click="form.dailyQuotaMode = 'amount'">具体金额</Button>
+          <Button type="button" size="sm" variant="ghost" class="h-8 rounded-sm" :class="form.dailyQuotaMode === 'unlimited' ? 'bg-background text-foreground shadow-sm hover:bg-background' : 'text-muted-foreground'" :aria-pressed="form.dailyQuotaMode === 'unlimited'" @click="form.dailyQuotaMode = 'unlimited'">不限</Button>
+        </div>
+        <div v-if="form.dailyQuotaMode === 'amount'" class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_80px]">
           <Input
             :model-value="form.dailyQuotaAmount ?? ''"
             type="number"
@@ -147,7 +157,11 @@ function stateLabelClass(key: string) {
           <span>每周最大花费额度（美元） <span class="text-xs text-primary">必填</span></span>
           <span v-if="stateLabel('weeklyQuota')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('weeklyQuota')">{{ stateLabel('weeklyQuota') }}</span>
         </span>
-        <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_80px]">
+        <div class="grid grid-cols-2 rounded-md border bg-muted/40 p-1" aria-label="每周额度模式">
+          <Button type="button" size="sm" variant="ghost" class="h-8 rounded-sm" :class="form.weeklyQuotaMode === 'amount' ? 'bg-background text-foreground shadow-sm hover:bg-background' : 'text-muted-foreground'" :aria-pressed="form.weeklyQuotaMode === 'amount'" @click="form.weeklyQuotaMode = 'amount'">具体金额</Button>
+          <Button type="button" size="sm" variant="ghost" class="h-8 rounded-sm" :class="form.weeklyQuotaMode === 'unlimited' ? 'bg-background text-foreground shadow-sm hover:bg-background' : 'text-muted-foreground'" :aria-pressed="form.weeklyQuotaMode === 'unlimited'" @click="form.weeklyQuotaMode = 'unlimited'">不限</Button>
+        </div>
+        <div v-if="form.weeklyQuotaMode === 'amount'" class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_80px]">
           <Input
             :model-value="form.weeklyQuotaAmount ?? ''"
             type="number"
@@ -171,30 +185,30 @@ function stateLabelClass(key: string) {
       </label>
 
       <label id="carpool-task-vpsRegion" class="space-y-2" :class="fieldShellClass('connection')">
-        <span class="font-medium">VPS 区域 <span class="text-xs text-primary">必填</span></span>
+        <span class="font-medium">VPS 区域 <span class="text-xs text-muted-foreground">选填</span></span>
         <Input v-model="form.vpsRegion" maxlength="64" placeholder="例如香港、新加坡、美国西部" />
         <p v-if="errors.connection" class="text-xs text-destructive">{{ errors.connection }}</p>
       </label>
 
       <label class="space-y-2" :class="fieldShellClass('connection')">
-        <span class="font-medium">是否支持国内直连 <span class="text-xs text-primary">必填</span></span>
-        <Select :model-value="booleanSelectValue(form.supportsMainlandChinaDirectConnection)" @update:model-value="value => form.supportsMainlandChinaDirectConnection = selectedBoolean(value)">
+        <span class="font-medium">是否支持国内直连 <span class="text-xs text-muted-foreground">选填</span></span>
+        <Select :model-value="optionalBooleanSelectValue(form.supportsMainlandChinaDirectConnection)" @update:model-value="value => form.supportsMainlandChinaDirectConnection = selectedBoolean(value)">
           <SelectTrigger class="w-full bg-background"><SelectValue placeholder="请选择" /></SelectTrigger>
-          <SelectContent><SelectItem value="true">支持国内直连</SelectItem><SelectItem value="false">不支持国内直连</SelectItem></SelectContent>
+          <SelectContent><SelectItem value="undeclared">未声明</SelectItem><SelectItem value="true">支持国内直连</SelectItem><SelectItem value="false">不支持国内直连</SelectItem></SelectContent>
         </Select>
       </label>
 
       <div id="carpool-task-distribution" class="space-y-3 md:col-span-2" :class="fieldShellClass('distribution')">
         <div class="flex items-center justify-between gap-2 text-sm font-medium">
-          <span>分发方式与管理员账号 <span class="text-xs text-primary">必填</span></span>
+          <span>分发方式 <span class="text-xs text-primary">必填</span></span>
           <span v-if="stateLabel('distribution')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('distribution')">{{ stateLabel('distribution') }}</span>
         </div>
         <div class="grid gap-3 md:grid-cols-2">
           <label class="space-y-2 text-sm">
             <span class="font-medium">分发方式</span>
-            <Select v-model="form.distributionMethod"><SelectTrigger class="w-full bg-background"><SelectValue placeholder="选择分发方式" /></SelectTrigger><SelectContent><SelectItem value="sub2api">Sub2API</SelectItem><SelectItem value="other">其他</SelectItem></SelectContent></Select>
+            <Select v-model="form.distributionMethod"><SelectTrigger class="w-full bg-background"><SelectValue placeholder="选择分发方式" /></SelectTrigger><SelectContent><SelectItem value="sub2api">Sub2API</SelectItem><SelectItem value="account_login">账号登录</SelectItem><SelectItem value="other">其他</SelectItem></SelectContent></Select>
           </label>
-          <label class="space-y-2 text-sm">
+          <label v-if="form.distributionMethod !== 'account_login'" class="space-y-2 text-sm">
             <span class="font-medium">是否提供管理员账号</span>
             <Select :model-value="booleanSelectValue(form.providesAdminAccount)" @update:model-value="value => form.providesAdminAccount = selectedBoolean(value)"><SelectTrigger class="w-full bg-background"><SelectValue placeholder="请选择" /></SelectTrigger><SelectContent><SelectItem value="true">提供管理员账号</SelectItem><SelectItem value="false">不提供管理员账号</SelectItem></SelectContent></Select>
           </label>
@@ -204,7 +218,7 @@ function stateLabelClass(key: string) {
           <Textarea v-model="form.distributionMethodNote" class="min-h-20 bg-background" placeholder="说明站外分发方式，不填写任何账号凭据。" />
         </label>
         <p v-if="errors.distribution" class="text-xs text-destructive">{{ errors.distribution }}</p>
-        <p v-else class="text-xs text-muted-foreground">具体权限与使用细节请站外确认，平台不保存管理员凭据。</p>
+        <p v-else class="text-xs text-muted-foreground">具体权限与使用细节请站外确认，平台不收集或保存账号、密码、登录态或管理员凭据。</p>
       </div>
     </div>
   </PublishSectionCard>
