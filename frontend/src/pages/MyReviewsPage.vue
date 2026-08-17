@@ -110,7 +110,7 @@ function actionLabel(row: ReviewCenterRow) {
 
 <template>
   <div class="space-y-5">
-    <PageTitle title="评价中心" description="管理已完成拼车与 API 订单的双向评价。" />
+    <PageTitle title="评价中心" description="管理已完成 API 订单的双向评价。" />
     <StatusTabs v-model="activeStatus" :items="['待评价', '我发出的', '我收到的', '全部']" />
 
     <Alert>

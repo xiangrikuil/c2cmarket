@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, CalendarClock, CheckCircle2, Clock3, Package, PlayCircle, UserRound } from 'lucide-vue-next'
+import { ArrowRight, CalendarClock, Clock3, Package, PlayCircle, UserRound } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import PageTitle from '@/components/market/PageTitle.vue'
@@ -24,11 +24,9 @@ const { data: applications } = useMyCarpoolApplications({ sort: 'default_buyer' 
 
 const statusGroups: Record<string, CarpoolApplication['status'][]> = {
   待车主处理: ['pending_owner'],
-  待联系: ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation'],
-  服务中: ['active'],
-  待完成: ['pending_completion'],
-  已完成: ['completed'],
-  已取消: ['rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'],
+  有效成员: ['active'],
+  退出或移除: ['cancelled_by_buyer', 'cancelled_by_owner'],
+  已拒绝: ['rejected'],
   纠纷: ['disputed'],
 }
 
@@ -45,16 +43,15 @@ const builtInProductIcons = new Map<string, string>()
 const stats = computed(() => {
   const all = applications.value ?? []
   return [
-    { label: '需要我处理', value: all.filter(item => ['waiting_contact', 'contacted', 'joined_pending_confirmation', 'pending_completion'].includes(item.status)).length },
-    { label: '等待车主', value: all.filter(item => ['pending_owner', 'accepted_reserved'].includes(item.status)).length },
-    { label: '服务中', value: all.filter(item => item.status === 'active').length },
-    { label: '已完成', value: all.filter(item => item.status === 'completed').length },
+    { label: '待车主处理', value: all.filter(item => item.status === 'pending_owner').length },
+    { label: '有效成员', value: all.filter(item => item.status === 'active').length },
+    { label: '已结束', value: all.filter(item => ['cancelled_by_buyer', 'cancelled_by_owner'].includes(item.status)).length },
   ]
 })
 
 function statusVariant(status: CarpoolApplication['status']) {
-  if (['completed', 'active'].includes(status)) return 'default'
-  if (['disputed', 'rejected', 'expired'].includes(status)) return 'secondary'
+  if (status === 'active') return 'default'
+  if (['disputed', 'rejected'].includes(status)) return 'secondary'
   return 'outline'
 }
 
@@ -67,8 +64,7 @@ function productToneClass(product: string) {
 }
 
 function seatLabel(item: CarpoolApplication) {
-  if (item.status === 'pending_owner') return '尚未占用席位'
-  if (item.reservedUntil) return '席位已预留'
+  if (item.status === 'pending_owner') return '等待车主确认'
   if (item.status === 'active') return '正在使用'
   return '查看状态记录'
 }
@@ -81,14 +77,13 @@ function openApplication(event: MouseEvent | KeyboardEvent, id: string) {
 
 <template>
   <div class="my-rides-reference space-y-4">
-    <div class="my-rides-heading rounded-xl border px-5 py-4"><PageTitle title="我的上车" description="查看上车申请、席位预留、联系沟通、服务中、待完成和评价状态。" action-text="继续找车源" action-to="/carpools" /></div>
+    <div class="my-rides-heading rounded-xl border px-5 py-4"><PageTitle title="我的上车" description="查看申请、有效成员关系和退出记录。" action-text="继续找车源" action-to="/carpools" /></div>
     <div class="my-rides-reference-stats">
-      <div><span><PlayCircle /></span><dl><dt>需要我处理</dt><dd>{{ stats[0]?.value ?? 0 }}</dd><small>继续确认当前步骤</small></dl></div>
-      <div><span><Clock3 /></span><dl><dt>等待车主</dt><dd>{{ stats[1]?.value ?? 0 }}</dd><small>等待车主处理</small></dl></div>
-      <div><span><UserRound /></span><dl><dt>服务中</dt><dd>{{ stats[2]?.value ?? 0 }}</dd><small>当前正在使用</small></dl></div>
-      <div><span><CheckCircle2 /></span><dl><dt>已完成</dt><dd>{{ stats[3]?.value ?? 0 }}</dd><small>历史完成记录</small></dl></div>
+      <div><span><PlayCircle /></span><dl><dt>待车主处理</dt><dd>{{ stats[0]?.value ?? 0 }}</dd><small>可确认最新版条件</small></dl></div>
+      <div><span><UserRound /></span><dl><dt>有效成员</dt><dd>{{ stats[1]?.value ?? 0 }}</dd><small>成员关系存续中</small></dl></div>
+      <div><span><Clock3 /></span><dl><dt>已结束</dt><dd>{{ stats[2]?.value ?? 0 }}</dd><small>退出或被移除</small></dl></div>
     </div>
-    <StatusTabs v-model="activeStatus" :items="['全部', '待车主处理', '待联系', '服务中', '待完成', '已完成', '已取消', '纠纷']" />
+    <StatusTabs v-model="activeStatus" :items="['全部', '待车主处理', '有效成员', '退出或移除', '已拒绝', '纠纷']" />
     <SkeletonTable v-if="isLoading" :rows="5" :columns="6" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无上车申请" description="可以继续浏览车源，或切换状态查看历史申请。" />
     <div v-else v-auto-animate="functionalMotion" class="my-transaction-list">
@@ -112,7 +107,7 @@ function openApplication(event: MouseEvent | KeyboardEvent, id: string) {
         </div>
         <div class="my-transaction-metric"><small>月费快照</small><strong>{{ item.snapshot.priceLabel }} ¥{{ item.snapshot.monthlyPriceCny }}</strong></div>
         <div class="my-transaction-owner"><span><UserRound class="h-4 w-4" /></span><div><small>车主</small><strong>{{ item.ownerUsername }}</strong><em>信任等级 {{ item.snapshot.ownerTrustLevel }}</em></div></div>
-        <div class="my-transaction-metric"><small>席位状态</small><strong>{{ seatLabel(item) }}</strong><em v-if="item.reservedUntil">预留至 <LocalTime :value="item.reservedUntil" /></em><em v-else><CalendarClock class="h-3.5 w-3.5" /><LocalTime :value="item.updatedAt" /></em></div>
+        <div class="my-transaction-metric"><small>成员状态</small><strong>{{ seatLabel(item) }}</strong><em><CalendarClock class="h-3.5 w-3.5" /><LocalTime :value="item.updatedAt" /></em></div>
         <div class="my-transaction-state"><Badge :variant="statusVariant(item.status)">{{ getCarpoolApplicationStatusLabel(item.status) }}</Badge><span>{{ getCarpoolApplicationNextAction(item, 'buyer') }}</span></div>
         <ArrowRight class="my-transaction-arrow" />
       </Card>

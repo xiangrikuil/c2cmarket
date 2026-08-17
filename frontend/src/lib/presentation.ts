@@ -3,7 +3,7 @@ export type StatusTone = 'brand' | 'success' | 'waiting' | 'warning' | 'risk' | 
 const statusToneGroups: Record<StatusTone, string[]> = {
   brand: ['active', 'online', '可上车', '进行中'],
   success: ['eligible', 'completed', 'approved', 'published', '已完成', '已交付', '已验证', '可创建订单'],
-  waiting: ['pending_payment', 'payment_submitted', 'payment_issue', 'paid_confirmed', 'delivery_submitted', 'pending_owner', 'accepted_reserved', '待付款', '待确认', '付款待补充', '待交付', '待验收', '待处理'],
+  waiting: ['pending_payment', 'payment_submitted', 'payment_issue', 'paid_confirmed', 'delivery_submitted', 'pending_owner', '待付款', '待确认', '付款待补充', '待交付', '待验收', '待处理'],
   warning: ['paused', 'changes_requested', 'owner_action_required', '待复核', '暂停', '即将超时'],
   risk: ['credential_risk', 'disputed', 'open', 'rejected', 'removed', '纠纷处理中', '风险', '已拒绝', '已下架'],
   complete: ['cancelled', 'closed', 'expired', '已取消', '已关闭', '已过期'],

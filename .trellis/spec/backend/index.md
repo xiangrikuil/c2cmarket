@@ -16,6 +16,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active |
 | [API Contracts](./api-contracts.md) | HTTP, session, CSRF, idempotency, and slice contracts | Active |
+| [Carpool Lightweight Matching](./carpool-lightweight-matching.md) | Direct acceptance, condition snapshots, recruitment control, membership contact access, and review exclusion | Active |
 | [Announcement Publication Lifecycle](./announcement-lifecycle.md) | Immediate/scheduled publication times, atomic persistence, status projection, and user-detail metadata | Active |
 | [API Model Catalog Pricing Sync And Activation](./api-model-catalog-sync.md) | Administrator-reviewed models.dev preview/apply, price versions, activation, and responsive admin workflow | Active |
 | [Identity And Session](./identity-session.md) | linux.do/account/API-market avatar projection, email time presentation, and logout cache consistency | Active |
@@ -55,36 +56,37 @@ Before editing backend code, read:
 
 1. [Directory Structure](./directory-structure.md)
 2. [API Contracts](./api-contracts.md)
-3. [API Model Catalog Pricing Sync And Activation](./api-model-catalog-sync.md) when touching the API model catalog, models.dev ingestion, price versions, model activation, or the public model picker
-4. [Identity And Session](./identity-session.md) for OAuth, profile identity, email time, or logout work
-5. [OAuth Identity And Administrator Bootstrap](./auth-identity.md) when touching OAuth identity ownership, provider bindings, OAuth permissions, or first-admin bootstrap
-6. [Authentication Sessions](./auth-sessions.md) when touching session creation, validation, student registration, capability projection, linux.do linking, cookies, revocation, or expiry
-7. [Administrator Registration Invite Codes](./registration-invite-codes.md) when touching required-code registration, administrator code management, password/OAuth/WeChat account creation, or registration-code cleanup
-8. [Contact Usage Scopes](./contact-usage-scopes.md) when touching contact CRUD, transaction contact selection, seller capabilities, linux.do projection, or contact audit events
-9. [Unified Operation Audit](./operation-audit.md) when touching covered mutations/events, audit/access tables, administrator operation history, privacy projection, cursor filters, or retention semantics
-10. [Restricted-Account Governance Appeals](./account-governance-appeals.md) when touching restricted OAuth, dedicated appeal sessions, account-governance appeals, or their standalone frontend
-11. [Administrator User Directory](./admin-user-directory.md) when touching administrator account discovery, safe detail, status, permissions, or account-governance audit records
-12. [Registered-User Growth And Umami Analytics](./growth-analytics.md) when touching growth KPIs, attribution, analytics identity/events, activity facts, cohorts, or the administrator growth dashboard
-13. [Verification And Data Lifecycle](./verification-data-lifecycle.md) when touching email challenges, idempotency expiry/replay, retention SQL, or maintenance runners
-14. [Limited API Packages](./api-limited-packages.md) when touching fixed packages, package inventory, order snapshots, or expiry
-15. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
-16. [API Health And Quota Policy](./api-health-quota-policy.md) when touching probe authorization, execution, health projection, quota rules, or order snapshots
-17. [Public API Order Numbers](./api-order-public-numbers.md) when touching API order creation, migration, identifiers, DTOs, search, notifications, or visible order references
-18. [API Order Dispute Lifecycle](./api-order-disputes.md) when touching API order dispute states, order projections, messages, remediation, or seller governance
-19. [API Service Promotions](./api-service-promotions.md) when touching promotion schedules, eligibility, public promotion reads, analytics contracts, or administrator promotion actions
-20. [Referral Rewards And Promotion Benefits](./promotion-rewards.md) when touching referral attribution, first-publication rewards, promotion coupons, reward projection, or growth-promotion administration
-21. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
-22. [Database Guidelines](./database-guidelines.md)
-23. [Deployment Contract](./deployment-contract.md) for CI/CD, images, Compose release, backup, or VPS work
-24. [Error Handling](./error-handling.md)
-25. [Quality Guidelines](./quality-guidelines.md)
-26. [Logging Guidelines](./logging-guidelines.md)
-27. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
-28. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
-29. [Runtime Security And Observability](./runtime-operations.md) when touching response headers, `frontend/public/_headers`, `/metrics`, observability labels, or operator-route exposure
-30. [C2CMarket Product Context](../guides/product-context.md)
-31. [Maintainability Contract](../guides/maintainability-contract.md)
-32. [Announcement Publication Lifecycle](./announcement-lifecycle.md) when touching announcement publication, timing, status derivation, audit persistence, Mock parity, or user-detail time metadata
+3. [Carpool Lightweight Matching](./carpool-lightweight-matching.md) when touching carpool listings, applications, memberships, contacts, reviews, reputation, or migration 111+
+4. [API Model Catalog Pricing Sync And Activation](./api-model-catalog-sync.md) when touching the API model catalog, models.dev ingestion, price versions, model activation, or the public model picker
+5. [Identity And Session](./identity-session.md) for OAuth, profile identity, email time, or logout work
+6. [OAuth Identity And Administrator Bootstrap](./auth-identity.md) when touching OAuth identity ownership, provider bindings, OAuth permissions, or first-admin bootstrap
+7. [Authentication Sessions](./auth-sessions.md) when touching session creation, validation, student registration, capability projection, linux.do linking, cookies, revocation, or expiry
+8. [Administrator Registration Invite Codes](./registration-invite-codes.md) when touching required-code registration, administrator code management, password/OAuth/WeChat account creation, or registration-code cleanup
+9. [Contact Usage Scopes](./contact-usage-scopes.md) when touching contact CRUD, transaction contact selection, seller capabilities, linux.do projection, or contact audit events
+10. [Unified Operation Audit](./operation-audit.md) when touching covered mutations/events, audit/access tables, administrator operation history, privacy projection, cursor filters, or retention semantics
+11. [Restricted-Account Governance Appeals](./account-governance-appeals.md) when touching restricted OAuth, dedicated appeal sessions, account-governance appeals, or their standalone frontend
+12. [Administrator User Directory](./admin-user-directory.md) when touching administrator account discovery, safe detail, status, permissions, or account-governance audit records
+13. [Registered-User Growth And Umami Analytics](./growth-analytics.md) when touching growth KPIs, attribution, analytics identity/events, activity facts, cohorts, or the administrator growth dashboard
+14. [Verification And Data Lifecycle](./verification-data-lifecycle.md) when touching email challenges, idempotency expiry/replay, retention SQL, or maintenance runners
+15. [Limited API Packages](./api-limited-packages.md) when touching fixed packages, package inventory, order snapshots, or expiry
+16. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
+17. [API Health And Quota Policy](./api-health-quota-policy.md) when touching probe authorization, execution, health projection, quota rules, or order snapshots
+18. [Public API Order Numbers](./api-order-public-numbers.md) when touching API order creation, migration, identifiers, DTOs, search, notifications, or visible order references
+19. [API Order Dispute Lifecycle](./api-order-disputes.md) when touching API order dispute states, order projections, messages, remediation, or seller governance
+20. [API Service Promotions](./api-service-promotions.md) when touching promotion schedules, eligibility, public promotion reads, analytics contracts, or administrator promotion actions
+21. [Referral Rewards And Promotion Benefits](./promotion-rewards.md) when touching referral attribution, first-publication rewards, promotion coupons, reward projection, or growth-promotion administration
+22. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
+23. [Database Guidelines](./database-guidelines.md)
+24. [Deployment Contract](./deployment-contract.md) for CI/CD, images, Compose release, backup, or VPS work
+25. [Error Handling](./error-handling.md)
+26. [Quality Guidelines](./quality-guidelines.md)
+27. [Logging Guidelines](./logging-guidelines.md)
+28. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
+29. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
+30. [Runtime Security And Observability](./runtime-operations.md) when touching response headers, `frontend/public/_headers`, `/metrics`, observability labels, or operator-route exposure
+31. [C2CMarket Product Context](../guides/product-context.md)
+32. [Maintainability Contract](../guides/maintainability-contract.md)
+33. [Announcement Publication Lifecycle](./announcement-lifecycle.md) when touching announcement publication, timing, status derivation, audit persistence, Mock parity, or user-detail time metadata
 
 ## Quality Check
 

@@ -89,13 +89,13 @@ func TestRegistryMatchesOfficialPriceAdminWriterActions(t *testing.T) {
 	}
 }
 
-func TestRegistryIncludesSystemCarpoolApplicationExpiry(t *testing.T) {
-	definition, ok := LookupAction(SourceDomain, "carpool_application.expired", "carpool_application")
+func TestRegistryIncludesOneStepCarpoolJoin(t *testing.T) {
+	definition, ok := LookupAction(SourceDomain, "carpool_application.joined", "carpool_application")
 	if !ok {
-		t.Fatal("carpool application expiry writer is missing from registry")
+		t.Fatal("carpool joined writer is missing from registry")
 	}
 	kinds := AllowedActorKinds(definition)
-	if len(kinds) != 1 || kinds[0] != ActorSystem {
-		t.Fatalf("carpool application expiry actor kinds = %v, want system", kinds)
+	if len(kinds) != 1 || kinds[0] != ActorUser {
+		t.Fatalf("carpool joined actor kinds = %v, want user", kinds)
 	}
 }

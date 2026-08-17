@@ -16,36 +16,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const carpoolApplicationConfirmationEvidenceSQL = `
-  CROSS JOIN LATERAL (
-    SELECT
-      EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'buyer'
-      ) AS buyer_confirmed,
-      EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'owner'
-      ) AS owner_confirmed
-  ) AS confirmations
-`
-
-const carpoolApplicationResponsibleCancellationPredicate = `(
-  (participants.role = 'buyer' AND application.status = 'cancelled_by_buyer')
-  OR (participants.role = 'seller' AND application.status = 'cancelled_by_owner')
-  OR (
-    application.status = 'expired'
-    AND (
-      (participants.role = 'buyer' AND NOT confirmations.buyer_confirmed)
-      OR (participants.role = 'seller' AND NOT confirmations.owner_confirmed)
-    )
-  )
-)`
-
 const apiOrderCancellationEvidenceSQL = `
   CROSS JOIN LATERAL (
     SELECT
@@ -93,124 +63,34 @@ base AS (
 ),
 terminal_facts AS (
   SELECT
-    requested.user_id,
-    participants.role,
-    'carpool'::text AS scope,
-    CASE
-      WHEN membership.status = 'completed'
-        AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-      THEN 1 ELSE 0
-    END AS completed_count,
-    CASE
-      WHEN membership.status = 'completed'
-        AND membership.ended_at >= $2
-        AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-      THEN 1 ELSE 0
-    END AS completed_count_90d,
-    CASE
-      WHEN (
-        (participants.role = 'buyer' AND membership.status = 'left' AND membership.ended_by_user_id = membership.buyer_user_id)
-        OR (participants.role = 'seller' AND membership.status = 'removed' AND membership.ended_by_user_id = membership.owner_user_id)
-      )
-        AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-      THEN 1 ELSE 0
-    END AS responsible_cancellation_count,
-    CASE
-      WHEN membership.status IN ('left', 'removed')
-        AND NOT COALESCE(
-          (membership.status = 'left' AND membership.ended_by_user_id = membership.buyer_user_id)
-          OR (membership.status = 'removed' AND membership.ended_by_user_id = membership.owner_user_id),
-          false
-        )
-        AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-      THEN 1 ELSE 0
-    END AS unknown_cancellation_count,
-    0 AS unresolved_dispute_count,
-    GREATEST(membership.updated_at, COALESCE(exclusion.updated_at, membership.updated_at)) AS source_updated_at
-  FROM requested
-  JOIN carpool_memberships membership
-    ON membership.buyer_user_id = requested.user_id
-    OR membership.owner_user_id = requested.user_id
-  CROSS JOIN LATERAL (
-    VALUES
-      (membership.buyer_user_id, 'buyer'::text),
-      (membership.owner_user_id, 'seller'::text)
-  ) AS participants(user_id, role)
-  LEFT JOIN reputation_transaction_exclusions exclusion
-    ON exclusion.transaction_type = 'carpool_membership'
-   AND exclusion.transaction_id = membership.id
-  WHERE participants.user_id = requested.user_id
-    AND membership.status IN ('completed', 'left', 'removed')
-
-  UNION ALL
-
-  SELECT
-    requested.user_id,
-    participants.role,
-    'carpool'::text,
-    0,
-    0,
-    CASE
-      WHEN ` + carpoolApplicationResponsibleCancellationPredicate + `
-        AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-      THEN 1 ELSE 0
-    END,
-    CASE
-      WHEN application.status = 'expired'
-        AND confirmations.buyer_confirmed
-        AND confirmations.owner_confirmed
-        AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-      THEN 1 ELSE 0
-    END,
-    0,
-    GREATEST(application.updated_at, COALESCE(exclusion.updated_at, application.updated_at))
-  FROM requested
-  JOIN carpool_applications application
-    ON application.buyer_user_id = requested.user_id
-    OR application.owner_user_id = requested.user_id
-  CROSS JOIN LATERAL (
-    VALUES
-      (application.buyer_user_id, 'buyer'::text),
-      (application.owner_user_id, 'seller'::text)
-  ) AS participants(user_id, role)
-` + carpoolApplicationConfirmationEvidenceSQL + `
-  LEFT JOIN reputation_transaction_exclusions exclusion
-    ON exclusion.transaction_type = 'carpool_application'
-   AND exclusion.transaction_id = application.id
-  WHERE participants.user_id = requested.user_id
-    AND application.status IN ('cancelled_by_buyer', 'cancelled_by_owner', 'expired')
-
-  UNION ALL
-
-  SELECT
-    requested.user_id,
-    participants.role,
-    'api'::text,
+    requested.user_id AS user_id,
+    participants.role AS role,
+    'api'::text AS scope,
     CASE
       WHEN api_order.status = 'completed'
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
-    END,
+    END AS completed_count,
     CASE
       WHEN api_order.status = 'completed'
         AND api_order.completed_at >= $2
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
-    END,
+    END AS completed_count_90d,
     CASE
       WHEN ` + apiOrderResponsibleCancellationPredicate + `
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
-    END,
+    END AS responsible_cancellation_count,
     CASE
       WHEN api_order.status = 'cancelled'
         AND NOT cancellation.known_actor_cancelled
         AND api_order.cancel_reason <> 'payment_timeout'
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
-    END,
-    0,
-    GREATEST(api_order.updated_at, COALESCE(exclusion.updated_at, api_order.updated_at))
+    END AS unknown_cancellation_count,
+    0 AS unresolved_dispute_count,
+    GREATEST(api_order.updated_at, COALESCE(exclusion.updated_at, api_order.updated_at)) AS source_updated_at
   FROM requested
   JOIN api_orders api_order
     ON api_order.buyer_user_id = requested.user_id
@@ -229,12 +109,12 @@ terminal_facts AS (
 ),
 dispute_facts AS (
   SELECT
-    requested.user_id,
+    requested.user_id AS user_id,
     CASE
-      WHEN membership.buyer_user_id = requested.user_id THEN 'buyer'::text
+      WHEN api_order.buyer_user_id = requested.user_id THEN 'buyer'::text
       ELSE 'seller'::text
     END AS role,
-    'carpool'::text AS scope,
+    'api'::text AS scope,
     0 AS completed_count,
     0 AS completed_count_90d,
     0 AS responsible_cancellation_count,
@@ -244,60 +124,6 @@ dispute_facts AS (
       THEN 1 ELSE 0
     END AS unresolved_dispute_count,
     GREATEST(dispute.updated_at, COALESCE(exclusion.updated_at, dispute.updated_at)) AS source_updated_at
-  FROM requested
-  JOIN dispute_cases dispute
-    ON dispute.subject_user_id = requested.user_id
-   AND dispute.target_type = 'carpool_membership'
-	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
-  JOIN carpool_memberships membership
-    ON dispute.target_id = membership.id::text
-  LEFT JOIN reputation_transaction_exclusions exclusion
-    ON exclusion.transaction_type = 'carpool_membership'
-   AND exclusion.transaction_id = membership.id
-  WHERE requested.user_id IN (membership.buyer_user_id, membership.owner_user_id)
-
-  UNION ALL
-
-  SELECT
-    requested.user_id,
-    CASE
-      WHEN application.buyer_user_id = requested.user_id THEN 'buyer'::text
-      ELSE 'seller'::text
-    END,
-    'carpool'::text,
-    0, 0, 0, 0,
-    CASE
-      WHEN exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL
-      THEN 1 ELSE 0
-    END,
-    GREATEST(dispute.updated_at, COALESCE(exclusion.updated_at, dispute.updated_at))
-  FROM requested
-  JOIN dispute_cases dispute
-    ON dispute.subject_user_id = requested.user_id
-   AND dispute.target_type = 'carpool_application'
-	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
-  JOIN carpool_applications application
-    ON dispute.target_id = application.id::text
-  LEFT JOIN reputation_transaction_exclusions exclusion
-    ON exclusion.transaction_type = 'carpool_application'
-   AND exclusion.transaction_id = application.id
-  WHERE requested.user_id IN (application.buyer_user_id, application.owner_user_id)
-
-  UNION ALL
-
-  SELECT
-    requested.user_id,
-    CASE
-      WHEN api_order.buyer_user_id = requested.user_id THEN 'buyer'::text
-      ELSE 'seller'::text
-    END,
-    'api'::text,
-    0, 0, 0, 0,
-    CASE
-      WHEN exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL
-      THEN 1 ELSE 0
-    END,
-    GREATEST(dispute.updated_at, COALESCE(exclusion.updated_at, dispute.updated_at))
   FROM requested
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
@@ -375,34 +201,30 @@ review_candidates AS (
   SELECT
     review.reviewee_user_id AS user_id,
     review.reviewee_role AS role,
-    CASE review.transaction_type
-      WHEN 'carpool_membership' THEN 'carpool'::text
-      WHEN 'api_order' THEN 'api'::text
-    END AS source_scope,
+    'api'::text AS source_scope,
     review.rating,
     review.tags,
 	    review.status,
 	    review.review_deadline_at,
-	    CASE WHEN review.transaction_type = 'api_order' THEN
-	      NOT EXISTS (
-	        SELECT 1
-	        FROM api_orders order_row
-	        WHERE order_row.id = review.api_order_id
-	          AND order_row.commercial_outcome IN ('normal_fulfillment', 'full_refund', 'partial_refund', 'continued_fulfillment')
-	          AND order_row.commercial_outcome_updated_at IS NOT NULL
-	          AND NOT EXISTS (
-	            SELECT 1 FROM dispute_cases dispute
-	            WHERE dispute.api_order_id = order_row.id AND dispute.active = true
-	          )
-	      )
-	    ELSE false END AS publication_paused,
+	    NOT EXISTS (
+	      SELECT 1
+	      FROM api_orders order_row
+	      WHERE order_row.id = review.api_order_id
+	        AND order_row.commercial_outcome IN ('normal_fulfillment', 'full_refund', 'partial_refund', 'continued_fulfillment')
+	        AND order_row.commercial_outcome_updated_at IS NOT NULL
+	        AND NOT EXISTS (
+	          SELECT 1 FROM dispute_cases dispute
+	          WHERE dispute.api_order_id = order_row.id AND dispute.active = true
+	        )
+	    ) AS publication_paused,
     COALESCE(review.visible_at, review.review_deadline_at) AS effective_visible_at,
     GREATEST(review.updated_at, COALESCE(exclusion.updated_at, review.updated_at)) AS source_updated_at
   FROM transaction_reviews review
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = review.transaction_type
-   AND exclusion.transaction_id = COALESCE(review.carpool_membership_id, review.api_order_id)
-  WHERE review.status <> 'removed'
+   AND exclusion.transaction_id = review.api_order_id
+	  WHERE review.status <> 'removed'
+	    AND review.transaction_type = 'api_order'
     AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
 ),
 review_events AS (
@@ -574,36 +396,11 @@ platform_review_stats AS (
 ),
 completion_candidates AS (
   SELECT
-    participants.user_id,
-    participants.role,
-    'carpool'::text AS source_scope,
-    COALESCE(membership.ended_at, membership.updated_at) AS completed_at,
-    GREATEST(membership.updated_at, COALESCE(exclusion.updated_at, membership.updated_at)) AS source_updated_at
-  FROM requested
-  JOIN carpool_memberships membership
-    ON membership.buyer_user_id = requested.user_id
-    OR membership.owner_user_id = requested.user_id
-  CROSS JOIN LATERAL (
-    VALUES
-      (membership.buyer_user_id, 'buyer'::text),
-      (membership.owner_user_id, 'seller'::text)
-  ) AS participants(user_id, role)
-  LEFT JOIN reputation_transaction_exclusions exclusion
-    ON exclusion.transaction_type = 'carpool_membership'
-   AND exclusion.transaction_id = membership.id
-  WHERE participants.user_id = requested.user_id
-    AND membership.status = 'completed'
-    AND COALESCE(membership.ended_at, membership.updated_at) >= $2 - interval '90 days'
-    AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-
-  UNION ALL
-
-  SELECT
-    participants.user_id,
-    participants.role,
-    'api'::text,
-    api_order.completed_at,
-    GREATEST(api_order.updated_at, COALESCE(exclusion.updated_at, api_order.updated_at))
+    participants.user_id AS user_id,
+    participants.role AS role,
+    'api'::text AS source_scope,
+    api_order.completed_at AS completed_at,
+    GREATEST(api_order.updated_at, COALESCE(exclusion.updated_at, api_order.updated_at)) AS source_updated_at
   FROM requested
   JOIN api_orders api_order
     ON api_order.buyer_user_id = requested.user_id
@@ -635,75 +432,16 @@ completion_boundaries AS (
   GROUP BY completion_candidates.user_id, completion_candidates.role, scopes.scope
 ),
 fault_candidates AS (
-  SELECT
-    participants.user_id,
-    participants.role,
-    'carpool'::text AS source_scope,
-    COALESCE(membership.ended_at, membership.updated_at) AS fault_at,
-    GREATEST(membership.updated_at, COALESCE(exclusion.updated_at, membership.updated_at)) AS source_updated_at
-  FROM requested
-  JOIN carpool_memberships membership
-    ON membership.buyer_user_id = requested.user_id
-    OR membership.owner_user_id = requested.user_id
-  CROSS JOIN LATERAL (
-    VALUES
-      (membership.buyer_user_id, 'buyer'::text),
-      (membership.owner_user_id, 'seller'::text)
-  ) AS participants(user_id, role)
-  LEFT JOIN reputation_transaction_exclusions exclusion
-    ON exclusion.transaction_type = 'carpool_membership'
-   AND exclusion.transaction_id = membership.id
-  WHERE participants.user_id = requested.user_id
-    AND COALESCE(membership.ended_at, membership.updated_at) >= $2 - interval '90 days'
-    AND (
-      (participants.role = 'buyer'
-        AND membership.status = 'left'
-        AND membership.ended_by_user_id = membership.buyer_user_id)
-      OR
-      (participants.role = 'seller'
-        AND membership.status = 'removed'
-        AND membership.ended_by_user_id = membership.owner_user_id)
-    )
-    AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-
-  UNION ALL
-
-  SELECT
-    participants.user_id,
-    participants.role,
-    'carpool'::text,
-    application.updated_at,
-    GREATEST(application.updated_at, COALESCE(exclusion.updated_at, application.updated_at))
-  FROM requested
-  JOIN carpool_applications application
-    ON application.buyer_user_id = requested.user_id
-    OR application.owner_user_id = requested.user_id
-  CROSS JOIN LATERAL (
-    VALUES
-      (application.buyer_user_id, 'buyer'::text),
-      (application.owner_user_id, 'seller'::text)
-  ) AS participants(user_id, role)
-` + carpoolApplicationConfirmationEvidenceSQL + `
-  LEFT JOIN reputation_transaction_exclusions exclusion
-    ON exclusion.transaction_type = 'carpool_application'
-   AND exclusion.transaction_id = application.id
-  WHERE participants.user_id = requested.user_id
-    AND application.updated_at >= $2 - interval '90 days'
-    AND ` + carpoolApplicationResponsibleCancellationPredicate + `
-    AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
-
-  UNION ALL
-
   SELECT DISTINCT
-    participants.user_id,
-    participants.role,
-    'api'::text,
-    COALESCE(cancellation.actor_cancelled_at, api_order.cancelled_at, api_order.updated_at),
+    participants.user_id AS user_id,
+    participants.role AS role,
+    'api'::text AS source_scope,
+    COALESCE(cancellation.actor_cancelled_at, api_order.cancelled_at, api_order.updated_at) AS fault_at,
     GREATEST(
       api_order.updated_at,
       cancellation.actor_cancelled_at,
       COALESCE(exclusion.updated_at, api_order.updated_at)
-    )
+    ) AS source_updated_at
   FROM requested
   JOIN api_orders api_order
     ON api_order.buyer_user_id = requested.user_id
@@ -755,17 +493,10 @@ outcome_candidates AS (
   ) AS roles
   CROSS JOIN LATERAL (
     SELECT scope
-    FROM unnest(
-      CASE
-        WHEN dispute.target_type IN ('carpool_application', 'carpool_membership')
-          THEN ARRAY['carpool'::text, 'overall'::text]
-        WHEN dispute.target_type IN ('api_purchase_intent', 'api_order')
-          THEN ARRAY['api'::text, 'overall'::text]
-        ELSE ARRAY['overall'::text]
-      END
-    ) AS scope_values(scope)
+    FROM unnest(ARRAY['api'::text, 'overall'::text]) AS scope_values(scope)
   ) AS scopes
   WHERE outcome.status = 'active'
+    AND dispute.target_type IN ('api_purchase_intent', 'api_order')
     AND outcome.responsibility IN ('responsible', 'shared')
     AND (
       dispute.target_type <> 'api_order'
@@ -806,6 +537,10 @@ restriction_candidates AS (
     restriction.updated_at AS source_updated_at
   FROM user_restrictions restriction
   JOIN requested ON requested.user_id = restriction.user_id
+  LEFT JOIN dispute_reputation_outcomes source_outcome
+    ON source_outcome.id = restriction.source_dispute_outcome_id
+  LEFT JOIN dispute_cases source_dispute
+    ON source_dispute.id = source_outcome.dispute_case_id
   CROSS JOIN LATERAL (
     SELECT role
     FROM (VALUES ('buyer'::text), ('seller'::text)) AS role_values(role)
@@ -815,16 +550,19 @@ restriction_candidates AS (
     SELECT scope
     FROM unnest(
       CASE
-        WHEN restriction.action_code IN ('carpool_publish', 'carpool_apply', 'carpool_accept')
-          THEN ARRAY['carpool'::text, 'overall'::text]
         WHEN restriction.action_code IN ('api_service_publish', 'api_order_create')
           THEN ARRAY['api'::text, 'overall'::text]
-        ELSE ARRAY['carpool'::text, 'api'::text, 'overall'::text]
+        ELSE ARRAY['overall'::text]
       END
     ) AS scope_values(scope)
   ) AS scopes
   WHERE restriction.revoked_at IS NULL
     AND (restriction.ends_at IS NULL OR $2 < restriction.ends_at)
+    AND restriction.action_code NOT IN ('carpool_publish', 'carpool_apply', 'carpool_accept')
+    AND (
+      source_dispute.id IS NULL
+      OR source_dispute.target_type NOT IN ('carpool_application', 'carpool_membership')
+    )
 ),
 restriction_stats AS (
   SELECT

@@ -18,7 +18,7 @@ func TestListingReviewIdempotencyAppendsOneMemoryAuditEvent(t *testing.T) {
 	listingID := uuid.NewString()
 	service.listings[listingID] = Listing{
 		ID: listingID, OwnerUserID: uuid.NewString(), Status: ListingStatusActive,
-		Version: 1, CreatedAt: now, UpdatedAt: now,
+		GovernanceStatus: "clear", Version: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	service.listingOrder = append(service.listingOrder, listingID)
 	admin := auth.User{ID: uuid.NewString(), IsAdmin: true}
@@ -36,7 +36,7 @@ func TestListingReviewIdempotencyAppendsOneMemoryAuditEvent(t *testing.T) {
 	listing, _, changed, appErr := service.UpdateListingReviewStatusWithIdempotency(
 		context.Background(), admin, "pause-route", "pause-key", "pause-hash", input, buildCompletion,
 	)
-	if appErr != nil || !changed || listing.Status != ListingStatusPaused {
+	if appErr != nil || !changed || listing.Status != ListingStatusActive || listing.GovernanceStatus != "removed" {
 		t.Fatalf("pause listing: listing=%+v changed=%t error=%v", listing, changed, appErr)
 	}
 	_, _, changed, appErr = service.UpdateListingReviewStatusWithIdempotency(
@@ -47,7 +47,8 @@ func TestListingReviewIdempotencyAppendsOneMemoryAuditEvent(t *testing.T) {
 	}
 	events := service.ListingAuditEvents()
 	if len(events) != 1 || events[0].EventType != "carpool_listing.paused" ||
-		events[0].ActorKind != "admin" || events[0].RequestID != "pause-request" || events[0].AggregateVersion != 2 {
+		events[0].ActorKind != "admin" || events[0].RequestID != "pause-request" || events[0].AggregateVersion != 2 ||
+		events[0].Status != ListingStatusActive || events[0].GovernanceStatus != "removed" {
 		t.Fatalf("unexpected listing audit events: %+v", events)
 	}
 }

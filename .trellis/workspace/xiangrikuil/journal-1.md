@@ -1948,3 +1948,25 @@ Consolidated message, reputation, and support workspace entries; added authorita
 ### Status
 
 [OK] **Completed**
+
+
+## Session 65: 拼车一次性撮合与完整车源条件
+
+**Date**: 2026-08-17
+**Task**: 拼车一次性撮合与完整车源条件
+**Package**: frontend
+**Branch**: `codex/carpool-lightweight-matching`
+
+### Summary
+
+移除拼车预留、双边确认、完成与评价链路；车主接受即创建有效成员和成员期联系；新增条件版本/快照与显式招募控制；统一 USD 日周最大花费额度并保留官方重置；完成全量测试、真实 PostgreSQL smoke 和规范同步。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `667f213` | (see git log) |
+
+### Status
+
+[OK] **Completed**

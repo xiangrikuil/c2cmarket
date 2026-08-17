@@ -58,7 +58,7 @@ function stateLabelClass() {
   <PublishSectionCard
     :index="6"
     title="规则说明与买家须知"
-    description="写清付款周期、退款规则、名额变化、中转或托管边界、Web 端支持、禁止用途和车主承诺响应；每天与每周额度已在基础信息中结构化填写。"
+    description="写清付款周期、退款规则、名额变化、中转或托管边界、Web 端支持、禁止用途和车主承诺响应；每日与每周最大花费额度已在基础信息中结构化填写。"
   >
     <div id="carpool-task-rulesNote" :class="shellClass()">
       <div class="mb-2 flex items-center justify-between gap-2">
@@ -69,7 +69,7 @@ function stateLabelClass() {
         v-model="form.rulesNote"
         class="min-h-32"
         maxlength="1200"
-        placeholder="建议说明：付款周期、价格锁定、退款规则、名额变化；中转方式（VPS 转发 / 家宽转发 / 成员邀请）；家宽地区（只写国家或地区，不写具体 IP）；是否支持 Sub2API 托管管理（仅站外确认，平台不收集凭据）；是否可用 Web 端；车主承诺响应。每天与每周额度请使用基础信息中的结构化字段，不要填写账号密码、管理员凭据、session token、refresh token、API Key、付款二维码或银行卡号。"
+        placeholder="建议说明：付款周期、价格锁定、退款规则、名额变化；中转方式（VPS 转发 / 家宽转发 / 成员邀请）；家宽地区（只写国家或地区，不写具体 IP）；是否支持 Sub2API 托管管理（仅站外确认，平台不收集凭据）；是否可用 Web 端；车主承诺响应。每日与每周最大花费额度请使用基础信息中的结构化字段，不要填写账号密码、管理员凭据、session token、refresh token、API Key、付款二维码或银行卡号。"
       />
       <div class="mt-2 flex items-center justify-between gap-3">
         <p v-if="errors.rulesNote" class="text-xs text-destructive">{{ errors.rulesNote }}</p>

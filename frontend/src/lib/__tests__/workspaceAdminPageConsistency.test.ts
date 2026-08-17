@@ -156,9 +156,9 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(apiServiceOwnerMetrics).toContain('核心经营指标')
   })
 
-  it('经营队列默认突出待处理、临近超时和下一动作', () => {
+  it('经营队列默认突出待处理、有效成员和下一动作', () => {
     expect(merchantCarpools).toContain("const activeStatus = ref('待处理')")
-    expect(merchantCarpools).toContain("label: '临近超时'")
+    expect(merchantCarpools).toContain("label: '有效成员'")
     expect(merchantCarpools).toContain('getCarpoolApplicationNextAction')
     expect(merchantOrders).toContain("sort: 'default_merchant'")
     expect(merchantOrders).toContain('待确认收款')

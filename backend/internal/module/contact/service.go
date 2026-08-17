@@ -725,7 +725,7 @@ func (s *Service) ReadSession(ctx context.Context, sessionID, viewerUserID, requ
 	if !ok {
 		return ContactSessionView{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact session not found", "联系窗口不存在。")
 	}
-	if session.Revoked || !s.now().Before(session.EndsAt) {
+	if session.Revoked || (!session.EndsAt.IsZero() && !s.now().Before(session.EndsAt)) {
 		return ContactSessionView{}, domain.NewError(http.StatusConflict, domain.CodeContactWindowExpired, "Contact window expired", "联系窗口已过期。")
 	}
 	if viewerUserID != session.BuyerUserID && viewerUserID != session.SellerUserID {
@@ -755,9 +755,14 @@ func (s *Service) ReadSession(ctx context.Context, sessionID, viewerUserID, requ
 	session.ContactAccessLogIDs = append(session.ContactAccessLogIDs, logEntry.ID)
 	s.sessions[session.ID] = session
 
+	var endsAt *time.Time
+	if !session.EndsAt.IsZero() {
+		value := session.EndsAt
+		endsAt = &value
+	}
 	return ContactSessionView{
 		SessionID: session.ID,
-		EndsAt:    session.EndsAt,
+		EndsAt:    endsAt,
 		Items: []ContactItemView{
 			{
 				Side:        "buyer",
@@ -877,7 +882,7 @@ func (s *Service) RevokeSession(sessionID string, now time.Time) {
 		return
 	}
 	session.Revoked = true
-	if now.Before(session.EndsAt) {
+	if session.EndsAt.IsZero() || now.Before(session.EndsAt) {
 		session.EndsAt = now
 	}
 	s.sessions[session.ID] = session

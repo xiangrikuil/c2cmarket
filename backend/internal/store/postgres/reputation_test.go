@@ -15,13 +15,8 @@ func TestAggregateReputationFactsSQLUsesTruthfulTerminalStatesAndBatchInput(t *t
 		"SELECT DISTINCT unnest($1::uuid[]) AS user_id",
 		"CROSS JOIN (VALUES ('buyer'), ('seller'))",
 		"CROSS JOIN (VALUES ('overall'), ('carpool'), ('api'))",
-		"membership.status = 'completed'",
 		"api_order.status = 'completed'",
 		"api_order.completed_at >= $2",
-		"application.status = 'cancelled_by_buyer'",
-		"application.status = 'cancelled_by_owner'",
-		"membership.ended_by_user_id = membership.buyer_user_id",
-		"membership.ended_by_user_id = membership.owner_user_id",
 		"event.event_type = 'api_order.cancelled'",
 		"dispute.status IN ('negotiating', 'open', 'waiting_info')",
 		"ON dispute.subject_user_id = requested.user_id",
@@ -35,8 +30,12 @@ func TestAggregateReputationFactsSQLUsesTruthfulTerminalStatesAndBatchInput(t *t
 	for _, forbidden := range []string{
 		"api_purchase_intents.status = 'completed'",
 		"carpool_listings.status = 'completed'",
+		"FROM carpool_applications",
+		"FROM carpool_memberships",
 		"dispute.primary_user_id = requested.user_id",
 		"dispute.counterparty_user_id = requested.user_id",
+		"FROM carpool_join_confirmations confirmation",
+		"AND false",
 	} {
 		if strings.Contains(aggregateReputationFactsSQL, forbidden) {
 			t.Fatalf("aggregate reputation SQL contains false completion source %q", forbidden)
@@ -47,16 +46,34 @@ func TestAggregateReputationFactsSQLUsesTruthfulTerminalStatesAndBatchInput(t *t
 func TestAggregateReputationFactsSQLAttributesControllableTimeoutsToResponsibleRole(t *testing.T) {
 	t.Parallel()
 
-	for _, required := range []string{
-		"api_order.cancel_reason = 'payment_timeout'",
-		"FROM carpool_join_confirmations confirmation",
-		"confirmation.actor_role = 'buyer'",
-		"confirmation.actor_role = 'owner'",
-		"participants.role = 'buyer' AND NOT confirmations.buyer_confirmed",
-		"participants.role = 'seller' AND NOT confirmations.owner_confirmed",
-	} {
+	for _, required := range []string{"api_order.cancel_reason = 'payment_timeout'"} {
 		if !strings.Contains(aggregateReputationFactsSQL, required) {
 			t.Fatalf("aggregate reputation SQL missing responsibility evidence %q", required)
+		}
+	}
+}
+
+func TestAggregateReputationEngineFactsSQLExcludesCarpoolSources(t *testing.T) {
+	t.Parallel()
+
+	for _, forbidden := range []string{
+		"FROM carpool_applications",
+		"FROM carpool_memberships",
+		"WHEN 'carpool_membership'",
+		"ARRAY['carpool'::text",
+		"AND false",
+	} {
+		if strings.Contains(aggregateReputationEngineFactsSQL, forbidden) {
+			t.Fatalf("reputation engine SQL contains retired carpool source %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"review.transaction_type = 'api_order'",
+		"dispute.target_type IN ('api_purchase_intent', 'api_order')",
+		"restriction.action_code NOT IN ('carpool_publish', 'carpool_apply', 'carpool_accept')",
+	} {
+		if !strings.Contains(aggregateReputationEngineFactsSQL, required) {
+			t.Fatalf("reputation engine SQL missing carpool exclusion guard %q", required)
 		}
 	}
 }

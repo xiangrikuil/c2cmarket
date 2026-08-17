@@ -75,7 +75,7 @@ func TestRestrictedCarpoolSessionCannotConfirmJoin(t *testing.T) {
 	request.AddCookie(&http.Cookie{Name: middleware.RestrictedBusinessSessionCookieName, Value: "restricted-only"})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
+	if response.Code != http.StatusNotFound {
 		t.Fatalf("restricted session reached confirm-join status=%d body=%s", response.Code, response.Body.String())
 	}
 }

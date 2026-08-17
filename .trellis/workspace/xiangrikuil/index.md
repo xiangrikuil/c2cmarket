@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 64
-- **Last Active**: 2026-08-16
+- **Total Sessions**: 65
+- **Last Active**: 2026-08-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1950 | Active |
+| `journal-1.md` | ~1972 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 65 | 2026-08-17 | 拼车一次性撮合与完整车源条件 | `667f213` | `codex/carpool-lightweight-matching` |
 | 64 | 2026-08-16 | API 市场卡片身份、模型与图标修复 | `bfdffae` | `staging` |
 | 63 | 2026-08-16 | Consolidate workspace navigation | `59c89c4` | `staging` |
 | 62 | 2026-08-16 | 公告分级强触达与回执闭环 | `54a8cf0` | `staging` |

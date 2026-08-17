@@ -157,7 +157,7 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 			buyer_seat_capacity, active_buyer_members, status, policy_version,
 			created_at, updated_at
 		) VALUES ($1, $2, $3, $4, '受限拼车', '受限业务连续性测试', '双方站外确认', 20,
-		          2, 2, 'active', 1, $5, $5)
+		          2, 1, 'active', 1, $5, $5)
 	`, listingID, owner.ID, productPlanID, ownerContactID, joinedAt.Add(-time.Hour)); err != nil {
 		t.Fatalf("insert restricted carpool listing: %v", err)
 	}
@@ -165,9 +165,12 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 		INSERT INTO carpool_applications (
 			id, carpool_listing_id, buyer_user_id, owner_user_id, product_plan_id,
 			buyer_contact_method_id, status, listing_title_snapshot,
-			price_monthly_cny_snapshot, policy_version_snapshot, joined_at,
+			price_monthly_cny_snapshot, policy_version_snapshot,
+			conditions_version_snapshot, conditions_snapshot,
+			accepted_conditions_version, conditions_accepted_at, joined_at,
 			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 'joined', '受限拼车', 20, 1, $7, $7, $7)`
+		) VALUES ($1, $2, $3, $4, $5, $6, 'joined', '受限拼车', 20, 1,
+		          1, '{}'::jsonb, 1, $7, $7, $7, $7)`
 	if _, err := store.pool.Exec(ctx, insertApplication, applicationID, listingID, buyer.ID, owner.ID, productPlanID, buyerContactID, joinedAt); err != nil {
 		t.Fatalf("insert preserved carpool application: %v", err)
 	}
@@ -179,13 +182,14 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 		INSERT INTO carpool_memberships (
 			id, carpool_listing_id, carpool_application_id, buyer_user_id, owner_user_id,
 			product_plan_id, status, price_monthly_cny_snapshot,
-			policy_version_snapshot, joined_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 'active', 20, 1, $7, $7, $7)`
+			policy_version_snapshot, conditions_version_snapshot, conditions_snapshot,
+			joined_at, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, 'active', 20, 1, 1, '{}'::jsonb, $7, $7, $7)`
 	if _, err := store.pool.Exec(ctx, insertMembership, membershipID, listingID, applicationID, buyer.ID, owner.ID, productPlanID, joinedAt); err != nil {
 		t.Fatalf("insert preserved carpool membership: %v", err)
 	}
 	unlinkedInsertMembership := strings.Replace(insertMembership, "status, price_monthly_cny_snapshot,", "status, ended_at, ended_reason, price_monthly_cny_snapshot,", 1)
-	unlinkedInsertMembership = strings.Replace(unlinkedInsertMembership, "'active', 20", "'completed', $8, 'completed', 20", 1)
+	unlinkedInsertMembership = strings.Replace(unlinkedInsertMembership, "'active', 20", "'left', $8, 'left', 20", 1)
 	if _, err := store.pool.Exec(ctx, unlinkedInsertMembership, unlinkedMembershipID, listingID, secondApplicationID, buyer.ID, owner.ID, productPlanID, joinedAt.Add(time.Minute), joinedAt.Add(2*time.Minute)); err != nil {
 		t.Fatalf("insert unlinked carpool membership: %v", err)
 	}
@@ -216,7 +220,6 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 		cleanupCtx := context.Background()
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM notifications WHERE target_type = 'carpool_membership' AND target_id IN ($1, $2)`, membershipID, unlinkedMembershipID)
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM domain_events WHERE aggregate_type = 'carpool_membership' AND aggregate_id IN ($1, $2)`, membershipID, unlinkedMembershipID)
-		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM carpool_completion_confirmations WHERE carpool_membership_id IN ($1, $2)`, membershipID, unlinkedMembershipID)
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM idempotency_keys WHERE user_id = $1`, buyer.ID)
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM account_governance_disposition_actions WHERE disposition_id = $1`, dispositionID)
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM account_governance_resource_dispositions WHERE id = $1`, dispositionID)
@@ -238,16 +241,16 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 	if _, appErr := store.GetCarpoolMembershipForActor(ctx, actor, unlinkedMembershipID, carpool.JoinActorBuyer); appErr == nil || appErr.Code != domain.CodeObjectNotFound {
 		t.Fatalf("unlinked restricted membership was visible: %v", appErr)
 	}
-	entry := idempotency.Entry{UserID: buyer.ID, RouteKey: "restricted-carpool-complete", Key: "restricted-carpool-complete", RequestHash: "restricted-carpool-complete", State: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	entry := idempotency.Entry{UserID: buyer.ID, RouteKey: "restricted-carpool-leave", Key: "restricted-carpool-leave", RequestHash: "restricted-carpool-leave", State: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 	if _, err := store.pool.Exec(ctx, `INSERT INTO idempotency_keys (id, user_id, route_key, idempotency_key, request_hash, status, response_body_cache_allowed, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, 'processing', false, $6, $7)`, uuid.NewString(), entry.UserID, entry.RouteKey, entry.Key, entry.RequestHash, entry.ExpiresAt, now); err != nil {
 		t.Fatalf("insert restricted carpool idempotency: %v", err)
 	}
-	input := carpool.ConfirmMembershipCompleteInput{MembershipID: membershipID, ActorUserID: buyer.ID, ActorRole: carpool.JoinActorBuyer, ActorAudience: auth.SessionAudienceRestrictedBusiness, GovernanceActionID: actionID, GovernanceVersion: 2, RestrictionEffectiveAt: effectiveAt, ExpectedVersion: memberships[0].Version, RequestID: "restricted-carpool-complete"}
-	completed, _, appErr := store.ConfirmCarpoolMembershipCompleteWithIdempotency(ctx, entry, input, now, func(value carpool.Membership) (idempotency.Completion, *domain.AppError) {
+	input := carpool.EndMembershipInput{MembershipID: membershipID, ActorUserID: buyer.ID, ActorRole: carpool.JoinActorBuyer, ActorAudience: auth.SessionAudienceRestrictedBusiness, GovernanceActionID: actionID, GovernanceVersion: 2, RestrictionEffectiveAt: effectiveAt, TargetStatus: carpool.MembershipStatusLeft, Reason: "受限账号退出拼车", ExpectedVersion: memberships[0].Version, RequestID: "restricted-carpool-leave"}
+	ended, _, appErr := store.EndCarpoolMembershipWithIdempotency(ctx, entry, input, now, func(value carpool.Membership) (idempotency.Completion, *domain.AppError) {
 		return idempotency.Completion{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{}`), ResourceType: "carpool_membership", ResourceID: value.ID}, nil
 	})
-	if appErr != nil || completed.BuyerCompletedAt == nil || completed.Status != carpool.MembershipStatusActive {
-		t.Fatalf("restricted carpool completion=%+v err=%v", completed, appErr)
+	if appErr != nil || ended.Status != carpool.MembershipStatusLeft || ended.EndedAt == nil {
+		t.Fatalf("restricted carpool leave=%+v err=%v", ended, appErr)
 	}
 	stale := actor
 	stale.GovernanceVersion = 1

@@ -12,7 +12,7 @@ import (
 
 func TestTransactionReviewsRemainSealedUntilBothParticipantsSubmit(t *testing.T) {
 	now := time.Date(2026, 7, 24, 4, 0, 0, 0, time.UTC)
-	transaction := testReviewTransaction(TransactionCarpoolMembership, now.Add(-time.Hour))
+	transaction := testReviewTransaction(TransactionAPIOrder, now.Add(-time.Hour))
 	service := NewService(nil, nil, staticTransactionResolver{transactions: []Transaction{transaction}}, nil, func() time.Time { return now })
 
 	buyerCompletion, appErr := service.SubmitWithIdempotency(context.Background(), transaction.BuyerUserID, "buyer-create", "buyer-key", "buyer-hash", SubmitReviewInput{

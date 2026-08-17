@@ -143,12 +143,12 @@ describe('个人中心待办聚合', () => {
   it('只保留当前买家或商户需要行动的真实状态', () => {
     const tasks = buildPendingTasks({
       buyerCarpoolApplications: [
-        carpoolApplication('ride-buyer-action', 'accepted_reserved', '2026-07-26 09:00'),
-        carpoolApplication('ride-buyer-wait', 'joined_pending_confirmation', '2026-07-26 10:00'),
+        carpoolApplication('ride-buyer-action', 'disputed', '2026-07-26 09:00'),
+        carpoolApplication('ride-buyer-wait', 'active', '2026-07-26 10:00'),
       ],
       ownerCarpoolApplications: [
         carpoolApplication('ride-owner-action', 'pending_owner', '2026-07-26 11:00'),
-        carpoolApplication('ride-owner-wait', 'accepted_reserved', '2026-07-26 12:00'),
+        carpoolApplication('ride-owner-wait', 'active', '2026-07-26 12:00'),
       ],
       buyerApiOrders: [
         apiOrder('order-buyer-action', 'payment_issue', '2026-07-26 13:00'),
@@ -161,10 +161,10 @@ describe('个人中心待办聚合', () => {
     })
 
     expect(tasks.map(item => item.id)).toEqual([
+      'ride-buyer-action',
       'order-buyer-action',
       'order-merchant-action',
       'ride-owner-action',
-      'ride-buyer-action',
     ])
     expect(tasks.find(item => item.id === 'ride-owner-action')?.to).toBe('/merchant/carpool-applications/ride-owner-action')
     expect(tasks.find(item => item.id === 'order-buyer-action')).toMatchObject({
@@ -182,7 +182,7 @@ describe('个人中心待办聚合', () => {
       buyerCarpoolApplications: [
         carpoolApplication('dispute-old', 'disputed', '2026-07-25 10:00'),
         carpoolApplication('dispute-new', 'disputed', '2026-07-26 10:00'),
-        carpoolApplication('buyer-payment-later', 'accepted_reserved', '2026-07-26 12:00'),
+        carpoolApplication('buyer-active', 'active', '2026-07-26 12:00'),
       ],
       ownerCarpoolApplications: [],
       buyerApiOrders: [apiOrder('payment-issue', 'payment_issue', '2026-07-26 11:00')],
@@ -193,7 +193,6 @@ describe('个人中心待办聚合', () => {
       'dispute-new',
       'dispute-old',
       'payment-issue',
-      'buyer-payment-later',
     ])
   })
 })

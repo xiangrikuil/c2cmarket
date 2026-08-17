@@ -66,7 +66,7 @@ func TestCatalogRiskHoldPausesActionsAndAutomaticMaterialization(t *testing.T) {
 	}
 }
 
-func TestCarpoolCatalogGovernanceReleasesOnlyReservedApplications(t *testing.T) {
+func TestCarpoolCatalogGovernanceRemovesListingWithoutRewritingApplications(t *testing.T) {
 	t.Parallel()
 
 	carpoolSource, err := os.ReadFile("carpool.go")
@@ -77,11 +77,11 @@ func TestCarpoolCatalogGovernanceReleasesOnlyReservedApplications(t *testing.T) 
 	if err != nil {
 		t.Fatalf("read catalog_lifecycle.go: %v", err)
 	}
-	if !strings.Contains(string(carpoolSource), "WHERE a.status = 'accepted_reserved'") {
-		t.Fatal("seat availability must remain projected from accepted_reserved applications")
+	if strings.Contains(string(carpoolSource), "WHERE a.status = 'accepted_reserved'") {
+		t.Fatal("seat availability must not depend on obsolete reservations")
 	}
-	if !strings.Contains(string(lifecycleSource), "application.status IN ('pending_owner', 'accepted_reserved')") ||
-		!strings.Contains(string(lifecycleSource), "SET status = 'cancelled_by_owner'") {
-		t.Fatal("catalog governance must close pending and reserved applications so only reserved seats are released")
+	if !strings.Contains(string(lifecycleSource), "SET governance_status = 'removed'") ||
+		strings.Contains(string(lifecycleSource), "SET status = 'cancelled_by_owner'") {
+		t.Fatal("catalog governance must remove the listing without rewriting pending applications")
 	}
 }

@@ -32,8 +32,8 @@ type createCarpoolRequest struct {
 	SourceURL                             string                      `json:"sourceUrl"`
 	PriceMonthlyCNY                       string                      `json:"priceMonthlyCny"`
 	ServiceMultiplier                     string                      `json:"serviceMultiplier"`
-	DailyQuotaAmount                      string                      `json:"dailyQuotaAmount"`
-	WeeklyQuotaAmount                     string                      `json:"weeklyQuotaAmount"`
+	DailyQuotaAmount                      string                      `json:"dailySpendLimitUsd"`
+	WeeklyQuotaAmount                     string                      `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             *bool                       `json:"followsOfficialQuotaReset"`
 	VPSRegion                             string                      `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                       `json:"supportsMainlandChinaDirectConnection"`
@@ -42,7 +42,7 @@ type createCarpoolRequest struct {
 	PaymentMethodCode                     string                      `json:"paymentMethodCode"`
 	CustomPaymentMethod                   string                      `json:"customPaymentMethod"`
 	BuyerSeatCapacity                     int                         `json:"buyerSeatCapacity"`
-	ActiveBuyerMembers                    int                         `json:"activeBuyerMembers"`
+	OfflineOccupiedSeats                  int                         `json:"offlineOccupiedSeats"`
 	RiskAcknowledgement                   *riskAcknowledgementRequest `json:"riskAcknowledgement"`
 }
 
@@ -83,8 +83,8 @@ type carpoolListingResponse struct {
 	SourceURL                             string                                `json:"sourceUrl,omitempty"`
 	PriceMonthlyCNY                       string                                `json:"priceMonthlyCny"`
 	ServiceMultiplier                     string                                `json:"serviceMultiplier"`
-	DailyQuotaAmount                      *string                               `json:"dailyQuotaAmount"`
-	WeeklyQuotaAmount                     string                                `json:"weeklyQuotaAmount"`
+	DailyQuotaAmount                      *string                               `json:"dailySpendLimitUsd"`
+	WeeklyQuotaAmount                     string                                `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             *bool                                 `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                               `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                                 `json:"supportsMainlandChinaDirectConnection"`
@@ -96,10 +96,13 @@ type carpoolListingResponse struct {
 	QuotaUnit                             string                                `json:"quotaUnit"`
 	QuotaPeriod                           string                                `json:"quotaPeriod"`
 	BuyerSeatCapacity                     int                                   `json:"buyerSeatCapacity"`
+	OfflineOccupiedSeats                  int                                   `json:"offlineOccupiedSeats"`
 	ActiveBuyerMembers                    int                                   `json:"activeBuyerMembers"`
-	ReservedSeats                         int                                   `json:"reservedSeats"`
 	AvailableSeats                        int                                   `json:"availableSeats"`
 	Status                                string                                `json:"status"`
+	GovernanceStatus                      string                                `json:"governanceStatus"`
+	RecruitmentStopReason                 string                                `json:"recruitmentStopReason,omitempty"`
+	ConditionsVersion                     int64                                 `json:"conditionsVersion"`
 	ReviewReason                          *string                               `json:"reviewReason,omitempty"`
 	ReviewedAt                            *string                               `json:"reviewedAt,omitempty"`
 	PolicyVersion                         int64                                 `json:"policyVersion"`
@@ -126,55 +129,54 @@ type carpoolApplicationEligibilityResponse struct {
 }
 
 type carpoolApplicationResponse struct {
-	ID                       string                     `json:"id"`
-	CarpoolListingID         string                     `json:"carpoolListingId"`
-	BuyerUserID              string                     `json:"buyerUserId"`
-	OwnerUserID              string                     `json:"ownerUserId"`
-	ProductPlanID            string                     `json:"productPlanId"`
-	BuyerContactMethodID     string                     `json:"buyerContactMethodId"`
-	Status                   string                     `json:"status"`
-	SeatCount                int                        `json:"seatCount"`
-	ListingTitleSnapshot     string                     `json:"listingTitleSnapshot"`
-	PriceMonthlyCNY          string                     `json:"priceMonthlyCny"`
-	PolicyVersionSnapshot    int64                      `json:"policyVersionSnapshot"`
-	RiskNoticeCode           string                     `json:"riskNoticeCode,omitempty"`
-	ContactSessionID         string                     `json:"contactSessionId,omitempty"`
-	ReservationExpiresAt     *string                    `json:"reservationExpiresAt,omitempty"`
-	JoinConfirmationDeadline *string                    `json:"joinConfirmationDeadline,omitempty"`
-	BuyerConfirmedAt         *string                    `json:"buyerConfirmedAt,omitempty"`
-	OwnerConfirmedAt         *string                    `json:"ownerConfirmedAt,omitempty"`
-	JoinedAt                 *string                    `json:"joinedAt,omitempty"`
-	DecisionReason           *string                    `json:"decisionReason,omitempty"`
-	DecidedAt                *string                    `json:"decidedAt,omitempty"`
-	Version                  int64                      `json:"version"`
-	CreatedAt                string                     `json:"createdAt"`
-	UpdatedAt                string                     `json:"updatedAt"`
-	BuyerReputation          *reputationSummaryResponse `json:"buyerReputation"`
+	ID                        string                            `json:"id"`
+	CarpoolListingID          string                            `json:"carpoolListingId"`
+	BuyerUserID               string                            `json:"buyerUserId"`
+	OwnerUserID               string                            `json:"ownerUserId"`
+	ProductPlanID             string                            `json:"productPlanId"`
+	BuyerContactMethodID      string                            `json:"buyerContactMethodId"`
+	Status                    string                            `json:"status"`
+	SeatCount                 int                               `json:"seatCount"`
+	ListingTitleSnapshot      string                            `json:"listingTitleSnapshot"`
+	PriceMonthlyCNY           string                            `json:"priceMonthlyCny"`
+	PolicyVersionSnapshot     int64                             `json:"policyVersionSnapshot"`
+	RiskNoticeCode            string                            `json:"riskNoticeCode,omitempty"`
+	ConditionsVersionSnapshot int64                             `json:"conditionsVersionSnapshot"`
+	ConditionsSnapshot        carpool.ListingConditionsSnapshot `json:"conditionsSnapshot"`
+	AcceptedConditionsVersion int64                             `json:"acceptedConditionsVersion"`
+	ConditionsAcceptedAt      string                            `json:"conditionsAcceptedAt"`
+	ContactSessionID          string                            `json:"contactSessionId,omitempty"`
+	JoinedAt                  *string                           `json:"joinedAt,omitempty"`
+	DecisionReason            *string                           `json:"decisionReason,omitempty"`
+	DecidedAt                 *string                           `json:"decidedAt,omitempty"`
+	Version                   int64                             `json:"version"`
+	CreatedAt                 string                            `json:"createdAt"`
+	UpdatedAt                 string                            `json:"updatedAt"`
+	BuyerReputation           *reputationSummaryResponse        `json:"buyerReputation"`
 }
 
 type carpoolMembershipResponse struct {
-	ID                    string  `json:"id"`
-	CarpoolListingID      string  `json:"carpoolListingId"`
-	CarpoolApplicationID  string  `json:"carpoolApplicationId"`
-	CycleTermID           string  `json:"cycleTermId,omitempty"`
-	BuyerUserID           string  `json:"buyerUserId"`
-	OwnerUserID           string  `json:"ownerUserId"`
-	ProductPlanID         string  `json:"productPlanId"`
-	Status                string  `json:"status"`
-	SeatCount             int     `json:"seatCount"`
-	PriceMonthlyCNY       string  `json:"priceMonthlyCny"`
-	PolicyVersionSnapshot int64   `json:"policyVersionSnapshot"`
-	RiskNoticeCode        string  `json:"riskNoticeCode,omitempty"`
-	JoinedAt              string  `json:"joinedAt"`
-	BuyerCompletedAt      *string `json:"buyerCompletedAt,omitempty"`
-	OwnerCompletedAt      *string `json:"ownerCompletedAt,omitempty"`
-	CompletedAt           *string `json:"completedAt,omitempty"`
-	EndedAt               *string `json:"endedAt,omitempty"`
-	EndedReason           string  `json:"endedReason,omitempty"`
-	EndedByUserID         string  `json:"endedByUserId,omitempty"`
-	Version               int64   `json:"version"`
-	CreatedAt             string  `json:"createdAt"`
-	UpdatedAt             string  `json:"updatedAt"`
+	ID                        string                            `json:"id"`
+	CarpoolListingID          string                            `json:"carpoolListingId"`
+	CarpoolApplicationID      string                            `json:"carpoolApplicationId"`
+	CycleTermID               string                            `json:"cycleTermId,omitempty"`
+	BuyerUserID               string                            `json:"buyerUserId"`
+	OwnerUserID               string                            `json:"ownerUserId"`
+	ProductPlanID             string                            `json:"productPlanId"`
+	Status                    string                            `json:"status"`
+	SeatCount                 int                               `json:"seatCount"`
+	PriceMonthlyCNY           string                            `json:"priceMonthlyCny"`
+	PolicyVersionSnapshot     int64                             `json:"policyVersionSnapshot"`
+	RiskNoticeCode            string                            `json:"riskNoticeCode,omitempty"`
+	ConditionsVersionSnapshot int64                             `json:"conditionsVersionSnapshot"`
+	ConditionsSnapshot        carpool.ListingConditionsSnapshot `json:"conditionsSnapshot"`
+	JoinedAt                  string                            `json:"joinedAt"`
+	EndedAt                   *string                           `json:"endedAt,omitempty"`
+	EndedReason               string                            `json:"endedReason,omitempty"`
+	EndedByUserID             string                            `json:"endedByUserId,omitempty"`
+	Version                   int64                             `json:"version"`
+	CreatedAt                 string                            `json:"createdAt"`
+	UpdatedAt                 string                            `json:"updatedAt"`
 }
 
 func (s *Server) handleCreateCarpool(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +283,7 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		PaymentMethodCode:                     req.PaymentMethodCode,
 		CustomPaymentMethod:                   req.CustomPaymentMethod,
 		BuyerSeatCapacity:                     req.BuyerSeatCapacity,
-		ActiveBuyerMembers:                    req.ActiveBuyerMembers,
+		OfflineOccupiedSeats:                  req.OfflineOccupiedSeats,
 		RiskAcknowledgement:                   toAppRiskAck(req.RiskAcknowledgement),
 		ExpectedVersion:                       version,
 		RequestID:                             requestIDFrom(r),
@@ -292,6 +294,45 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 	}
 	restoreCarpoolListingETag(&completion)
 	writeIdempotencyCompletion(w, completion)
+}
+
+func (s *Server) handleStopCarpoolRecruiting(w http.ResponseWriter, r *http.Request) {
+	s.handleUpdateCarpoolRecruitment(w, r, carpool.ListingStatusStopped)
+}
+
+func (s *Server) handleResumeCarpoolRecruiting(w http.ResponseWriter, r *http.Request) {
+	s.handleUpdateCarpoolRecruitment(w, r, carpool.ListingStatusActive)
+}
+
+func (s *Server) handleUpdateCarpoolRecruitment(w http.ResponseWriter, r *http.Request, targetStatus string) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
+	if _, _, appErr := decodeStrictJSON[emptyRequest](r); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	listing, appErr := s.carpools.UpdateRecruitment(r.Context(), user, carpool.RecruitmentInput{
+		ListingID:       chi.URLParam(r, "id"),
+		ExpectedVersion: version,
+		RequestID:       requestIDFrom(r),
+	}, targetStatus)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	setETag(w, listing.Version)
+	writeJSON(w, http.StatusOK, toCarpoolListingResponse(listing))
 }
 
 func toAppCreateCarpoolInput(req createCarpoolRequest) carpool.CreateListingInput {
@@ -320,7 +361,7 @@ func toAppCreateCarpoolInput(req createCarpoolRequest) carpool.CreateListingInpu
 		PaymentMethodCode:                     req.PaymentMethodCode,
 		CustomPaymentMethod:                   req.CustomPaymentMethod,
 		BuyerSeatCapacity:                     req.BuyerSeatCapacity,
-		ActiveBuyerMembers:                    req.ActiveBuyerMembers,
+		OfflineOccupiedSeats:                  req.OfflineOccupiedSeats,
 		RiskAcknowledgement:                   toAppRiskAck(req.RiskAcknowledgement),
 	}
 }
@@ -601,8 +642,36 @@ func (s *Server) handleMyCarpoolApplication(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, toCarpoolApplicationResponse(application))
 }
 
-func (s *Server) handleBuyerConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request) {
-	s.handleConfirmCarpoolJoin(w, r, carpool.JoinActorBuyer)
+func (s *Server) handleConfirmCarpoolApplicationConditions(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolApply) {
+		return
+	}
+	_, _, appErr = decodeStrictJSON[emptyRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	application, appErr := s.carpools.ConfirmCarpoolApplicationConditions(r.Context(), user, carpool.ConfirmApplicationConditionsInput{
+		ApplicationID:   chi.URLParam(r, "id"),
+		ExpectedVersion: version,
+		RequestID:       requestIDFrom(r),
+	})
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	setETag(w, application.Version)
+	writeJSON(w, http.StatusOK, toCarpoolApplicationResponse(application))
 }
 
 func (s *Server) handleCancelCarpoolApplication(w http.ResponseWriter, r *http.Request) {
@@ -655,10 +724,6 @@ func (s *Server) handleCancelCarpoolApplication(w http.ResponseWriter, r *http.R
 	}
 	restoreCarpoolApplicationETag(&completion)
 	writeIdempotencyCompletion(w, completion)
-}
-
-func (s *Server) handleBuyerConfirmCarpoolMembershipComplete(w http.ResponseWriter, r *http.Request) {
-	s.handleConfirmCarpoolMembershipComplete(w, r, carpool.JoinActorBuyer)
 }
 
 func (s *Server) handleBuyerLeaveCarpoolMembership(w http.ResponseWriter, r *http.Request) {
@@ -803,68 +868,6 @@ func (s *Server) handleRejectCarpoolApplication(w http.ResponseWriter, r *http.R
 	writeIdempotencyCompletion(w, completion)
 }
 
-func (s *Server) handleWithdrawCarpoolAcceptance(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
-		return
-	}
-	body, req, appErr := decodeStrictJSON[membershipEndRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	version, appErr := requireIfMatchVersion(r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	applicationID := chi.URLParam(r, "id")
-	routeKey := "POST /api/v1/owner/carpool-applications/{id}/withdraw-acceptance:" + applicationID
-	completion, appErr := s.carpools.WithdrawCarpoolAcceptanceWithIdempotency(
-		r.Context(),
-		user,
-		routeKey,
-		r.Header.Get("Idempotency-Key"),
-		requestHash(r.Method, routeKey, body),
-		carpool.WithdrawAcceptanceInput{
-			ApplicationID:   applicationID,
-			Reason:          req.Reason,
-			ExpectedVersion: version,
-			RequestID:       requestIDFrom(r),
-		},
-		func(application carpool.Application) (idempotency.Completion, *domain.AppError) {
-			responseBody, marshalErr := json.Marshal(toCarpoolApplicationResponse(application))
-			if marshalErr != nil {
-				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-			}
-			return idempotency.Completion{
-				Status:       http.StatusOK,
-				ContentType:  "application/json; charset=utf-8",
-				Body:         responseBody,
-				ResourceType: "carpool_application",
-				ResourceID:   application.ID,
-			}, nil
-		},
-	)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	writeIdempotencyCompletion(w, completion)
-}
-
-func (s *Server) handleOwnerConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request) {
-	s.handleConfirmCarpoolJoin(w, r, carpool.JoinActorOwner)
-}
-
-func (s *Server) handleOwnerConfirmCarpoolMembershipComplete(w http.ResponseWriter, r *http.Request) {
-	s.handleConfirmCarpoolMembershipComplete(w, r, carpool.JoinActorOwner)
-}
-
 func (s *Server) handleOwnerRemoveCarpoolMembership(w http.ResponseWriter, r *http.Request) {
 	s.handleEndCarpoolMembership(w, r, carpool.JoinActorOwner, carpool.MembershipStatusRemoved)
 }
@@ -882,122 +885,6 @@ func (s *Server) handleOwnerCarpoolMemberships(w http.ResponseWriter, r *http.Re
 	}
 	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships))
 }
-func (s *Server) handleConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request, actorRole string) {
-	user, _, appErr := s.requireSessionAndCSRF(w, r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	if actorRole == carpool.JoinActorOwner && !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
-		return
-	}
-	body, _, appErr := decodeStrictJSON[emptyRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	version, appErr := requireIfMatchVersion(r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	applicationID := chi.URLParam(r, "id")
-	routePrefix := "POST /api/v1/me/carpool-applications/{id}/confirm-join"
-	if actorRole == carpool.JoinActorOwner {
-		routePrefix = "POST /api/v1/owner/carpool-applications/{id}/confirm-join"
-	}
-	routeKey := routePrefix + ":" + applicationID
-	completion, appErr := s.carpools.ConfirmCarpoolApplicationJoinWithIdempotency(
-		r.Context(),
-		user,
-		routeKey,
-		r.Header.Get("Idempotency-Key"),
-		requestHash(r.Method, routeKey, body),
-		carpool.ConfirmApplicationJoinInput{
-			ApplicationID:   applicationID,
-			ActorRole:       actorRole,
-			ExpectedVersion: version,
-			RequestID:       requestIDFrom(r),
-		},
-		func(application carpool.Application) (idempotency.Completion, *domain.AppError) {
-			responseBody, marshalErr := json.Marshal(toCarpoolApplicationResponse(application))
-			if marshalErr != nil {
-				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-			}
-			return idempotency.Completion{
-				Status:       http.StatusOK,
-				ContentType:  "application/json; charset=utf-8",
-				Body:         responseBody,
-				ResourceType: "carpool_application",
-				ResourceID:   application.ID,
-			}, nil
-		},
-	)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	writeIdempotencyCompletion(w, completion)
-}
-
-func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r *http.Request, actorRole string) {
-	actor, appErr := s.requireBusinessActor(r, true, true)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	if actor.Audience == auth.SessionAudienceNormal && actorRole == carpool.JoinActorOwner && !requireActorCapability(w, r, actor, auth.CapabilityCarpoolPublish) {
-		return
-	}
-	body, _, appErr := decodeStrictJSON[emptyRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	version, appErr := requireIfMatchVersion(r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	membershipID := chi.URLParam(r, "id")
-	routePrefix := "POST /api/v1/me/carpool-memberships/{id}/confirm-complete"
-	if actorRole == carpool.JoinActorOwner {
-		routePrefix = "POST /api/v1/owner/carpool-memberships/{id}/confirm-complete"
-	}
-	routeKey := routePrefix + ":" + membershipID
-	completion, appErr := s.carpoolContinuity.ConfirmCarpoolMembershipCompleteForActorWithIdempotency(
-		r.Context(),
-		actor,
-		routeKey,
-		r.Header.Get("Idempotency-Key"),
-		requestHash(r.Method, routeKey, body),
-		carpool.ConfirmMembershipCompleteInput{
-			MembershipID:    membershipID,
-			ActorRole:       actorRole,
-			ExpectedVersion: version,
-			RequestID:       requestIDFrom(r),
-		},
-		func(membership carpool.Membership) (idempotency.Completion, *domain.AppError) {
-			responseBody, marshalErr := json.Marshal(toCarpoolMembershipResponse(membership))
-			if marshalErr != nil {
-				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-			}
-			return idempotency.Completion{
-				Status:       http.StatusOK,
-				ContentType:  "application/json; charset=utf-8",
-				Body:         responseBody,
-				ResourceType: "carpool_membership",
-				ResourceID:   membership.ID,
-			}, nil
-		},
-	)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	writeIdempotencyCompletion(w, completion)
-}
-
 func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Request, actorRole, targetStatus string) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
@@ -1199,10 +1086,13 @@ func toCarpoolListingResponse(listing carpool.Listing) carpoolListingResponse {
 		QuotaUnit:                             listing.QuotaUnit,
 		QuotaPeriod:                           listing.QuotaPeriod,
 		BuyerSeatCapacity:                     listing.BuyerSeatCapacity,
+		OfflineOccupiedSeats:                  listing.OfflineOccupiedSeats,
 		ActiveBuyerMembers:                    listing.ActiveBuyerMembers,
-		ReservedSeats:                         listing.ReservedSeats,
 		AvailableSeats:                        listing.AvailableSeats,
 		Status:                                listing.Status,
+		GovernanceStatus:                      listing.GovernanceStatus,
+		RecruitmentStopReason:                 listing.RecruitmentStopReason,
+		ConditionsVersion:                     listing.ConditionsVersion,
 		ReviewReason:                          reviewReason,
 		ReviewedAt:                            reviewedAt,
 		PolicyVersion:                         listing.PolicyVersion,
@@ -1244,56 +1134,36 @@ func toCarpoolApplicationResponse(application carpool.Application) carpoolApplic
 		formatted := application.DecidedAt.UTC().Format(time.RFC3339)
 		decidedAt = &formatted
 	}
-	var reservationExpiresAt *string
-	if application.ReservationExpiresAt != nil {
-		formatted := application.ReservationExpiresAt.UTC().Format(time.RFC3339)
-		reservationExpiresAt = &formatted
-	}
-	var joinConfirmationDeadline *string
-	if application.JoinConfirmationDeadline != nil {
-		formatted := application.JoinConfirmationDeadline.UTC().Format(time.RFC3339)
-		joinConfirmationDeadline = &formatted
-	}
-	var buyerConfirmedAt *string
-	if application.BuyerConfirmedAt != nil {
-		formatted := application.BuyerConfirmedAt.UTC().Format(time.RFC3339)
-		buyerConfirmedAt = &formatted
-	}
-	var ownerConfirmedAt *string
-	if application.OwnerConfirmedAt != nil {
-		formatted := application.OwnerConfirmedAt.UTC().Format(time.RFC3339)
-		ownerConfirmedAt = &formatted
-	}
 	var joinedAt *string
 	if application.JoinedAt != nil {
 		formatted := application.JoinedAt.UTC().Format(time.RFC3339)
 		joinedAt = &formatted
 	}
 	return carpoolApplicationResponse{
-		ID:                       application.ID,
-		CarpoolListingID:         application.CarpoolListingID,
-		BuyerUserID:              application.BuyerUserID,
-		OwnerUserID:              application.OwnerUserID,
-		ProductPlanID:            application.ProductPlanID,
-		BuyerContactMethodID:     application.BuyerContactMethodID,
-		Status:                   application.Status,
-		SeatCount:                application.SeatCount,
-		ListingTitleSnapshot:     application.ListingTitleSnapshot,
-		PriceMonthlyCNY:          application.PriceMonthlyCNY,
-		PolicyVersionSnapshot:    application.PolicyVersionSnapshot,
-		RiskNoticeCode:           application.RiskNoticeCode,
-		ContactSessionID:         application.ContactSessionID,
-		ReservationExpiresAt:     reservationExpiresAt,
-		JoinConfirmationDeadline: joinConfirmationDeadline,
-		BuyerConfirmedAt:         buyerConfirmedAt,
-		OwnerConfirmedAt:         ownerConfirmedAt,
-		JoinedAt:                 joinedAt,
-		DecisionReason:           decisionReason,
-		DecidedAt:                decidedAt,
-		Version:                  application.Version,
-		CreatedAt:                application.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:                application.UpdatedAt.UTC().Format(time.RFC3339),
-		BuyerReputation:          toReputationSummary(application.BuyerReputation),
+		ID:                        application.ID,
+		CarpoolListingID:          application.CarpoolListingID,
+		BuyerUserID:               application.BuyerUserID,
+		OwnerUserID:               application.OwnerUserID,
+		ProductPlanID:             application.ProductPlanID,
+		BuyerContactMethodID:      application.BuyerContactMethodID,
+		Status:                    application.Status,
+		SeatCount:                 application.SeatCount,
+		ListingTitleSnapshot:      application.ListingTitleSnapshot,
+		PriceMonthlyCNY:           application.PriceMonthlyCNY,
+		PolicyVersionSnapshot:     application.PolicyVersionSnapshot,
+		RiskNoticeCode:            application.RiskNoticeCode,
+		ConditionsVersionSnapshot: application.ConditionsVersionSnapshot,
+		ConditionsSnapshot:        application.ConditionsSnapshot,
+		AcceptedConditionsVersion: application.AcceptedConditionsVersion,
+		ConditionsAcceptedAt:      application.ConditionsAcceptedAt.UTC().Format(time.RFC3339),
+		ContactSessionID:          application.ContactSessionID,
+		JoinedAt:                  joinedAt,
+		DecisionReason:            decisionReason,
+		DecidedAt:                 decidedAt,
+		Version:                   application.Version,
+		CreatedAt:                 application.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:                 application.UpdatedAt.UTC().Format(time.RFC3339),
+		BuyerReputation:           toReputationSummary(application.BuyerReputation),
 	}
 }
 
@@ -1306,48 +1176,32 @@ func toCarpoolMembershipResponses(memberships []carpool.Membership) []carpoolMem
 }
 
 func toCarpoolMembershipResponse(membership carpool.Membership) carpoolMembershipResponse {
-	var buyerCompletedAt *string
-	if membership.BuyerCompletedAt != nil {
-		formatted := membership.BuyerCompletedAt.UTC().Format(time.RFC3339)
-		buyerCompletedAt = &formatted
-	}
-	var ownerCompletedAt *string
-	if membership.OwnerCompletedAt != nil {
-		formatted := membership.OwnerCompletedAt.UTC().Format(time.RFC3339)
-		ownerCompletedAt = &formatted
-	}
-	var completedAt *string
-	if membership.CompletedAt != nil {
-		formatted := membership.CompletedAt.UTC().Format(time.RFC3339)
-		completedAt = &formatted
-	}
 	var endedAt *string
 	if membership.EndedAt != nil {
 		formatted := membership.EndedAt.UTC().Format(time.RFC3339)
 		endedAt = &formatted
 	}
 	return carpoolMembershipResponse{
-		ID:                    membership.ID,
-		CarpoolListingID:      membership.CarpoolListingID,
-		CarpoolApplicationID:  membership.CarpoolApplicationID,
-		CycleTermID:           membership.CycleTermID,
-		BuyerUserID:           membership.BuyerUserID,
-		OwnerUserID:           membership.OwnerUserID,
-		ProductPlanID:         membership.ProductPlanID,
-		Status:                membership.Status,
-		SeatCount:             membership.SeatCount,
-		PriceMonthlyCNY:       membership.PriceMonthlyCNY,
-		PolicyVersionSnapshot: membership.PolicyVersionSnapshot,
-		RiskNoticeCode:        membership.RiskNoticeCode,
-		JoinedAt:              membership.JoinedAt.UTC().Format(time.RFC3339),
-		BuyerCompletedAt:      buyerCompletedAt,
-		OwnerCompletedAt:      ownerCompletedAt,
-		CompletedAt:           completedAt,
-		EndedAt:               endedAt,
-		EndedReason:           membership.EndedReason,
-		EndedByUserID:         membership.EndedByUserID,
-		Version:               membership.Version,
-		CreatedAt:             membership.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:             membership.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:                        membership.ID,
+		CarpoolListingID:          membership.CarpoolListingID,
+		CarpoolApplicationID:      membership.CarpoolApplicationID,
+		CycleTermID:               membership.CycleTermID,
+		BuyerUserID:               membership.BuyerUserID,
+		OwnerUserID:               membership.OwnerUserID,
+		ProductPlanID:             membership.ProductPlanID,
+		Status:                    membership.Status,
+		SeatCount:                 membership.SeatCount,
+		PriceMonthlyCNY:           membership.PriceMonthlyCNY,
+		PolicyVersionSnapshot:     membership.PolicyVersionSnapshot,
+		RiskNoticeCode:            membership.RiskNoticeCode,
+		ConditionsVersionSnapshot: membership.ConditionsVersionSnapshot,
+		ConditionsSnapshot:        membership.ConditionsSnapshot,
+		JoinedAt:                  membership.JoinedAt.UTC().Format(time.RFC3339),
+		EndedAt:                   endedAt,
+		EndedReason:               membership.EndedReason,
+		EndedByUserID:             membership.EndedByUserID,
+		Version:                   membership.Version,
+		CreatedAt:                 membership.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:                 membership.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }

@@ -83,8 +83,8 @@ function ownerListing(overrides: Record<string, unknown> = {}) {
     sourceAuthorVerification: { status: 'verified' },
     priceMonthlyCny: '88.50',
     serviceMultiplier: '1.2500',
-    dailyQuotaAmount: '12.500000',
-    weeklyQuotaAmount: '75.000000',
+    dailySpendLimitUsd: '12.500000',
+    weeklySpendLimitUsd: '75.000000',
     followsOfficialQuotaReset: true,
     vpsRegion: 'Singapore',
     supportsMainlandChinaDirectConnection: false,
@@ -96,8 +96,9 @@ function ownerListing(overrides: Record<string, unknown> = {}) {
     quotaUnit: 'USD',
     quotaPeriod: 'monthly',
     buyerSeatCapacity: 5,
-    activeBuyerMembers: 2,
-    reservedSeats: 1,
+    offlineOccupiedSeats: 2,
+    platformActiveSeats: 1,
+    reservedSeats: 0,
     availableSeats: 2,
     status: 'changes_requested',
     policyVersion: 7,
@@ -304,13 +305,13 @@ test('contact reveal analytics fires only after authoritative disclosure succeed
         ownerUserId: 'owner-id',
         productPlanId: 'plan-id',
         buyerContactMethodId: 'contact-method-id',
-        status: 'accepted_reserved',
+        status: 'joined',
         seatCount: 1,
         listingTitleSnapshot: '测试车源',
         priceMonthlyCny: '88.00',
         policyVersionSnapshot: 1,
         contactSessionId: 'contact-session-id',
-        reservationExpiresAt: '2026-08-03T00:00:00Z',
+        joinedAt: '2026-08-02T01:00:00Z',
         version: 1,
         createdAt: '2026-08-02T00:00:00Z',
         updatedAt: '2026-08-02T01:00:00Z',
@@ -522,7 +523,9 @@ test('owner carpool update uses If-Match and submits with the patched version', 
   assert.equal(new Headers(patchInit?.headers).get('X-CSRF-Token'), 'csrf-carpool')
   const patchBody = JSON.parse(String(patchInit?.body))
   assert.equal(patchBody.serviceMultiplier, '1.25')
-  assert.equal(patchBody.dailyQuotaAmount, '12.5')
+  assert.equal(patchBody.dailySpendLimitUsd, '12.5')
+  assert.equal(patchBody.weeklySpendLimitUsd, '75')
+  assert.equal(patchBody.offlineOccupiedSeats, 2)
   assert.equal(patchBody.ownerContactMethodId, 'contact-id')
   assert.deepEqual(patchBody.riskAcknowledgement, {
     riskNoticeCode: 'shared-account-risk',
@@ -541,7 +544,7 @@ test('owner carpool pages bind real tabs, edit routing, and version conflict rec
   assert.match(myCarpoolsSource, /`\/my\/carpools\/\$\{item\.id\}\/edit`/)
   assert.match(myCarpoolsSource, /draft: '草稿'/)
   assert.match(myCarpoolsSource, /changes_requested: '待修改'/)
-  assert.match(myCarpoolsSource, /paused: '已暂停'/)
+  assert.match(myCarpoolsSource, /stopped: '已停止'/)
   assert.match(myCarpoolsSource, /ownerStatusLabel\(item\)/)
   assert.doesNotMatch(myCarpoolsSource, /toast\.(?:info|success)\([^)]*编辑/)
 

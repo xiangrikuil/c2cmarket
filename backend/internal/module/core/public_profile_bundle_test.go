@@ -66,17 +66,6 @@ func TestPublicProfileCompletionsRespectPrivacyDeduplicateAndLimit(t *testing.T)
 			ShowCompletedAPIIntentCount: true,
 		},
 	}
-	buyerMemberships := make([]carpool.Membership, 0, 6)
-	ownerMemberships := make([]carpool.Membership, 0, 6)
-	for index := 0; index < 6; index++ {
-		completedAt := base.Add(time.Duration(index) * time.Minute)
-		item := carpool.Membership{
-			ID: fmt.Sprintf("membership-%02d", index), BuyerUserID: publicProfile.ID,
-			Status: carpool.MembershipStatusCompleted, CompletedAt: &completedAt,
-		}
-		buyerMemberships = append(buyerMemberships, item)
-		ownerMemberships = append(ownerMemberships, item)
-	}
 	buyerOrders := make([]apiorder.Order, 0, 8)
 	sellerOrders := make([]apiorder.Order, 0, 8)
 	for index := 0; index < 8; index++ {
@@ -89,9 +78,9 @@ func TestPublicProfileCompletionsRespectPrivacyDeduplicateAndLimit(t *testing.T)
 		sellerOrders = append(sellerOrders, item)
 	}
 
-	items := publicProfileCompletions(publicProfile, buyerMemberships, ownerMemberships, buyerOrders, sellerOrders)
-	if len(items) != 10 {
-		t.Fatalf("expected 10 unique completions, got %d", len(items))
+	items := publicProfileCompletions(publicProfile, buyerOrders, sellerOrders)
+	if len(items) != 8 {
+		t.Fatalf("expected 8 unique API completions, got %d", len(items))
 	}
 	seen := make(map[string]struct{}, len(items))
 	for index, item := range items {
@@ -106,19 +95,15 @@ func TestPublicProfileCompletionsRespectPrivacyDeduplicateAndLimit(t *testing.T)
 	}
 
 	publicProfile.Privacy.ShowCompletedCarpoolCount = false
-	apiOnly := publicProfileCompletions(publicProfile, buyerMemberships, ownerMemberships, buyerOrders, sellerOrders)
+	apiOnly := publicProfileCompletions(publicProfile, buyerOrders, sellerOrders)
 	for _, item := range apiOnly {
 		if item.Kind != "api_order" {
 			t.Fatalf("carpool completion leaked with carpool privacy disabled: %#v", item)
 		}
 	}
-	publicProfile.Privacy.ShowCompletedCarpoolCount = true
 	publicProfile.Privacy.ShowCompletedAPIIntentCount = false
-	carpoolOnly := publicProfileCompletions(publicProfile, buyerMemberships, ownerMemberships, buyerOrders, sellerOrders)
-	for _, item := range carpoolOnly {
-		if item.Kind != "carpool" {
-			t.Fatalf("API completion leaked with API privacy disabled: %#v", item)
-		}
+	if hidden := publicProfileCompletions(publicProfile, buyerOrders, sellerOrders); len(hidden) != 0 {
+		t.Fatalf("API completions leaked with API privacy disabled: %#v", hidden)
 	}
 }
 

@@ -190,8 +190,7 @@ func TestSMTPEmailSenderSendsCarpoolAcceptanceReminder(t *testing.T) {
 		return client, nil
 	}
 
-	deadline := time.Date(2026, 7, 6, 10, 30, 0, 0, time.UTC)
-	appErr := sender.SendCarpoolApplicationAccepted(context.Background(), "buyer@example.com", "Claude Pro <拼车>", "app-accepted", &deadline)
+	appErr := sender.SendCarpoolApplicationAccepted(context.Background(), "buyer@example.com", "Claude Pro <拼车>", "app-accepted")
 	if appErr != nil {
 		t.Fatalf("send carpool acceptance reminder: %v", appErr)
 	}
@@ -203,7 +202,7 @@ func TestSMTPEmailSenderSendsCarpoolAcceptanceReminder(t *testing.T) {
 		t.Fatalf("decode quoted-printable message: %v", err)
 	}
 	decodedMessage := string(decoded)
-	if !strings.Contains(decodedMessage, "Claude Pro &lt;拼车&gt;") || !strings.Contains(decodedMessage, "CA-CEPTED") || !strings.Contains(decodedMessage, "2026-07-06 18:30:00（北京时间）") || strings.Contains(decodedMessage, deadline.Format(time.RFC3339)) || !strings.Contains(decodedMessage, "确认上车") || !strings.Contains(decodedMessage, "https://c2cmarket.example/my/rides/app-accepted") || strings.Contains(decodedMessage, "联系窗口") {
+	if !strings.Contains(decodedMessage, "Claude Pro &lt;拼车&gt;") || !strings.Contains(decodedMessage, "CA-CEPTED") || !strings.Contains(decodedMessage, "成员关系已生效") || !strings.Contains(decodedMessage, "联系方式现已开放") || !strings.Contains(decodedMessage, "https://c2cmarket.example/my/rides/app-accepted") || strings.Contains(decodedMessage, "确认截止时间") || strings.Contains(decodedMessage, "再次确认上车") {
 		t.Fatalf("expected escaped listing title and buyer workflow copy, got %s", decodedMessage)
 	}
 }

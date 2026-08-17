@@ -31,13 +31,13 @@ describe('交易评价交互', () => {
   })
 
   it('详情页使用 review 查询参数恢复弹框并保留其他查询参数', () => {
-    for (const page of [carpoolDetail, apiOrderDetail]) {
-      expect(page).toContain("route.query.review === 'open'")
-      expect(page).toContain("query: { ...route.query, review: 'open' }")
-      expect(page).toContain('delete query.review')
-      expect(page).toContain('<ReviewDialog')
-      expect(page).not.toContain("path: '/my/reviews'")
-    }
+    expect(apiOrderDetail).toContain("route.query.review === 'open'")
+    expect(apiOrderDetail).toContain("query: { ...route.query, review: 'open' }")
+    expect(apiOrderDetail).toContain('delete query.review')
+    expect(apiOrderDetail).toContain('<ReviewDialog')
+    expect(apiOrderDetail).not.toContain("path: '/my/reviews'")
+    expect(carpoolDetail).not.toContain('<ReviewDialog')
+    expect(carpoolDetail).not.toContain("route.query.review === 'open'")
     expect(reviewCenter).toContain('<ReviewDialog')
     expect(reviewCenter).toContain('const selectedRow = computed')
     expect(reviewCenter).toContain('router.push({ query:')

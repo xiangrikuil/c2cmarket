@@ -156,13 +156,7 @@ type RejectCarpoolApplicationInput = carpool.RejectApplicationInput
 
 type CancelCarpoolApplicationInput = carpool.CancelApplicationInput
 
-type WithdrawCarpoolAcceptanceInput = carpool.WithdrawAcceptanceInput
-
-type ConfirmCarpoolApplicationJoinInput = carpool.ConfirmApplicationJoinInput
-
 type CarpoolApplicationCompletionBuilder = carpool.ApplicationCompletionBuilder
-
-type ConfirmCarpoolMembershipCompleteInput = carpool.ConfirmMembershipCompleteInput
 
 type EndCarpoolMembershipInput = carpool.EndMembershipInput
 

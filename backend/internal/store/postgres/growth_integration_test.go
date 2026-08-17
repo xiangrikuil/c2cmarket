@@ -78,7 +78,7 @@ func TestGrowthOverviewPostgresMetricsAndDailyActivity(t *testing.T) {
 	oldBuyerContactID := uuid.NewString()
 	oldServiceID := uuid.NewString()
 	seedQuotaServiceForTest(t, ctx, pool, oldSellerID, oldSellerContactID, oldBuyerID, oldBuyerContactID, oldServiceID, oldCreatedAt)
-	membershipID := seedCompletedCarpoolMembershipForReview(
+	membershipID := seedEndedCarpoolMembershipWithoutReview(
 		t,
 		ctx,
 		pool,
@@ -136,7 +136,7 @@ func TestGrowthOverviewPostgresMetricsAndDailyActivity(t *testing.T) {
 	if overview.Summary.DAU != 1 || overview.Summary.WAU != 2 || overview.Summary.MAU != 2 {
 		t.Fatalf("unexpected DAU/WAU/MAU: %#v", overview.Summary)
 	}
-	if overview.Summary.CompletedCarpoolTransactions != 1 || overview.Summary.CompletedAPITransactions != 1 {
+	if overview.Summary.CompletedCarpoolTransactions != 0 || overview.Summary.CompletedAPITransactions != 1 {
 		t.Fatalf("unexpected completed transaction totals: %#v", overview.Summary)
 	}
 	assertGrowthRatio(t, "summary activation", overview.Summary.ActivationRate, 1)
@@ -287,10 +287,10 @@ func assertCarpoolFirstPublishedAtImmutable(t *testing.T, ctx context.Context, p
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE carpool_listings
-		SET status = 'paused', first_published_at = $2, updated_at = $2
+		SET governance_status = 'removed', first_published_at = $2, updated_at = $2
 		WHERE id = $1
 	`, listingID, later); err != nil {
-		t.Fatalf("pause carpool while testing first publication: %v", err)
+		t.Fatalf("remove carpool while testing first publication: %v", err)
 	}
 	var preserved time.Time
 	if err := pool.QueryRow(ctx, `SELECT first_published_at FROM carpool_listings WHERE id = $1`, listingID).Scan(&preserved); err != nil {
@@ -298,6 +298,9 @@ func assertCarpoolFirstPublishedAtImmutable(t *testing.T, ctx context.Context, p
 	}
 	if !preserved.Equal(firstPublishedAt) {
 		t.Fatalf("carpool first publication changed: before=%s after=%s", firstPublishedAt, preserved)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE carpool_listings SET governance_status = 'clear', updated_at = $2 WHERE id = $1`, listingID, later.Add(time.Hour)); err != nil {
+		t.Fatalf("restore carpool after first-publication assertion: %v", err)
 	}
 }
 

@@ -300,7 +300,7 @@ func (s *Server) handleCreateDevContactSession(w http.ResponseWriter, r *http.Re
 
 type contactSessionContactsResponse struct {
 	SessionID string           `json:"sessionId"`
-	EndsAt    string           `json:"endsAt"`
+	EndsAt    *string          `json:"endsAt"`
 	Items     []contactItemDTO `json:"items"`
 }
 
@@ -331,7 +331,7 @@ func (s *Server) handleReadContactSession(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, contactSessionContactsResponse{
 		SessionID: view.SessionID,
-		EndsAt:    view.EndsAt.UTC().Format(time.RFC3339),
+		EndsAt:    formatOptionalTime(view.EndsAt),
 		Items:     items,
 	})
 }

@@ -184,7 +184,6 @@ type CarpoolListSeatRow = {
   seatSummary?: {
     totalSeats: number
     activeMemberCount: number
-    reservedSeatCount: number
     availableSeats: number
   }
   applicationEligibility?: { code: string, canApply: boolean, reason: string }
@@ -194,12 +193,8 @@ function activeSeatsForList(row: CarpoolListSeatRow) {
   return row.seatSummary?.activeMemberCount ?? row.currentConfirmedMembers
 }
 
-function reservedSeatsForList(row: CarpoolListSeatRow) {
-  return row.seatSummary?.reservedSeatCount ?? 0
-}
-
 function availableSeatsForList(row: CarpoolListSeatRow) {
-  return row.seatSummary?.availableSeats ?? Math.max(row.maxMembers - activeSeatsForList(row) - reservedSeatsForList(row), 0)
+  return row.seatSummary?.availableSeats ?? Math.max(row.maxMembers - activeSeatsForList(row), 0)
 }
 
 function totalSeatsForList(row: CarpoolListSeatRow) {
@@ -209,12 +204,11 @@ function totalSeatsForList(row: CarpoolListSeatRow) {
 function listStatusForCarpool(row: CarpoolListSeatRow) {
   if (row.applicationEligibility && !row.applicationEligibility.canApply) {
     if (row.applicationEligibility.code === 'credential_risk' || row.applicationEligibility.code === 'owner_action_required') return '需车主修正'
-    if (row.applicationEligibility.code === 'sold_out') return reservedSeatsForList(row) > 0 ? '预留中' : '已满'
+    if (row.applicationEligibility.code === 'sold_out') return '已满'
     return row.applicationEligibility.reason
   }
   if (!['可上车', '已满'].includes(row.status)) return row.status
   if (availableSeatsForList(row) > 0) return '可上车'
-  if (reservedSeatsForList(row) > 0) return '预留中'
   return '已满'
 }
 
@@ -254,7 +248,6 @@ function productToneClass(product: string) {
 
 function statusToneClass(status: string) {
   if (status === '可上车') return 'carpool-status-badge--available'
-  if (status === '预留中') return 'carpool-status-badge--reserved'
   if (status === '候补') return 'carpool-status-badge--waitlist'
   if (status === '审核中') return 'carpool-status-badge--reviewing'
   if (status === '已满') return 'carpool-status-badge--full'
@@ -262,7 +255,7 @@ function statusToneClass(status: string) {
 }
 
 function seatProgress(row: CarpoolListSeatRow) {
-  const occupiedSeats = activeSeatsForList(row) + reservedSeatsForList(row)
+  const occupiedSeats = activeSeatsForList(row)
   return `${Math.min(Math.round((occupiedSeats / Math.max(totalSeatsForList(row), 1)) * 100), 100)}%`
 }
 
@@ -392,7 +385,6 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
             <span class="font-medium">已上车 {{ activeSeatsForList(row) }}/{{ totalSeatsForList(row) }} 人</span>
             <span class="text-xs text-muted-foreground">可申请 {{ availableSeatsForList(row) }} 位</span>
           </div>
-          <div v-if="reservedSeatsForList(row)" class="mt-1 text-xs text-muted-foreground">预留 {{ reservedSeatsForList(row) }} 位</div>
           <div class="carpool-seat-meter mt-2" aria-hidden="true">
             <span :style="{ width: seatProgress(row) }"></span>
           </div>

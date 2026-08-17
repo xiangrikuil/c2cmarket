@@ -1552,7 +1552,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	assertPublicCarpoolVisible(t, server, published.ID, true)
 
 	paused := reviewCarpool(t, server, adminSession, published.ID, "pause", published.Version, "carpool-pause")
-	if paused.Status != app.CarpoolListingStatusPaused || paused.Version != 3 {
+	if paused.Status != app.CarpoolListingStatusActive || paused.GovernanceStatus != "removed" || paused.Version != 3 {
 		t.Fatalf("unexpected paused listing: %+v", paused)
 	}
 	assertPublicCarpoolVisible(t, server, paused.ID, false)
@@ -1565,7 +1565,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 
 	restored := reviewCarpool(t, server, adminSession, paused.ID, "restore", paused.Version, "carpool-restore")
-	if restored.Status != app.CarpoolListingStatusActive || restored.Version != 4 {
+	if restored.Status != app.CarpoolListingStatusActive || restored.GovernanceStatus != "clear" || restored.Version != 4 {
 		t.Fatalf("unexpected restored listing: %+v", restored)
 	}
 	assertPublicCarpoolVisible(t, server, restored.ID, true)
@@ -1609,7 +1609,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 
 	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "carpool-accept")
 	replayed := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "carpool-accept")
-	if accepted.Status != app.CarpoolApplicationStatusAcceptedReserved || accepted.ContactSessionID == "" || accepted.ReservationExpiresAt == nil {
+	if accepted.Status != app.CarpoolApplicationStatusJoined || accepted.ContactSessionID == "" || accepted.JoinedAt == nil || accepted.ReservationExpiresAt != nil {
 		t.Fatalf("unexpected accepted application: %+v", accepted)
 	}
 	if accepted.ContactSessionID != replayed.ContactSessionID || accepted.Version != replayed.Version {
@@ -1629,27 +1629,13 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	if !strings.Contains(readContactResponse.Body.String(), "@owner_carpool") {
 		t.Fatalf("expected owner contact in contact window response")
 	}
-
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "carpool-buyer-confirm")
-	if buyerConfirmed.Status != app.CarpoolApplicationStatusAcceptedReserved || buyerConfirmed.BuyerConfirmedAt == nil || buyerConfirmed.OwnerConfirmedAt != nil {
-		t.Fatalf("unexpected buyer-confirmed application: %+v", buyerConfirmed)
-	}
-	ownerConfirmed := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "carpool-owner-confirm")
-	if ownerConfirmed.Status != app.CarpoolApplicationStatusJoined || ownerConfirmed.JoinedAt == nil || ownerConfirmed.ReservationExpiresAt != nil {
-		t.Fatalf("unexpected joined application: %+v", ownerConfirmed)
+	if !strings.Contains(readContactResponse.Body.String(), `"endsAt":null`) {
+		t.Fatalf("expected membership contact access without a countdown, got %s", readContactResponse.Body.String())
 	}
 
-	membership := firstCarpoolMembership(t, server, buyerSession, "me", ownerConfirmed.ID)
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", accepted.ID)
 	if membership.Status != app.CarpoolMembershipStatusActive {
 		t.Fatalf("unexpected active membership: %+v", membership)
-	}
-	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "carpool-buyer-complete")
-	if buyerCompleted.Status != app.CarpoolMembershipStatusActive || buyerCompleted.BuyerCompletedAt == nil || buyerCompleted.OwnerCompletedAt != nil {
-		t.Fatalf("unexpected buyer-completed membership: %+v", buyerCompleted)
-	}
-	ownerCompleted := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "carpool-owner-complete")
-	if ownerCompleted.Status != app.CarpoolMembershipStatusCompleted || ownerCompleted.CompletedAt == nil || ownerCompleted.EndedAt == nil {
-		t.Fatalf("unexpected completed membership: %+v", ownerCompleted)
 	}
 }
 
@@ -1707,11 +1693,10 @@ func TestMyCarpoolViewsAndOwnerDetail(t *testing.T) {
 	assertProblemCode(t, invalidViewResponse, "VALIDATION_FAILED")
 }
 
-func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
+func TestCarpoolMembershipDoesNotEnterReviewCenter(t *testing.T) {
 	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
 	ownerSession := createLinuxDoSession(t, server, "review-route-owner")
 	buyerSession := createSession(t, server, "review-route-buyer", false)
-	adminSession := createSession(t, server, "review-route-admin", true)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Review Owner TG", "@review_route_owner")
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Review Buyer TG", "@review_route_buyer")
 
@@ -1719,150 +1704,22 @@ func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "review-route-carpool-publish")
 	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "review-route-carpool-apply")
 	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "review-route-carpool-accept")
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "review-route-buyer-join")
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "review-route-owner-join")
-	membership := firstCarpoolMembership(t, server, buyerSession, "me", joined.ID)
-	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "review-route-buyer-complete")
-	completed := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "review-route-owner-complete")
-	if completed.Status != app.CarpoolMembershipStatusCompleted {
-		t.Fatalf("expected completed membership before review, got %+v", completed)
-	}
-
-	buyerCenter := listTransactionReviewsHTTP(t, server, buyerSession)
-	if len(buyerCenter.PresetTags) == 0 {
-		t.Fatal("review center must return server-owned preset tags")
-	}
-	pending := findReviewDTO(t, buyerCenter.Items, "pending", membership.ID)
-	if !pending.CanCreate || pending.Rating != nil || pending.Note != nil {
-		t.Fatalf("unexpected pending review row: %+v", pending)
-	}
-
-	buyerReview := submitTransactionReviewHTTP(
-		t,
-		server,
-		buyerSession,
-		http.MethodPost,
-		"carpool_membership",
-		membership.ID,
-		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
-		"review-route-buyer-create",
-		http.StatusCreated,
-	)
-	if buyerReview.Visibility != "sealed" || buyerReview.Rating == nil || *buyerReview.Rating != 5 || buyerReview.Note == nil {
-		t.Fatalf("unexpected buyer sealed review response: %+v", buyerReview)
-	}
-	replayedBuyerReview := submitTransactionReviewHTTP(
-		t,
-		server,
-		buyerSession,
-		http.MethodPost,
-		"carpool_membership",
-		membership.ID,
-		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
-		"review-route-buyer-create",
-		http.StatusCreated,
-	)
-	if replayedBuyerReview.ID != buyerReview.ID || replayedBuyerReview.Version != buyerReview.Version {
-		t.Fatalf("review create replay changed response: first=%+v replay=%+v", buyerReview, replayedBuyerReview)
-	}
-
-	ownerCenter := listTransactionReviewsHTTP(t, server, ownerSession)
-	ownerPending := findReviewDTO(t, ownerCenter.Items, "pending", membership.ID)
-	if !ownerPending.CanCreate || !containsReviewTagDTO(ownerPending.AllowedTags, "quick_payment") {
-		t.Fatalf("owner pending row did not include seller-to-buyer tags: %+v", ownerPending)
-	}
-	for _, item := range ownerCenter.Items {
-		if item.TransactionID == membership.ID && item.Direction == "received" {
-			t.Fatalf("sealed counterparty submission must not be observable through HTTP: %+v", item)
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", accepted.ID)
+	for _, item := range listTransactionReviewsHTTP(t, server, buyerSession).Items {
+		if item.TransactionID == membership.ID {
+			t.Fatalf("carpool membership must not appear in review center: %+v", item)
 		}
-	}
-
-	ownerReview := submitTransactionReviewHTTP(
-		t,
-		server,
-		ownerSession,
-		http.MethodPost,
-		"carpool_membership",
-		membership.ID,
-		`{"rating":4,"tags":["付款及时"],"note":"买家付款和确认都很及时。"}`,
-		"review-route-owner-create",
-		http.StatusCreated,
-	)
-	if ownerReview.Visibility != "published" || ownerReview.FrozenAt == nil {
-		t.Fatalf("second review did not publish and freeze pair: %+v", ownerReview)
-	}
-	buyerPublished := findReviewDTO(t, listTransactionReviewsHTTP(t, server, buyerSession).Items, "sent", membership.ID)
-	if buyerPublished.Visibility != "published" || buyerPublished.FrozenAt == nil || buyerPublished.Rating == nil || *buyerPublished.Rating != 5 {
-		t.Fatalf("buyer review did not become published: %+v", buyerPublished)
-	}
-
-	editRequest := newJSONRequest(
-		http.MethodPut,
-		"/api/v1/me/transactions/carpool_membership/"+membership.ID+"/review",
-		`{"rating":1,"tags":["响应较慢"],"note":"公开后不应允许修改。"}`,
-	)
-	addAuth(editRequest, buyerSession, "review-route-buyer-edit-frozen")
-	editResponse := httptest.NewRecorder()
-	server.ServeHTTP(editResponse, editRequest)
-	if editResponse.Code != http.StatusConflict {
-		t.Fatalf("expected frozen review conflict, got %d body %s", editResponse.Code, editResponse.Body.String())
-	}
-	assertProblemCode(t, editResponse, "INVALID_STATE_TRANSITION")
-
-	removeWithoutVersion := newJSONRequest(
-		http.MethodPost,
-		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
-		`{"reason":"管理员确认该评价需要移除。"}`,
-	)
-	addAuth(removeWithoutVersion, adminSession, "review-route-remove-missing-version")
-	removeWithoutVersionResponse := httptest.NewRecorder()
-	server.ServeHTTP(removeWithoutVersionResponse, removeWithoutVersion)
-	if removeWithoutVersionResponse.Code != http.StatusPreconditionRequired {
-		t.Fatalf("expected missing If-Match failure, got %d body %s", removeWithoutVersionResponse.Code, removeWithoutVersionResponse.Body.String())
-	}
-
-	removeRequest := newJSONRequest(
-		http.MethodPost,
-		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
-		`{"reason":"管理员确认该评价需要移除。"}`,
-	)
-	addAuth(removeRequest, adminSession, "review-route-remove")
-	removeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(buyerPublished.Version, 10)+`"`)
-	removeResponse := httptest.NewRecorder()
-	server.ServeHTTP(removeResponse, removeRequest)
-	if removeResponse.Code != http.StatusOK {
-		t.Fatalf("remove review status %d body %s", removeResponse.Code, removeResponse.Body.String())
-	}
-	if got := removeResponse.Header().Get("ETag"); got != `"`+strconv.FormatInt(buyerPublished.Version+1, 10)+`"` {
-		t.Fatalf("unexpected removed review ETag %q", got)
-	}
-	removedReceived := findReviewDTO(t, listTransactionReviewsHTTP(t, server, ownerSession).Items, "received", membership.ID)
-	if removedReceived.Visibility != "removed" || removedReceived.Rating != nil || removedReceived.Note != nil || len(removedReceived.Tags) != 0 {
-		t.Fatalf("removed review content remained visible: %+v", removedReceived)
 	}
 }
 
-func containsReviewTagDTO(items []reviewTagDTO, code string) bool {
-	for _, item := range items {
-		if item.Code == code {
-			return true
-		}
-	}
-	return false
-}
-
-func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {
+func TestCarpoolApplicationCancellationLifecycle(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "cancel-owner")
 	pendingBuyer := createSession(t, server, "cancel-buyer-pending", false)
 	reservedBuyer := createSession(t, server, "cancel-buyer-reserved", false)
-	ownerWithdrawBuyer := createSession(t, server, "cancel-buyer-owner-withdraw", false)
-	joinedBuyer := createSession(t, server, "cancel-buyer-joined", false)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Cancel Owner TG", "@cancel_owner")
 	pendingBuyerContact := createContactMethod(t, server, pendingBuyer, "telegram", "Cancel Buyer Pending TG", "@cancel_pending")
 	reservedBuyerContact := createContactMethod(t, server, reservedBuyer, "telegram", "Cancel Buyer Reserved TG", "@cancel_reserved")
-	ownerWithdrawBuyerContact := createContactMethod(t, server, ownerWithdrawBuyer, "telegram", "Cancel Buyer Owner Withdraw TG", "@cancel_owner_withdraw")
-	joinedBuyerContact := createContactMethod(t, server, joinedBuyer, "telegram", "Cancel Buyer Joined TG", "@cancel_joined")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "cancel-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "cancel-submit")
@@ -1875,33 +1732,15 @@ func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {
 
 	reservedApplication := createCarpoolApplication(t, server, reservedBuyer, published.ID, reservedBuyerContact.ID, "cancel-reserved-apply")
 	reservedAccepted := acceptCarpoolApplication(t, server, ownerSession, reservedApplication.ID, reservedApplication.Version, "cancel-reserved-accept")
-	cancelledReserved := cancelCarpoolApplication(t, server, reservedBuyer, reservedAccepted.ID, reservedAccepted.Version, "cancel-reserved")
-	if cancelledReserved.Status != app.CarpoolApplicationStatusCancelledByBuyer || cancelledReserved.ContactSessionID != reservedAccepted.ContactSessionID {
-		t.Fatalf("unexpected reserved cancellation: %+v", cancelledReserved)
+	cancelAccepted := newJSONRequest(http.MethodPost, "/api/v1/me/carpool-applications/"+reservedAccepted.ID+"/cancel", `{"reason":"已加入后应使用退出拼车。"}`)
+	addAuth(cancelAccepted, reservedBuyer, "cancel-joined-conflict")
+	cancelAccepted.Header.Set("If-Match", `"`+strconv.FormatInt(reservedAccepted.Version, 10)+`"`)
+	cancelAcceptedResponse := httptest.NewRecorder()
+	server.ServeHTTP(cancelAcceptedResponse, cancelAccepted)
+	if cancelAcceptedResponse.Code != http.StatusConflict {
+		t.Fatalf("expected joined cancel conflict, got %d body %s", cancelAcceptedResponse.Code, cancelAcceptedResponse.Body.String())
 	}
-	assertContactSessionConflict(t, server, reservedBuyer, reservedAccepted.ContactSessionID)
-
-	ownerWithdrawApplication := createCarpoolApplication(t, server, ownerWithdrawBuyer, published.ID, ownerWithdrawBuyerContact.ID, "cancel-owner-withdraw-apply")
-	ownerWithdrawAccepted := acceptCarpoolApplication(t, server, ownerSession, ownerWithdrawApplication.ID, ownerWithdrawApplication.Version, "cancel-owner-withdraw-accept")
-	withdrawn := withdrawCarpoolAcceptance(t, server, ownerSession, ownerWithdrawAccepted.ID, ownerWithdrawAccepted.Version, "cancel-owner-withdraw")
-	if withdrawn.Status != app.CarpoolApplicationStatusCancelledByOwner || withdrawn.ContactSessionID != ownerWithdrawAccepted.ContactSessionID {
-		t.Fatalf("unexpected owner withdrawal: %+v", withdrawn)
-	}
-	assertContactSessionConflict(t, server, ownerWithdrawBuyer, ownerWithdrawAccepted.ContactSessionID)
-
-	joinedApplication := createCarpoolApplication(t, server, joinedBuyer, published.ID, joinedBuyerContact.ID, "cancel-joined-apply")
-	joinedAccepted := acceptCarpoolApplication(t, server, ownerSession, joinedApplication.ID, joinedApplication.Version, "cancel-joined-accept")
-	buyerConfirmed := confirmCarpoolJoin(t, server, joinedBuyer, "me", joinedAccepted.ID, joinedAccepted.Version, "cancel-joined-buyer-confirm")
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", joinedAccepted.ID, buyerConfirmed.Version, "cancel-joined-owner-confirm")
-	cancelJoined := newJSONRequest(http.MethodPost, "/api/v1/me/carpool-applications/"+joined.ID+"/cancel", `{"reason":"已加入后应使用退出拼车。"}`)
-	addAuth(cancelJoined, joinedBuyer, "cancel-joined-conflict")
-	cancelJoined.Header.Set("If-Match", `"`+strconv.FormatInt(joined.Version, 10)+`"`)
-	cancelJoinedResponse := httptest.NewRecorder()
-	server.ServeHTTP(cancelJoinedResponse, cancelJoined)
-	if cancelJoinedResponse.Code != http.StatusConflict {
-		t.Fatalf("expected joined cancel conflict, got %d body %s", cancelJoinedResponse.Code, cancelJoinedResponse.Body.String())
-	}
-	assertProblemCode(t, cancelJoinedResponse, "INVALID_STATE_TRANSITION")
+	assertProblemCode(t, cancelAcceptedResponse, "INVALID_STATE_TRANSITION")
 }
 
 func TestCarpoolDirectPublishCreatesActiveListing(t *testing.T) {
@@ -2001,20 +1840,32 @@ func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "member-submit")
 	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "member-apply")
 	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "member-accept")
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "member-buyer-confirm")
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "member-owner-confirm")
-	membership := firstCarpoolMembership(t, server, buyerSession, "me", joined.ID)
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", accepted.ID)
 	left := endCarpoolMembership(t, server, buyerSession, "me", "leave", membership.ID, membership.Version, "member-leave")
 	if left.Status != app.CarpoolMembershipStatusLeft || left.EndedAt == nil || left.EndedReason == "" || left.EndedByUserID != buyerSession.userID {
 		t.Fatalf("unexpected left membership: %+v", left)
 	}
 	assertContactSessionConflict(t, server, buyerSession, accepted.ContactSessionID)
+	ownerDetailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools/"+published.ID, nil)
+	addCookie(ownerDetailRequest, ownerSession.cookie)
+	ownerDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(ownerDetailResponse, ownerDetailRequest)
+	var stoppedListing createdCarpool
+	if ownerDetailResponse.Code != http.StatusOK || json.NewDecoder(ownerDetailResponse.Body).Decode(&stoppedListing) != nil {
+		t.Fatalf("load stopped carpool status %d body %s", ownerDetailResponse.Code, ownerDetailResponse.Body.String())
+	}
+	resumeRequest := newJSONRequest(http.MethodPost, "/api/v1/me/carpools/"+published.ID+"/resume-recruiting", `{}`)
+	addAuth(resumeRequest, ownerSession, "member-resume-recruiting")
+	resumeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(stoppedListing.Version, 10)+`"`)
+	resumeResponse := httptest.NewRecorder()
+	server.ServeHTTP(resumeResponse, resumeRequest)
+	if resumeResponse.Code != http.StatusOK {
+		t.Fatalf("resume recruiting status %d body %s", resumeResponse.Code, resumeResponse.Body.String())
+	}
 
 	secondApplication := createCarpoolApplication(t, server, secondBuyerSession, published.ID, secondBuyerContact.ID, "member-apply-two")
 	secondAccepted := acceptCarpoolApplication(t, server, ownerSession, secondApplication.ID, secondApplication.Version, "member-accept-two")
-	secondBuyerConfirmed := confirmCarpoolJoin(t, server, secondBuyerSession, "me", secondAccepted.ID, secondAccepted.Version, "member-buyer-confirm-two")
-	secondJoined := confirmCarpoolJoin(t, server, ownerSession, "owner", secondAccepted.ID, secondBuyerConfirmed.Version, "member-owner-confirm-two")
-	secondMembership := firstCarpoolMembership(t, server, ownerSession, "owner", secondJoined.ID)
+	secondMembership := firstCarpoolMembership(t, server, ownerSession, "owner", secondAccepted.ID)
 	removed := endCarpoolMembership(t, server, ownerSession, "owner", "remove", secondMembership.ID, secondMembership.Version, "member-remove")
 	if removed.Status != app.CarpoolMembershipStatusRemoved || removed.EndedAt == nil || removed.EndedReason == "" || removed.EndedByUserID != ownerSession.userID {
 		t.Fatalf("unexpected removed membership: %+v", removed)
@@ -3013,7 +2864,7 @@ func TestCarpoolAcceptRejectsWhenNoSeatAvailable(t *testing.T) {
 	assertProblemCode(t, response, "SEAT_UNAVAILABLE")
 }
 
-func TestExpiredCarpoolReservationReleasesSeatAndBuyerApplicationSlot(t *testing.T) {
+func TestFullCarpoolDoesNotReopenWithoutOwnerAction(t *testing.T) {
 	current := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 	server := NewServer(app.NewServiceWithClock(func() time.Time { return current }))
 	ownerSession := createLinuxDoSession(t, server, "expiry-owner")
@@ -3026,16 +2877,18 @@ func TestExpiredCarpoolReservationReleasesSeatAndBuyerApplicationSlot(t *testing
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "expiry-carpool-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "expiry-carpool-submit-review")
 	firstApplication := createCarpoolApplication(t, server, firstBuyer, published.ID, firstBuyerContact.ID, "expiry-apply-one")
-	_ = acceptCarpoolApplication(t, server, ownerSession, firstApplication.ID, firstApplication.Version, "expiry-accept-one")
-
-	current = current.Add(31 * time.Minute)
-	secondApplication := createCarpoolApplication(t, server, secondBuyer, published.ID, secondBuyerContact.ID, "expiry-apply-two")
-	if secondApplication.Status != app.CarpoolApplicationStatusPendingOwner {
-		t.Fatalf("expected second buyer to apply after reservation expiry, got %+v", secondApplication)
+	accepted := acceptCarpoolApplication(t, server, ownerSession, firstApplication.ID, firstApplication.Version, "expiry-accept-one")
+	membership := firstCarpoolMembership(t, server, firstBuyer, "me", accepted.ID)
+	left := endCarpoolMembership(t, server, firstBuyer, "me", "leave", membership.ID, membership.Version, "full-carpool-first-leave")
+	if left.Status != app.CarpoolMembershipStatusLeft {
+		t.Fatalf("expected first buyer to leave, got %+v", left)
 	}
-	reapplied := createCarpoolApplication(t, server, firstBuyer, published.ID, firstBuyerContact.ID, "expiry-reapply-one")
-	if reapplied.Status != app.CarpoolApplicationStatusPendingOwner {
-		t.Fatalf("expected original buyer to reapply after reservation expiry, got %+v", reapplied)
+	blockedRequest := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+published.ID+"/applications", carpoolApplicationPayload(secondBuyerContact.ID))
+	addAuth(blockedRequest, secondBuyer, "full-carpool-second-apply")
+	blockedResponse := httptest.NewRecorder()
+	server.ServeHTTP(blockedResponse, blockedRequest)
+	if blockedResponse.Code != http.StatusNotFound {
+		t.Fatalf("member exit must not resume recruiting, got %d body %s", blockedResponse.Code, blockedResponse.Body.String())
 	}
 }
 
@@ -3632,14 +3485,15 @@ type createdMerchantProfile struct {
 type createdCarpool struct {
 	ID                                    string                    `json:"id"`
 	Status                                string                    `json:"status"`
+	GovernanceStatus                      string                    `json:"governanceStatus"`
 	DistributionMethod                    string                    `json:"distributionMethod"`
 	DistributionMethodNote                string                    `json:"distributionMethodNote"`
 	ProvidesAdminAccount                  bool                      `json:"providesAdminAccount"`
 	RegionCode                            string                    `json:"regionCode"`
 	RegionName                            string                    `json:"regionName"`
 	ServiceMultiplier                     string                    `json:"serviceMultiplier"`
-	DailyQuotaAmount                      *string                   `json:"dailyQuotaAmount"`
-	WeeklyQuotaAmount                     string                    `json:"weeklyQuotaAmount"`
+	DailyQuotaAmount                      *string                   `json:"dailySpendLimitUsd"`
+	WeeklyQuotaAmount                     string                    `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             *bool                     `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                   `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                     `json:"supportsMainlandChinaDirectConnection"`
@@ -4323,23 +4177,6 @@ func cancelCarpoolApplication(t *testing.T, server http.Handler, session testSes
 	return payload
 }
 
-func withdrawCarpoolAcceptance(t *testing.T, server http.Handler, session testSession, applicationID string, version int64, key string) createdCarpoolApplication {
-	t.Helper()
-	request := newJSONRequest(http.MethodPost, "/api/v1/owner/carpool-applications/"+applicationID+"/withdraw-acceptance", `{"reason":"车主撤回本次预留。"}`)
-	addAuth(request, session, key)
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("withdraw carpool acceptance status %d body %s", response.Code, response.Body.String())
-	}
-	var payload createdCarpoolApplication
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode withdrawn application: %v", err)
-	}
-	return payload
-}
-
 func assertContactSessionConflict(t *testing.T, server http.Handler, session testSession, contactSessionID string) {
 	t.Helper()
 	if strings.TrimSpace(contactSessionID) == "" {
@@ -4353,27 +4190,6 @@ func assertContactSessionConflict(t *testing.T, server http.Handler, session tes
 		t.Fatalf("expected contact session conflict, got %d body %s", response.Code, response.Body.String())
 	}
 	assertProblemCode(t, response, "CONTACT_WINDOW_EXPIRED")
-}
-
-func confirmCarpoolJoin(t *testing.T, server http.Handler, session testSession, perspective, applicationID string, version int64, key string) createdCarpoolApplication {
-	t.Helper()
-	path := "/api/v1/me/carpool-applications/" + applicationID + "/confirm-join"
-	if perspective == "owner" {
-		path = "/api/v1/owner/carpool-applications/" + applicationID + "/confirm-join"
-	}
-	request := newJSONRequest(http.MethodPost, path, `{}`)
-	addAuth(request, session, key)
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("confirm carpool join status %d body %s", response.Code, response.Body.String())
-	}
-	var payload createdCarpoolApplication
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode confirmed application: %v", err)
-	}
-	return payload
 }
 
 func firstCarpoolMembership(t *testing.T, server http.Handler, session testSession, perspective, applicationID string) createdCarpoolMembership {
@@ -4402,27 +4218,6 @@ func firstCarpoolMembership(t *testing.T, server http.Handler, session testSessi
 	}
 	t.Fatalf("expected membership for application %s, got %+v", applicationID, payload.Items)
 	return createdCarpoolMembership{}
-}
-
-func confirmCarpoolMembershipComplete(t *testing.T, server http.Handler, session testSession, perspective, membershipID string, version int64, key string) createdCarpoolMembership {
-	t.Helper()
-	path := "/api/v1/me/carpool-memberships/" + membershipID + "/confirm-complete"
-	if perspective == "owner" {
-		path = "/api/v1/owner/carpool-memberships/" + membershipID + "/confirm-complete"
-	}
-	request := newJSONRequest(http.MethodPost, path, `{}`)
-	addAuth(request, session, key)
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("confirm carpool membership complete status %d body %s", response.Code, response.Body.String())
-	}
-	var payload createdCarpoolMembership
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode completed membership: %v", err)
-	}
-	return payload
 }
 
 func endCarpoolMembership(t *testing.T, server http.Handler, session testSession, perspective, action, membershipID string, version int64, key string) createdCarpoolMembership {
@@ -4960,8 +4755,8 @@ func carpoolPayload(ownerContactID string) string {
 		"regionName":"印度区",
 		"priceMonthlyCny":"68.00",
 		"serviceMultiplier":"1.0000",
-		"dailyQuotaAmount":"50.00",
-		"weeklyQuotaAmount":"200.00",
+		"dailySpendLimitUsd":"50.00",
+		"weeklySpendLimitUsd":"200.00",
 		"followsOfficialQuotaReset":true,
 		"vpsRegion":"香港",
 		"supportsMainlandChinaDirectConnection":true,
@@ -4970,7 +4765,7 @@ func carpoolPayload(ownerContactID string) string {
 		"paymentMethodCode":"u_card",
 		"customPaymentMethod":"",
 		"buyerSeatCapacity":1,
-		"activeBuyerMembers":0
+		"offlineOccupiedSeats":0
 	}`
 }
 

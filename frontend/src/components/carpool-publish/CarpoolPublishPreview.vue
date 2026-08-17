@@ -65,7 +65,7 @@ const arrangementLabel = computed(() => {
 })
 function quotaText(amount: number | null, period: '每天' | '每周') {
   if (!amount || amount <= 0) return '待确认'
-  return `${period} ${formatQuotaAmount(amount)} ${selectedProduct.value?.quotaUnit || 'USD'}`
+  return `${period} $${formatQuotaAmount(amount)}`
 }
 const regionText = computed(() => regionDisplayName(props.form, props.regionsByCode) || '待选择')
 const distributionText = computed(() => distributionMethodLabel(props.form.distributionMethod))
@@ -107,8 +107,8 @@ const directConnectionText = computed(() => props.form.supportsMainlandChinaDire
 
       <dl class="mt-4 divide-y divide-border text-sm">
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">开通区</dt><dd class="font-semibold">{{ regionText }}</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每天额度</dt><dd class="font-semibold">{{ dailyQuotaText }}</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每周额度</dt><dd class="font-semibold">{{ weeklyQuotaText }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每日最大花费额度</dt><dd class="font-semibold">{{ dailyQuotaText }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每周最大花费额度</dt><dd class="font-semibold">{{ weeklyQuotaText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">额度重置</dt><dd class="font-semibold">{{ resetText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">VPS 区域</dt><dd class="font-semibold">{{ form.vpsRegion || '待填写' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">国内直连</dt><dd class="font-semibold">{{ directConnectionText }}</dd></div>

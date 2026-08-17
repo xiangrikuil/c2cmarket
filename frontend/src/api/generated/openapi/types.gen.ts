@@ -3229,13 +3229,13 @@ export type CreateCarpoolListingRequest = {
      */
     serviceMultiplier: DecimalString;
     /**
-     * Owner-declared per-seat daily quota amount. It uses the selected product plan quota label and unit.
+     * Per-member daily maximum spend in USD.
      */
-    dailyQuotaAmount: DecimalString;
+    dailySpendLimitUsd: DecimalString;
     /**
-     * Owner-declared per-seat weekly quota amount. Label and unit come from the selected product plan and are not accepted from the client.
+     * Per-member weekly maximum spend in USD.
      */
-    weeklyQuotaAmount: DecimalString;
+    weeklySpendLimitUsd: DecimalString;
     /**
      * Whether the declared quota follows the official provider reset schedule.
      */
@@ -3263,9 +3263,9 @@ export type CreateCarpoolListingRequest = {
      */
     buyerSeatCapacity: number;
     /**
-     * Active buyer members only. Excludes the listing owner.
+     * Seats already occupied outside the platform. Platform memberships are derived and cannot be supplied by the owner.
      */
-    activeBuyerMembers: number;
+    offlineOccupiedSeats: number;
     riskAcknowledgement?: RiskAcknowledgement;
 };
 
@@ -3314,8 +3314,8 @@ export type CarpoolListing = {
     sourceUrl?: string;
     priceMonthlyCny: DecimalString;
     serviceMultiplier: DecimalString;
-    dailyQuotaAmount: string | null;
-    weeklyQuotaAmount: DecimalString;
+    dailySpendLimitUsd: string | null;
+    weeklySpendLimitUsd: DecimalString;
     followsOfficialQuotaReset: boolean | null;
     vpsRegion: string | null;
     supportsMainlandChinaDirectConnection: boolean | null;
@@ -3331,15 +3331,21 @@ export type CarpoolListing = {
      */
     buyerSeatCapacity: number;
     /**
-     * Active buyer members only. Excludes the listing owner.
+     * Owner-declared seats already occupied outside the platform.
+     */
+    offlineOccupiedSeats: number;
+    /**
+     * Active platform memberships, derived by the server.
      */
     activeBuyerMembers: number;
-    reservedSeats: number;
     availableSeats: number;
     applicationEligibility: CarpoolApplicationEligibility;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
-    status: 'draft' | 'pending_review' | 'changes_requested' | 'active' | 'paused' | 'rejected' | 'removed';
+    status: 'draft' | 'active' | 'stopped';
+    governanceStatus: 'clear' | 'removed';
+    recruitmentStopReason?: '' | 'owner' | 'full' | 'migration';
+    conditionsVersion: number;
     reviewReason?: string | null;
     reviewedAt?: string | null;
     policyVersion: number;
@@ -3377,9 +3383,9 @@ export type FavoriteStatus = {
 
 export type ReviewCenterRow = {
     id: string;
-    transactionType: 'carpool_membership' | 'api_order';
+    transactionType: 'api_order';
     transactionId: string;
-    sourceType: 'carpool_membership' | 'api_order';
+    sourceType: 'api_order';
     sourceId: string;
     direction: 'pending' | 'sent' | 'received';
     target: string;
@@ -3448,7 +3454,7 @@ export type PublicReview = {
     username: string;
     date: string;
     serviceType: string;
-    transactionType: 'carpool_membership' | 'api_order';
+    transactionType: 'api_order';
     reviewerRole: 'buyer' | 'seller';
     revieweeRole: 'buyer' | 'seller';
     rating: number;
@@ -4556,6 +4562,31 @@ export type EmptyRequest = {
     [key: string]: never;
 };
 
+export type CarpoolListingConditionsSnapshot = {
+    title: string;
+    priceMonthlyCny: DecimalString;
+    dailySpendLimitUsd: string | null;
+    weeklySpendLimitUsd: DecimalString;
+    followsOfficialQuotaReset: boolean;
+    buyerSeatCapacity: number;
+    offlineOccupiedSeats: number;
+    regionCode: string;
+    regionName: string;
+    vpsRegion: string;
+    supportsMainlandChinaDirectConnection: boolean;
+    openingChannelCode: string;
+    customOpeningChannel: string;
+    paymentMethodCode: string;
+    customPaymentMethod: string;
+    distributionMethod: string;
+    distributionMethodNote: string;
+    providesAdminAccount: boolean;
+    accessArrangement: string;
+    cycleTerm?: CarpoolCycleTermInput;
+    policyVersion: number;
+    riskNoticeCode: string;
+};
+
 export type CarpoolApplication = {
     id: string;
     carpoolListingId: string;
@@ -4563,24 +4594,18 @@ export type CarpoolApplication = {
     ownerUserId: string;
     productPlanId: string;
     buyerContactMethodId: string;
-    status: 'pending_owner' | 'accepted_reserved' | 'joined' | 'rejected' | 'cancelled_by_buyer' | 'expired';
+    status: 'pending_owner' | 'joined' | 'rejected' | 'cancelled_by_buyer';
     seatCount: 1;
     listingTitleSnapshot: string;
     priceMonthlyCny: DecimalString;
     policyVersionSnapshot: number;
     buyerReputation: ReputationSummary | null;
     riskNoticeCode?: string;
+    conditionsVersionSnapshot: number;
+    conditionsSnapshot: CarpoolListingConditionsSnapshot;
+    acceptedConditionsVersion: number;
+    conditionsAcceptedAt: string;
     contactSessionId?: string;
-    /**
-     * Absolute deadline for the seat reservation. Expired reservations do not consume capacity even before scheduler materialization.
-     */
-    reservationExpiresAt?: string | null;
-    /**
-     * Deadline for buyer and owner to confirm the off-platform arrangement. This is separate from payment and does not imply platform guarantee.
-     */
-    joinConfirmationDeadline?: string | null;
-    buyerConfirmedAt?: string | null;
-    ownerConfirmedAt?: string | null;
     joinedAt?: string | null;
     decisionReason?: string | null;
     decidedAt?: string | null;
@@ -4602,15 +4627,14 @@ export type CarpoolMembership = {
     buyerUserId: string;
     ownerUserId: string;
     productPlanId: string;
-    status: 'active' | 'completed' | 'left' | 'removed';
+    status: 'active' | 'left' | 'removed';
     seatCount: 1;
     priceMonthlyCny: DecimalString;
     policyVersionSnapshot: number;
     riskNoticeCode?: string;
+    conditionsVersionSnapshot: number;
+    conditionsSnapshot: CarpoolListingConditionsSnapshot;
     joinedAt: string;
-    buyerCompletedAt?: string | null;
-    ownerCompletedAt?: string | null;
-    completedAt?: string | null;
     endedAt?: string | null;
     endedReason?: string;
     endedByUserId?: string;
@@ -4854,7 +4878,7 @@ export type ContactSession = {
 
 export type ContactSessionContacts = {
     sessionId: string;
-    endsAt: string;
+    endsAt: string | null;
     items: Array<{
         side: 'buyer' | 'seller';
         subjectId: string;
@@ -5258,7 +5282,7 @@ export type IfMatch = string;
  */
 export type IfMatchAllowZero = string;
 
-export type ReviewTransactionType = 'carpool_membership' | 'api_order';
+export type ReviewTransactionType = 'api_order';
 
 export type ResourceId = string;
 
@@ -7703,7 +7727,7 @@ export type CreateTransactionReviewData = {
         'Idempotency-Key': string;
     };
     path: {
-        type: 'carpool_membership' | 'api_order';
+        type: 'api_order';
         id: string;
     };
     query?: never;
@@ -7750,7 +7774,7 @@ export type EditTransactionReviewData = {
         'Idempotency-Key': string;
     };
     path: {
-        type: 'carpool_membership' | 'api_order';
+        type: 'api_order';
         id: string;
     };
     query?: never;
@@ -7790,52 +7814,6 @@ export type EditTransactionReviewResponses = {
 };
 
 export type EditTransactionReviewResponse = EditTransactionReviewResponses[keyof EditTransactionReviewResponses];
-
-export type SubmitCarpoolMembershipReviewData = {
-    body: SubmitReviewRequest;
-    headers: {
-        'Idempotency-Key': string;
-    };
-    path: {
-        membershipId: string;
-    };
-    query?: never;
-    url: '/api/v1/me/reviews/carpool-memberships/{membershipId}';
-};
-
-export type SubmitCarpoolMembershipReviewErrors = {
-    /**
-     * Problem Details error.
-     */
-    401: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-};
-
-export type SubmitCarpoolMembershipReviewError = SubmitCarpoolMembershipReviewErrors[keyof SubmitCarpoolMembershipReviewErrors];
-
-export type SubmitCarpoolMembershipReviewResponses = {
-    /**
-     * Review center row after the submit/update.
-     */
-    200: ReviewCenterRow;
-};
-
-export type SubmitCarpoolMembershipReviewResponse = SubmitCarpoolMembershipReviewResponses[keyof SubmitCarpoolMembershipReviewResponses];
 
 export type CreateReportData = {
     body: CreateReportRequest;
@@ -8514,6 +8492,74 @@ export type GetMyCarpoolResponses = {
 
 export type GetMyCarpoolResponse = GetMyCarpoolResponses[keyof GetMyCarpoolResponses];
 
+export type StopMyCarpoolRecruitingData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/carpools/{id}/stop-recruiting';
+};
+
+export type StopMyCarpoolRecruitingErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+};
+
+export type StopMyCarpoolRecruitingError = StopMyCarpoolRecruitingErrors[keyof StopMyCarpoolRecruitingErrors];
+
+export type StopMyCarpoolRecruitingResponses = {
+    /**
+     * Recruitment stopped without changing pending applications or active memberships.
+     */
+    200: CarpoolListing;
+};
+
+export type StopMyCarpoolRecruitingResponse = StopMyCarpoolRecruitingResponses[keyof StopMyCarpoolRecruitingResponses];
+
+export type ResumeMyCarpoolRecruitingData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/carpools/{id}/resume-recruiting';
+};
+
+export type ResumeMyCarpoolRecruitingErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+};
+
+export type ResumeMyCarpoolRecruitingError = ResumeMyCarpoolRecruitingErrors[keyof ResumeMyCarpoolRecruitingErrors];
+
+export type ResumeMyCarpoolRecruitingResponses = {
+    /**
+     * Recruitment resumed when governance is clear and seats are available.
+     */
+    200: CarpoolListing;
+};
+
+export type ResumeMyCarpoolRecruitingResponse = ResumeMyCarpoolRecruitingResponses[keyof ResumeMyCarpoolRecruitingResponses];
+
 export type ListMyCarpoolApplicationsData = {
     body?: never;
     path?: never;
@@ -8605,20 +8651,23 @@ export type CancelMyCarpoolApplicationResponses = {
 
 export type CancelMyCarpoolApplicationResponse = CancelMyCarpoolApplicationResponses[keyof CancelMyCarpoolApplicationResponses];
 
-export type ConfirmMyCarpoolApplicationJoinData = {
+export type ConfirmMyCarpoolApplicationConditionsData = {
     body: EmptyRequestWritable;
     headers: {
         'If-Match': string;
-        'Idempotency-Key': string;
     };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/me/carpool-applications/{id}/confirm-join';
+    url: '/api/v1/me/carpool-applications/{id}/confirm-conditions';
 };
 
-export type ConfirmMyCarpoolApplicationJoinErrors = {
+export type ConfirmMyCarpoolApplicationConditionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
     /**
      * Problem Details error.
      */
@@ -8633,16 +8682,16 @@ export type ConfirmMyCarpoolApplicationJoinErrors = {
     428: ProblemDetails;
 };
 
-export type ConfirmMyCarpoolApplicationJoinError = ConfirmMyCarpoolApplicationJoinErrors[keyof ConfirmMyCarpoolApplicationJoinErrors];
+export type ConfirmMyCarpoolApplicationConditionsError = ConfirmMyCarpoolApplicationConditionsErrors[keyof ConfirmMyCarpoolApplicationConditionsErrors];
 
-export type ConfirmMyCarpoolApplicationJoinResponses = {
+export type ConfirmMyCarpoolApplicationConditionsResponses = {
     /**
-     * Buyer-side join confirmation recorded. When both sides confirm, membership becomes active.
+     * Latest conditions frozen into the pending application.
      */
     200: CarpoolApplication;
 };
 
-export type ConfirmMyCarpoolApplicationJoinResponse = ConfirmMyCarpoolApplicationJoinResponses[keyof ConfirmMyCarpoolApplicationJoinResponses];
+export type ConfirmMyCarpoolApplicationConditionsResponse = ConfirmMyCarpoolApplicationConditionsResponses[keyof ConfirmMyCarpoolApplicationConditionsResponses];
 
 export type ListMyCarpoolMembershipsData = {
     body?: never;
@@ -8668,45 +8717,6 @@ export type ListMyCarpoolMembershipsResponses = {
 };
 
 export type ListMyCarpoolMembershipsResponse = ListMyCarpoolMembershipsResponses[keyof ListMyCarpoolMembershipsResponses];
-
-export type ConfirmMyCarpoolMembershipCompleteData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/me/carpool-memberships/{id}/confirm-complete';
-};
-
-export type ConfirmMyCarpoolMembershipCompleteErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ConfirmMyCarpoolMembershipCompleteError = ConfirmMyCarpoolMembershipCompleteErrors[keyof ConfirmMyCarpoolMembershipCompleteErrors];
-
-export type ConfirmMyCarpoolMembershipCompleteResponses = {
-    /**
-     * Buyer-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-     */
-    200: CarpoolMembership;
-};
-
-export type ConfirmMyCarpoolMembershipCompleteResponse = ConfirmMyCarpoolMembershipCompleteResponses[keyof ConfirmMyCarpoolMembershipCompleteResponses];
 
 export type LeaveMyCarpoolMembershipData = {
     body: MembershipEndRequest;
@@ -9801,7 +9811,7 @@ export type AcceptCarpoolApplicationError = AcceptCarpoolApplicationErrors[keyof
 
 export type AcceptCarpoolApplicationResponses = {
     /**
-     * Application accepted and a 30-minute contact window opened.
+     * Application joined, active membership created, and lifecycle-bound contact access opened atomically.
      */
     200: CarpoolApplication;
 };
@@ -9843,84 +9853,6 @@ export type RejectCarpoolApplicationResponses = {
 
 export type RejectCarpoolApplicationResponse = RejectCarpoolApplicationResponses[keyof RejectCarpoolApplicationResponses];
 
-export type WithdrawCarpoolAcceptanceData = {
-    body: MembershipEndRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/carpool-applications/{id}/withdraw-acceptance';
-};
-
-export type WithdrawCarpoolAcceptanceErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type WithdrawCarpoolAcceptanceError = WithdrawCarpoolAcceptanceErrors[keyof WithdrawCarpoolAcceptanceErrors];
-
-export type WithdrawCarpoolAcceptanceResponses = {
-    /**
-     * Owner withdrew an accepted reservation before the application joined.
-     */
-    200: CarpoolApplication;
-};
-
-export type WithdrawCarpoolAcceptanceResponse = WithdrawCarpoolAcceptanceResponses[keyof WithdrawCarpoolAcceptanceResponses];
-
-export type ConfirmOwnerCarpoolApplicationJoinData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/carpool-applications/{id}/confirm-join';
-};
-
-export type ConfirmOwnerCarpoolApplicationJoinErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ConfirmOwnerCarpoolApplicationJoinError = ConfirmOwnerCarpoolApplicationJoinErrors[keyof ConfirmOwnerCarpoolApplicationJoinErrors];
-
-export type ConfirmOwnerCarpoolApplicationJoinResponses = {
-    /**
-     * Owner-side join confirmation recorded. When both sides confirm, membership becomes active.
-     */
-    200: CarpoolApplication;
-};
-
-export type ConfirmOwnerCarpoolApplicationJoinResponse = ConfirmOwnerCarpoolApplicationJoinResponses[keyof ConfirmOwnerCarpoolApplicationJoinResponses];
-
 export type ListOwnerCarpoolMembershipsData = {
     body?: never;
     path?: never;
@@ -9945,45 +9877,6 @@ export type ListOwnerCarpoolMembershipsResponses = {
 };
 
 export type ListOwnerCarpoolMembershipsResponse = ListOwnerCarpoolMembershipsResponses[keyof ListOwnerCarpoolMembershipsResponses];
-
-export type ConfirmOwnerCarpoolMembershipCompleteData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/carpool-memberships/{id}/confirm-complete';
-};
-
-export type ConfirmOwnerCarpoolMembershipCompleteErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ConfirmOwnerCarpoolMembershipCompleteError = ConfirmOwnerCarpoolMembershipCompleteErrors[keyof ConfirmOwnerCarpoolMembershipCompleteErrors];
-
-export type ConfirmOwnerCarpoolMembershipCompleteResponses = {
-    /**
-     * Owner-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-     */
-    200: CarpoolMembership;
-};
-
-export type ConfirmOwnerCarpoolMembershipCompleteResponse = ConfirmOwnerCarpoolMembershipCompleteResponses[keyof ConfirmOwnerCarpoolMembershipCompleteResponses];
 
 export type RemoveOwnerCarpoolMembershipData = {
     body: MembershipEndRequest;
@@ -12140,7 +12033,7 @@ export type PauseCarpoolError = PauseCarpoolErrors[keyof PauseCarpoolErrors];
 
 export type PauseCarpoolResponses = {
     /**
-     * Carpool listing paused.
+     * Carpool listing removed from public visibility without changing recruitment state.
      */
     200: CarpoolListing;
 };
@@ -12175,7 +12068,7 @@ export type RestoreCarpoolError = RestoreCarpoolErrors[keyof RestoreCarpoolError
 
 export type RestoreCarpoolResponses = {
     /**
-     * Carpool listing restored to active.
+     * Carpool listing governance restored without changing recruitment state.
      */
     200: CarpoolListing;
 };

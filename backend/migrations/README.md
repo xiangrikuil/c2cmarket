@@ -106,6 +106,7 @@ versions:
 | `000097_dynamic_catalog_lifecycle` | three-state catalog lifecycle, Grok/xAI seed data, immutable core identity, and API-order catalog risk holds |
 | `000098_password_reset` | purpose-isolated active password-reset challenge uniqueness for immutable student-email recovery |
 | `000109_announcement_critical_delivery` | critical global delivery, acknowledgement receipts, and publish-time recipient snapshots |
+| `000111_carpool_lightweight_matching` | one-step carpool matching, recruitment/governance separation, USD spend-limit naming, and immutable condition snapshots |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -575,6 +576,17 @@ email. Each active challenge is purpose-isolated and bound to the current user,
 contact method, immutable contact-method version, and normalized email. The
 down migration removes only contact-email challenges before restoring the
 previous purpose constraint.
+
+Version 111 (`000111_carpool_lightweight_matching`) replaces the pre-launch
+reservation and bilateral-confirmation workflow with owner acceptance directly
+creating an active membership. It preserves listings while clearing disposable
+application, membership, contact-session, and carpool-review test data; separates
+owner recruitment state from administrator governance; records offline and
+platform seats independently; renames daily and weekly quota values to USD spend
+limits; and adds versioned full-condition snapshots. Carpool matching no longer
+creates review or public reputation facts. The down migration restores the old
+schema only on a database without carpool data or open-ended contact sessions.
+Deleted pre-launch workflow data remains recoverable only from a backup.
 
 ## Docker Compose
 

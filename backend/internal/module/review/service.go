@@ -520,8 +520,8 @@ func ValidateSubmitInput(input SubmitReviewInput) *domain.AppError {
 	if strings.TrimSpace(input.ReviewerUserID) == "" {
 		return sessionRequired()
 	}
-	if input.TransactionType != TransactionCarpoolMembership && input.TransactionType != TransactionAPIOrder {
-		return validationError("type", "交易类型必须是 carpool_membership 或 api_order。")
+	if input.TransactionType != TransactionAPIOrder {
+		return validationError("type", "交易类型必须是 api_order。")
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(input.TransactionID)); err != nil {
 		return validationError("id", "交易 ID 格式不正确。")
