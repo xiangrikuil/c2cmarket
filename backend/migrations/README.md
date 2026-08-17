@@ -588,6 +588,12 @@ creates review or public reputation facts. The down migration restores the old
 schema only on a database without carpool data or open-ended contact sessions.
 Deleted pre-launch workflow data remains recoverable only from a backup.
 
+Version 112 (`000112_carpool_optional_spend_limits_account_login`) lets carpool
+owners declare daily and weekly spend limits independently as unlimited, and
+adds account login as a non-credential distribution method. VPS region and
+mainland direct-connect declarations remain optional. The down migration refuses
+to discard unlimited weekly limits or rewrite account-login listings.
+
 ## Docker Compose
 
 The repository root `compose.yaml` provides a PostgreSQL service and a one-shot

@@ -1939,6 +1939,7 @@ export function getCarpoolSeatSummary(carpool: Carpool): CarpoolSeatSummary {
     carpoolId: carpool.id,
     totalSeats: carpool.maxMembers,
     activeMemberCount,
+    occupiedSeatCount: activeMemberCount,
     availableSeats: Math.max(0, carpool.maxMembers - activeMemberCount),
   }
 }
@@ -2631,7 +2632,7 @@ export async function updateMyCarpool(id: string, payload: SaveCarpoolDraftPaylo
 		dailyQuotaAmount: payload.dailyQuotaAmount ?? undefined,
 		weeklyQuotaAmount: payload.weeklyQuotaAmount ?? undefined,
 		followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
-		vpsRegion: payload.vpsRegion,
+		vpsRegion: payload.vpsRegion.trim() || null,
 		supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
 		currentConfirmedMembers: payload.occupiedSeats,
 		maxMembers: payload.totalSeats,
@@ -2641,7 +2642,7 @@ export async function updateMyCarpool(id: string, payload: SaveCarpoolDraftPaylo
 		customPaymentMethod: payload.customPaymentMethod || null,
 		distributionMethod: payload.distributionMethod || 'other',
 		distributionMethodNote: payload.distributionMethodNote ?? '',
-		providesAdminAccount: Boolean(payload.providesAdminAccount),
+		providesAdminAccount: payload.distributionMethod === 'account_login' ? false : Boolean(payload.providesAdminAccount),
 		accessArrangementMode: payload.accessArrangementMode,
 		accessArrangementNote: payload.accessArrangementNote,
 		status: submitForReview ? '审核中' : '暂停',
@@ -4635,8 +4636,8 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (!payload.distributionMethod) {
     throw new Error('请选择分发方式。')
   }
-  if (payload.distributionMethod !== 'sub2api' && payload.distributionMethod !== 'other') {
-    throw new Error('分发方式只能选择 Sub2API 或其他。')
+  if (payload.distributionMethod !== 'sub2api' && payload.distributionMethod !== 'account_login' && payload.distributionMethod !== 'other') {
+    throw new Error('分发方式只能选择 Sub2API、账号登录或其他。')
   }
   const distributionNote = payload.distributionMethodNote?.trim() ?? ''
   if (payload.distributionMethod === 'other' && !distributionNote) {
@@ -4645,15 +4646,13 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (distributionNote && hasCredentialSharingLanguage(distributionNote)) {
     throw new Error('分发方式说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。')
   }
-  if (typeof payload.providesAdminAccount !== 'boolean') {
+  if (payload.distributionMethod !== 'account_login' && typeof payload.providesAdminAccount !== 'boolean') {
     throw new Error('请选择是否提供管理员账号。')
   }
-  if (!payload.dailyQuotaAmount || payload.dailyQuotaAmount <= 0 || !payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0) {
+  if ((payload.dailyQuotaAmount !== null && payload.dailyQuotaAmount <= 0) || (payload.weeklyQuotaAmount !== null && payload.weeklyQuotaAmount <= 0)) {
     throw new Error('请填写有效的每日最大花费额度与每周最大花费额度。')
   }
   if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
-  if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
-  if (typeof payload.supportsMainlandChinaDirectConnection !== 'boolean') throw new Error('请选择是否支持国内直连。')
   if (!payload.openingChannelCode || (payload.openingChannelCode === 'other' && !payload.customOpeningChannel.trim())) {
     throw new Error('请选择或填写开通渠道。')
   }
@@ -4760,8 +4759,8 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
   const monthly = payload.monthlyPriceCny ?? 0
-  const dailyQuotaAmount = payload.dailyQuotaAmount ?? 0
-  const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? 0
+  const dailyQuotaAmount = payload.dailyQuotaAmount ?? undefined
+  const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? undefined
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
@@ -4799,7 +4798,7 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
     hasUnresolvedDispute: false,
     distributionMethod: payload.distributionMethod || 'other',
     distributionMethodNote: payload.distributionMethodNote?.trim() || '站外分发方式待确认。',
-    providesAdminAccount: Boolean(payload.providesAdminAccount),
+    providesAdminAccount: payload.distributionMethod === 'account_login' ? false : Boolean(payload.providesAdminAccount),
     accessArrangementMode: payload.accessArrangementMode ?? 'other_off_platform',
     accessArrangementNote: payload.accessArrangementNote?.trim() || '待管理员复核访问安排',
     riskAcknowledged: carpoolRequiresRiskAck(product, payload.riskNoticeCode) ? Boolean(payload.riskAcknowledged) : undefined,

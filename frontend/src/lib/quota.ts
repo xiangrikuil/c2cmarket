@@ -35,7 +35,7 @@ export function formatMonthlyQuota(input: QuotaDisplayInput, fallback = '额度�
   return `${quotaPeriodText(input.period ?? input.quotaPeriod)} ${formatQuotaAmount(amount)} ${unit}`
 }
 
-export function formatDailyWeeklyQuota(input: QuotaDisplayInput, fallback = '未声明') {
+export function formatDailyWeeklyQuota(input: QuotaDisplayInput, fallback = '不限') {
 	const daily = input.dailyQuotaAmount
   const weekly = input.weeklyQuotaAmount ?? input.amount
   const dailyText = Number.isFinite(daily) && daily && daily > 0

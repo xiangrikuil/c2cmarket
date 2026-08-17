@@ -89,9 +89,9 @@ type BackendCarpoolListing = {
   priceMonthlyCny: string
   serviceMultiplier: string
   dailySpendLimitUsd?: string | null
-  weeklySpendLimitUsd?: string
+  weeklySpendLimitUsd?: string | null
   dailyQuotaAmount?: string | null
-  weeklyQuotaAmount?: string
+  weeklyQuotaAmount?: string | null
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string | null
   supportsMainlandChinaDirectConnection: boolean | null
@@ -151,7 +151,7 @@ type BackendCarpoolApplication = {
     title: string
     priceMonthlyCny: string
     dailySpendLimitUsd: string | null
-    weeklySpendLimitUsd: string
+    weeklySpendLimitUsd: string | null
     followsOfficialQuotaReset: boolean
     buyerSeatCapacity: number
     offlineOccupiedSeats: number
@@ -355,18 +355,33 @@ function ownerLabel(userId: string) {
   return userId.length > 8 ? `用户 ${userId.slice(0, 8)}` : userId
 }
 
+function projectListingSeats(listing: BackendCarpoolListing) {
+  const totalSeats = Math.max(1, listing.buyerSeatCapacity)
+  const activeMemberCount = Math.min(Math.max(0, listing.activeBuyerMembers), totalSeats)
+  const occupiedSeatCount = Math.min(
+    Math.max(0, (listing.offlineOccupiedSeats ?? 0) + listing.activeBuyerMembers),
+    totalSeats,
+  )
+
+  return {
+    carpoolId: listing.id,
+    totalSeats,
+    activeMemberCount,
+    occupiedSeatCount,
+    availableSeats: Math.min(Math.max(0, listing.availableSeats), totalSeats),
+  }
+}
+
 export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): Promise<CarpoolWithMeta> {
   backendCarpoolListings.set(listing.id, listing)
   const plan = await productPlan(listing.productPlanId)
   const monthly = numberFromDecimal(listing.priceMonthlyCny)
   const serviceMultiplier = numberFromDecimal(listing.serviceMultiplier)
-  const dailyLimit = listing.dailySpendLimitUsd ?? listing.dailyQuotaAmount
-  const weeklyLimit = listing.weeklySpendLimitUsd ?? listing.weeklyQuotaAmount
+  const dailyLimit = listing.dailySpendLimitUsd !== undefined ? listing.dailySpendLimitUsd : listing.dailyQuotaAmount
+  const weeklyLimit = listing.weeklySpendLimitUsd !== undefined ? listing.weeklySpendLimitUsd : listing.weeklyQuotaAmount
   const dailyQuotaAmount = dailyLimit ? numberFromDecimal(dailyLimit) : undefined
-  const weeklyQuotaAmount = numberFromDecimal(weeklyLimit)
-  const activeSeats = Math.max(0, listing.activeBuyerMembers)
-  const totalSeats = Math.max(1, listing.buyerSeatCapacity)
-  const availableSeats = Math.max(0, listing.availableSeats)
+  const weeklyQuotaAmount = weeklyLimit ? numberFromDecimal(weeklyLimit) : undefined
+  const seatSummary = projectListingSeats(listing)
   return {
     id: listing.id,
     product: plan.displayName,
@@ -385,11 +400,11 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     quotaLabel: listing.quotaLabel || plan.quotaLabel || defaultQuotaLabel,
     quotaUnit: listing.quotaUnit || plan.quotaUnit || defaultQuotaUnit,
     quotaPeriod: listing.quotaPeriod || plan.quotaPeriod || defaultQuotaPeriod,
-    seats: `${activeSeats}/${totalSeats}`,
+    seats: `${seatSummary.occupiedSeatCount}/${seatSummary.totalSeats}`,
     pricingMode: 'fixed',
     fixedMonthlyPrice: monthly,
-    currentConfirmedMembers: activeSeats,
-    maxMembers: totalSeats,
+    currentConfirmedMembers: seatSummary.activeMemberCount,
+    maxMembers: seatSummary.totalSeats,
     owner: ownerLabel(listing.ownerUserId),
     ownerUserId: listing.ownerUserId,
     trustLevel: null,
@@ -397,7 +412,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     ownerType: '个人车主',
     warranty: '车主承诺',
     openingMethod: openingMethodFromAccessMode(plan.accessMode),
-    status: listingStatus(listing.status, availableSeats),
+    status: listingStatus(listing.status, seatSummary.availableSeats),
     confirmedAt: formatTime(listing.updatedAt),
     confirmedWithin48h: true,
     linuxdoBound: null,
@@ -417,12 +432,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     backendStatus: listing.status,
     offlineOccupiedSeats: listing.offlineOccupiedSeats ?? 0,
     recruitmentStopReason: listing.recruitmentStopReason,
-    seatSummary: {
-      carpoolId: listing.id,
-      totalSeats,
-      activeMemberCount: activeSeats,
-      availableSeats,
-    },
+    seatSummary,
   }
 }
 
@@ -498,7 +508,7 @@ function ownerCarpoolEditData(listing: BackendCarpoolListing, plan: BackendProdu
       monthlyPriceCny: numberFromDecimal(listing.priceMonthlyCny),
       serviceMultiplier: numberFromDecimal(listing.serviceMultiplier),
       dailyQuotaAmount: (listing.dailySpendLimitUsd ?? listing.dailyQuotaAmount) ? numberFromDecimal(listing.dailySpendLimitUsd ?? listing.dailyQuotaAmount) : null,
-      weeklyQuotaAmount: numberFromDecimal(listing.weeklySpendLimitUsd ?? listing.weeklyQuotaAmount),
+      weeklyQuotaAmount: (listing.weeklySpendLimitUsd ?? listing.weeklyQuotaAmount) ? numberFromDecimal(listing.weeklySpendLimitUsd ?? listing.weeklyQuotaAmount) : null,
       followsOfficialQuotaReset: listing.followsOfficialQuotaReset,
       vpsRegion: listing.vpsRegion ?? '',
       supportsMainlandChinaDirectConnection: listing.supportsMainlandChinaDirectConnection,
@@ -588,7 +598,14 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
       monthlyPriceCny: monthly,
       serviceMultiplier: listing ? numberFromDecimal(listing.serviceMultiplier) : undefined,
       dailyQuotaAmount: conditions?.dailySpendLimitUsd ? numberFromDecimal(conditions.dailySpendLimitUsd) : undefined,
-      weeklyQuotaAmount: numberFromDecimal(conditions?.weeklySpendLimitUsd ?? listing?.weeklySpendLimitUsd ?? listing?.weeklyQuotaAmount),
+      weeklyQuotaAmount: (() => {
+        const value = conditions
+          ? conditions.weeklySpendLimitUsd
+          : listing?.weeklySpendLimitUsd !== undefined
+            ? listing.weeklySpendLimitUsd
+            : listing?.weeklyQuotaAmount
+        return value ? numberFromDecimal(value) : undefined
+      })(),
       quotaLabel: listing?.quotaLabel || plan.quotaLabel || defaultQuotaLabel,
       quotaUnit: listing?.quotaUnit || plan.quotaUnit || defaultQuotaUnit,
       quotaPeriod: listing?.quotaPeriod || plan.quotaPeriod || defaultQuotaPeriod,
@@ -801,16 +818,16 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
     summary: payload.rulesNote,
     accessArrangement: payload.accessArrangementNote || '站外成员安排，平台不保存、不提供账号凭据。',
     distributionMethod: payload.distributionMethod || 'other',
-    distributionMethodNote: payload.distributionMethodNote?.trim() || '站外分发方式待确认。',
-    providesAdminAccount: Boolean(payload.providesAdminAccount),
+    distributionMethodNote: payload.distributionMethod === 'other' ? payload.distributionMethodNote?.trim() || '站外分发方式待确认。' : payload.distributionMethodNote?.trim() || '',
+    providesAdminAccount: payload.distributionMethod === 'account_login' ? false : Boolean(payload.providesAdminAccount),
     regionCode: payload.regionCode,
     regionName,
     priceMonthlyCny: String(monthly),
     serviceMultiplier: String(payload.serviceMultiplier ?? 1),
-    dailySpendLimitUsd: String(payload.dailyQuotaAmount ?? 0),
-    weeklySpendLimitUsd: String(payload.weeklyQuotaAmount ?? 0),
+    dailySpendLimitUsd: payload.dailyQuotaAmount === null ? null : String(payload.dailyQuotaAmount),
+    weeklySpendLimitUsd: payload.weeklyQuotaAmount === null ? null : String(payload.weeklyQuotaAmount),
     followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
-    vpsRegion: payload.vpsRegion.trim(),
+    vpsRegion: payload.vpsRegion.trim() || null,
     supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
     openingChannelCode: payload.openingChannelCode,
     customOpeningChannel: payload.openingChannelCode === 'other' ? payload.customOpeningChannel.trim() : '',

@@ -100,8 +100,8 @@ SELECT
 	l.title AS title,
 	'¥' || l.price_monthly_cny::text || '/月 · 可用席位 ' ||
 	GREATEST(l.buyer_seat_capacity - l.offline_occupied_seats - l.active_buyer_members, 0)::text ||
-	' · 每日最大花费 ' || COALESCE('$' || l.daily_spend_limit_usd::text, '未声明') ||
-	' · 每周最大花费 $' || l.weekly_spend_limit_usd::text AS subtitle,
+	' · 每日最大花费 ' || COALESCE('$' || l.daily_spend_limit_usd::text, '不限') ||
+	' · 每周最大花费 ' || COALESCE('$' || l.weekly_spend_limit_usd::text, '不限') AS subtitle,
 	l.status AS badge,
 	'/carpools/' || l.id::text AS to,
 	l.updated_at AS rank_time
@@ -113,7 +113,7 @@ WHERE ` + publicCarpoolListingPredicate("l") + `
 		COALESCE(l.source_url, '') || ' ' ||
 		l.price_monthly_cny::text || ' ' ||
 		COALESCE(l.daily_spend_limit_usd::text, '') || ' ' ||
-		l.weekly_spend_limit_usd::text
+		COALESCE(l.weekly_spend_limit_usd::text, '')
 	) ILIKE $1 ESCAPE '\'
   )
 ORDER BY l.updated_at DESC

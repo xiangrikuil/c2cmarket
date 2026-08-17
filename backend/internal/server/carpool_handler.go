@@ -32,8 +32,8 @@ type createCarpoolRequest struct {
 	SourceURL                             string                      `json:"sourceUrl"`
 	PriceMonthlyCNY                       string                      `json:"priceMonthlyCny"`
 	ServiceMultiplier                     string                      `json:"serviceMultiplier"`
-	DailyQuotaAmount                      string                      `json:"dailySpendLimitUsd"`
-	WeeklyQuotaAmount                     string                      `json:"weeklySpendLimitUsd"`
+	DailyQuotaAmount                      *string                     `json:"dailySpendLimitUsd"`
+	WeeklyQuotaAmount                     *string                     `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             *bool                       `json:"followsOfficialQuotaReset"`
 	VPSRegion                             string                      `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                       `json:"supportsMainlandChinaDirectConnection"`
@@ -44,6 +44,13 @@ type createCarpoolRequest struct {
 	BuyerSeatCapacity                     int                         `json:"buyerSeatCapacity"`
 	OfflineOccupiedSeats                  int                         `json:"offlineOccupiedSeats"`
 	RiskAcknowledgement                   *riskAcknowledgementRequest `json:"riskAcknowledgement"`
+}
+
+func optionalRequestString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 type carpoolCycleTermRequest struct {
@@ -84,7 +91,7 @@ type carpoolListingResponse struct {
 	PriceMonthlyCNY                       string                                `json:"priceMonthlyCny"`
 	ServiceMultiplier                     string                                `json:"serviceMultiplier"`
 	DailyQuotaAmount                      *string                               `json:"dailySpendLimitUsd"`
-	WeeklyQuotaAmount                     string                                `json:"weeklySpendLimitUsd"`
+	WeeklyQuotaAmount                     *string                               `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             *bool                                 `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                               `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                                 `json:"supportsMainlandChinaDirectConnection"`
@@ -273,8 +280,8 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		SourceURL:                             req.SourceURL,
 		PriceMonthlyCNY:                       req.PriceMonthlyCNY,
 		ServiceMultiplier:                     req.ServiceMultiplier,
-		DailyQuotaAmount:                      req.DailyQuotaAmount,
-		WeeklyQuotaAmount:                     req.WeeklyQuotaAmount,
+		DailyQuotaAmount:                      optionalRequestString(req.DailyQuotaAmount),
+		WeeklyQuotaAmount:                     optionalRequestString(req.WeeklyQuotaAmount),
 		FollowsOfficialQuotaReset:             req.FollowsOfficialQuotaReset,
 		VPSRegion:                             req.VPSRegion,
 		SupportsMainlandChinaDirectConnection: req.SupportsMainlandChinaDirectConnection,
@@ -351,8 +358,8 @@ func toAppCreateCarpoolInput(req createCarpoolRequest) carpool.CreateListingInpu
 		SourceURL:                             req.SourceURL,
 		PriceMonthlyCNY:                       req.PriceMonthlyCNY,
 		ServiceMultiplier:                     req.ServiceMultiplier,
-		DailyQuotaAmount:                      req.DailyQuotaAmount,
-		WeeklyQuotaAmount:                     req.WeeklyQuotaAmount,
+		DailyQuotaAmount:                      optionalRequestString(req.DailyQuotaAmount),
+		WeeklyQuotaAmount:                     optionalRequestString(req.WeeklyQuotaAmount),
 		FollowsOfficialQuotaReset:             req.FollowsOfficialQuotaReset,
 		VPSRegion:                             req.VPSRegion,
 		SupportsMainlandChinaDirectConnection: req.SupportsMainlandChinaDirectConnection,
