@@ -40,6 +40,10 @@ const (
 	PaymentMethodAlipay = "alipay"
 
 	PublicServiceSortUpdatedDesc        = "updated_desc"
+	PublicServiceSortRecommended        = "recommended"
+	PublicServiceSortReputationDesc     = "reputation_desc"
+	PublicServiceSortCompletedDesc      = "completed_desc"
+	PublicServiceSortResponseFast       = "response_fast"
 	PublicServiceSortPriceAsc           = "price_asc"
 	PublicServiceSortMinimumPurchaseAsc = "minimum_purchase_asc"
 	PublicServiceSortPackagePriceAsc    = "package_price_asc"
@@ -125,6 +129,8 @@ type Service struct {
 	SellerReputation                 *reputation.ReputationSnapshot
 	SourceAuthorVerification         reputation.SourceAuthorResourceSummary
 	SalesSummary                     ServiceSalesSummary
+	// PublicSortValue 仅用于公开列表的 keyset 游标，不属于公共响应字段。
+	PublicSortValue string `json:"-"`
 }
 
 type ServiceAccessMode struct {

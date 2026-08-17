@@ -1252,7 +1252,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [updated_desc, price_asc, minimum_purchase_asc, package_price_asc]
+            enum: [updated_desc, recommended, reputation_desc, completed_desc, response_fast, price_asc, minimum_purchase_asc, package_price_asc]
             default: updated_desc
       responses:
         "200":
@@ -1512,7 +1512,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [updated_desc, unit_price_asc, allowance_desc, delivery_asc]
+            enum: [updated_desc, recommended, reputation_desc, completed_desc, response_fast, unit_price_asc, allowance_desc, delivery_asc]
             default: updated_desc
         - name: slotKey
           in: query

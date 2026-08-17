@@ -53,6 +53,23 @@ const wechatMarkSource = readFileSync(new URL('../../../public/wechat-mark.svg',
 const alipayMarkSource = readFileSync(new URL('../../../public/alipay-mark.svg', import.meta.url), 'utf8')
 
 describe('API 额度包市场视图', () => {
+  test('三种市场视图共享推荐、信誉、完成单数和响应速度排序契约', () => {
+    for (const value of ['recommended', 'reputation_desc', 'completed_desc', 'response_fast']) {
+      assert.equal(marketPageSource.split(`value="${value}"`).length - 1, 3)
+    }
+    assert.ok(marketPageSource.includes("limitedSort.value = ['recommended', 'reputation_desc', 'completed_desc', 'response_fast'"))
+    assert.ok(marketPageSource.includes("packageSort.value = ['reputation_desc', 'completed_desc', 'response_fast'"))
+    assert.ok(marketPageSource.includes("freeSort.value = ['recommended', 'reputation_desc', 'completed_desc', 'response_fast'"))
+    assert.match(apiFacadeSource, /filters.sort === 'reputation_desc'/)
+    assert.match(apiFacadeSource, /filters.sort === 'completed_desc'/)
+    assert.match(apiFacadeSource, /filters.sort === 'response_fast'/)
+    assert.match(marketPageSource, /packageSort\.value === 'reputation_desc'[\s\S]*?compareApiServiceReputationDesc\(left\.service, right\.service\)/)
+    assert.match(marketPageSource, /packageSort\.value === 'completed_desc'[\s\S]*?right\.service\.completed30d[\s\S]*?left\.service\.completed30d/)
+    assert.match(marketPageSource, /packageSort\.value === 'response_fast'[\s\S]*?compareNullableNumberAsc\(left\.service\.responseMedianMinutes, right\.service\.responseMedianMinutes\)/)
+    assert.doesNotMatch(marketPageSource, /成交率/)
+    assert.doesNotMatch(apiFacadeSource, /成交率/)
+  })
+
   test('关闭限量额度包后默认进入自选额度并保留短期流量包切换', () => {
     assert.equal(apiMarketViewFromQuery(undefined), 'free')
     assert.equal(apiMarketViewFromQuery('unknown'), 'free')
@@ -70,15 +87,15 @@ describe('API 额度包市场视图', () => {
     assert.match(appShellSource, /isApiMarketViewActive\(child\.view\)/)
   })
 
-  test('市场列表省略重复页头并保留商家发布入口', () => {
+  test('市场列表省略重复页头并保留限量额度包空状态发布入口', () => {
     assert.doesNotMatch(marketPageSource, /API 市场 \/ \{\{ viewMeta\.title \}\}/)
     assert.doesNotMatch(marketPageSource, /额度来自卖家实际控制的站外中转系统/)
-    assert.match(marketPageSource, /v-if="canPublishCurrentView" class="flex justify-end"/)
-    assert.match(marketPageSource, /<RouterLink :to="viewMeta\.publishTo"/)
+    assert.doesNotMatch(marketPageSource, /canPublishCurrentView|canPublishApiService|viewMeta\.publish(Label|To)/)
+    assert.match(marketPageSource, /<RouterLink v-if="canPublishQuota" to="\/api-market\/quota\/new">/)
   })
 
   test('市场入口进入可复用已有服务的固定场次发布向导', () => {
-    assert.match(marketPageSource, /publishTo: '\/api-market\/quota\/new'/)
+    assert.match(marketPageSource, /to="\/api-market\/quota\/new"/)
     assert.match(marketPageSource, /发布限量额度包/)
     assert.match(marketPageSource, /卖家也可以发布自己的限量额度包/)
     assert.match(myApiServicesPageSource, /quotaPublishIntent \? '选择 API 服务'/)

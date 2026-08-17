@@ -216,6 +216,10 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 	sortExpression := ""
 	var scalarValue func(apimarket.Service) string
 	switch sortMode {
+	case apimarket.PublicServiceSortRecommended, apimarket.PublicServiceSortReputationDesc,
+		apimarket.PublicServiceSortCompletedDesc, apimarket.PublicServiceSortResponseFast:
+		sortExpression = apiServiceSortExpression("api_services", sortMode)
+		scalarValue = func(item apimarket.Service) string { return item.PublicSortValue }
 	case apimarket.PublicServiceSortPriceAsc:
 		sortExpression = "api_services.declared_cny_per_usd_allowance"
 		scalarValue = func(item apimarket.Service) string { return item.DeclaredCNYPerUSDAllowance }
@@ -1222,7 +1226,11 @@ func (s *Store) listAPIServicesPage(
 			return domain.Page[apimarket.Service]{}, appErr
 		}
 	}
-	query := `SELECT ` + apiServiceColumns + ` FROM api_services `
+	selectColumns := apiServiceColumns
+	if sortExpression != "" {
+		selectColumns += ", " + sortExpression
+	}
+	query := `SELECT ` + selectColumns + ` FROM api_services `
 	whereClause = strings.TrimSpace(whereClause)
 	if whereClause != "" {
 		query += whereClause
@@ -1254,7 +1262,12 @@ func (s *Store) listAPIServicesPage(
 		return domain.Page[apimarket.Service]{}, internalStoreError()
 	}
 	defer rows.Close()
-	services, appErr := scanAPIServices(rows)
+	var services []apimarket.Service
+	if sortExpression != "" {
+		services, appErr = scanAPIServicesWithSortValue(rows)
+	} else {
+		services, appErr = scanAPIServices(rows)
+	}
 	if appErr != nil {
 		return domain.Page[apimarket.Service]{}, appErr
 	}
@@ -2680,8 +2693,29 @@ func scanAPIServices(rows pgx.Rows) ([]apimarket.Service, *domain.AppError) {
 	return services, nil
 }
 
+func scanAPIServicesWithSortValue(rows pgx.Rows) ([]apimarket.Service, *domain.AppError) {
+	services := []apimarket.Service{}
+	for rows.Next() {
+		var service apimarket.Service
+		if err := scanAPIServiceWithSortValue(rows, &service); err != nil {
+			return nil, internalStoreError()
+		}
+		services = append(services, service)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, internalStoreError()
+	}
+	return services, nil
+}
+
 func scanAPIService(row scanner, service *apimarket.Service) error {
 	return row.Scan(apiServiceScanDestinations(service)...)
+}
+
+func scanAPIServiceWithSortValue(row scanner, service *apimarket.Service) error {
+	destinations := apiServiceScanDestinations(service)
+	destinations = append(destinations, &service.PublicSortValue)
+	return row.Scan(destinations...)
 }
 
 func apiServiceScanDestinations(service *apimarket.Service) []any {

@@ -6758,7 +6758,7 @@ export type ListPublicApiServicesData = {
          * Maximum merchant multiplier for the selected package model.
          */
         packageMultiplierMax?: string;
-        sort?: 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
+        sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
     };
     url: '/api/v1/api-services';
 };
@@ -7023,7 +7023,7 @@ export type ListPublicApiQuotaOffersData = {
         maxMultiplier?: string;
         onlyOrderable?: boolean;
         saleMode?: 'continuous' | 'scheduled';
-        sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
+        sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
         /**
          * Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
          */
