@@ -22,6 +22,7 @@ import (
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
+	"c2c-market/backend/internal/module/communityidentity"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/devpersona"
 	"c2c-market/backend/internal/module/evidence"
@@ -130,6 +131,13 @@ type AdminUserService interface {
 	AdminUser(ctx context.Context, user auth.User, userID string) (auth.AdminUserDetail, *domain.AppError)
 	UpdateAdminUserStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserStatusInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type CommunityIdentityService interface {
+	PublicCommunityIdentities(ctx context.Context, userID string) ([]communityidentity.PublicIdentity, *domain.AppError)
+	AdminCommunityIdentities(ctx context.Context, user auth.User, targetUserID string) ([]communityidentity.Identity, *domain.AppError)
+	GrantCommunityIdentityWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input communityidentity.GrantAdminInput, buildCompletion func(communityidentity.Identity) (idempotency.Completion, *domain.AppError)) (idempotency.Completion, *domain.AppError)
+	RevokeCommunityIdentityWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input communityidentity.RevokeInput, buildCompletion func(communityidentity.Identity) (idempotency.Completion, *domain.AppError)) (idempotency.Completion, *domain.AppError)
 }
 
 type OperationAuditService interface {
@@ -525,6 +533,7 @@ type ApplicationService interface {
 	APIQuotaService
 	APIPaymentSettingsService
 	AdminUserService
+	CommunityIdentityService
 	OperationAuditService
 	APIPromotionService
 	GrowthService
@@ -546,6 +555,7 @@ type Server struct {
 	adminAPIHealth     AdminAPIHealthService
 	apiModelTester     APIModelTesterService
 	adminUsers         AdminUserService
+	communityIdentity  CommunityIdentityService
 	operationAudit     OperationAuditService
 	apiPromotions      APIPromotionService
 	growth             GrowthService
@@ -613,6 +623,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		adminAPIHealth:     option.AdminAPIHealth,
 		apiModelTester:     apiModelTester,
 		adminUsers:         service,
+		communityIdentity:  service,
 		operationAudit:     service,
 		apiPromotions:      service,
 		growth:             service,

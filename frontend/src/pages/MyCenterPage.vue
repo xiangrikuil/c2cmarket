@@ -1673,6 +1673,16 @@ function goToLogin() {
               <span class="block text-muted-foreground">系统铭牌</span>
               <div class="flex flex-wrap gap-2"><Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge></div>
             </div>
+            <div class="space-y-2">
+              <span class="block text-muted-foreground">社区身份</span>
+              <div v-if="profile.communityIdentities.length" class="flex flex-wrap gap-2">
+                <Badge v-for="identity in profile.communityIdentities" :key="`${identity.code}-${identity.grantedAt}`" variant="outline">
+                  {{ identity.name }}<span v-if="identity.revokedAt" class="ml-1 text-muted-foreground">（已撤销）</span>
+                </Badge>
+              </div>
+              <span v-else class="text-muted-foreground">暂无</span>
+              <p class="text-xs leading-5 text-muted-foreground">社区身份只记录参与经历，不代表交易信用认证、平台担保或服务能力评价。</p>
+            </div>
           </div>
         </div>
 

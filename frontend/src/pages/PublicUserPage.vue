@@ -155,6 +155,7 @@ function reportPublicProfile() {
             <div class="flex flex-wrap items-center gap-2">
               <h1 class="text-2xl font-semibold">{{ profile.displayName }}</h1>
               <Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge>
+              <Badge v-for="identity in profile.communityIdentities" :key="identity.code" variant="outline">{{ identity.name }}</Badge>
             </div>
             <div class="mt-2 text-sm text-muted-foreground">
               @{{ profile.username }}
@@ -163,6 +164,7 @@ function reportPublicProfile() {
               <span v-if="profile.lastActiveAt"> · 最近活跃 {{ profile.lastActiveAt }}</span>
             </div>
             <p v-if="profile.bio" class="mt-2 max-w-3xl text-sm text-muted-foreground">{{ profile.bio }}</p>
+            <p v-if="profile.communityIdentities.length" class="mt-2 text-xs leading-5 text-muted-foreground">社区身份只记录参与经历，不代表交易信用认证、平台担保或服务能力评价。</p>
             <div class="mt-2 flex flex-wrap gap-2">
               <Button v-if="linuxDoURL" size="sm" variant="outline" as-child><a :href="linuxDoURL" target="_blank" rel="noopener noreferrer"><ExternalLink class="h-4 w-4" />查看 linux.do 主页</a></Button>
               <Button v-if="profile.privacy.allowPublicProfileReport" size="sm" variant="outline" :disabled="reportMutation.isPending.value" @click="reportPublicProfile"><Flag class="h-4 w-4" />举报</Button>

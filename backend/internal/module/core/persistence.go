@@ -16,6 +16,7 @@ import (
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
+	"c2c-market/backend/internal/module/communityidentity"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
@@ -83,6 +84,8 @@ type OperationAuditRepository = operationaudit.Repository
 
 type AccountGovernanceRepository = accountgovernance.Repository
 
+type CommunityIdentityRepository = communityidentity.Repository
+
 type Persistence interface {
 	AuthRepository
 	IdempotencyRepository
@@ -109,6 +112,7 @@ type Persistence interface {
 	PromotionRewardRepository
 	OperationAuditRepository
 	AccountGovernanceRepository
+	CommunityIdentityRepository
 }
 
 type Repositories struct {
@@ -137,6 +141,7 @@ type Repositories struct {
 	PromotionReward   PromotionRewardRepository
 	OperationAudit    OperationAuditRepository
 	AccountGovernance AccountGovernanceRepository
+	CommunityIdentity CommunityIdentityRepository
 }
 
 func RepositoriesFromPersistence(persistence Persistence) Repositories {
@@ -169,6 +174,7 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		PromotionReward:   persistence,
 		OperationAudit:    persistence,
 		AccountGovernance: persistence,
+		CommunityIdentity: persistence,
 	}
 }
 

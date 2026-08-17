@@ -103,10 +103,17 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 		return nil, err
 	}
-	serviceOptions := core.ServiceOptions{EmailVerificationPepper: cfg.EmailVerificationPepper}
+	serviceOptions := core.ServiceOptions{
+		EmailVerificationPepper:           cfg.EmailVerificationPepper,
+		CommunityIdentityFoundingCutoffAt: cfg.CommunityIdentityFoundingCutoffAt,
+	}
 	service := core.NewServiceWithRepositoriesEmailSenderAndOptions(core.Repositories{}, emailSender, serviceOptions)
 	if store != nil {
 		service = core.NewServiceWithRepositoriesEmailSenderAndOptions(core.RepositoriesFromPersistence(store), emailSender, serviceOptions)
+		if _, appErr := service.BackfillCommunityIdentities(ctx); appErr != nil {
+			store.Close()
+			return nil, fmt.Errorf("community identity backfill failed: %w", appErr)
+		}
 	}
 	service.ConfigureModelAuditOutbound(modelAuditPolicy)
 	service.ConfigureAPIOrderDeliveryVerifier(cfg.APIHealth.Timeout)

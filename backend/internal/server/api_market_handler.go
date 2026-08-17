@@ -235,6 +235,7 @@ type publicAPIServiceResponse struct {
 	UpdatedAt                        string                              `json:"updatedAt"`
 	SellerReputation                 *reputationSummaryResponse          `json:"sellerReputation"`
 	SourceAuthorVerification         sourceAuthorResourceSummaryResponse `json:"sourceAuthorVerification"`
+	CommunityIdentities              []publicCommunityIdentityDTO        `json:"communityIdentities,omitempty"`
 }
 
 type apiServiceAccessModeResponse struct {
@@ -505,7 +506,16 @@ func (s *Server) handlePublicAPIService(w http.ResponseWriter, r *http.Request) 
 	}
 	setETag(w, service.Version)
 	summaries := s.loadAPIHealthSummaries(r.Context(), []string{service.ID})
-	writeJSON(w, http.StatusOK, toPublicAPIServiceResponseWithHealth(service, summaries[service.ID]))
+	response := toPublicAPIServiceResponseWithHealth(service, summaries[service.ID])
+	if service.MerchantIdentityMode == "public_profile" {
+		identities, identityErr := s.communityIdentity.PublicCommunityIdentities(r.Context(), service.OwnerUserID)
+		if identityErr != nil {
+			writeProblem(w, r, identityErr)
+			return
+		}
+		response.CommunityIdentities = toCompactPublicCommunityIdentityDTOs(identities)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleCreateAPIPurchaseIntent(w http.ResponseWriter, r *http.Request) {

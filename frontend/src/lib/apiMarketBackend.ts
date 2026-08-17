@@ -26,6 +26,7 @@ import type {
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
   ApiService,
+  CommunityIdentity,
   ApiServiceCommercialSnapshot,
   ApiServiceSalesChannel,
   ApiServiceSalesView,
@@ -148,6 +149,7 @@ type BackendAPIService = {
     expiresAt?: string
   }
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   healthSummary?: ApiServiceHealthSummary
   quotaUsagePolicy: unknown
   distributionSystem: string
@@ -649,6 +651,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     sourceUrl: service.sourceUrl ?? '',
     sourceAuthorVerification: service.sourceAuthorVerification,
     sellerReputation,
+    communityIdentities: service.communityIdentities ?? [],
     healthSummary: service.healthSummary,
     quotaUsagePolicy: parseApiQuotaUsagePolicy(service.quotaUsagePolicy),
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
