@@ -27,3 +27,27 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 68: API delivery, account, commerce, and inline probe workflows
+
+**Date**: 2026-08-19
+**Task**: API delivery, account, commerce, and inline probe workflows
+**Package**: frontend
+**Branch**: `codex/api-order-delivery-content-view`
+
+### Summary
+
+Added focused API delivery viewing, fixed mock account setup persistence, improved account and API commerce workflows, and kept probe creation inside publish forms.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ae60091` | (see git log) |
+| `cfeeef2` | (see git log) |
+| `ced709a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
