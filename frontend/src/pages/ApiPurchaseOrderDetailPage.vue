@@ -2,10 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, FileCheck2, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Clock3, FileCheck2, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
+import ApiOrderDeliveryCredentialCard from '@/components/api-order/ApiOrderDeliveryCredentialCard.vue'
 import ApiRefundPolicyEvidence from '@/components/api-order/ApiRefundPolicyEvidence.vue'
 import DisputeEvidencePicker from '@/components/api-order/DisputeEvidencePicker.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
@@ -31,7 +32,6 @@ import StatusBadge from '@/components/market/StatusBadge.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
-  getApiOrderDeliveryKindLabel,
 	getApiOrderDisputeStatusDescription,
 	getApiOrderDisputeStatusLabel,
   getApiOrderDisplayStatus,
@@ -71,7 +71,6 @@ import { functionalMotion } from '@/lib/motion'
 import {
   useApiOrder,
   useCancelApiOrderMutation,
-  useConfirmApiOrderCompleteMutation,
   useConfirmApiOrderPaymentMutation,
   useOpenApiOrderDisputeMutation,
   useReportApiOrderPaymentIssueMutation,
@@ -127,24 +126,17 @@ const disputeRequestedAmount = ref('')
 const disputeIssueOccurredAt = ref('')
 const disputeReason = ref('')
 const disputeEvidence = ref<DisputeEvidenceAsset[]>([])
-const completionConfirmOpen = ref(false)
-const credentialProblemOpen = ref(false)
-const credentialProblemReason = ref<CredentialProblemReason | ''>('')
-const credentialProblemNote = ref('')
 const cancelDrawerOpen = ref(false)
 const cancelReason = ref('')
 const cancelNote = ref('')
 const cancelUnpaidConfirmed = ref(false)
 const orderDetailsOpen = ref(true)
 const orderRecordsOpen = ref(false)
-const apiKeyVisible = ref(false)
-const passwordVisible = ref(false)
 const now = ref(Date.now())
 let countdownTimer: ReturnType<typeof setInterval> | undefined
 
 const submitPaymentMutation = useSubmitApiOrderPaymentMutation()
 const cancelOrderMutation = useCancelApiOrderMutation()
-const confirmCompleteMutation = useConfirmApiOrderCompleteMutation()
 const confirmPaymentMutation = useConfirmApiOrderPaymentMutation()
 const reportPaymentIssueMutation = useReportApiOrderPaymentIssueMutation()
 const reportLatePaymentMutation = useReportLateApiOrderPaymentMutation()
@@ -162,7 +154,6 @@ const canReportLatePayment = computed(() => !isMerchantView.value && Boolean(ord
 const canResolveLatePayment = computed(() => isMerchantView.value && order.value?.latePaymentStatus === 'reported')
 const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
 const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
-const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
 	&& !isMerchantView.value
@@ -274,7 +265,7 @@ const canConfirmOffPlatformPayment = computed(() => {
   if (!paymentInstructions.value) return false
   return !apiPaymentMethodRequiresQrCode(paymentInstructions.value.paymentMethod) || Boolean(paymentInstructions.value.paymentQrCodeDataUrl)
 })
-const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmCompleteMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || reportLatePaymentMutation.isPending.value || resolveLatePaymentMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
+const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || reportLatePaymentMutation.isPending.value || resolveLatePaymentMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
 const newDisputeResolutionLabels = computed(() => Object.fromEntries(
   Object.entries(apiOrderDisputeResolutionLabels).filter(([value]) => value !== 'continue_fulfillment'),
 ))
@@ -283,17 +274,6 @@ const paymentIssueOptions: Array<{ value: ApiOrderPaymentIssueReason, label: str
   { value: 'amount_mismatch', label: '金额不符', description: '实收金额与订单金额不一致。' },
   { value: 'remark_mismatch', label: '备注不符', description: '付款备注或订单识别信息不一致。' },
 ]
-type CredentialProblemReason = 'unreachable' | 'invalid_credential' | 'quota_mismatch' | 'permission_mismatch' | 'description_mismatch' | 'other'
-const credentialProblemOptions: Array<{ value: CredentialProblemReason, label: string, description: string }> = [
-  { value: 'unreachable', label: '无法连接', description: '接入地址无法访问或服务没有响应。' },
-  { value: 'invalid_credential', label: '凭证无效', description: 'API Key、账号或初始密码无法使用。' },
-  { value: 'quota_mismatch', label: '额度不符', description: '可用额度与订单快照不一致。' },
-  { value: 'permission_mismatch', label: '权限不符', description: '模型、并发或接口权限与约定不一致。' },
-  { value: 'description_mismatch', label: '与描述不符', description: '交付内容与服务或套餐说明不一致。' },
-  { value: 'other', label: '其他问题', description: '以上原因无法准确描述当前问题。' },
-]
-const credentialProblemSubmitDisabled = computed(() => !credentialProblemReason.value
-  || (credentialProblemReason.value === 'other' && !credentialProblemNote.value.trim()))
 const flowSteps = ['创建订单', '买家付款', '商户确认收款', '商户交付', '买家核验']
 const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '完成一次性交付', '确认可用或核验期自动结束']
 const currentFlowIndex = computed(() => {
@@ -518,45 +498,6 @@ async function resubmitPayment() {
   }
 }
 
-async function confirmComplete() {
-  if (!order.value) return
-  try {
-    await confirmCompleteMutation.mutateAsync({ id: order.value.id, version: order.value.version })
-    completionConfirmOpen.value = false
-    await refresh(order.value.id)
-    toast.success('已确认凭证可用，订单完成。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '确认凭证可用失败。')
-  }
-}
-
-async function submitCredentialProblem() {
-  if (!order.value || !credentialProblemReason.value) return
-  const option = credentialProblemOptions.find(item => item.value === credentialProblemReason.value)
-  if (!option) return
-  const reason = `凭证异常｜${option.label}${credentialProblemNote.value.trim() ? `｜补充说明：${credentialProblemNote.value.trim()}` : ''}`
-  try {
-    await openDisputeMutation.mutateAsync({
-      id: order.value.id,
-      input: {
-        issueCode: 'service_unavailable',
-        requestedResolution: 'full_refund',
-        requestedAmountCny: null,
-        reason,
-      },
-      version: order.value.version,
-      perspective: 'buyer',
-    })
-    credentialProblemOpen.value = false
-    credentialProblemReason.value = ''
-    credentialProblemNote.value = ''
-    await refresh(order.value.id)
-    toast.success('凭证问题已提交，自动完成计时已暂停。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '提交凭证问题失败。')
-  }
-}
-
 function openReviewCenter() {
   router.push({ query: { ...route.query, review: 'open' } })
 }
@@ -599,23 +540,6 @@ async function submitDelivery() {
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交交付信息失败。')
   }
-}
-
-async function copyValue(value: string | undefined, label: string) {
-  if (!value) return
-  try {
-    await navigator.clipboard.writeText(value)
-    toast.success(`已复制${label}。`)
-  } catch {
-    toast.error('复制失败，请手动选择文本。')
-  }
-}
-
-function maskCredential(value: string | undefined) {
-  if (!value) return ''
-  if (value.length <= 8) return '••••••••'
-  const maskedLength = Math.min(18, Math.max(8, value.length - 7))
-  return `${value.slice(0, 3)}${'•'.repeat(maskedLength)}${value.slice(-4)}`
 }
 
 async function openPaymentConfirmation() {
@@ -832,11 +756,8 @@ onBeforeUnmount(() => {
             <KeyRound class="h-4 w-4" />继续填写交付信息
           </Button>
           <template v-else-if="canConfirmComplete">
-            <Button size="lg" :disabled="actionBusy" @click="completionConfirmOpen = true">
-              <CheckCircle2 class="h-4 w-4" />确认凭证可用
-            </Button>
-            <Button v-if="canReportCredentialProblem" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="credentialProblemOpen = true">
-              <ShieldAlert class="h-4 w-4" />凭证存在问题
+            <Button size="lg" @click="router.push(`/my/api-orders/${order.id}/delivery`)">
+              <KeyRound class="h-4 w-4" />查看交付内容
             </Button>
           </template>
           <Button v-else-if="canOpenReviewCenter" size="lg" :disabled="actionBusy" @click="openReviewCenter">
@@ -923,56 +844,17 @@ onBeforeUnmount(() => {
 
       <div v-auto-animate="functionalMotion" class="min-w-0 space-y-4">
 
-        <Card v-if="order.deliveryCredential" class="p-5">
-          <div class="flex items-center justify-between gap-3">
+        <ApiOrderDeliveryCredentialCard v-if="order.deliveryCredential && isMerchantView" :credential="order.deliveryCredential" title="已提交的交付内容" />
+
+        <Card v-else-if="order.deliveryCredential" class="border-primary/20 p-5">
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 class="font-semibold">接入凭证</h2>
-              <p class="mt-1 text-xs text-muted-foreground">{{ getApiOrderDeliveryKindLabel(order.deliveryCredential.deliveryKind) }} · {{ formatOrderDateTime(order.deliveryCredential.submittedAt) }}</p>
+              <h2 class="font-semibold">卖家交付内容</h2>
+              <p class="mt-1 text-sm leading-6 text-muted-foreground">API Key、接入地址或登录账密已集中到独立页面，不再与订单信息混排。</p>
             </div>
-            <Badge :variant="order.deliveryCredential.destroyedAt ? 'secondary' : 'verified'">{{ order.deliveryCredential.destroyedAt ? '已销毁' : '保留期内可查看' }}</Badge>
-          </div>
-          <div v-if="order.deliveryCredential.destroyedAt" class="mt-4 rounded-md border border-border bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
-            历史凭证已按保留策略销毁，平台仅保留交付类型、提交时间和销毁时间等审计事实。
-            <div class="mt-1 text-xs">销毁时间：{{ formatOrderDateTime(order.deliveryCredential.destroyedAt) }}</div>
-          </div>
-          <div v-else class="mt-4 space-y-3 text-sm">
-            <div v-if="order.deliveryCredential.apiBaseUrl" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">API Base URL</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.apiBaseUrl, 'API Base URL')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.apiBaseUrl }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.apiKey" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">API Key</span>
-                <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" :aria-label="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="apiKeyVisible = !apiKeyVisible">
-                    <EyeOff v-if="apiKeyVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ apiKeyVisible ? '隐藏 API Key' : '显示 API Key' }}</span>
-                  </Button>
-                  <Button size="icon" variant="outline" title="复制 API Key" aria-label="复制 API Key" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /><span class="sr-only">复制 API Key</span></Button>
-                </span>
-              </div>
-              <div class="mt-2 break-all font-mono text-xs">{{ apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey) }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.panelLoginUrl" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">登录地址</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.panelLoginUrl, '登录地址')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.panelLoginUrl }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.username" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">用户名</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.username, '用户名')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.username }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.password" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">初始密码</span>
-                <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="passwordVisible ? '隐藏初始密码' : '显示初始密码'" :aria-label="passwordVisible ? '隐藏初始密码' : '显示初始密码'" @click="passwordVisible = !passwordVisible">
-                    <EyeOff v-if="passwordVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ passwordVisible ? '隐藏初始密码' : '显示初始密码' }}</span>
-                  </Button>
-                  <Button size="icon" variant="outline" title="复制初始密码" aria-label="复制初始密码" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /><span class="sr-only">复制初始密码</span></Button>
-                </span>
-              </div>
-              <div class="mt-2 break-all font-mono text-xs">{{ passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password) }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.instructions" class="rounded-md border border-border bg-muted/40 p-3 whitespace-pre-line">{{ order.deliveryCredential.instructions }}</div>
+            <Button class="shrink-0" @click="router.push(`/my/api-orders/${order.id}/delivery`)">
+              <KeyRound class="h-4 w-4" />查看交付内容<ArrowRight class="h-4 w-4" />
+            </Button>
           </div>
         </Card>
 
@@ -1087,24 +969,6 @@ onBeforeUnmount(() => {
       <Badge v-else-if="showDisputeStatus" variant="status">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</Badge>
     </div>
 
-    <Dialog v-model:open="completionConfirmOpen">
-      <DialogContent class="sm:max-w-[480px]">
-        <DialogHeader>
-          <DialogTitle>确认凭证可以使用？</DialogTitle>
-          <DialogDescription>确认后订单将立即完成并开放评价。交付凭证仅在平台保留期内可查看，请妥善保存买家专属接入信息。</DialogDescription>
-        </DialogHeader>
-        <Alert class="border-success/25 bg-success/10">
-          <CheckCircle2 class="text-success" />
-          <AlertTitle>请先完成实际核验</AlertTitle>
-          <AlertDescription>请确认接入地址、凭证、额度和权限均符合订单说明；平台不会代替你测试 API。</AlertDescription>
-        </Alert>
-        <DialogFooter>
-          <Button variant="outline" @click="completionConfirmOpen = false">返回核验</Button>
-          <Button :disabled="actionBusy" @click="confirmComplete">{{ actionBusy ? '提交中…' : '确认凭证可用' }}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
     <Dialog v-model:open="latePaymentDialogOpen">
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
@@ -1133,38 +997,6 @@ onBeforeUnmount(() => {
         </RadioGroup>
         <label class="block space-y-2"><span class="text-sm font-medium">核对说明（选填）</span><Textarea v-model="latePaymentResolutionNote" class="min-h-24" maxlength="500" /></label>
         <DialogFooter><Button variant="outline" @click="latePaymentResolutionOpen = false">取消</Button><Button :disabled="actionBusy" @click="resolveLatePayment">提交结果</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    <Dialog v-model:open="credentialProblemOpen">
-      <DialogContent class="max-h-[92dvh] overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle>凭证存在问题</DialogTitle>
-          <DialogDescription>选择最符合的原因。提交后订单进入问题处理，24 小时自动完成计时将暂停。</DialogDescription>
-        </DialogHeader>
-        <RadioGroup v-model="credentialProblemReason" class="space-y-2">
-          <label
-            v-for="option in credentialProblemOptions"
-            :key="option.value"
-            class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted/40"
-            :class="credentialProblemReason === option.value ? 'border-warning/60 bg-warning/10' : ''"
-          >
-            <RadioGroupItem :value="option.value" class="mt-0.5" />
-            <span>
-              <span class="block text-sm font-medium">{{ option.label }}</span>
-              <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
-            </span>
-          </label>
-        </RadioGroup>
-        <label class="block space-y-2">
-          <span class="text-sm font-medium">补充说明{{ credentialProblemReason === 'other' ? '' : '（选填）' }}</span>
-          <Textarea v-model="credentialProblemNote" class="min-h-24" maxlength="400" placeholder="说明实际表现和核验时间，不要填写 API Key、密码或验证码。" />
-          <span class="block text-right text-xs text-muted-foreground">{{ credentialProblemNote.length }} / 400</span>
-        </label>
-        <DialogFooter>
-          <Button variant="outline" @click="credentialProblemOpen = false">暂不提交</Button>
-          <Button :disabled="credentialProblemSubmitDisabled || actionBusy" @click="submitCredentialProblem">{{ actionBusy ? '提交中…' : '提交凭证问题' }}</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
 

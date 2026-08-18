@@ -94,6 +94,11 @@ test('source route normalization removes known dynamic identifiers', () => {
     entity_type: 'api_purchase_intent',
     reason_code: 'other',
   })
+
+  assert.equal(
+    normalizeAnalyticsPath('/my/api-orders/12049d7e-7088-4c99-80c6-e6cc0e8eeed1/delivery?credential=secret'),
+    '/my/api-orders/:id/delivery',
+  )
 })
 
 test('auth and normalized page events keep only low-cardinality route fields', () => {

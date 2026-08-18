@@ -146,6 +146,7 @@ export const normalizeAnalyticsPath = (value: unknown) => {
   if (first === 'api-market' && segments.length === 2) return '/api-market/:id'
   if (first === 'api-intents' && segments.length === 2) return '/api-intents/:id'
   if (first === 'my' && second === 'rides' && segments.length === 3) return '/my/rides/:id'
+  if (first === 'my' && second === 'api-orders' && segments.length === 4 && fourth === 'delivery') return '/my/api-orders/:id/delivery'
   if (first === 'my' && second === 'api-orders' && segments.length === 3) return '/my/api-orders/:id'
   if (first === 'my' && second === 'api-services' && segments.length === 3) return '/my/api-services/:id'
   if (first === 'my' && second === 'feedback' && segments.length === 3) return '/my/feedback/:id'
