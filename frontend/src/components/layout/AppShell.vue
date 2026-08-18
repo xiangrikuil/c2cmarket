@@ -45,7 +45,7 @@ import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { loginRoute } from '@/lib/authNavigation'
-import { apiMarketViewFromQuery } from '@/lib/apiQuotaOfferUi'
+import { apiMarketPath, apiMarketViewFromPath } from '@/lib/apiMarketRoutes'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
@@ -89,9 +89,9 @@ const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
 const apiMarketNavItems = [
-  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited' } as const] : []),
-  { label: '短期流量包', view: 'packages' },
-  { label: '自选额度', view: 'free' },
+  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited', path: apiMarketPath('limited') } as const] : []),
+  { label: '短期流量包', view: 'packages', path: apiMarketPath('packages') },
+  { label: '自选额度', view: 'free', path: apiMarketPath('free') },
 ] as const
 const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value, [
   CAPABILITY.carpoolPublish,
@@ -185,8 +185,8 @@ const activeNavItem = computed(() => {
 })
 
 const currentTitle = computed(() => {
-  if (route.path === '/api-market') {
-    const currentView = apiMarketViewFromQuery(route.query.view)
+  if (route.meta.apiMarketView) {
+    const currentView = apiMarketViewFromPath(route.path)
     return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '自选额度'}`
   }
   return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
@@ -204,8 +204,8 @@ function matchesRoute(item: NavigationGroup['items'][number]) {
 }
 
 function isApiMarketViewActive(view: typeof apiMarketNavItems[number]['view']) {
-  if (route.path !== '/api-market') return false
-  const currentView = apiMarketViewFromQuery(route.query.view)
+  if (!route.meta.apiMarketView) return false
+  const currentView = apiMarketViewFromPath(route.path)
   return currentView === view
 }
 
@@ -314,7 +314,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 <RouterLink
                   v-for="child in apiMarketNavItems"
                   :key="child.view"
-                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  :to="child.path"
                   class="flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                 >
@@ -392,7 +392,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 <RouterLink
                   v-for="child in apiMarketNavItems"
                   :key="child.view"
-                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  :to="child.path"
                   class="rounded-md px-3 py-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                   @click="closeMenu"
@@ -568,7 +568,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
 
       <main
         class="w-full px-4 py-5 sm:px-5 lg:px-5"
-        :class="route.path === '/api-market' ? 'bg-white' : ''"
+        :class="route.path.startsWith('/api-market') ? 'bg-white' : ''"
       >
         <slot />
       </main>

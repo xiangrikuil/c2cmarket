@@ -12,8 +12,7 @@ describe('限量额度包功能开关', () => {
     assert.equal(LIMITED_API_QUOTA_OFFERS_ENABLED, false)
     const quotaPublishRoute = routes.find(route => route.path === '/api-market/quota/new')
     assert.deepEqual(quotaPublishRoute && 'redirect' in quotaPublishRoute ? quotaPublishRoute.redirect : undefined, {
-      path: '/api-market',
-      query: { view: 'free' },
+      path: '/api-market/free',
     })
     assert.match(marketPageSource, /v-if="LIMITED_API_QUOTA_OFFERS_ENABLED" value="limited"/)
     assert.match(marketPageSource, /useApiQuotaSaleSlots\(limitedViewEnabled\)/)

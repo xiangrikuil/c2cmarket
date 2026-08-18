@@ -22,6 +22,15 @@ describe('Nuxt hybrid rendering and SEO architecture', () => {
     expect(resolveRouteSeo(route('/u/orbit')).indexable).toBe(false)
   })
 
+  it('classifies canonical API market modes separately from detail and publish routes', () => {
+    expect(resolveRouteSeo(route('/api-market/limited')).title).toBe('API 限量额度包｜C2CMarket')
+    expect(resolveRouteSeo(route('/api-market/packages')).title).toBe('API 短期流量包｜C2CMarket')
+    expect(resolveRouteSeo(route('/api-market/free')).title).toBe('API 自选额度｜C2CMarket')
+    expect(resolveRouteSeo(route('/api-market/service-1')).title).toBe('API 服务详情｜C2CMarket')
+    expect(resolveRouteSeo(route('/api-market/new')).indexable).toBe(false)
+    expect(resolveRouteSeo(route('/api-market/quota/new')).indexable).toBe(false)
+  })
+
   it('marks the catch-all route as a non-indexable not-found page', () => {
     const seo = resolveRouteSeo(route('/missing-page', 'not-found'))
     expect(seo.indexable).toBe(false)
@@ -55,7 +64,7 @@ describe('Nuxt hybrid rendering and SEO architecture', () => {
     expect(plugin).toContain('hydrate(queryClient, vueQueryState.value)')
     expect(home).toContain('prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)')
     expect(apiMarket).toContain("const visibleMarketQuery = activeView.value === 'limited' ? quotaQuery : freeServicesQuery")
-    expect(apiMarket).toContain('prefetchQueriesOnServer(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery)')
+    expect(apiMarket).toContain('prefetchQueriesOnServer(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery, packageFilterOptionsQuery)')
     expect(apiMarket).toMatch(/onServerPrefetch\(async \(\) => \{[\s\S]*?await slotQuery\.suspense\(\)[\s\S]*?await rushQuery\.suspense\(\)/)
 	expect(apiMarket).toContain('const promotionQuery = useApiPromotions()')
 	expect(apiMarket).not.toContain('prefetchQueriesOnServer(promotionQuery')

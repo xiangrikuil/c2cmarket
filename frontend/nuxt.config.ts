@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite'
 import { defineNuxtConfig } from 'nuxt/config'
-import { resolve } from 'node:path'
 import { routes } from './src/router'
+import { materializeNuxtPages } from './nuxt.routes'
 import { requireApiMode } from './src/lib/apiMode'
 import { DEFAULT_APP_THEME } from './src/theme/appThemes'
 
@@ -98,21 +98,7 @@ export default defineNuxtConfig({
       await Promise.all(routePageNames.map(name => server.transformRequest(`/pages/${name}.vue?macro=true`, { ssr: true })))
     },
     'pages:extend'(pages) {
-      pages.splice(0, pages.length, ...routes.map((route) => {
-        const componentName = typeof route.component === 'function' ? route.component.name : ''
-        return {
-          path: route.path,
-          name: typeof route.name === 'string' ? route.name : undefined,
-          ...(componentName ? { file: resolve(process.cwd(), 'src/pages', `${componentName}.vue`) } : {}),
-          ...(
-            typeof route.redirect === 'string'
-            || (route.redirect !== null && typeof route.redirect === 'object')
-              ? { redirect: route.redirect }
-              : {}
-          ),
-          ...(route.meta ? { meta: route.meta } : {}),
-        }
-      }))
+      pages.splice(0, pages.length, ...materializeNuxtPages(routes))
     },
   },
   css: ['~/styles.css', 'vue-sonner/style.css'],
