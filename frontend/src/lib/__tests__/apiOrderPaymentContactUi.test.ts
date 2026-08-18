@@ -155,6 +155,8 @@ describe('付款联系与平台兜底文案', () => {
     assert.match(compactTemplate, /复制微信/)
     assert.doesNotMatch(compactTemplate, /我已联系对方|无效|无法联系|疑似冒充|举报/)
     assert.match(orderDetailSource, /:snapshot="merchantContactSnapshot"[\s\S]*?title="付款有疑问？直接联系商户"[\s\S]*?compact[\s\S]*?:show-contacted-action="false"[\s\S]*?:show-issue-actions="false"/)
+    assert.doesNotMatch(orderDetailSource, /微信或 linux\.do 私信/)
+    assert.match(orderDetailSource, /通过订单内微信联系/)
   })
 
   test('收款说明只引导脱敏核对，不重复填写付款软件或昵称', () => {

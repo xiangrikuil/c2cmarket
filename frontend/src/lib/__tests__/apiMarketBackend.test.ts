@@ -71,7 +71,7 @@ afterEach(() => {
   vi.resetModules()
 })
 
-test('selects the default eligible buyer contact before linux.do', async () => {
+test('selects the enabled WeChat contact and ignores other contact types', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
   const linuxdo = buyerContact({ id: 'contact-linuxdo', type: 'linuxdo', label: 'linux.do', verified: true })
   const wechat = buyerContact({ isDefault: true })
@@ -79,19 +79,25 @@ test('selects the default eligible buyer contact before linux.do', async () => {
   assert.equal(apiMarketBackend.selectBuyerContactMethod([linuxdo, wechat]), wechat)
 })
 
-test('allows a verified email contact for student API purchases', async () => {
+test('rejects a verified email contact for API purchases', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
   const email = buyerContact({ id: 'contact-email', type: 'email', label: '邮箱', verified: true })
 
-  assert.equal(apiMarketBackend.selectBuyerContactMethod([email]), email)
+  assert.throws(
+    () => apiMarketBackend.selectBuyerContactMethod([email]),
+    /个人中心配置微信联系方式/,
+  )
 })
 
-test('skips unverified email contacts and falls back to another eligible buyer contact', async () => {
+test('rejects linux.do even when it is verified and eligible for buyer use', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
   const email = buyerContact({ id: 'contact-email', type: 'email', label: '邮箱', verified: false, isDefault: true })
   const linuxdo = buyerContact({ id: 'contact-linuxdo', type: 'linuxdo', label: 'linux.do', verified: true })
 
-  assert.equal(apiMarketBackend.selectBuyerContactMethod([email, linuxdo]), linuxdo)
+  assert.throws(
+    () => apiMarketBackend.selectBuyerContactMethod([email, linuxdo]),
+    /个人中心配置微信联系方式/,
+  )
 })
 
 test('explains how to configure a contact when no buyer contact is eligible', async () => {
@@ -100,10 +106,10 @@ test('explains how to configure a contact when no buyer contact is eligible', as
   assert.throws(
     () => apiMarketBackend.selectBuyerContactMethod([
       buyerContact({ enabled: false }),
-      buyerContact({ id: 'contact-seller', usageScopes: ['api_merchant'] }),
+      buyerContact({ id: 'contact-seller', type: 'email', usageScopes: ['api_merchant'] }),
       buyerContact({ id: 'contact-email', type: 'email', verified: false }),
     ]),
-    /个人中心配置可用于买家交易的联系方式/,
+    /个人中心配置微信联系方式/,
   )
 })
 

@@ -402,9 +402,9 @@ func (s *Manager) updateWithIdempotency(ctx context.Context, routeKey, key, requ
 }
 
 func (s *Manager) createInMemory(input CreateIntentInput, service apimarket.Service) (Intent, *domain.AppError) {
-	buyerMethod, buyerVersion, ok := s.contact.VersionForOwner(input.BuyerContactMethodID, input.BuyerUserID)
-	if !ok || !buyerMethod.Enabled {
-		return Intent{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用或不属于当前用户。")
+	buyerMethod, buyerVersion, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer)
+	if !ok {
+		return Intent{}, contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
 	}
 	ownerContactMethodIDs := service.OwnerContactMethodIDs
 	if len(ownerContactMethodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
@@ -413,9 +413,9 @@ func (s *Manager) createInMemory(input CreateIntentInput, service apimarket.Serv
 	ownerSnapshots := make([]OwnerContactSnapshot, 0, len(ownerContactMethodIDs))
 	merchantContacts := make([]contact.ContactItemView, 0, len(ownerContactMethodIDs))
 	for _, methodID := range ownerContactMethodIDs {
-		ownerMethod, ownerVersion, ok := s.contact.VersionForOwner(methodID, service.OwnerUserID)
-		if !ok || !ownerMethod.Enabled {
-			return Intent{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或归属不正确。")
+		ownerMethod, ownerVersion, ok := s.contact.WechatVersionForOwnerAndScope(methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant)
+		if !ok {
+			return Intent{}, contact.WechatRequiredError("ownerContactMethodIds", "商户尚未配置可用的微信联系方式。")
 		}
 		ownerSnapshots = append(ownerSnapshots, OwnerContactSnapshot{
 			ContactMethodID:        ownerMethod.ID,
@@ -566,7 +566,7 @@ func validateCreateInput(input CreateIntentInput, service apimarket.Service) *do
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "apiServiceId", "required", "必须提供 API 服务。")
 	}
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "提交购买意向必须选择联系方式。", "buyerContactMethodId", "required", "必须选择联系方式。")
+		return contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
 	}
 	if input.BuyerUserID == service.OwnerUserID {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "不能向自己的 API 服务提交购买意向。")

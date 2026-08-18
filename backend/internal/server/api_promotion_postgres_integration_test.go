@@ -35,7 +35,7 @@ func TestPostgresAPIPromotionCapacityAndLifecycle(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-promotion-owner-"+suffix)
 	adminSession := createSession(t, server, "pg-promotion-admin-"+suffix, true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Promotion Owner "+suffix, "@pg_promotion_owner_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG Promotion Owner WeChat "+suffix, "pg_promotion_owner_"+suffix)
 
 	services := make([]createdAPIService, 0, 4)
 	for index := 0; index < 4; index++ {

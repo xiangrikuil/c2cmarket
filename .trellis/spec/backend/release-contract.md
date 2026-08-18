@@ -32,7 +32,7 @@ node scripts/check-openapi-types.mjs
   "version": "0.1.0",
   "gitCommit": "<full resolved commit>",
   "buildTime": "<RFC3339 commit time>",
-  "expectedMigrationVersion": 114
+  "expectedMigrationVersion": 115
 }
 ```
 

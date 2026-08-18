@@ -17,7 +17,7 @@ import type {
   OwnerCarpoolView,
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
-import { backendBoundLinuxDoContactMethod } from '@/lib/apiMarketBackend'
+import { backendEnabledWechatContactMethod } from '@/lib/apiMarketBackend'
 import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@/data/mock'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
@@ -848,7 +848,7 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
 export async function backendSubmitCarpool(payload: SaveCarpoolDraftPayload) {
   await ensureBackendSession('owner', false)
   const plan = await productPlan(payload.productId)
-	const ownerContact = await backendBoundLinuxDoContactMethod()
+	const ownerContact = await backendEnabledWechatContactMethod()
   const publish = payload.status === 'reviewing'
   const listing = await backendMutation<BackendCarpoolListing>(publish ? '/api/v1/carpools/publish' : '/api/v1/carpools', toListingRequest(payload, ownerContact.id, plan), {
     idempotencyPrefix: publish ? 'carpool-publish' : 'carpool-listing',
@@ -860,14 +860,15 @@ export async function backendUpdateOwnerCarpool(
 	id: string,
 	payload: SaveCarpoolDraftPayload,
 	version: number,
-	ownerContactMethodId: string,
+	_ownerContactMethodId: string,
 	submitForReview: boolean,
 ) {
 	await ensureBackendSession('owner', false)
 	const plan = await productPlan(payload.productId)
+	const ownerContact = await backendEnabledWechatContactMethod()
 	let listing = await backendMutation<BackendCarpoolListing>(
 		`/api/v1/carpools/${encodeURIComponent(id)}`,
-		toListingRequest(payload, ownerContactMethodId, plan),
+		toListingRequest(payload, ownerContact.id, plan),
 		{ method: 'PATCH', ifMatch: version, idempotencyPrefix: 'carpool-update' },
 	)
 	if (submitForReview) {
@@ -886,7 +887,7 @@ export async function backendCreateCarpoolApplication(carpoolId: string, payload
   const listing = await backendRequest<BackendCarpoolListing>(`/api/v1/carpools/${carpoolId}`)
   backendCarpoolListings.set(listing.id, listing)
   const plan = await productPlan(listing.productPlanId)
-	const buyerContact = await backendBoundLinuxDoContactMethod()
+	const buyerContact = await backendEnabledWechatContactMethod()
   const response = await backendMutation<BackendCarpoolApplication>(`/api/v1/carpools/${carpoolId}/applications`, {
     buyerContactMethodId: buyerContact.id,
     riskAcknowledgement: riskAcknowledgement(plan, listing.riskNoticeCode, listing.policyVersion, true),

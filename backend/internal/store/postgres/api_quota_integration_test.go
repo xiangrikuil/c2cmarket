@@ -1072,8 +1072,8 @@ func seedAPIQuotaRushBuyers(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		buyerContactIDs[index] = uuid.NewString()
 		versionID := uuid.NewString()
 		userRows = append(userRows, []any{buyerIDs[index], fmt.Sprintf("quota-rush-buyer-%04d", index), "并发额度买家", "active", now, now})
-		contactRows = append(contactRows, []any{buyerContactIDs[index], buyerIDs[index], "linuxdo", "linux.do", true, true, now, now})
-		versionRows = append(versionRows, []any{versionID, buyerContactIDs[index], buyerIDs[index], []byte{1, 2}, make([]byte, 12), "linux.do 用户",
+		contactRows = append(contactRows, []any{buyerContactIDs[index], buyerIDs[index], "wechat", "微信", []string{"carpool_owner", "api_merchant", "buyer", "dispute"}, true, true, now, now})
+		versionRows = append(versionRows, []any{versionID, buyerContactIDs[index], buyerIDs[index], []byte{1, 2}, make([]byte, 12), "微信用户",
 			fmt.Sprintf("quota-rush-fingerprint-%04d", index), "test-v1", "test-v1", now})
 	}
 	if _, err := pool.CopyFrom(ctx, pgx.Identifier{"users"},
@@ -1081,7 +1081,7 @@ func seedAPIQuotaRushBuyers(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		t.Fatalf("seed rush buyers: %v", err)
 	}
 	if _, err := pool.CopyFrom(ctx, pgx.Identifier{"contact_methods"},
-		[]string{"id", "user_id", "type", "label", "is_default", "enabled", "created_at", "updated_at"}, pgx.CopyFromRows(contactRows)); err != nil {
+		[]string{"id", "user_id", "type", "label", "usage_scopes", "is_default", "enabled", "created_at", "updated_at"}, pgx.CopyFromRows(contactRows)); err != nil {
 		t.Fatalf("seed rush buyer contacts: %v", err)
 	}
 	if _, err := pool.CopyFrom(ctx, pgx.Identifier{"contact_method_versions"},
@@ -1183,7 +1183,7 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['api_merchant']::text[], true, true, $3, $3)
+			VALUES ($1, $2, 'wechat', '微信', ARRAY['carpool_owner', 'api_merchant', 'buyer', 'dispute']::text[], true, true, $3, $3)
 	`, contactID, sellerID, now); err != nil {
 		t.Fatalf("seed contact method: %v", err)
 	}
@@ -1196,7 +1196,7 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['buyer']::text[], true, true, $3, $3)
+			VALUES ($1, $2, 'wechat', '微信', ARRAY['carpool_owner', 'api_merchant', 'buyer', 'dispute']::text[], true, true, $3, $3)
 	`, buyerContactID, buyerID, now); err != nil {
 		t.Fatalf("seed buyer contact method: %v", err)
 	}
@@ -1273,7 +1273,7 @@ func seedContactVersionForTest(t *testing.T, ctx context.Context, pool *pgxpool.
 			id, contact_method_id, owner_user_id, value_ciphertext, value_nonce,
 			masked_value, value_fingerprint, encryption_key_version, fingerprint_key_version, created_at
 		) VALUES ($1, $2, $3, decode('0102', 'hex'), decode('000000000000000000000000', 'hex'),
-		          'linux.do 用户', $4, 'test-v1', 'test-v1', $5)
+			          '微信用户', $4, 'test-v1', 'test-v1', $5)
 	`, versionID, contactID, ownerID, "fingerprint-"+versionID, now); err != nil {
 		t.Fatalf("seed contact version: %v", err)
 	}

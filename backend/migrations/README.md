@@ -604,6 +604,12 @@ to each carpool membership. The note is retained for historical memberships,
 returned only through owner-scoped membership responses, and may be cleared by
 writing an empty string. The down migration removes only the note column.
 
+Version 115 (`000115_wechat_contact_single_mapping`) enforces at most one
+enabled WeChat contact per user. WeChat remains stored through encrypted,
+versioned contact methods and is the sole contact type accepted by new carpool
+and API quota transaction writes. The down migration drops only the partial
+unique index.
+
 ## Docker Compose
 
 The repository root `compose.yaml` provides a PostgreSQL service and a one-shot

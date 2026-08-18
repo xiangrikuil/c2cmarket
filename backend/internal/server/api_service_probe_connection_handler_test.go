@@ -15,7 +15,7 @@ func TestOwnerAPIServiceProbeConnectionRouteSupportsRebindAndUnbind(t *testing.T
 	now := time.Date(2026, 8, 8, 8, 0, 0, 0, time.UTC)
 	handler := NewServer(app.NewServiceWithClock(func() time.Time { return now }), ServerOptions{EnableDevAuth: true})
 	owner := createSession(t, handler, "probe-binding-owner", false)
-	contact := createContactMethod(t, handler, owner, "telegram", "Owner", "@probe_binding_owner")
+	contact := createContactMethod(t, handler, owner, "wechat", "Owner WeChat", "probe_binding_owner")
 	created := createAPIService(t, handler, owner, contact.ID, "create-probe-binding-service")
 
 	rebind := newJSONRequest(http.MethodPatch, "/api/v1/owner/api-services/"+created.ID+"/probe-connection", `{"probeConnectionId":"00000000-0000-0000-0000-000000000822"}`)

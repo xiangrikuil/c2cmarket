@@ -13317,14 +13317,16 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
+          description: Enabled WeChat contact owned by the merchant. Retained as a compatibility alias for the single item in ownerContactMethodIds.
         ownerContactMethodIds:
           type: array
           minItems: 1
+          maxItems: 1
           uniqueItems: true
           items:
             type: string
             format: uuid
-          description: Ordered merchant contacts to freeze for each purchase intent. The first item is also returned through ownerContactMethodId for compatibility.
+          description: Exactly one enabled WeChat contact owned by the merchant. Its current version is frozen for each purchase intent.
         probeConnectionId:
           type: string
           format: uuid
@@ -13815,13 +13817,16 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
-          description: Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
+          description: Owner/admin view only. Enabled WeChat contact frozen for new transactions; public clients must create purchase intents instead of reading contact values from service detail.
         ownerContactMethodIds:
           type: array
+          minItems: 1
+          maxItems: 1
+          uniqueItems: true
           items:
             type: string
             format: uuid
-          description: Owner/admin view only. Ordered contact-method identifiers; public service projections omit this field.
+          description: Owner/admin view only. Contains exactly the single enabled WeChat contact identifier; public service projections omit this field.
         probeConnectionId:
           type: string
           format: uuid
@@ -14822,6 +14827,7 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact. The current version is frozen for the quota order.
         selectedAccessMode:
           type: string
         paymentMethod:
@@ -14839,6 +14845,7 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact. The current version is frozen for the purchase intent.
         selectedAccessMode:
           type: string
           enum:
@@ -16023,7 +16030,7 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
-          description: Owner-selected contact method. The platform freezes its current version only when an application is accepted.
+          description: Owner's enabled WeChat contact. The platform freezes its current version only when an application is accepted.
         cycleTerm:
           $ref: "#/components/schemas/CarpoolCycleTermInput"
         title:
@@ -16223,6 +16230,7 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
+          description: Owner's enabled WeChat contact used for new applications.
         cycleTerm:
           $ref: "#/components/schemas/CarpoolCycleTerm"
         title:
@@ -18608,6 +18616,7 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact. The current version is frozen when the application is accepted.
         riskAcknowledgement:
           $ref: "#/components/schemas/RiskAcknowledgement"
     EmptyRequest:
@@ -18705,6 +18714,7 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact selected for this application.
         status:
           type: string
           enum: [pending_owner, joined, rejected, cancelled_by_buyer]
@@ -19258,6 +19268,7 @@ components:
           uniqueItems: true
           items:
             $ref: "#/components/schemas/ContactUsageScope"
+          description: For WeChat, the server normalizes this field to all transaction scopes. Other contact types retain the submitted supported scopes.
         isDefault:
           type: boolean
         enabled:
@@ -19285,6 +19296,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ContactUsageScope"
+          description: WeChat always contains all transaction scopes after server normalization.
         isDefault:
           type: boolean
         enabled:

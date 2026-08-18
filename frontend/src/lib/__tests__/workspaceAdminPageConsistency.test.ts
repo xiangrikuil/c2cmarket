@@ -138,7 +138,7 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(paymentMethodCard).not.toContain('<Checkbox')
     expect(configurationProgressCard).toContain('配置完成度')
     expect(buyerPreviewDrawer).toContain('不会出现在公开主页')
-    expect(myCenter).toContain("wechatBound ? '已填写' : '未填写'")
+    expect(myCenter).toContain("wechatBound ? '已配置' : '未配置'")
     expect(myCenter).toContain("emailBound ? '已验证' : '未验证'")
     expect(myCenter).not.toContain('支持撤销')
   })

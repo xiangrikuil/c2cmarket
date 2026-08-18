@@ -75,7 +75,7 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 		t.Fatalf("create buyer contact: %v", appErr)
 	}
 	applicationBuyerContact, appErr := contactService.CreateMethod(ctx, contact.ContactMethodInput{
-		UserID: buyerUserID, Type: "telegram", Label: "申请人联系", Value: "audit-application-buyer-contact",
+		UserID: buyerUserID, Type: "wechat", Label: "申请人微信", Value: "audit-application-buyer-contact",
 		UsageScopes: []string{contact.UsageScopeBuyer}, Enabled: true, RequestID: "application-buyer-contact-create",
 	})
 	if appErr != nil {
@@ -315,8 +315,8 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 
 	invalidInput := validCarpoolListingAuditInput(buyerOnlyContact.ID, "invalid-scope-request")
 	_, _, _, appErr = service.CreateListingWithIdempotency(ctx, owner, "carpool-create-invalid", "invalid-key", "invalid-hash", invalidInput, completionBuilder)
-	if appErr == nil || appErr.Code != domain.CodeContactMethodNotOwned {
-		t.Fatalf("buyer-only contact was accepted for listing: %#v", appErr)
+	if appErr == nil || appErr.Code != domain.CodeContactMethodRequired || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "wechat_required" {
+		t.Fatalf("non-WeChat contact returned an unexpected listing error: %#v", appErr)
 	}
 	var invalidListings, invalidEvents int
 	if err := store.pool.QueryRow(ctx, `SELECT count(*)::int FROM carpool_listings WHERE owner_user_id = $1 AND id <> $2`, userID, listing.ID).Scan(&invalidListings); err != nil {

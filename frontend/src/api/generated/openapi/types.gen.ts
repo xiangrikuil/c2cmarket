@@ -1834,11 +1834,16 @@ export type QuotaUsagePolicy = {
 export type ApiServiceRequest = unknown & {
     merchantProfileId?: string;
     merchantIdentityMode?: 'public_profile' | 'store_alias';
+    /**
+     * Enabled WeChat contact owned by the merchant. Retained as a compatibility alias for the single item in ownerContactMethodIds.
+     */
     ownerContactMethodId?: string;
     /**
-     * Ordered merchant contacts to freeze for each purchase intent. The first item is also returned through ownerContactMethodId for compatibility.
+     * Exactly one enabled WeChat contact owned by the merchant. Its current version is frozen for each purchase intent.
      */
-    ownerContactMethodIds?: Array<string>;
+    ownerContactMethodIds?: [
+        string
+    ];
     /**
      * Optional while saving a draft. Publication and order acceptance require an enabled, verified connection owned by the seller.
      */
@@ -2123,13 +2128,15 @@ export type ApiService = {
      */
     merchantAvatarUrl?: string;
     /**
-     * Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
+     * Owner/admin view only. Enabled WeChat contact frozen for new transactions; public clients must create purchase intents instead of reading contact values from service detail.
      */
     ownerContactMethodId?: string;
     /**
-     * Owner/admin view only. Ordered contact-method identifiers; public service projections omit this field.
+     * Owner/admin view only. Contains exactly the single enabled WeChat contact identifier; public service projections omit this field.
      */
-    ownerContactMethodIds?: Array<string>;
+    ownerContactMethodIds?: [
+        string
+    ];
     /**
      * Owner/admin-only reusable probe connection binding. Public service DTOs never expose it.
      */
@@ -2618,6 +2625,9 @@ export type CreateApiQuotaOrderRequest = {
      * Required for scheduled offers and omitted for continuous offers.
      */
     saleRoundId?: string;
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen for the quota order.
+     */
     buyerContactMethodId: string;
     selectedAccessMode: string;
     paymentMethod: 'wechat' | 'alipay';
@@ -2628,6 +2638,9 @@ export type CreateApiQuotaOrderRequest = {
 };
 
 export type CreateApiPurchaseIntentRequest = {
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen for the purchase intent.
+     */
     buyerContactMethodId: string;
     selectedAccessMode: 'merchant_operated_endpoint' | 'buyer_dedicated_sub_key' | 'buyer_dedicated_panel_subaccount' | 'fixed_package_offsite' | 'manual_offsite_arrangement';
     requestedCnyAmount: DecimalString;
@@ -3242,7 +3255,7 @@ export type RiskAcknowledgement = {
 export type CreateCarpoolListingRequest = {
     productPlanId: string;
     /**
-     * Owner-selected contact method. The platform freezes its current version only when an application is accepted.
+     * Owner's enabled WeChat contact. The platform freezes its current version only when an application is accepted.
      */
     ownerContactMethodId: string;
     cycleTerm: CarpoolCycleTermInput;
@@ -3354,6 +3367,9 @@ export type CarpoolListing = {
     id: string;
     ownerUserId: string;
     productPlanId: string;
+    /**
+     * Owner's enabled WeChat contact used for new applications.
+     */
     ownerContactMethodId: string;
     cycleTerm: CarpoolCycleTerm;
     title: string;
@@ -4611,6 +4627,9 @@ export type FeedbackTicketList = {
 };
 
 export type CreateCarpoolApplicationRequest = {
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen when the application is accepted.
+     */
     buyerContactMethodId: string;
     riskAcknowledgement?: RiskAcknowledgement;
 };
@@ -4650,6 +4669,9 @@ export type CarpoolApplication = {
     buyerUserId: string;
     ownerUserId: string;
     productPlanId: string;
+    /**
+     * Buyer's enabled WeChat contact selected for this application.
+     */
     buyerContactMethodId: string;
     status: 'pending_owner' | 'joined' | 'rejected' | 'cancelled_by_buyer';
     seatCount: 1;
@@ -4877,6 +4899,9 @@ export type CreateContactMethodRequest = {
     label: string;
     value?: string;
     displayValue?: string;
+    /**
+     * For WeChat, the server normalizes this field to all transaction scopes. Other contact types retain the submitted supported scopes.
+     */
     usageScopes: Array<ContactUsageScope>;
     isDefault?: boolean;
     enabled?: boolean;
@@ -4892,6 +4917,9 @@ export type ContactMethod = {
      * Returned only in authorized self/contact-window contexts when implemented.
      */
     displayValue?: string;
+    /**
+     * WeChat always contains all transaction scopes after server normalization.
+     */
     usageScopes: Array<ContactUsageScope>;
     isDefault: boolean;
     enabled: boolean;
