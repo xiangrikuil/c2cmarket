@@ -3470,13 +3470,7 @@ export async function importApiQuotaCredentials(offerId: string, deliveryKind: A
 export async function getApiServiceById(id: string) {
   if (shouldUseRealBackend()) return backendAPIServiceById(id)
   await wait()
-  return clone(apiServiceStore.find(item => item.id === id && (
-    isApiServicePubliclyOrderable(item)
-    || item.billingMode === 'fixed_package'
-      && item.online
-      && Boolean(item.packages?.some(packageItem => packageItem.enabled))
-      && !item.packages?.some(packageItem => packageItem.enabled && packageItem.stockAvailable > 0)
-  )) ?? null)
+  return clone(apiServiceStore.find(item => item.id === id && isApiServicePubliclyOrderable(item)) ?? null)
 }
 
 const apiServiceSalesStatePriority: Record<ApiServiceSalesState, number> = {

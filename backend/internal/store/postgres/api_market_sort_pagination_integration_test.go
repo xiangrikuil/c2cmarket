@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -248,8 +249,8 @@ func TestPostgresPublicAPIPackageDiscoveryFiltersBeforePagination(t *testing.T) 
 		t.Fatalf("unexpected package duration options: %+v", availability.Facts)
 	}
 
-	if _, appErr := store.GetPublicAPIService(ctx, serviceIDs[2]); appErr != nil {
-		t.Fatalf("sold-out package must remain visible by direct detail: %v", appErr)
+	if _, appErr := store.GetPublicAPIService(ctx, serviceIDs[2]); appErr == nil || appErr.Status != http.StatusNotFound {
+		t.Fatalf("sold-out package detail must be hidden, got %+v", appErr)
 	}
 	if _, appErr := store.GetPublicAPIService(ctx, serviceIDs[0]); appErr == nil || appErr.Status != 404 {
 		t.Fatalf("package backed only by disabled service models must be hidden, got %+v", appErr)

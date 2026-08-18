@@ -180,7 +180,7 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.merchantRefundPolicyVersion, 'api-merchant-refund-v1')
 })
 
-test('preserves the sold-out detail reason without making the service orderable', async () => {
+test('preserves sold-out state for non-public service projections', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
   const service = apiMarketBackend.mapBackendAPIService(backendPublicAPIService({
     billingMode: 'fixed_package',

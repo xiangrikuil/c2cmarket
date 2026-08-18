@@ -6926,7 +6926,7 @@ export type GetPublicApiServiceError = GetPublicApiServiceErrors[keyof GetPublic
 
 export type GetPublicApiServiceResponses = {
     /**
-     * Public API service detail, including a truthful disabled state for sold-out fixed packages.
+     * Orderable public API service detail.
      */
     200: PublicApiService;
 };

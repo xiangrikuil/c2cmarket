@@ -364,18 +364,10 @@ func (s *Store) ListPublicAPIPackageFilterAvailability(ctx context.Context) (api
 }
 
 func publicAPIServiceOrderablePredicate(alias string) string {
-	return publicAPIServiceVisibilityPredicateAt(alias, "now()", true)
+	return publicAPIServiceOrderablePredicateAt(alias, "now()")
 }
 
 func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) string {
-	return publicAPIServiceVisibilityPredicateAt(alias, currentTimeExpression, true)
-}
-
-func publicAPIServiceDetailVisiblePredicate(alias string) string {
-	return publicAPIServiceVisibilityPredicateAt(alias, "now()", false)
-}
-
-func publicAPIServiceVisibilityPredicateAt(alias, currentTimeExpression string, requirePackageStock bool) string {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
 		alias = "api_services"
@@ -383,10 +375,6 @@ func publicAPIServiceVisibilityPredicateAt(alias, currentTimeExpression string, 
 	currentTimeExpression = strings.TrimSpace(currentTimeExpression)
 	if currentTimeExpression == "" {
 		currentTimeExpression = "now()"
-	}
-	packageStockPredicate := ""
-	if requirePackageStock {
-		packageStockPredicate = "AND package_row.stock_available > 0"
 	}
 	return fmt.Sprintf(`%[1]s.review_status = 'approved'
 		  AND %[1]s.publication_status = 'online'
@@ -423,7 +411,7 @@ func publicAPIServiceVisibilityPredicateAt(alias, currentTimeExpression string, 
 		    FROM api_service_packages package_row
 		    WHERE package_row.api_service_id = %[1]s.id
 		      AND package_row.enabled = true
-		      %[4]s
+		      AND package_row.stock_available > 0
 		      AND EXISTS (
 		        SELECT 1
 		        FROM api_service_package_models package_model
@@ -441,7 +429,7 @@ func publicAPIServiceVisibilityPredicateAt(alias, currentTimeExpression string, 
 		    WHERE po.api_service_id = %[1]s.id
 		      AND po.enabled = true
 		      AND po.payment_method IN (%[2]s)
-		  )`, alias, apiServiceSupportedPaymentMethodsSQL, currentTimeExpression, packageStockPredicate)
+		  )`, alias, apiServiceSupportedPaymentMethodsSQL, currentTimeExpression)
 }
 
 func apiServiceFulfillmentReadyPredicate(alias string) string {
@@ -1381,9 +1369,8 @@ func (s *Store) getAPIService(ctx context.Context, q queryer, serviceID string, 
 }
 
 func (s *Store) getPublicAPIService(ctx context.Context, q queryer, serviceID string, forUpdate bool) (apimarket.Service, error) {
-	predicate := publicAPIServiceDetailVisiblePredicate("api_services")
+	predicate := publicAPIServiceOrderablePredicate("api_services")
 	if forUpdate {
-		predicate = publicAPIServiceOrderablePredicate("api_services")
 		var id string
 		if err := q.QueryRow(ctx, `SELECT id::text FROM api_services WHERE id = $1 AND `+predicate+` FOR UPDATE`, serviceID).Scan(&id); err != nil {
 			return apimarket.Service{}, err

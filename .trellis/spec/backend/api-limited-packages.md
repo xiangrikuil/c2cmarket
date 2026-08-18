@@ -146,7 +146,7 @@ score       = 0.60 * value + 0.25 * fulfillment + 0.10 * response + 0.05 * fresh
 - Cards use two columns on desktop and one on mobile, maintain stable dimensions, and show no more than three model chips plus `+N`.
 - Package cards consume the same `merchantAvatarUrl` projection as other API-market cards. They render an image when present and the merchant/store-name initial only when absent.
 - Opening a card navigates to `/api-market/{serviceId}?package={packageId}`. Detail preselects that valid package and fixes the intent/order amount to its CNY price.
-- Sold-out packages are absent from public discovery and filter options, but an existing direct detail URL remains truthful when the service is otherwise public and has an enabled package linked to an enabled service model. Detail returns `orderableReasons: ['package_sold_out']`, shows the sold-out alert before authentication gating, keeps package facts visible to anonymous buyers, and disables purchase. Purchase and `FOR UPDATE` paths continue to require positive stock.
+- Sold-out packages are absent from every buyer-facing public read: discovery, search, pagination, filter options, and direct detail. Public detail uses the same positive-stock orderability predicate as the list and returns `404 OBJECT_NOT_FOUND` after the final enabled package sells out. Merchant management continues to expose zero-stock inventory, while purchase and `FOR UPDATE` paths retain their independent positive-stock checks.
 
 #### Inventory, Snapshots, And Expiry
 
@@ -195,7 +195,7 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 | New stock total is below already reserved/consumed units | 422 | `VALIDATION_FAILED`, `packages` / `stock_below_committed` |
 | Intent selects a missing, disabled, or sold-out package | 422 | `VALIDATION_FAILED`, `selectedPackageId` invalid |
 | Buyer lists a sold-out fixed package | Omitted from results | No discoverable row and no sold-out-only filter option |
-| Buyer opens an otherwise-public sold-out package detail | 200, purchase disabled | `orderableReasons` includes `package_sold_out` |
+| Buyer opens a sold-out package detail | 404 | `OBJECT_NOT_FOUND`; no public package facts |
 | Package links only disabled service models | 404 from public detail and omitted from list | No public/filter-option projection |
 | Concurrent order loses the final-stock reservation race | 409 | `INVALID_STATE_TRANSITION`; refresh/retry message |
 | Delivery snapshot is missing/invalid for a fixed package | 409 | `INVALID_STATE_TRANSITION`; delivery is rejected |
@@ -209,7 +209,7 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 
 - Good: a merchant publishes 1-, 3-, 7-, and 30-day packages and enables exact models; every package/model row inherits that service's `0.0100` default while another self-hosted service keeps `1.0000`.
 - Good: the package route opens with all models and durations, then a buyer selects OpenAI plus xAI; packages matching either provider are returned once and show only matching model/multiplier pairs.
-- Good: an anonymous buyer follows an old link to a sold-out package and sees the sold-out alert and package facts without being forced through login; purchase remains disabled.
+- Good: after the last package sells, buyer list, search, filter options, and direct detail all stop exposing it, while the owner management view still shows zero stock.
 - Good: two buyers race for the last unit; exactly one order commits and the other receives a stock conflict.
 - Good: a 3-day package is delivered at time T; its frozen expiry is T plus 3 calendar days even if the merchant edits or disables the package later.
 - Good: the service selected WeChat then linux.do; the intent preserves both frozen versions in that order, and a completed dispute reported before `packageExpiresAt+24h` records an occurrence during package validity.
@@ -223,14 +223,14 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 ### 6. Tests Required
 
 - Migration checks: version 51 is documented; package stock/allowance/duration constraints and package-model ownership foreign keys exist; non-1 multipliers such as `1.2000` insert successfully.
-- API-market domain tests: allowed durations, positive decimals, exact model subsets, repeated/legacy model normalization, zero/one/many OR matching without duplication, stable package/model IDs, disabled omissions, sold-out detail visibility, and stock-delta rejection.
+- API-market domain tests: allowed durations, positive decimals, exact model subsets, repeated/legacy model normalization, zero/one/many OR matching without duplication, stable package/model IDs, disabled omissions, sold-out public-detail exclusion, and stock-delta rejection.
 - Intent tests: package availability and a full immutable snapshot containing exact model name, multiplier, model price-version ID, commercial facts, and historical explicit-null behavior.
 - Contact tests: non-empty unique ownership validation, stable selected order, all frozen immutable versions, legacy first-contact compatibility, and no placeholder contact creation.
 - Order tests: last-unit reservation, cancellation and timeout release exactly once, payment-confirmation consumption, no later release, and delivery-based expiry from the frozen snapshot.
 - After-sales tests: `packageExpiresAt` wins validity priority, exact 24-hour reporting boundary, required completed-order occurrence time, and rejection after package validity.
 - PostgreSQL integration: reservation/update/release occurs in the order transaction and cannot oversell under competing writes; multi-model OR matching, sold-out exclusion, sold-out-only option exclusion, disabled-model detail exclusion, later-page matching, and cursor ordering run against an isolated fully migrated database.
 - OpenAPI/router checks: publish/public response fields, snapshot/order lifecycle fields, route parity, and strict YAML parsing.
-- Frontend unit tests: uniform service-default multiplier mapping with no model/package override, xAI/Google adapter mapping, mock lifecycle parity, canonical/legacy routing, repeated URL params, provider grouping and tri-state selection, browse-first projection, all score components, deterministic tie breakers, recommendation gating, and sold-out direct detail.
+- Frontend unit tests: uniform service-default multiplier mapping with no model/package override, xAI/Google adapter mapping, mock lifecycle parity including sold-out public-detail exclusion, canonical/legacy routing, repeated URL params, provider grouping and tri-state selection, browse-first projection, all score components, deterministic tie breakers, and recommendation gating.
 - Merchant projection tests: both `public_profile` and `store_alias` preserve their correct avatar boundary through storage, API response, frontend adapter, and shared card component.
 - Frontend gates: `vue-tsc`, Vitest, real-backend production build, plus desktop/mobile browser checks for package cards, query preselection, fixed order amount, publish controls, and viewport overflow.
 - Metered-quota regression tests must continue passing after every package change.
