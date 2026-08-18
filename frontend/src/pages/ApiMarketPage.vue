@@ -276,7 +276,12 @@ const { data: catalogCategories } = productCategoriesQuery
 const createOrderMutation = useCreateApiQuotaOrderMutation()
 const { setPromotionElement, trackPromotionClick } = usePromotionImpression()
 const visibleMarketQuery = activeView.value === 'limited' ? quotaQuery : freeServicesQuery
-prefetchQueriesOnServer(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery, packageFilterOptionsQuery)
+prefetchQueriesOnServer(
+  visibleMarketQuery,
+  productCategoriesQuery,
+  modelCatalogQuery,
+  ...(activeView.value === 'packages' ? [packageFilterOptionsQuery] : []),
+)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const quotaHasLoadedPages = computed(() => Boolean(quotaQuery.data.value?.pages.length))
 const rushHasLoadedPages = computed(() => Boolean(rushQuery.data.value?.pages.length))
