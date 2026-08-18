@@ -42,12 +42,31 @@ func (s *Service) List(ctx context.Context, userID string, page domain.PageReque
 	items := make([]Notification, 0, len(s.items))
 	for _, item := range s.items {
 		if item.UserID == userID {
+			if item.ActionDueAt != nil && !s.now().Before(*item.ActionDueAt) {
+				item.ActionRequired = false
+			}
 			items = append(items, item)
 		}
 	}
 	s.mu.Unlock()
 	sortNotifications(items)
 	return domain.PageItems(items, page)
+}
+
+func (s *Service) CompleteDisputeActions(disputeID string) {
+	disputeID = strings.TrimSpace(disputeID)
+	if disputeID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, item := range s.items {
+		if item.TargetType != "dispute" || item.TargetID != disputeID || !item.ActionRequired {
+			continue
+		}
+		item.ActionRequired = false
+		s.items[id] = item
+	}
 }
 
 func (s *Service) UnreadCount(ctx context.Context, userID string) (int, *domain.AppError) {

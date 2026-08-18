@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/contact"
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/platform/modelsdev"
 
@@ -3321,9 +3323,9 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	student := createStudentSession(t, server, "contact-scope-student")
 
 	sellerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"wechat",
-		"label":"学生微信",
-		"value":"student-wechat",
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"seller-scope@example.edu",
 		"usageScopes":["api_merchant"],
 		"isDefault":false,
 		"enabled":true
@@ -3337,9 +3339,9 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	assertProblemCode(t, sellerScopeResponse, domain.CodeCapabilityRequired)
 
 	buyerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"wechat",
-		"label":"学生微信",
-		"value":"student-wechat",
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"buyer-scope@example.edu",
 		"usageScopes":["dispute","buyer","dispute"],
 		"isDefault":false,
 		"enabled":true
@@ -3363,9 +3365,9 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	}
 
 	updateSellerScope := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
-		"type":"wechat",
-		"label":"学生微信",
-		"value":"student-wechat",
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"buyer-scope@example.edu",
 		"usageScopes":["carpool_owner","buyer"],
 		"isDefault":false,
 		"enabled":true
@@ -3378,10 +3380,44 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	}
 	assertProblemCode(t, updateSellerScopeResponse, domain.CodeCapabilityRequired)
 
-	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+	wechatRequest := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
 		"type":"wechat",
-		"label":"未知范围",
-		"value":"unknown-scope",
+		"label":"微信",
+		"value":"student-wechat",
+		"usageScopes":[],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(wechatRequest, student, "student-required-wechat")
+	wechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(wechatResponse, wechatRequest)
+	if wechatResponse.Code != http.StatusCreated {
+		t.Fatalf("student required wechat status %d body %s", wechatResponse.Code, wechatResponse.Body.String())
+	}
+	var wechat struct {
+		ID          string   `json:"id"`
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(wechatResponse.Body).Decode(&wechat); err != nil {
+		t.Fatalf("decode required wechat: %v", err)
+	}
+	if wechat.ID == "" || !slices.Equal(wechat.UsageScopes, contact.AllUsageScopes()) {
+		t.Fatalf("required wechat scopes = %+v", wechat)
+	}
+
+	deleteWechat := httptest.NewRequest(http.MethodDelete, "/api/v1/contact-methods/"+wechat.ID, nil)
+	addAuth(deleteWechat, student, "student-required-wechat-delete")
+	deleteWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(deleteWechatResponse, deleteWechat)
+	if deleteWechatResponse.Code != http.StatusConflict {
+		t.Fatalf("required wechat delete status %d body %s", deleteWechatResponse.Code, deleteWechatResponse.Body.String())
+	}
+	assertProblemCode(t, deleteWechatResponse, domain.CodeInvalidStateTransition)
+
+	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"email",
+		"label":"未知范围邮箱",
+		"value":"unknown-scope@example.edu",
 		"usageScopes":["unknown_scope"],
 		"isDefault":false,
 		"enabled":true

@@ -21,20 +21,21 @@ const incompleteProfile = {
   linuxDoBinding: { bound: true },
 }
 
-test('linux.do account recovery requires both verified email and backup password', () => {
+test('account recovery requires a verified email but keeps backup password optional', () => {
   assert.equal(isAccountRecoveryComplete(completeProfile), true)
   assert.equal(isAccountRecoveryComplete(incompleteProfile), false)
   assert.deepEqual(
     outstandingAccountRecoveryRequirements(incompleteProfile).map(item => item.id),
-    ['email', 'password'],
+    ['email'],
   )
   assert.deepEqual(
     accountRecoveryRequirements({ emailVerified: true, passwordConfigured: false, linuxDoBinding: { bound: true } }).map(item => [item.id, item.completed]),
-    [['email', true], ['password', false]],
+    [['email', true]],
   )
+  assert.equal(isAccountRecoveryComplete({ emailVerified: true, passwordConfigured: false, linuxDoBinding: { bound: true } }), true)
 })
 
-test('unbound account recovery does not require or expose a backup password', () => {
+test('unbound account uses the same verified-email recovery requirement', () => {
   const unboundProfile = {
     emailVerified: true,
     passwordConfigured: false,

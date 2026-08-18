@@ -113,6 +113,7 @@ export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { WECHAT_USAGE_SCOPES } from '@/lib/contactUsageScopes'
 export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -209,6 +210,7 @@ import {
   backendOwnerAPIOrder,
   backendOwnerAPIOrders,
   backendOwnerAPIOrdersPage,
+  backendSellerCommerceStatus,
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
@@ -388,7 +390,7 @@ export type CarpoolNotification = {
 
 export type UnifiedNotification = {
   id: string
-  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒'
+  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒' | '交易待办' | '交易通知'
   title: string
   detail: string
   time: string
@@ -579,6 +581,33 @@ export type ApiOrderLatePaymentStatus = 'reported' | 'not_received' | 'received_
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
 export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
 export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
+
+export type SellerCommerceRestrictionLevel = 'normal' | 'service_limited' | 'account_limited'
+export type SellerCommerceReason = 'service_multiple_buyers' | 'seller_response_overdue' | 'account_multiple_buyers' | 'remedy_fulfillment_overdue'
+
+export type SellerCommerceDispute = {
+  disputeId: string
+  orderId: string
+  orderNo: string
+  apiServiceId: string
+  serviceTitle: string
+  status: ApiOrderDisputeStatus
+  nextActor: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none'
+  dueAt?: string | null
+  restrictionLevel: SellerCommerceRestrictionLevel
+  reasonCodes: SellerCommerceReason[]
+}
+
+export type SellerCommerceStatus = {
+  level: SellerCommerceRestrictionLevel
+  activeDisputeCount: number
+  activeBuyerCount: number
+  blockingDisputeCount: number
+  affectedServiceIds: string[]
+  reasonCodes: SellerCommerceReason[]
+  disputes: SellerCommerceDispute[]
+  nextReleaseAt?: string | null
+}
 
 export type ApiQuotaOrderSnapshot = ApiServiceCommercialSnapshot & {
   batchId: string
@@ -2237,7 +2266,7 @@ export type ApiOrderFilters = {
   search?: string
   dateRange?: 'all' | 'today' | '7d' | '30d'
   sort?: 'default_buyer' | 'default_merchant' | 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
-  dispute?: 'all' | 'active' | 'none'
+  dispute?: 'all' | 'active' | 'none' | 'needs_action' | 'waiting_counterparty' | 'platform_review'
   minAmount?: string
   maxAmount?: string
   risk?: 'all' | 'high' | 'has_note'
@@ -2384,12 +2413,18 @@ export function filterApiOrderRows(source: readonly ApiOrder[], filters: ApiOrde
     const createdAt = new Date(item.createdAt).getTime()
     const amount = item.amountDecimal ?? String(item.amount)
     const activeDispute = isApiOrderDisputeActive(item.disputeStatus)
+    const disputeFilterMatches = !filters.dispute || filters.dispute === 'all'
+      || filters.dispute === 'active' && activeDispute
+      || filters.dispute === 'none' && !activeDispute
+      || filters.dispute === 'needs_action' && activeDispute && Boolean(item.disputeNeedsAction)
+      || filters.dispute === 'waiting_counterparty' && activeDispute && !item.disputeNeedsAction && item.disputeNextActor !== 'admin'
+      || filters.dispute === 'platform_review' && activeDispute && item.disputeNextActor === 'admin'
     return (!filters.buyerId || item.buyerId === filters.buyerId)
       && (!filters.sellerId || item.sellerId === filters.sellerId)
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
       && (createdAfter === null || createdAt >= createdAfter)
-      && (!filters.dispute || filters.dispute === 'all' || filters.dispute === 'active' && activeDispute || filters.dispute === 'none' && !activeDispute)
+      && disputeFilterMatches
       && (minAmount === null || compareDecimal(amount, minAmount) >= 0)
       && (maxAmount === null || compareDecimal(amount, maxAmount) <= 0)
       && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
@@ -3685,6 +3720,7 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
   if (payload.type === 'linuxdo') throw new Error('linux.do 联系方式来自绑定账号，不能手动伪造')
   if (!payload.displayValue.trim()) throw new Error('联系方式内容不能为空')
   const createdAt = nowText()
+  const wechat = payload.type === 'wechat'
   const contact: UserContactMethod = {
     id: `contact-${Date.now()}`,
     userId: myUserProfileStore.id,
@@ -3692,9 +3728,9 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: [...payload.usageScopes],
+    usageScopes: wechat ? [...WECHAT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: payload.enabled,
+    enabled: wechat ? true : payload.enabled,
     verified: false,
     createdAt,
     updatedAt: createdAt,
@@ -3713,6 +3749,8 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo' && payload.displayValue !== current.displayValue) throw new Error('linux.do 联系方式不能手动修改')
+  if (current.type === 'wechat' && payload.type !== 'wechat') throw new Error('微信是必填联系方式，不能转换为其他类型')
+  if (current.type === 'wechat' && !payload.enabled) throw new Error('微信是必填联系方式，不能停用')
   const nextType = current.type === 'linuxdo' ? 'linuxdo' : payload.type
   const currentVersionValue = nextType === 'email' ? current.displayValue.trim().toLowerCase() : current.displayValue.trim()
   const nextVersionValue = nextType === 'email' ? payload.displayValue.trim().toLowerCase() : payload.displayValue.trim()
@@ -3723,9 +3761,9 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(current.type === 'linuxdo' ? 'linuxdo' : payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: [...payload.usageScopes],
+    usageScopes: nextType === 'wechat' ? [...WECHAT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: payload.enabled,
+    enabled: nextType === 'wechat' ? true : payload.enabled,
     verified: valueChanged ? false : current.verified,
     updatedAt: nowText(),
   }
@@ -3743,6 +3781,7 @@ export async function deleteContactMethod(contactId: string) {
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo') throw new Error('linux.do 绑定联系方式不能删除')
+  if (current.type === 'wechat') throw new Error('微信是必填联系方式，不能删除')
   myContactMethodStore = myContactMethodStore.filter(item => item.id !== contactId)
   contactMethodVersionStore.delete(contactId)
   contactEmailVerificationStore.delete(contactId)
@@ -6462,6 +6501,36 @@ export async function getMerchantApiOrders(filters: ApiOrderFilters = {}) {
 export async function getMerchantApiOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}) {
   if (shouldUseRealBackend()) return backendOwnerAPIOrdersPage(filters, page)
   return paginateCursorItems(filterApiOrders({ ...filters, sellerId: currentMerchantId }), page)
+}
+
+export async function getSellerCommerceStatus(): Promise<SellerCommerceStatus> {
+  if (shouldUseRealBackend()) return backendSellerCommerceStatus()
+  await wait()
+  const active = filterApiOrders({ dispute: 'active', sellerId: currentMerchantId })
+  const buyerIds = new Set(active.map(item => item.buyerId))
+  const serviceBuyers = new Map<string, Set<string>>()
+  for (const order of active) {
+    const buyers = serviceBuyers.get(order.apiServiceId) ?? new Set<string>()
+    buyers.add(order.buyerId)
+    serviceBuyers.set(order.apiServiceId, buyers)
+  }
+  const affectedServiceIds = [...serviceBuyers.entries()].filter(([, buyers]) => buyers.size >= 2).map(([serviceId]) => serviceId)
+  const level: SellerCommerceRestrictionLevel = buyerIds.size >= 3 ? 'account_limited' : affectedServiceIds.length ? 'service_limited' : 'normal'
+  return clone({
+    level,
+    activeDisputeCount: active.length,
+    activeBuyerCount: buyerIds.size,
+    blockingDisputeCount: level === 'normal' ? 0 : active.length,
+    affectedServiceIds,
+    reasonCodes: level === 'account_limited' ? ['account_multiple_buyers'] : level === 'service_limited' ? ['service_multiple_buyers'] : [],
+    disputes: active.filter(item => item.disputeCaseId).map(item => ({
+      disputeId: item.disputeCaseId!, orderId: item.id, orderNo: item.orderNo,
+      apiServiceId: item.apiServiceId, serviceTitle: item.serviceTitle,
+      status: item.disputeStatus ?? 'none', nextActor: item.disputeNextActor ?? 'none',
+      dueAt: item.disputeDueAt, restrictionLevel: level, reasonCodes: [],
+    })),
+    nextReleaseAt: null,
+  })
 }
 
 export async function getApiOrderById(id: string, perspective: 'buyer' | 'merchant' = 'buyer') {

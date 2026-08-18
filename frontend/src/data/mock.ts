@@ -1110,7 +1110,7 @@ export const myContactMethods: UserContactMethod[] = [
     label: '微信',
     maskedValue: 'c2c_***',
     displayValue: 'c2c_orbit',
-    usageScopes: ['carpool_owner', 'api_merchant'],
+    usageScopes: ['carpool_owner', 'api_merchant', 'buyer', 'dispute'],
     isDefault: true,
     enabled: true,
     verified: false,

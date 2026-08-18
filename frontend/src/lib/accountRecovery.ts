@@ -2,12 +2,10 @@ import type { UserProfile } from '@/lib/api'
 
 export const ACCOUNT_RECOVERY_PATH = '/my/account'
 
-type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified' | 'passwordConfigured'> & {
-  linuxDoBinding: Pick<UserProfile['linuxDoBinding'], 'bound'>
-}
+type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified'>
 
 export type AccountRecoveryRequirement = {
-  id: 'email' | 'password'
+  id: 'email'
   label: string
   description: string
   completed: boolean
@@ -26,7 +24,7 @@ const accountRecoveryAllowedPrefixes = [
 ]
 
 export function accountRecoveryRequirements(profile: AccountRecoveryProfile): AccountRecoveryRequirement[] {
-  const requirements: AccountRecoveryRequirement[] = [
+  return [
     {
       id: 'email',
       label: '绑定验证邮箱',
@@ -34,17 +32,6 @@ export function accountRecoveryRequirements(profile: AccountRecoveryProfile): Ac
       completed: profile.emailVerified,
     },
   ]
-
-  if (profile.linuxDoBinding.bound) {
-    requirements.push({
-      id: 'password',
-      label: '设置备用密码',
-      description: 'linux.do 暂不可用时，可用站内用户名和密码登录。',
-      completed: profile.passwordConfigured,
-    })
-  }
-
-  return requirements
 }
 
 export function outstandingAccountRecoveryRequirements(profile: AccountRecoveryProfile) {

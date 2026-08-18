@@ -263,6 +263,49 @@ func (s *Service) HasActiveDisputeForSeller(ctx context.Context, sellerUserID st
 	return false, nil
 }
 
+func (s *Service) SellerCommerceStatus(ctx context.Context, sellerUserID string) (SellerCommerceStatus, *domain.AppError) {
+	sellerUserID = strings.TrimSpace(sellerUserID)
+	if sellerUserID == "" {
+		return SellerCommerceStatus{Level: CommerceRestrictionNormal}, nil
+	}
+	if s.repo != nil {
+		if repo, ok := s.repo.(interface {
+			GetSellerCommerceStatus(context.Context, string, time.Time) (SellerCommerceStatus, *domain.AppError)
+		}); ok {
+			return repo.GetSellerCommerceStatus(ctx, sellerUserID, s.now())
+		}
+		orders, appErr := s.repo.ListAPIOrdersBySeller(ctx, sellerUserID, s.now())
+		if appErr != nil {
+			return SellerCommerceStatus{}, appErr
+		}
+		return EvaluateSellerCommerce(commerceFactsFromOrders(orders), s.now()), nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	orders := make([]Order, 0)
+	for _, order := range s.orders {
+		if order.SellerUserID == sellerUserID {
+			orders = append(orders, order)
+		}
+	}
+	return EvaluateSellerCommerce(commerceFactsFromOrders(orders), s.now()), nil
+}
+
+func commerceFactsFromOrders(orders []Order) []DisputeCommerceFact {
+	facts := make([]DisputeCommerceFact, 0, len(orders))
+	for _, order := range orders {
+		facts = append(facts, DisputeCommerceFact{
+			DisputeID: order.DisputeCaseID, OrderID: order.ID, OrderNo: order.OrderNo,
+			APIServiceID: order.APIServiceID, BuyerUserID: order.BuyerUserID,
+			DisputeStatus: order.DisputeStatus, NextActor: order.DisputeNextActor,
+			DueAt: order.DisputeDueAt, ServiceTitle: order.ServiceTitleSnapshot,
+			RemedySource: order.ActiveRemedySource,
+		})
+	}
+	return facts
+}
+
 func (s *Service) AdminOrders(ctx context.Context, user auth.User, filter AdminOrderFilter, page domain.PageRequest) (domain.Page[Order], *domain.AppError) {
 	if !user.IsAdmin {
 		return domain.Page[Order]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")

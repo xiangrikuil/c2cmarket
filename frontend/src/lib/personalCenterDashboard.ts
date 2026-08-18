@@ -90,7 +90,7 @@ export type BuildPublishedContentInput = {
 
 export type BuildAccountCompletenessInput = {
   profile: UserProfile
-  enabledContactCount: number
+  wechatBound: boolean
   hasApiServices: boolean
   apiPaymentComplete: boolean
 }
@@ -269,9 +269,9 @@ export function buildAccountCompleteness(input: BuildAccountCompletenessInput): 
   tasks.push(
     {
       id: 'contact',
-      label: '添加联系方式',
-      description: '在有效交易联系窗口中使用。',
-      completed: input.enabledContactCount > 0,
+      label: '绑定微信',
+      description: '微信是平台必填联系方式，用于有效交易联系。',
+      completed: input.wechatBound,
       to: '/my/contacts',
     },
     {
@@ -316,6 +316,12 @@ export function getPrimaryAccountAlert(completeness: AccountCompleteness): Accou
   const missingTasks = new Map(completeness.tasks.filter(item => !item.completed).map(item => [item.id, item]))
   const alertDefinitions: Array<Omit<AccountAlert, 'to'> & { id: AccountCompletenessTask['id'] }> = [
     {
+      id: 'contact',
+      title: '请先绑定微信',
+      description: '微信是平台必填联系方式，绑定后会自动用于全部交易场景。',
+      actionLabel: '绑定微信',
+    },
+    {
       id: 'linuxdo',
       title: 'Linux.do 绑定状态需要检查',
       description: '社区身份未绑定，公开身份和信任等级无法正常展示。',
@@ -332,12 +338,6 @@ export function getPrimaryAccountAlert(completeness: AccountCompleteness): Accou
       title: '尚未设置备用密码',
       description: '设置后可以在社区认证不可用时使用站内账号登录。',
       actionLabel: '设置密码',
-    },
-    {
-      id: 'contact',
-      title: '尚未配置联系方式',
-      description: '有效交易建立后，需要至少一种可用联系方式继续沟通。',
-      actionLabel: '添加联系方式',
     },
     {
       id: 'api-payment',

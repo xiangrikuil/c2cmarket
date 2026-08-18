@@ -720,9 +720,6 @@ func (s *Store) submitAPIServiceForReviewInTx(ctx context.Context, tx pgx.Tx, us
 	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
 		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
-		return apimarket.Service{}, appErr
-	}
 	if service.ReviewStatus != apimarket.ServiceReviewStatusDraft && service.ReviewStatus != apimarket.ServiceReviewStatusChangesRequested {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能提交审核。")
 	}
@@ -784,7 +781,7 @@ func (s *Store) updateAPIServicePublicationInTx(ctx context.Context, tx pgx.Tx, 
 		if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
 			return apimarket.Service{}, appErr
 		}
-		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, service.ID, now); appErr != nil {
 			return apimarket.Service{}, appErr
 		}
 		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
@@ -1580,7 +1577,7 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, service.ID, now); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
 

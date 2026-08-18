@@ -377,21 +377,8 @@ func (s *Store) ListAPIOrdersBySeller(ctx context.Context, sellerUserID string, 
 }
 
 func (s *Store) HasActiveAPIOrderDisputeForSeller(ctx context.Context, sellerUserID string) (bool, *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return false, internalStoreError()
-	}
-	var exists bool
-	if err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM api_orders
-			WHERE seller_user_id = $1
-			  AND dispute_status IN ('negotiating', 'open', 'awaiting_fulfillment', 'fulfillment_confirmation')
-		)
-	`, sellerUserID).Scan(&exists); err != nil {
-		return false, internalStoreError()
-	}
-	return exists, nil
+	status, appErr := s.GetSellerCommerceStatus(ctx, sellerUserID, time.Now())
+	return status.ActiveDisputeCount > 0, appErr
 }
 
 func (s *Store) ListAdminAPIOrders(ctx context.Context, filter apiorder.AdminOrderFilter, page domain.PageRequest, now time.Time) (domain.Page[apiorder.Order], *domain.AppError) {
@@ -495,7 +482,7 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		return apiorder.Order{}, appErr
 	}
 	service = apimarket.WithOrderabilityAt(service, now)
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, service.ID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	order, appErr := newStoreAPIOrder(input, intent, service, now)

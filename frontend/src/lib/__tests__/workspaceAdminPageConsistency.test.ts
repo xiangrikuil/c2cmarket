@@ -140,6 +140,11 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(buyerPreviewDrawer).toContain('不会出现在公开主页')
     expect(myCenter).toContain("wechatBound ? '已填写' : '未填写'")
     expect(myCenter).toContain("emailBound ? '已验证' : '未验证'")
+    const wechatCard = myCenter.slice(myCenter.indexOf('title="微信"'), myCenter.indexOf('title="邮箱"'))
+    expect(wechatCard).toContain('微信为必填联系方式')
+    expect(wechatCard).not.toContain('ContactUsageScopeSelector')
+    expect(wechatCard).not.toContain('解除微信绑定')
+    expect(myCenter).toContain('注册完成，请绑定微信')
     expect(myCenter).not.toContain('支持撤销')
   })
 

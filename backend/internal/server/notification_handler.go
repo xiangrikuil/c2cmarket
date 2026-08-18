@@ -151,6 +151,8 @@ func notificationTargetURL(item notification.Notification) string {
 		return "/my/api-orders"
 	case "api_order":
 		return "/my/api-orders/" + item.TargetID
+	case "dispute":
+		return "/my/disputes/" + item.TargetID
 	case "carpool_application":
 		return "/my/rides/" + item.TargetID
 	case "carpool_membership":
@@ -170,6 +172,11 @@ func notificationCategory(item notification.Notification) string {
 		return "API 订单"
 	case "api_order":
 		return "API 订单"
+	case "dispute":
+		if item.ActionRequired {
+			return "交易待办"
+		}
+		return "交易通知"
 	case "carpool_application", "carpool_membership":
 		return "上车申请"
 	case "official_price_lead":

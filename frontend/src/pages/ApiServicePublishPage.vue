@@ -12,7 +12,9 @@ import {
   Send,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiProbeConnectionDialog from '@/components/api-probe/ApiProbeConnectionDialog.vue'
 import AccountPaymentSummarySection from '@/components/api-service-publish/AccountPaymentSummarySection.vue'
+import SellerCommerceStatusPanel from '@/components/api-order/SellerCommerceStatusPanel.vue'
 import ApiPaymentSettingsDialog from '@/components/contact-payment/ApiPaymentSettingsDialog.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
@@ -51,7 +53,6 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { backendErrorMessage } from '@/lib/backendClient'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
@@ -59,9 +60,10 @@ import { trackAnalytics } from '@/lib/analytics'
 import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
-import { useApiPaymentAccountSettingsQuery, useMerchantApiOrders, useModelCatalog, useMyContactMethodsQuery, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyContactMethodsQuery, useMyProfileQuery, useSellerCommerceStatus } from '@/queries/useMarketQueries'
 import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
+import type { OwnerAPIProbeConnection } from '@/types/apiHealth'
 
 type Field =
   | 'merchantIdentity'
@@ -91,7 +93,7 @@ const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const { data: myProfile, isLoading: profileLoading } = useMyProfileQuery()
 const contactMethodsQuery = useMyContactMethodsQuery()
-const activeDisputesQuery = useMerchantApiOrders({ dispute: 'active' })
+const commerceStatusQuery = useSellerCommerceStatus()
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const queryClient = useQueryClient()
 const route = useRoute()
@@ -120,6 +122,7 @@ const publishSteps = computed(() => isLimitedQuotaMode.value
     ])
 const previewOpen = ref(false)
 const paymentSettingsDialogOpen = ref(false)
+const probeConnectionDialogOpen = ref(false)
 const errors = reactive<FieldErrors<Field>>({})
 const pendingProviderCategory = ref<ApiProviderCategory | null>(null)
 const formDirty = ref(false)
@@ -218,6 +221,12 @@ function syncMerchantDisplayNameSnapshot() {
 
 function setStoreAliasVisible(value: boolean) {
   form.merchantIdentityMode = value ? 'store_alias' : 'public_profile'
+}
+
+function selectProbeConnection(connection: OwnerAPIProbeConnection) {
+  form.probeConnectionId = connection.id
+  delete errors.probeConnection
+  formDirty.value = true
 }
 
 function syncHiddenPublishFields() {
@@ -505,15 +514,18 @@ const completeness = computed(() => {
   return items
 })
 const publishAssistant = computed(() => apiPublishAssistantSummary(completeness.value))
-const activeDisputeCount = computed(() => activeDisputesQuery.data.value?.length ?? 0)
+const activeDisputeCount = computed(() => commerceStatusQuery.data.value?.activeDisputeCount ?? 0)
 const disputePublishBlocked = computed(() => (
-	activeDisputesQuery.isLoading.value || activeDisputesQuery.isError.value || activeDisputeCount.value > 0
+	commerceStatusQuery.isLoading.value
+	|| commerceStatusQuery.isError.value
+	|| commerceStatusQuery.data.value?.level === 'account_limited'
 ))
 const disputeRuleText = computed(() => {
-	if (activeDisputesQuery.isLoading.value) return '正在检查当前账号是否存在未解决的 API 订单纠纷，检查完成前不能提交发布。'
-	if (activeDisputesQuery.isError.value) return '暂时无法确认纠纷状态，为避免违规接单，当前不能提交发布。请重试。'
-	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 个未解决的 API 订单纠纷。处理完成前不能发布或恢复 API 服务与额度，也不会接收新订单。`
-	return '发布规则：账号存在未解决的 API 订单纠纷时，不能发布或恢复 API 服务与额度，也不会接收新订单。'
+	if (commerceStatusQuery.isLoading.value) return '正在检查当前账号的经营状态，检查完成前不能开启接单。'
+	if (commerceStatusQuery.isError.value) return '暂时无法确认经营状态，请重试；编辑和保存草稿仍然可用。'
+	if (commerceStatusQuery.data.value?.level === 'account_limited') return `当前有 ${commerceStatusQuery.data.value.activeBuyerCount} 位不同买家的活动纠纷或履行逾期，暂时不能开启新接单。`
+	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 笔活动纠纷，但未达到账号限制阈值，不影响创建和提交新服务。`
+	return '单笔普通纠纷只冻结对应订单；达到账号风险阈值后才暂停全部新接单。'
 })
 
 const risks = computed(() => {
@@ -811,14 +823,12 @@ function confirmProviderCategoryChange() {
         </div>
       </div>
 
-      <Alert :variant="activeDisputeCount > 0 || activeDisputesQuery.isError.value ? 'destructive' : 'default'">
-        <Info />
-        <AlertTitle>发布前纠纷规则</AlertTitle>
-        <AlertDescription>
-          {{ disputeRuleText }}
-          <Button v-if="activeDisputesQuery.isError.value" type="button" size="sm" variant="outline" class="mt-3" @click="activeDisputesQuery.refetch()">重新检查</Button>
-        </AlertDescription>
-      </Alert>
+      <SellerCommerceStatusPanel
+        :status="commerceStatusQuery.data.value"
+        :loading="commerceStatusQuery.isLoading.value"
+        :error="commerceStatusQuery.isError.value"
+        @retry="commerceStatusQuery.refetch()"
+      />
 
       <PublishWorkflowStepper
         :steps="publishSteps"
@@ -871,6 +881,7 @@ function confirmProviderCategoryChange() {
               :loading="probeConnectionsQuery.isLoading.value"
               :error="probeConnectionError"
               :field-error="errors.probeConnection"
+              @create="probeConnectionDialogOpen = true"
               @refresh="probeConnectionsQuery.refetch()"
             />
             <AccountPaymentSummarySection
@@ -991,6 +1002,13 @@ function confirmProviderCategoryChange() {
     <ApiPaymentSettingsDialog
       v-model:open="paymentSettingsDialogOpen"
       :settings="accountPaymentSettingsValue"
+    />
+    <ApiProbeConnectionDialog
+      v-model:open="probeConnectionDialogOpen"
+      :connections="probeConnections"
+      require-enabled
+      @saved="selectProbeConnection"
+      @reuse="selectProbeConnection"
     />
   </div>
 </template>

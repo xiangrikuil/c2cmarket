@@ -195,9 +195,12 @@ describe('付款联系与平台兜底文案', () => {
     for (const source of [buyerListSource, merchantListSource]) {
       assert.match(source, /disputeCaseId/)
       assert.match(source, /disputeNeedsAction/)
-	  assert.match(source, /售后处理中/)
-	  assert.match(source, /售后待你处理/)
+      assert.match(source, /disputeActionLabel/)
+      assert.match(source, /disputeDueAt/)
       assert.match(source, /`\/my\/disputes\/\$\{item\.disputeCaseId\}/)
     }
+    assert.match(merchantListSource, /已完成当前处理，无需操作/)
+    assert.match(merchantListSource, /等待买家决定/)
+    assert.match(merchantListSource, /平台处理中/)
   })
 })

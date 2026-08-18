@@ -66,7 +66,7 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	service := contact.NewService(store, func() time.Time { return now })
 	createInput := contact.ContactMethodInput{
-		UserID: userID, Type: "wechat", Label: "微信", Value: "postgres-scopes", Enabled: true,
+		UserID: userID, Type: "telegram", Label: "Telegram", Value: "postgres-scopes", Enabled: true,
 		UsageScopes: []string{contact.UsageScopeDispute, contact.UsageScopeAPIMerchant, contact.UsageScopeBuyer},
 		RequestID:   "contact-create",
 	}
@@ -119,7 +119,7 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 	}
 
 	updated, _, changed, appErr := service.UpdateMethodWithIdempotency(ctx, userID, "contact-update", "contact-update-key", "contact-update-hash", contact.UpdateContactMethodInput{
-		UserID: userID, MethodID: created.ID, Type: "wechat", Label: "工作微信", Value: "postgres-scopes-2", Enabled: true,
+		UserID: userID, MethodID: created.ID, Type: "telegram", Label: "工作 Telegram", Value: "postgres-scopes-2", Enabled: true,
 		UsageScopes: []string{contact.UsageScopeBuyer},
 		RequestID:   "contact-update-scopes",
 	}, buildCompletion)
@@ -130,20 +130,20 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 		t.Fatalf("updated scopes = %v", updated.UsageScopes)
 	}
 	if _, _, changed, appErr = service.UpdateMethodWithIdempotency(ctx, userID, "contact-update", "contact-update-key", "contact-update-hash", contact.UpdateContactMethodInput{
-		UserID: userID, MethodID: created.ID, Type: "wechat", Label: "工作微信", Value: "postgres-scopes-2", Enabled: true,
+		UserID: userID, MethodID: created.ID, Type: "telegram", Label: "工作 Telegram", Value: "postgres-scopes-2", Enabled: true,
 		UsageScopes: []string{contact.UsageScopeBuyer}, RequestID: "contact-update-scopes",
 	}, buildCompletion); appErr != nil || changed {
 		t.Fatalf("update contact replay: changed=%t error=%v", changed, appErr)
 	}
 	preserved, _, changed, appErr := service.UpdateMethodWithIdempotency(ctx, userID, "contact-update-preserved", "contact-update-preserved-key", "contact-update-preserved-hash", contact.UpdateContactMethodInput{
-		UserID: userID, MethodID: created.ID, Type: "wechat", Label: "工作微信", Value: "postgres-scopes-3", Enabled: true,
+		UserID: userID, MethodID: created.ID, Type: "telegram", Label: "工作 Telegram", Value: "postgres-scopes-3", Enabled: true,
 		RequestID: "contact-update-preserved",
 	}, buildCompletion)
 	if appErr != nil || !changed || !slices.Equal(preserved.UsageScopes, []string{contact.UsageScopeBuyer}) {
 		t.Fatalf("omitted update scopes were not preserved: method=%+v changed=%t error=%v", preserved, changed, appErr)
 	}
 	failedUpdate := contact.UpdateContactMethodInput{
-		UserID: userID, MethodID: created.ID, Type: "wechat", Label: "不应持久化", Value: "must-rollback-update", Enabled: true,
+		UserID: userID, MethodID: created.ID, Type: "telegram", Label: "不应持久化", Value: "must-rollback-update", Enabled: true,
 		UsageScopes: []string{contact.UsageScopeBuyer}, RequestID: "contact-update-builder-failure",
 	}
 	if _, _, _, appErr = service.UpdateMethodWithIdempotency(
@@ -183,6 +183,25 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 	deleted, _, changed, appErr := service.DeleteMethodWithIdempotency(ctx, userID, "contact-disable", "contact-disable-key", "contact-disable-hash", created.ID, "contact-disable", buildCompletion)
 	if appErr != nil || !changed || !slices.Equal(deleted.UsageScopes, []string{contact.UsageScopeBuyer}) {
 		t.Fatalf("deleted method lost scopes: method=%+v changed=%t error=%v", deleted, changed, appErr)
+	}
+
+	requiredWechat, _, changed, appErr := service.CreateMethodWithIdempotency(ctx, userID, "required-wechat-create", "required-wechat-create-key", "required-wechat-create-hash", contact.ContactMethodInput{
+		UserID: userID, Type: "wechat", Label: "微信", Value: "postgres-required-wechat", Enabled: true,
+		UsageScopes: []string{contact.UsageScopeBuyer}, RequestID: "required-wechat-create",
+	}, buildCompletion)
+	if appErr != nil || !changed || !slices.Equal(requiredWechat.UsageScopes, contact.AllUsageScopes()) {
+		t.Fatalf("required wechat create: method=%+v changed=%t error=%v", requiredWechat, changed, appErr)
+	}
+	if _, _, changed, appErr = service.UpdateMethodWithIdempotency(ctx, userID, "required-wechat-disable", "required-wechat-disable-key", "required-wechat-disable-hash", contact.UpdateContactMethodInput{
+		UserID: userID, MethodID: requiredWechat.ID, Type: "wechat", Label: "微信", Value: "postgres-required-wechat", Enabled: false,
+	}, buildCompletion); appErr == nil || changed || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("required wechat disable: changed=%t error=%#v", changed, appErr)
+	}
+	if _, _, changed, appErr = service.DeleteMethodWithIdempotency(ctx, userID, "required-wechat-delete", "required-wechat-delete-key", "required-wechat-delete-hash", requiredWechat.ID, "required-wechat-delete", buildCompletion); appErr == nil || changed || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("required wechat delete: changed=%t error=%#v", changed, appErr)
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE contact_methods SET usage_scopes = ARRAY['buyer']::text[] WHERE id = $1`, requiredWechat.ID); err == nil {
+		t.Fatal("database allowed required wechat scopes to be narrowed")
 	}
 
 	rows, err := store.pool.Query(ctx, `

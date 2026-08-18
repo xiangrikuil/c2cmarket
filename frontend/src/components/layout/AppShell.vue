@@ -49,6 +49,7 @@ import { apiMarketViewFromQuery } from '@/lib/apiQuotaOfferUi'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
+import { prioritizeTransactionTodos } from '@/lib/notificationUi'
 import { logoutCurrentSession } from '@/lib/sessionActions'
 import type { WorkspaceNavKey } from '@/router'
 
@@ -176,7 +177,7 @@ const navGroups = computed(() => {
   return groups
 })
 
-const topNotifications = computed(() => (notifications.value ?? []).slice(0, 4))
+const topNotifications = computed(() => prioritizeTransactionTodos(notifications.value ?? []).slice(0, 4))
 
 const activeNavItem = computed(() => {
   return navGroups.value

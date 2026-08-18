@@ -16,6 +16,7 @@ output/
 .wrangler/
 *.log
 *.zip
+*.tsbuildinfo
 
 .env
 .env.*

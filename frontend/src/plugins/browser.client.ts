@@ -4,6 +4,7 @@ import { initializeAppTheme } from '@/theme/appThemes'
 import { buildUmamiScriptConfig, installUmamiScript } from '@/lib/umamiLoader'
 import { captureRegistrationAttribution, clearRegistrationAttribution } from '@/lib/registrationAttribution'
 import { clearReferralCapture } from '@/lib/referralCapture'
+import { wechatOnboardingRoute } from '@/lib/authNavigation'
 
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig().public
@@ -51,7 +52,12 @@ export default defineNuxtPlugin((nuxtApp) => {
 
     const query = { ...route.query }
     delete query.authOutcome
-    void router.replace({ path: route.path, query, hash: route.hash })
+    const cleanRoute = { path: route.path, query, hash: route.hash }
+    if (rawOutcome === 'registered') {
+      void router.replace(wechatOnboardingRoute(router.resolve(cleanRoute).fullPath))
+      return
+    }
+    void router.replace(cleanRoute)
   }
 
   const removeAfterEach = router.afterEach(to => processRoute(to))

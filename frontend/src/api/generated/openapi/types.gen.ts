@@ -2817,6 +2817,33 @@ export type ApiOrderDisputeRequest = {
     evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
+export type SellerCommerceDispute = {
+    disputeId: string;
+    orderId: string;
+    orderNo: string;
+    apiServiceId: string;
+    serviceTitle: string;
+    status: 'negotiating' | 'pending_seller_response' | 'pending_applicant_decision' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation';
+    nextActor: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
+    dueAt?: string | null;
+    restrictionLevel: 'normal' | 'service_limited' | 'account_limited';
+    reasonCodes: Array<'service_multiple_buyers' | 'seller_response_overdue' | 'account_multiple_buyers' | 'remedy_fulfillment_overdue'>;
+};
+
+export type SellerCommerceStatus = {
+    level: 'normal' | 'service_limited' | 'account_limited';
+    activeDisputeCount: number;
+    activeBuyerCount: number;
+    blockingDisputeCount: number;
+    affectedServiceIds: Array<string>;
+    reasonCodes: Array<'service_multiple_buyers' | 'seller_response_overdue' | 'account_multiple_buyers' | 'remedy_fulfillment_overdue'>;
+    disputes: Array<SellerCommerceDispute>;
+    /**
+     * Earliest automatic buyer-side deadline among currently blocking disputes when one exists; null when release requires an explicit action.
+     */
+    nextReleaseAt?: string | null;
+};
+
 /**
  * API service order for either a free-amount API service purchase or a limited fixed quota offer. C2CMarket does not process payments, provide escrow, or proxy API calls. After the seller explicitly confirms off-platform payment, the seller may submit one buyer-specific credential or a previously encrypted buyer-specific credential may be bound to the order. Buyer/seller detail and action responses may include it; lists, admin summaries, public responses, events, notifications, and logs must not.
  */
@@ -8899,9 +8926,9 @@ export type ListMyApiOrdersData = {
          */
         cursor?: string;
         /**
-         * Filter by whether the order currently has an active dispute.
+         * Filter by active-dispute state or by the current participant queue.
          */
-        dispute?: 'all' | 'active' | 'none';
+        dispute?: 'all' | 'active' | 'none' | 'needs_action' | 'waiting_counterparty' | 'platform_review';
     };
     url: '/api/v1/me/api-orders';
 };
@@ -11223,9 +11250,9 @@ export type ListOwnerApiOrdersData = {
          */
         cursor?: string;
         /**
-         * Filter by whether the order currently has an active dispute.
+         * Filter by active-dispute state or by the seller's current queue.
          */
-        dispute?: 'all' | 'active' | 'none';
+        dispute?: 'all' | 'active' | 'none' | 'needs_action' | 'waiting_counterparty' | 'platform_review';
     };
     url: '/api/v1/owner/api-orders';
 };
@@ -11247,6 +11274,31 @@ export type ListOwnerApiOrdersResponses = {
 };
 
 export type ListOwnerApiOrdersResponse = ListOwnerApiOrdersResponses[keyof ListOwnerApiOrdersResponses];
+
+export type GetSellerCommerceStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-orders/commerce-status';
+};
+
+export type GetSellerCommerceStatusErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type GetSellerCommerceStatusError = GetSellerCommerceStatusErrors[keyof GetSellerCommerceStatusErrors];
+
+export type GetSellerCommerceStatusResponses = {
+    /**
+     * Current seller commerce status. Sensitive dispute relations are private and must not be cached.
+     */
+    200: SellerCommerceStatus;
+};
+
+export type GetSellerCommerceStatusResponse = GetSellerCommerceStatusResponses[keyof GetSellerCommerceStatusResponses];
 
 export type GetOwnerApiOrderData = {
     body?: never;

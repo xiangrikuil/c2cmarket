@@ -13,6 +13,8 @@ export const CONTACT_USAGE_SCOPE_OPTIONS: ContactUsageScopeOption[] = [
   { value: 'dispute', label: '纠纷联系', description: '用于售后纠纷联系' },
 ]
 
+export const WECHAT_USAGE_SCOPES = CONTACT_USAGE_SCOPE_OPTIONS.map(option => option.value)
+
 export function contactUsageScopeOptionsForCapabilities(capabilities: {
   canPublishCarpool: boolean
   canPublishApiService: boolean
@@ -54,7 +56,9 @@ export function buildContactMethodPayload(input: {
     type: input.type,
     label: input.label,
     displayValue: input.displayValue.trim(),
-    usageScopes: normalizeContactUsageScopes(input.usageScopes),
+    usageScopes: input.type === 'wechat'
+      ? [...WECHAT_USAGE_SCOPES]
+      : normalizeContactUsageScopes(input.usageScopes),
     isDefault: input.current?.isDefault ?? false,
     enabled: true,
   }

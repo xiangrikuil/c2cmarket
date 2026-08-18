@@ -789,6 +789,9 @@ func (s *Service) notifyDisputeRemedyMemory(item DisputeCase, action string) {
 		return
 	}
 	remedy := item.Remedies[0]
+	if remedy.Status != RemedyStatusClaimedFulfilled {
+		s.notifications.CompleteDisputeActions(item.ID)
+	}
 	title := ""
 	body := ""
 	recipients := []string{}
@@ -800,7 +803,7 @@ func (s *Service) notifyDisputeRemedyMemory(item DisputeCase, action string) {
 		recipients = []string{remedy.ResponsibleUserID, remedy.BeneficiaryUserID}
 	case action == DisputeRemedyActionClaim && remedy.Status == RemedyStatusClaimedFulfilled:
 		eventType, title = "dispute.remedy_claimed", "整改履行声明待确认"
-		body = "责任方已声明履行，请在 48 小时内确认是否收到或完成。"
+		body = "责任方已声明履行，请在 24 小时内确认是否收到或完成。"
 		recipients = []string{remedy.BeneficiaryUserID}
 	case remedy.Status == RemedyStatusConfirmationExpired:
 		eventType, title = "dispute.remedy_confirmation_expired", "整改确认期已结束"
@@ -831,7 +834,9 @@ func (s *Service) notifyDisputeRemedyMemory(item DisputeCase, action string) {
 		s.notifications.Add(notification.Notification{
 			UserID: userID, Type: eventType, Title: title, Body: body,
 			TargetType: "dispute", TargetID: item.ID,
-			TargetURL: "/my/reports/dispute/" + item.ID, SourceEventType: eventType,
+			TargetURL: "/my/disputes/" + item.ID, SourceEventType: eventType,
+			ActionRequired: eventType == "dispute.remedy_claimed",
+			ActionDueAt:    remedy.ConfirmationDueAt,
 		})
 	}
 }

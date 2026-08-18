@@ -227,6 +227,7 @@ func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testin
 	order := insertLifecycleCompletedCredentialOrder(t, store, serviceID, sellerID, sellerContactID, buyerID, buyerContactID, now.Add(-2*time.Hour), now.Add(-3*time.Hour), "", nil)
 	disputeID := insertLifecycleDispute(t, store, order.OrderID, buyerID, sellerID, report.DisputeStatusResolved, now.Add(-72*time.Hour))
 	remedyID := uuid.NewString()
+	confirmationDueAt := now.Add(90 * time.Minute)
 	t.Cleanup(func() {
 		_, _ = store.pool.Exec(context.Background(), `DELETE FROM notifications WHERE target_id = $1`, disputeID)
 		_, _ = store.pool.Exec(context.Background(), `DELETE FROM dispute_events WHERE entity_id = $1`, disputeID)
@@ -249,14 +250,33 @@ func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testin
 		VALUES ($1, $2, 'continue_fulfillment', $3, $4,
 		        '请继续完成订单交付。', 'claimed_fulfilled', $5, $6, $7,
 		        '已声明继续履行。', $3, $8, $9, $10, $6, 2)
-	`, remedyID, disputeID, sellerID, buyerID, now.Add(24*time.Hour), now.Add(-49*time.Hour), now,
+	`, remedyID, disputeID, sellerID, buyerID, now.Add(24*time.Hour), now.Add(-49*time.Hour), confirmationDueAt,
 		"remedy-created-"+remedyID, "remedy-claimed-"+remedyID, now.Add(-72*time.Hour)); err != nil {
 		t.Fatalf("seed claimed remedy: %v", err)
 	}
 
-	result, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
+	reminderResult, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
 	if appErr != nil {
-		t.Fatalf("run remedy confirmation lifecycle: %v", appErr)
+		t.Fatalf("run remedy confirmation reminder lifecycle: %v", appErr)
+	}
+	if reminderResult.DisputeRemedyConfirmationReminders != 1 || reminderResult.DisputeRemedyConfirmationsExpired != 0 {
+		t.Fatalf("expected one reminder before expiry, got %+v", reminderResult)
+	}
+	var reminderCount int
+	if err := store.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM notifications
+		WHERE target_id = $1 AND source_event_type = 'dispute.remedy_confirmation_due'
+	`, disputeID).Scan(&reminderCount); err != nil || reminderCount != 1 {
+		t.Fatalf("expected one buyer confirmation reminder, count=%d err=%v", reminderCount, err)
+	}
+	reminderRerun, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
+	if appErr != nil || reminderRerun.DisputeRemedyConfirmationReminders != 0 {
+		t.Fatalf("remedy reminder rerun must be idempotent: result=%+v err=%v", reminderRerun, appErr)
+	}
+
+	result, appErr := store.RunDataLifecycle(ctx, confirmationDueAt, 10, lifecycleCredentialPolicy())
+	if appErr != nil {
+		t.Fatalf("run remedy confirmation expiry lifecycle: %v", appErr)
 	}
 	if result.DisputeRemedyConfirmationsExpired != 1 {
 		t.Fatalf("expected one expired remedy confirmation, got %+v", result)
@@ -288,7 +308,7 @@ func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testin
 		t.Fatalf("expected both participants to receive neutral timeout notification, got %d", notificationCount)
 	}
 
-	second, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
+	second, appErr := store.RunDataLifecycle(ctx, confirmationDueAt, 10, lifecycleCredentialPolicy())
 	if appErr != nil || second.DisputeRemedyConfirmationsExpired != 0 {
 		t.Fatalf("remedy timeout rerun must be idempotent: result=%+v err=%v", second, appErr)
 	}

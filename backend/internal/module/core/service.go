@@ -1463,6 +1463,13 @@ func (s *Service) OwnerAPIOrders(ctx context.Context, user User) ([]APIOrder, *d
 	return s.withAPIOrderReputations(ctx, orders)
 }
 
+func (s *Service) SellerCommerceStatus(ctx context.Context, user User) (apiorder.SellerCommerceStatus, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return apiorder.SellerCommerceStatus{}, appErr
+	}
+	return s.apiOrder.SellerCommerceStatus(ctx, user.ID)
+}
+
 func (s *Service) AdminAPIOrders(ctx context.Context, user User, filter apiorder.AdminOrderFilter, pageRequest domain.PageRequest) (domain.Page[APIOrder], *domain.AppError) {
 	page, appErr := s.apiOrder.AdminOrders(ctx, user, filter, pageRequest)
 	if appErr != nil {

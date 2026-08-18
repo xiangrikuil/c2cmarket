@@ -214,7 +214,13 @@ func carpoolApplicationDisplayStatus(application carpool.Application, membership
 	return application.Status
 }
 
-func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
+const (
+	apiOrderDisputeFilterNeedsAction         = "needs_action"
+	apiOrderDisputeFilterWaitingCounterparty = "waiting_counterparty"
+	apiOrderDisputeFilterPlatformReview      = "platform_review"
+)
+
+func filterAPIOrders(r *http.Request, items []apiorder.Order, viewerUserID string) []apiorder.Order {
 	statuses := querySet(r, "statuses")
 	serviceID := strings.TrimSpace(r.URL.Query().Get("serviceId"))
 	query := r.URL.Query().Get("q")
@@ -231,8 +237,28 @@ func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
 		if risk == "high" && !apiorder.IsDisputeActive(item.DisputeStatus) || risk == "has_note" && !hasRiskNote {
 			continue
 		}
-		if dispute == "active" && !apiorder.IsDisputeActive(item.DisputeStatus) || dispute == "none" && apiorder.IsDisputeActive(item.DisputeStatus) {
-			continue
+		activeDispute := apiorder.IsDisputeActive(item.DisputeStatus)
+		switch dispute {
+		case "active":
+			if !activeDispute {
+				continue
+			}
+		case "none":
+			if activeDispute {
+				continue
+			}
+		case apiOrderDisputeFilterNeedsAction:
+			if !activeDispute || item.DisputeNextUserID != viewerUserID {
+				continue
+			}
+		case apiOrderDisputeFilterWaitingCounterparty:
+			if !activeDispute || item.DisputeNextActor == "admin" || item.DisputeNextUserID == "" || item.DisputeNextUserID == viewerUserID {
+				continue
+			}
+		case apiOrderDisputeFilterPlatformReview:
+			if !activeDispute || item.DisputeNextActor != "admin" {
+				continue
+			}
 		}
 		if !containsFold(query, item.ID, item.OrderNo, item.APIServiceID, item.ServiceTitleSnapshot, item.BuyerUserID, item.SellerUserID) {
 			continue
@@ -268,7 +294,7 @@ func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
 
 func validateAPIOrderListQuery(r *http.Request) *domain.AppError {
 	dispute := strings.TrimSpace(r.URL.Query().Get("dispute"))
-	if apiorder.IsAdminOrderDispute(dispute) {
+	if apiorder.IsAdminOrderDispute(dispute) || dispute == apiOrderDisputeFilterNeedsAction || dispute == apiOrderDisputeFilterWaitingCounterparty || dispute == apiOrderDisputeFilterPlatformReview {
 		return nil
 	}
 	detail := "纠纷筛选无效。"

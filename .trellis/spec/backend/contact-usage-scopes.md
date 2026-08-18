@@ -2,6 +2,7 @@
 
 Date: 2026-08-12
 Author: Codex
+Updated: 2026-08-18
 
 ## Scenario: Capability-Bound Contact Purposes
 
@@ -42,17 +43,19 @@ ContactMethod.usageScopes: required canonical array
 ```sql
 contact_methods.usage_scopes text[] NOT NULL
 CHECK (usage_scopes <@ ARRAY['carpool_owner','api_merchant','buyer','dispute'])
+CHECK (type <> 'wechat' OR usage_scopes = ARRAY['carpool_owner','api_merchant','buyer','dispute'])
 ```
 
 ### 3. Contracts
 
-- PostgreSQL persists the exact canonical scope set and returns it on every contact read. Canonical order is `carpool_owner`, `api_merchant`, `buyer`, `dispute`; duplicate input values collapse to one value.
-- Legacy rows migrate with all four scopes so existing transaction references keep working. New backend callers that omit scopes use only `buyer` plus `dispute`; the public OpenAPI create request requires an explicit non-empty array.
-- An update that omits `usageScopes` preserves the stored scopes. An explicit empty or unknown set is invalid; no handler may hard-code a wider response than the row actually stores.
-- Adding or retaining `api_merchant` requires `api_service.publish`; adding or retaining `carpool_owner` requires `carpool.publish`. Buyer/dispute scopes remain available to an authenticated student buyer.
+- PostgreSQL persists the exact canonical scope set and returns it on every contact read. Canonical order is `carpool_owner`, `api_merchant`, `buyer`, `dispute`; duplicate input values collapse to one value. WeChat is the explicit system-rule exception and always persists all four scopes.
+- Legacy rows migrate with all four scopes so existing transaction references keep working. New non-WeChat backend callers that omit scopes use only `buyer` plus `dispute`; WeChat creation ignores a narrower client set and uses all four. The public OpenAPI create request still requires an explicit non-empty array.
+- A non-WeChat update that omits `usageScopes` preserves the stored scopes. An explicit empty or unknown set is invalid. A WeChat update always restores all four scopes and the database constraint prevents narrowing.
+- Adding or retaining `api_merchant` requires `api_service.publish`; adding or retaining `carpool_owner` requires `carpool.publish`. WeChat bypasses this request-purpose check because its scopes are server-owned and do not grant publish capability; publish endpoints still enforce the real capability independently.
 - Scope capability checks happen before idempotency acquisition and are repeated at the reusable service boundary with freshly loaded identity facts.
 - API-service and quota publication accept only an enabled owner contact containing `api_merchant`; carpool-owner publication accepts only `carpool_owner`; buyer and dispute snapshots accept only the matching scope. Ownership/type checks still apply.
 - The system-managed linux.do bridge is projected from the immutable binding with all four scopes and cannot be created, converted, edited, or deleted through public contact CRUD.
+- WeChat is required after registration. Once bound, public CRUD may modify only its value and metadata; it cannot disable, convert, or delete the record. The frontend must not expose a WeChat scope selector or removal action.
 - Contact values stay in versioned private storage and transaction snapshots. Configuration audit events expose only the action, actor/request IDs, aggregate version, and changed field names; they never contain the value, masked value, fingerprint, email, or provider handle.
 - Contact create/update/default/verify/delete mutation, configuration event, and idempotency completion use one repository transaction. Actual disclosure reads remain separate dedicated access-log facts.
 
@@ -62,6 +65,8 @@ CHECK (usage_scopes <@ ARRAY['carpool_owner','api_merchant','buyer','dispute'])
 | --- | --- |
 | Missing/empty/unknown explicit scope array | `422 VALIDATION_FAILED` on `usageScopes`; no mutation/event |
 | Student requests `api_merchant` or `carpool_owner` | `403 CAPABILITY_REQUIRED` before idempotency or storage |
+| Student creates or updates WeChat with any valid scope set | Persist all four canonical scopes; publish capability remains unchanged |
+| Existing WeChat is disabled, converted, deleted, or narrowed in SQL | `409 INVALID_STATE_TRANSITION` for CRUD; database constraint rejects scope narrowing |
 | Merchant/carpool selects a contact lacking its required scope | `422 VALIDATION_FAILED` on the contact field |
 | Contact is disabled, foreign, missing, or wrong type | Existing stable not-found/validation result; do not reveal another user's row |
 | Public CRUD targets the system linux.do method | `409 INVALID_STATE_TRANSITION` |
@@ -70,17 +75,17 @@ CHECK (usage_scopes <@ ARRAY['carpool_owner','api_merchant','buyer','dispute'])
 
 ### 5. Good / Base / Bad Cases
 
-- Good: a student stores WeChat for `buyer` and `dispute`, buys API quota, and can use buyer after-sales without seeing seller publish actions.
+- Good: a student binds WeChat once; the service stores all four scopes, while capability checks still prevent seller publish actions.
 - Good: a linux.do seller chooses `api_merchant` on one enabled contact; API publication validates that scope and stores only the selected version reference.
-- Base: a migrated existing contact has all four scopes and remains usable until its owner narrows the set explicitly.
-- Bad: accept `usageScopes` in JSON, drop it before the service, then return a hard-coded four-scope response.
+- Base: a migrated existing non-WeChat contact has all four scopes and remains usable until its owner narrows the set explicitly; migrated WeChat remains fixed to all four.
+- Bad: hard-code four scopes in a response for an ordinary contact without persisting them, or trust a client-provided subset for WeChat.
 - Bad: treat owning a contact as enough for every transaction purpose or infer a scope from its type/label.
 - Bad: copy contact values, masked values, fingerprints, or request bodies into `domain_events` or the unified administrator log.
 
 ### 6. Tests Required
 
 - Unit tests assert canonical ordering/deduplication, omitted-create defaults, omitted-update preservation, explicit-empty/unknown rejection, clone safety, and linux.do all-scope projection.
-- Handler/service tests assert student seller-scope denial before idempotency, valid buyer/dispute round trips, truthful response scopes, and no direct-service bypass.
+- Handler/service tests assert student seller-scope denial for ordinary contacts, student WeChat all-scope normalization, valid buyer/dispute round trips, truthful response scopes, and no direct-service bypass.
 - PostgreSQL integration tests assert migration defaults, array constraints, create/update/read round trips, scope-aware merchant/carpool selection, and rollback/replay counts for mutation/version/event/completion.
 - Audit tests assert one safe configuration action per successful mutation and scan serialized output for contact values, emails, fingerprints, credentials, and arbitrary metadata.
 - OpenAPI/generated/frontend tests assert the exact four-value union and capability-aware scope options; production real mode must not fall back to mock contact data.
@@ -93,7 +98,7 @@ CHECK (usage_scopes <@ ARRAY['carpool_owner','api_merchant','buyer','dispute'])
 response.UsageScopes = []string{"carpool_owner", "api_merchant", "buyer", "dispute"}
 ```
 
-This lies about persisted intent and can let a later workflow treat a buyer-only method as a seller contact.
+This lies about persisted intent for an ordinary contact and can let a later workflow treat a buyer-only method as a seller contact. WeChat may return all four only because the service and database persist that exact server-owned set.
 
 #### Correct
 
