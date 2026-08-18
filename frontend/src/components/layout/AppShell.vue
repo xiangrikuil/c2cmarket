@@ -134,8 +134,7 @@ const navGroups = computed(() => {
     title: '经营中心',
     items: [
       ...(canPublishCarpool.value ? [
-        { key: 'my-carpools', label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
-        { key: 'merchant-carpool-applications', label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+        { key: 'carpool-management', label: '拼车管理', to: '/my/carpools', count: ownerCarpoolActionCount.value, icon: CarFront },
       ] : []),
       ...(canPublishApiService.value ? [
         { key: 'my-api-services', label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },

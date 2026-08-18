@@ -160,6 +160,8 @@ type CarpoolApplicationCompletionBuilder = carpool.ApplicationCompletionBuilder
 
 type EndCarpoolMembershipInput = carpool.EndMembershipInput
 
+type UpdateCarpoolMembershipOwnerNoteInput = carpool.UpdateMembershipOwnerNoteInput
+
 type CarpoolMembershipCompletionBuilder = carpool.MembershipCompletionBuilder
 
 type ContactMethod = contact.ContactMethod

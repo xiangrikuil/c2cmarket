@@ -88,7 +88,7 @@ function rejectApplication(item: CarpoolApplication) {
 
 <template>
   <div>
-    <PageTitle title="上车申请" description="车主确认上车后直接建立成员关系。" />
+    <PageTitle title="待处理申请" description="集中处理所有车源的上车申请；确认后直接建立成员关系。" />
     <CompactStats class="mb-5" :items="stats" :loading="isLoading" />
 
     <StatusTabs v-model="activeStatus" :items="['待处理', '有效成员', '退出或移除', '已拒绝', '纠纷']" />

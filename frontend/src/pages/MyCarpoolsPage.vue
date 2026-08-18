@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
@@ -14,12 +15,14 @@ import ShortId from '@/components/market/ShortId.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { useCursorPagination } from '@/composables/useCursorPagination'
 import { useMerchantCarpoolApplications, usePagedMyCarpools } from '@/queries/useMarketQueries'
+import MerchantCarpoolApplicationsPage from '@/pages/MerchantCarpoolApplicationsPage.vue'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { formatDailyWeeklyQuota } from '@/lib/quota'
 import { updateCarpoolRecruitment, type OwnerCarpoolView } from '@/lib/api'
 
 const tabItems = ['招募中', '已停止', '草稿', '治理下架']
 const activeTab = ref(tabItems[0]!)
+const route = useRoute()
 const queryClient = useQueryClient()
 const actionId = ref('')
 const ownerView = computed<OwnerCarpoolView>(() => {
@@ -31,9 +34,11 @@ const ownerView = computed<OwnerCarpoolView>(() => {
 const pagination = useCursorPagination([activeTab])
 const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
 const pageQuery = usePagedMyCarpools(ownerView, pageRequest)
-const { data: applications } = useMerchantCarpoolApplications({ sort: 'default_owner' })
+const showApplications = computed(() => route.query.view === 'applications')
+const { data: applications } = useMerchantCarpoolApplications({ sort: 'default_owner' }, computed(() => !showApplications.value))
 const rows = computed(() => pageQuery.data.value?.items ?? [])
 const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
+const pendingApplicationCount = computed(() => (applications.value ?? []).filter(item => item.status === 'pending_owner').length)
 const emptyCopy = computed(() => {
 	if (ownerView.value === 'serving') return { title: '暂无已停止车源', description: '主动停止或满员停止的车源会显示在这里。' }
 	if (ownerView.value === 'history') return { title: '暂无治理下架车源', description: '因目录或治理原因下架的车源会显示在这里。' }
@@ -81,8 +86,16 @@ async function changeRecruitment(id: string, action: 'stop' | 'resume') {
 </script>
 
 <template>
-  <div>
-    <PageTitle title="我的车源" description="管理招募状态、席位和有效成员。" action-text="发布车源" action-to="/carpools/new" />
+  <MerchantCarpoolApplicationsPage v-if="showApplications" />
+  <div v-else>
+    <PageTitle title="拼车管理" description="管理我的车源、待处理申请和每条车源的成员关系。">
+      <template #action>
+        <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <RouterLink to="/my/carpools?view=applications" class="w-full sm:w-auto"><Button class="w-full sm:w-auto" variant="outline">待处理申请<span v-if="pendingApplicationCount" class="ml-1.5">{{ pendingApplicationCount }}</span></Button></RouterLink>
+          <RouterLink to="/carpools/new" class="w-full sm:w-auto"><Button class="w-full sm:w-auto">发布车源</Button></RouterLink>
+        </div>
+      </template>
+    </PageTitle>
     <StatusTabs v-model="activeTab" :items="tabItems" />
     <SkeletonTable v-if="isLoading" :rows="5" :columns="7" />
     <EmptyState v-else-if="rows.length === 0" :title="emptyCopy.title" :description="emptyCopy.description"><template #action><RouterLink to="/carpools/new"><Button>发布车源</Button></RouterLink></template></EmptyState>
@@ -109,7 +122,8 @@ async function changeRecruitment(id: string, action: 'stop' | 'resume') {
         <td class="text-muted-foreground"><LocalTime :value="item.confirmedAt" /></td>
         <td>
           <div class="flex flex-wrap gap-2">
-			<RouterLink v-if="ownerView === 'recruiting' || ownerView === 'serving'" to="/merchant/carpool-applications"><Button size="sm">处理申请</Button></RouterLink>
+			<RouterLink :to="`/my/carpools/${item.id}/manage`"><Button size="sm">管理车队</Button></RouterLink>
+			<RouterLink v-if="ownerView === 'recruiting' || ownerView === 'serving'" to="/my/carpools?view=applications"><Button size="sm" variant="outline">处理申请</Button></RouterLink>
 			<Button v-if="item.backendStatus === 'active'" size="sm" variant="outline" :disabled="actionId === item.id" @click="changeRecruitment(item.id, 'stop')">停止招募</Button>
 			<Button v-if="item.backendStatus === 'stopped'" size="sm" variant="outline" :disabled="actionId === item.id" @click="changeRecruitment(item.id, 'resume')">恢复招募</Button>
 			<RouterLink v-if="editable(item)" :to="`/my/carpools/${item.id}/edit`"><Button size="sm" variant="outline">编辑</Button></RouterLink>

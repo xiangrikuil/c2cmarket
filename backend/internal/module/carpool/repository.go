@@ -45,4 +45,5 @@ type Repository interface {
 	ListCarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]Membership, *domain.AppError)
 	GetCarpoolMembershipForActor(ctx context.Context, actor auth.BusinessActor, membershipID, participantRole string) (Membership, *domain.AppError)
 	EndCarpoolMembershipWithIdempotency(ctx context.Context, entry idempotency.Entry, input EndMembershipInput, now time.Time, buildCompletion MembershipCompletionBuilder) (Membership, idempotency.Completion, *domain.AppError)
+	UpdateCarpoolMembershipOwnerNoteWithIdempotency(ctx context.Context, entry idempotency.Entry, input UpdateMembershipOwnerNoteInput, now time.Time, buildCompletion MembershipCompletionBuilder) (Membership, idempotency.Completion, *domain.AppError)
 }

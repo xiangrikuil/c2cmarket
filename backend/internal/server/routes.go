@@ -184,6 +184,7 @@ func (s *Server) routes() {
 		r.Post("/owner/carpool-applications/{id}/reject", s.handleRejectCarpoolApplication)
 		r.Get("/owner/carpool-memberships", s.handleOwnerCarpoolMemberships)
 		r.Post("/owner/carpool-memberships/{id}/remove", s.handleOwnerRemoveCarpoolMembership)
+		r.Patch("/owner/carpool-memberships/{id}/note", s.handleOwnerUpdateCarpoolMembershipNote)
 		r.Get("/owner/api-services", s.handleOwnerAPIServices)
 		r.Get("/owner/api-services/{id}", s.handleOwnerAPIService)
 		r.Get("/owner/api-probe-connections", s.handleOwnerAPIProbeConnections)

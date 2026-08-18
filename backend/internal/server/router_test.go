@@ -1949,6 +1949,73 @@ func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
 	assertContactSessionConflict(t, server, secondBuyerSession, secondAccepted.ContactSessionID)
 }
 
+func TestCarpoolMembershipOwnerNoteIsPrivateAndRemovalReasonOptional(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "owner-note-owner")
+	buyerSession := createSession(t, server, "owner-note-buyer", false)
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Owner Note TG", "@owner_note")
+	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Owner Note Buyer TG", "@owner_note_buyer")
+
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "owner-note-create")
+	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "owner-note-submit")
+	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "owner-note-apply")
+	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "owner-note-accept")
+	ownerMembership := firstCarpoolMembership(t, server, ownerSession, "owner", accepted.ID)
+
+	noteRequest := newJSONRequest(http.MethodPatch, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/note", `{"note":"车主私有备注"}`)
+	addAuth(noteRequest, ownerSession, "owner-note-write")
+	noteRequest.Header.Set("If-Match", `"`+strconv.FormatInt(ownerMembership.Version, 10)+`"`)
+	noteResponse := httptest.NewRecorder()
+	server.ServeHTTP(noteResponse, noteRequest)
+	if noteResponse.Code != http.StatusOK || !strings.Contains(noteResponse.Body.String(), `"ownerNote":"车主私有备注"`) {
+		t.Fatalf("owner note update should return the private note, got %d body %s", noteResponse.Code, noteResponse.Body.String())
+	}
+	var notedMembership createdCarpoolMembership
+	if err := json.NewDecoder(noteResponse.Body).Decode(&notedMembership); err != nil {
+		t.Fatalf("decode noted membership: %v", err)
+	}
+	if notedMembership.Version != ownerMembership.Version+1 {
+		t.Fatalf("expected owner note version increment, got %d from %d", notedMembership.Version, ownerMembership.Version)
+	}
+
+	buyerMembershipsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpool-memberships", nil)
+	addCookie(buyerMembershipsRequest, buyerSession.cookie)
+	buyerMembershipsResponse := httptest.NewRecorder()
+	server.ServeHTTP(buyerMembershipsResponse, buyerMembershipsRequest)
+	if buyerMembershipsResponse.Code != http.StatusOK || strings.Contains(buyerMembershipsResponse.Body.String(), "ownerNote") {
+		t.Fatalf("buyer membership response must omit owner note, got %d body %s", buyerMembershipsResponse.Code, buyerMembershipsResponse.Body.String())
+	}
+
+	clearRequest := newJSONRequest(http.MethodPatch, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/note", `{"note":""}`)
+	addAuth(clearRequest, ownerSession, "owner-note-clear")
+	clearRequest.Header.Set("If-Match", `"`+strconv.FormatInt(notedMembership.Version, 10)+`"`)
+	clearResponse := httptest.NewRecorder()
+	server.ServeHTTP(clearResponse, clearRequest)
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("clear owner note status %d body %s", clearResponse.Code, clearResponse.Body.String())
+	}
+	var clearedMembership createdCarpoolMembership
+	if err := json.NewDecoder(clearResponse.Body).Decode(&clearedMembership); err != nil {
+		t.Fatalf("decode cleared membership: %v", err)
+	}
+
+	removeRequest := newJSONRequest(http.MethodPost, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/remove", `{}`)
+	addAuth(removeRequest, ownerSession, "owner-note-remove")
+	removeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(clearedMembership.Version, 10)+`"`)
+	removeResponse := httptest.NewRecorder()
+	server.ServeHTTP(removeResponse, removeRequest)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("owner remove without reason status %d body %s", removeResponse.Code, removeResponse.Body.String())
+	}
+	var removedMembership createdCarpoolMembership
+	if err := json.NewDecoder(removeResponse.Body).Decode(&removedMembership); err != nil {
+		t.Fatalf("decode removed membership: %v", err)
+	}
+	if removedMembership.Status != app.CarpoolMembershipStatusRemoved || removedMembership.EndedReason != "" {
+		t.Fatalf("expected optional removal reason to remain empty, got %+v", removedMembership)
+	}
+}
+
 func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-owner")
@@ -3608,6 +3675,7 @@ type createdCarpoolMembership struct {
 	EndedAt              *string `json:"endedAt"`
 	EndedReason          string  `json:"endedReason"`
 	EndedByUserID        string  `json:"endedByUserId"`
+	OwnerNote            string  `json:"ownerNote"`
 	Version              int64   `json:"version"`
 }
 

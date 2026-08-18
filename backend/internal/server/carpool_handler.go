@@ -181,9 +181,14 @@ type carpoolMembershipResponse struct {
 	EndedAt                   *string                           `json:"endedAt,omitempty"`
 	EndedReason               string                            `json:"endedReason,omitempty"`
 	EndedByUserID             string                            `json:"endedByUserId,omitempty"`
+	OwnerNote                 string                            `json:"ownerNote,omitempty"`
 	Version                   int64                             `json:"version"`
 	CreatedAt                 string                            `json:"createdAt"`
 	UpdatedAt                 string                            `json:"updatedAt"`
+}
+
+type carpoolMembershipOwnerNoteRequest struct {
+	Note *string `json:"note"`
 }
 
 func (s *Server) handleCreateCarpool(w http.ResponseWriter, r *http.Request) {
@@ -748,7 +753,7 @@ func (s *Server) handleMyCarpoolMemberships(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships))
+	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships, false))
 }
 func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.Request) {
 	actor, appErr := s.requireBusinessActor(r, true, false)
@@ -890,7 +895,62 @@ func (s *Server) handleOwnerCarpoolMemberships(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships))
+	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships, true))
+}
+
+func (s *Server) handleOwnerUpdateCarpoolMembershipNote(w http.ResponseWriter, r *http.Request) {
+	actor, appErr := s.requireBusinessActor(r, true, true)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if actor.Audience == auth.SessionAudienceNormal && !requireActorCapability(w, r, actor, auth.CapabilityCarpoolPublish) {
+		return
+	}
+	body, req, appErr := decodeStrictJSON[carpoolMembershipOwnerNoteRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if req.Note == nil {
+		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Note required", "必须提供备注内容；留空字符串可清空备注。", "note", "required", "必须提供备注内容。"))
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	membershipID := chi.URLParam(r, "id")
+	routeKey := "PATCH /api/v1/owner/carpool-memberships/{id}/note:" + membershipID
+	completion, appErr := s.carpoolContinuity.UpdateCarpoolMembershipOwnerNoteForActorWithIdempotency(
+		r.Context(), actor, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body),
+		carpool.UpdateMembershipOwnerNoteInput{
+			MembershipID:    membershipID,
+			Note:            *req.Note,
+			ExpectedVersion: version,
+			RequestID:       requestIDFrom(r),
+		},
+		func(membership carpool.Membership) (idempotency.Completion, *domain.AppError) {
+			responseBody, marshalErr := json.Marshal(toCarpoolMembershipResponse(membership, true))
+			if marshalErr != nil {
+				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+			}
+			return idempotency.Completion{
+				Status:       http.StatusOK,
+				ContentType:  "application/json; charset=utf-8",
+				Body:         responseBody,
+				ResourceType: "carpool_membership",
+				ResourceID:   membership.ID,
+				Headers:      map[string]string{"ETag": `"` + strconv.FormatInt(membership.Version, 10) + `"`},
+			}, nil
+		},
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Request, actorRole, targetStatus string) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
@@ -932,7 +992,7 @@ func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Reque
 			RequestID:       requestIDFrom(r),
 		},
 		func(membership carpool.Membership) (idempotency.Completion, *domain.AppError) {
-			responseBody, marshalErr := json.Marshal(toCarpoolMembershipResponse(membership))
+			responseBody, marshalErr := json.Marshal(toCarpoolMembershipResponse(membership, actorRole == carpool.JoinActorOwner))
 			if marshalErr != nil {
 				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 			}
@@ -1174,21 +1234,21 @@ func toCarpoolApplicationResponse(application carpool.Application) carpoolApplic
 	}
 }
 
-func toCarpoolMembershipResponses(memberships []carpool.Membership) []carpoolMembershipResponse {
+func toCarpoolMembershipResponses(memberships []carpool.Membership, includeOwnerNote bool) []carpoolMembershipResponse {
 	items := make([]carpoolMembershipResponse, 0, len(memberships))
 	for _, membership := range memberships {
-		items = append(items, toCarpoolMembershipResponse(membership))
+		items = append(items, toCarpoolMembershipResponse(membership, includeOwnerNote))
 	}
 	return items
 }
 
-func toCarpoolMembershipResponse(membership carpool.Membership) carpoolMembershipResponse {
+func toCarpoolMembershipResponse(membership carpool.Membership, includeOwnerNote bool) carpoolMembershipResponse {
 	var endedAt *string
 	if membership.EndedAt != nil {
 		formatted := membership.EndedAt.UTC().Format(time.RFC3339)
 		endedAt = &formatted
 	}
-	return carpoolMembershipResponse{
+	response := carpoolMembershipResponse{
 		ID:                        membership.ID,
 		CarpoolListingID:          membership.CarpoolListingID,
 		CarpoolApplicationID:      membership.CarpoolApplicationID,
@@ -1211,4 +1271,8 @@ func toCarpoolMembershipResponse(membership carpool.Membership) carpoolMembershi
 		CreatedAt:                 membership.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                 membership.UpdatedAt.UTC().Format(time.RFC3339),
 	}
+	if includeOwnerNote {
+		response.OwnerNote = membership.OwnerNote
+	}
+	return response
 }

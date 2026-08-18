@@ -160,6 +160,7 @@ import {
   backendMyCarpoolApplications,
   backendMyCarpoolApplicationsPage,
   backendOwnerRemoveCarpool,
+  backendUpdateCarpoolMembershipOwnerNote,
   backendRejectCarpoolApplication,
   backendRunAdminCarpoolAction,
   backendSubmitCarpool,
@@ -919,7 +920,13 @@ export type BackendResourceMeta = {
 }
 
 export type CarpoolWithMeta = Carpool & BackendResourceMeta & { seatSummary?: CarpoolSeatSummary, offlineOccupiedSeats?: number, recruitmentStopReason?: string }
-export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta & { conditionsOutdated?: boolean, acceptedConditionsVersion?: number, conditionsVersionSnapshot?: number }
+export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta & {
+  conditionsOutdated?: boolean
+  acceptedConditionsVersion?: number
+  conditionsVersionSnapshot?: number
+  backendMembershipJoinedAt?: string
+  ownerNote?: string
+}
 export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
@@ -986,6 +993,7 @@ const apiQuotaRoundStorageKey = 'c2cmarket.apiQuotaRounds.v1'
 const apiQuotaCredentialSummaryStorageKey = 'c2cmarket.apiQuotaCredentialSummaries.v1'
 const carpoolApplicationStorageKey = 'c2cmarket.carpoolApplications.v1'
 const carpoolApplicationEventStorageKey = 'c2cmarket.carpoolApplicationEvents.v1'
+const carpoolOwnerNoteStorageKey = 'c2cmarket.carpoolOwnerNotes.v1'
 const adminAuditLogStorageKey = 'c2cmarket.adminAuditLogs.v1'
 const officialPriceStorageKey = 'c2cmarket.officialPrices.v1'
 const carpoolStorageKey = 'c2cmarket.carpools.v1'
@@ -1012,6 +1020,7 @@ let apiQuotaRoundStore = readSessionStore<ApiQuotaRound[]>(apiQuotaRoundStorageK
 let apiQuotaCredentialSummaryStore = readSessionStore<ApiQuotaCredentialSummary[]>(apiQuotaCredentialSummaryStorageKey, apiQuotaCredentialSummaries)
 let carpoolApplicationStore = readSessionStore(carpoolApplicationStorageKey, carpoolApplications)
 let carpoolApplicationEventStore = readSessionStore(carpoolApplicationEventStorageKey, carpoolApplicationEvents)
+let carpoolOwnerNoteStore = readSessionStore<Record<string, string>>(carpoolOwnerNoteStorageKey, {})
 let adminAuditLogStore = readSessionStore(adminAuditLogStorageKey, adminAuditLogs)
 let officialPriceStore = readSessionStore<OfficialPrice[]>(officialPriceStorageKey, officialPrices)
 let carpoolStore = normalizeCarpoolStore(readSessionStore<Carpool[]>(carpoolStorageKey, carpools))
@@ -1367,6 +1376,7 @@ function persistCarpoolApplicationStores() {
   if (typeof window === 'undefined') return
   window.sessionStorage.setItem(carpoolApplicationStorageKey, JSON.stringify(carpoolApplicationStore))
   window.sessionStorage.setItem(carpoolApplicationEventStorageKey, JSON.stringify(carpoolApplicationEventStore))
+  window.sessionStorage.setItem(carpoolOwnerNoteStorageKey, JSON.stringify(carpoolOwnerNoteStore))
 }
 
 function persistAdminStores() {
@@ -2393,6 +2403,26 @@ function filterCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
     if (sort === 'default_owner') return defaultCarpoolSortForRole('owner')(a, b)
     if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt)
     return compareTimeDesc(a.updatedAt, b.updatedAt)
+  })
+}
+
+function mockOwnerCarpoolApplicationMetadata(rows: CarpoolApplication[]): CarpoolApplicationWithMeta[] {
+  return rows.map(item => {
+    const membershipStatus = item.status === 'active'
+      ? 'active'
+      : item.status === 'cancelled_by_buyer'
+        ? 'left'
+        : item.status === 'cancelled_by_owner'
+          ? 'removed'
+          : undefined
+    return {
+      ...item,
+      backendMembershipId: membershipStatus ? `mock-membership-${item.id}` : undefined,
+      backendMembershipJoinedAt: membershipStatus ? item.startedAt ?? undefined : undefined,
+      backendStatus: membershipStatus ?? item.status,
+      backendVersion: membershipStatus ? 1 : undefined,
+      ownerNote: membershipStatus ? carpoolOwnerNoteStore[item.id] ?? '' : undefined,
+    }
   })
 }
 
@@ -5460,7 +5490,7 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     .filter(isCarpoolBuyerActionRequired)
     .length
   const merchantCarpoolActions = carpoolApplicationStore.filter(item => item.ownerUserId === currentOwnerId)
-    .filter(isCarpoolOwnerActionRequired)
+    .filter(item => item.status === 'pending_owner')
     .length
   const currentUserFeedback = feedbackTicketStore
     .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
@@ -5765,12 +5795,12 @@ export async function getMyCarpoolApplicationsPage(filters: CarpoolApplicationFi
 export async function getMerchantCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplications(filters)
   await wait()
-  return clone(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }))
+  return clone(mockOwnerCarpoolApplicationMetadata(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' })))
 }
 
 export async function getMerchantCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplicationsPage(filters, page)
-  return paginateCursorItems(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }), page)
+  return paginateCursorItems(mockOwnerCarpoolApplicationMetadata(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' })), page)
 }
 
 export async function getCarpoolApplicationById(id: string): Promise<CarpoolApplicationWithMeta | null> {
@@ -5973,6 +6003,21 @@ export async function removeCarpoolMember(id: string, reason: string) {
       note: reason,
     })
   })
+}
+
+export async function updateCarpoolMembershipOwnerNote(application: Pick<CarpoolApplicationWithMeta, 'id' | 'backendMembershipId' | 'backendVersion'>, note: string) {
+  const normalizedNote = note.trim()
+  if (Array.from(normalizedNote).length > 500) throw new Error('车主备注不能超过 500 个字符。')
+  if (shouldUseRealBackend()) {
+    if (!application.backendMembershipId || application.backendVersion === undefined) throw new Error('成员版本暂不可用，请刷新后重试。')
+    return backendUpdateCarpoolMembershipOwnerNote(application.backendMembershipId, normalizedNote, application.backendVersion)
+  }
+  await wait()
+  const current = findCarpoolApplication(application.id)
+  if (!['active', 'cancelled_by_buyer', 'cancelled_by_owner'].includes(current.status)) throw new Error('只有已加入过的成员可以记录备注。')
+  carpoolOwnerNoteStore[current.id] = normalizedNote
+  persistCarpoolApplicationStores()
+  return mockOwnerCarpoolApplicationMetadata([current])[0]!
 }
 
 export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {

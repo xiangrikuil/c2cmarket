@@ -1929,6 +1929,15 @@ func (s *Service) EndCarpoolMembershipForActorWithIdempotency(ctx context.Contex
 	return s.carpoolService.EndMembershipForActorWithIdempotency(ctx, actor, routeKey, key, requestHash, input, buildCompletion)
 }
 
+func (s *Service) UpdateCarpoolMembershipOwnerNoteForActorWithIdempotency(ctx context.Context, actor authmodule.BusinessActor, routeKey, key, requestHash string, input UpdateCarpoolMembershipOwnerNoteInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if actor.Audience == authmodule.SessionAudienceNormal {
+		if appErr := authmodule.RequireProjectedCapability(actor.Capabilities, authmodule.CapabilityCarpoolPublish); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+	}
+	return s.carpoolService.UpdateMembershipOwnerNoteForActorWithIdempotency(ctx, actor, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) MyCarpoolMembershipsByUserID(ctx context.Context, userID string) ([]CarpoolMembership, *domain.AppError) {
 	return s.carpoolService.MyMemberships(ctx, User{ID: userID})
 }
