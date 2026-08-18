@@ -51,3 +51,25 @@ Added focused API delivery viewing, fixed mock account setup persistence, improv
 ### Status
 
 [OK] **Completed**
+
+
+## Session 69: 卖家纠纷状态与红色待办徽章
+
+**Date**: 2026-08-19
+**Task**: 卖家纠纷状态与红色待办徽章
+**Package**: frontend
+**Branch**: `codex/api-order-delivery-content-view`
+
+### Summary
+
+卖家 API 订单列表和详情优先显示活跃纠纷；权威导航汇总按订单去重并以红色徽章提示未解决纠纷；完成跨层测试、浏览器验收、规范同步和独立质量审阅。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `498f4c8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
