@@ -2,6 +2,7 @@ package apimarket
 
 import (
 	"context"
+	"net/http"
 	"sort"
 	"strconv"
 	"testing"
@@ -600,7 +601,7 @@ func TestPublicPackageFilterOptionsExposeOnlyPurchasableActiveModels(t *testing.
 	}
 }
 
-func TestSoldOutPackageIsHiddenFromListButVisibleByDirectDetail(t *testing.T) {
+func TestSoldOutPackageIsHiddenFromPublicListAndDetail(t *testing.T) {
 	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
 	manager := NewManager(nil, nil, nil, func() time.Time { return now })
 	service := testPublicPackageService("sold-out", "model-a", 7, now)
@@ -612,16 +613,17 @@ func TestSoldOutPackageIsHiddenFromListButVisibleByDirectDetail(t *testing.T) {
 	if appErr != nil || len(page.Items) != 0 {
 		t.Fatalf("sold-out package must be hidden from discovery: page=%+v err=%v", page, appErr)
 	}
-	detail, appErr := manager.PublicService(context.Background(), service.ID)
-	if appErr != nil {
-		t.Fatalf("sold-out package detail must remain visible: %v", appErr)
-	}
-	if detail.IsOrderable || len(detail.OrderableReasons) != 1 || detail.OrderableReasons[0] != "package_sold_out" {
-		t.Fatalf("sold-out detail must disable ordering truthfully: %+v", detail)
+	if _, appErr := manager.PublicService(context.Background(), service.ID); appErr == nil || appErr.Status != http.StatusNotFound {
+		t.Fatalf("sold-out package detail must be hidden, got %+v", appErr)
 	}
 
+	service.Packages[0].StockAvailable = 1
 	service.Models[0].Enabled = false
 	manager.services[service.ID] = service
+	page, appErr = manager.PublicServices(context.Background(), PublicServiceFilter{BillingMode: ServiceBillingModeFixedPackage}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(page.Items) != 0 {
+		t.Fatalf("package backed only by disabled service models must be hidden from discovery: page=%+v err=%v", page, appErr)
+	}
 	if _, appErr := manager.PublicService(context.Background(), service.ID); appErr == nil || appErr.Status != 404 {
 		t.Fatalf("detail backed only by disabled service models must remain hidden, got %+v", appErr)
 	}

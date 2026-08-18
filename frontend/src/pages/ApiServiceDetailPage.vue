@@ -3,13 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { toast } from 'vue-sonner'
-import { PackageX } from 'lucide-vue-next'
 import ApiPurchasePanel from '@/components/api-service-detail/ApiPurchasePanel.vue'
 import ApiServiceDetailsTabs from '@/components/api-service-detail/ApiServiceDetailsTabs.vue'
 import ApiServiceHeader from '@/components/api-service-detail/ApiServiceHeader.vue'
 import ApiServiceSummary from '@/components/api-service-detail/ApiServiceSummary.vue'
 import { Button } from '@/components/ui/button'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -65,11 +63,6 @@ const ownerPreview = computed(() => route.query.preview === 'owner')
 const isOwnedService = computed(() => Boolean(ownedServices.value?.some(item => item.id === id.value)))
 const availablePackages = computed(() => (service.value?.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
 const selectedPackage = computed<ApiServicePackage | null>(() => availablePackages.value.find(item => item.id === selectedPackageId.value) ?? null)
-const packageSoldOut = computed(() => Boolean(
-  service.value?.billingMode === 'fixed_package'
-  && (service.value.orderableReasons?.includes('package_sold_out')
-    || (service.value.packages?.some(item => item.enabled) && availablePackages.value.length === 0)),
-))
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const serviceIconSrc = computed(() => service.value ? getApiServiceProductIconSrc(service.value, categoryIconByCode.value) : null)
 
@@ -213,11 +206,6 @@ function createOrder() {
   </EmptyState>
   <div v-else class="api-service-detail-page space-y-4">
     <ApiServiceHeader :service="service" :icon-src="serviceIconSrc" />
-    <Alert v-if="packageSoldOut">
-      <PackageX />
-      <AlertTitle>短期流量包已售罄</AlertTitle>
-      <AlertDescription>服务与套餐信息仍可查看，但当前没有可购买库存，创建订单已禁用。</AlertDescription>
-    </Alert>
 
     <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,65fr)_minmax(340px,35fr)] lg:items-start">
       <div class="min-w-0 space-y-4">
@@ -248,7 +236,6 @@ function createOrder() {
         v-model:amount="amount"
         v-model:selected-package-id="selectedPackageId"
         :service="service"
-        :package-sold-out="packageSoldOut"
         :submitting="createOrderMutation.isPending.value"
         :favorited="favorited"
         @toggle-favorite="toggleFavorite"

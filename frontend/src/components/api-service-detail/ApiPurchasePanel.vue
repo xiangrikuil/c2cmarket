@@ -23,7 +23,6 @@ const props = defineProps<{
   service: ApiService
   amount: number
   selectedPackageId: string
-  packageSoldOut: boolean
   submitting: boolean
   favorited: boolean
 }>()
@@ -39,7 +38,6 @@ const confirmOpen = ref(false)
 const merchantUrl = computed(() => getApiMerchantProfileUrl(props.service))
 const estimatedCredit = computed(() => estimateUsdAllowance(String(props.amount), props.service))
 const fixedPackageMode = computed(() => props.service.billingMode === 'fixed_package')
-const enabledPackages = computed(() => (props.service.packages ?? []).filter(item => item.enabled))
 const availablePackages = computed(() => (props.service.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
 const selectedPackage = computed(() => availablePackages.value.find(item => item.id === props.selectedPackageId) ?? null)
 const acceptedPaymentMethods = computed(() => props.service.acceptedPaymentMethods ?? [])
@@ -52,7 +50,6 @@ const showSourceAuthorVerification = computed(() => {
 const amountError = computed(() => {
   const decimalPattern = /^\d+(\.\d{1,2})?$/
   if (fixedPackageMode.value) {
-    if (props.packageSoldOut) return '当前短期流量包已售罄。'
     if (!selectedPackage.value) return '请选择有库存的短期流量包。'
     if (props.amount !== selectedPackage.value.priceCny) return '订单金额必须与套餐固定价格一致。'
     return ''
@@ -112,28 +109,12 @@ async function shareService() {
     <div class="space-y-4 border-t border-border p-5">
       <div v-if="fixedPackageMode" class="space-y-2">
         <div class="text-sm font-semibold">选择短期流量包</div>
-        <Select v-if="availablePackages.length" :model-value="selectedPackageId" @update:model-value="value => emit('update:selectedPackageId', String(value))">
+        <Select :model-value="selectedPackageId" @update:model-value="value => emit('update:selectedPackageId', String(value))">
           <SelectTrigger class="w-full"><SelectValue placeholder="请选择套餐" /></SelectTrigger>
           <SelectContent>
             <SelectItem v-for="item in availablePackages" :key="item.id" :value="item.id">{{ item.name }} · {{ item.durationDays }} 天 · ¥{{ item.priceCny }}</SelectItem>
           </SelectContent>
         </Select>
-        <div v-else-if="packageSoldOut" class="space-y-2 rounded-md border border-border bg-muted/30 p-3">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-sm font-medium">所有套餐已售罄</span>
-            <Badge variant="secondary">暂不可购买</Badge>
-          </div>
-          <div v-for="item in enabledPackages" :key="item.id" class="border-t border-border pt-2 text-xs">
-            <div class="flex items-start justify-between gap-3">
-              <span class="font-medium">{{ item.name }} · {{ item.durationDays }} 天</span>
-              <span class="shrink-0">¥{{ item.priceCny }}</span>
-            </div>
-            <div class="mt-1 text-muted-foreground">面板额度 {{ item.panelAllowance }} · 库存 0 / {{ item.stockTotal }}</div>
-            <div class="mt-1 flex flex-wrap gap-1">
-              <Badge v-for="model in item.models" :key="model.serviceModelId" variant="model">{{ model.modelName }} · {{ model.merchantMultiplier }}x</Badge>
-            </div>
-          </div>
-        </div>
         <p v-if="amountError" class="text-xs text-destructive">{{ amountError }}</p>
       </div>
       <div v-else class="space-y-2">
@@ -168,7 +149,7 @@ async function shareService() {
       </div>
 
       <Button class="w-full" :disabled="!canSubmit" @click="openConfirm">
-        {{ packageSoldOut ? '暂时售罄' : submitting ? '创建中…' : '创建订单并查看付款方式' }}
+        {{ submitting ? '创建中…' : '创建订单并查看付款方式' }}
       </Button>
       <p class="text-xs leading-5 text-muted-foreground">{{ selectedPackage ? '有效期从商户提交交付时开始计算。' : '订单创建后展示下单时锁定的商户收款方式；平台记录状态但不代收、不托管资金。' }}</p>
       <div class="grid grid-cols-3 gap-2">

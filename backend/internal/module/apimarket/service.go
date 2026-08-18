@@ -392,7 +392,7 @@ func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter
 	now := s.now()
 	for _, id := range s.serviceOrder {
 		service := WithOrderabilityAt(s.services[id], now)
-		if service.IsOrderable && matchesPublicServiceFilter(service, filter) {
+		if service.IsOrderable && (service.BillingMode != ServiceBillingModeFixedPackage || hasEnabledPackageModel(service)) && matchesPublicServiceFilter(service, filter) {
 			services = append(services, service)
 		}
 	}
@@ -514,18 +514,14 @@ func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service,
 	defer s.mu.Unlock()
 
 	service, ok := s.services[serviceID]
-	if !ok || !IsPublicDetailVisibleService(service) {
+	if !ok {
 		return Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
 	}
-	return WithOrderability(service), nil
-}
-
-func IsPublicDetailVisibleService(service Service) bool {
-	projected := WithOrderability(service)
-	if projected.IsOrderable {
-		return true
+	service = WithOrderabilityAt(service, s.now())
+	if !service.IsOrderable || service.BillingMode == ServiceBillingModeFixedPackage && !hasEnabledPackageModel(service) {
+		return Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
 	}
-	return service.BillingMode == ServiceBillingModeFixedPackage && len(projected.OrderableReasons) == 1 && projected.OrderableReasons[0] == "package_sold_out" && hasEnabledPackageModel(service)
+	return service, nil
 }
 
 func hasEnabledPackageModel(service Service) bool {

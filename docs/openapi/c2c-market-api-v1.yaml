@@ -1329,13 +1329,13 @@ paths:
       operationId: getPublicAPIService
       tags: [APIMarket]
       security: []
-      summary: Get one public API service detail.
-      description: Returns an orderable public service or a fixed-package service whose enabled package inventory is currently sold out. Sold-out detail returns `isOrderable=false` with `package_sold_out`; purchase-intent creation remains unavailable.
+      summary: Get one orderable public API service.
+      description: Returns only services that currently satisfy the same public orderability contract as marketplace discovery. Sold-out fixed-package services are not publicly visible.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
       responses:
         "200":
-          description: Public API service detail, including a truthful disabled state for sold-out fixed packages.
+          description: Orderable public API service detail.
           headers:
             ETag:
               schema:
