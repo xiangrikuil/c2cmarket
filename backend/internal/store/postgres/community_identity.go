@@ -2,13 +2,16 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/communityidentity"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -27,7 +30,7 @@ func (s *Store) GrantFounding(ctx context.Context, input communityidentity.Grant
 		return communityidentity.Identity{}, false, appErr
 	}
 	if created {
-		if appErr := insertCommunityIdentityNotification(ctx, tx, item, now); appErr != nil {
+		if appErr := insertCommunityIdentityNotification(ctx, tx, item, communityIdentityGrantRequestID(item), now); appErr != nil {
 			return communityidentity.Identity{}, false, appErr
 		}
 	}
@@ -52,7 +55,7 @@ func (s *Store) GrantAdmin(ctx context.Context, input communityidentity.GrantAdm
 		return communityidentity.Identity{}, false, appErr
 	}
 	if created {
-		if appErr := insertCommunityIdentityNotification(ctx, tx, item, now); appErr != nil {
+		if appErr := insertCommunityIdentityNotification(ctx, tx, item, input.RequestID, now); appErr != nil {
 			return communityidentity.Identity{}, false, appErr
 		}
 	}
@@ -189,7 +192,7 @@ func (s *Store) BackfillFounding(ctx context.Context, cutoff, now time.Time) (in
 	}
 	rows.Close()
 	for _, item := range items {
-		if appErr := insertCommunityIdentityNotification(ctx, tx, item, now); appErr != nil {
+		if appErr := insertCommunityIdentityNotification(ctx, tx, item, communityIdentityGrantRequestID(item), now); appErr != nil {
 			return 0, appErr
 		}
 	}
@@ -232,18 +235,47 @@ func insertCommunityIdentity(ctx context.Context, tx pgx.Tx, userID string, iden
 	return existing, false, nil
 }
 
-func insertCommunityIdentityNotification(ctx context.Context, tx pgx.Tx, item communityidentity.Identity, now time.Time) *domain.AppError {
+func insertCommunityIdentityNotification(ctx context.Context, tx pgx.Tx, item communityidentity.Identity, requestID string, now time.Time) *domain.AppError {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		requestID = communityIdentityGrantRequestID(item)
+	}
+	actorKind := "system"
+	if item.GrantedBy != "" {
+		actorKind = "admin"
+	}
+	metadata, err := json.Marshal(map[string]string{
+		"identityType": string(item.Type),
+		"source":       string(item.Source),
+	})
+	if err != nil {
+		return internalStoreError()
+	}
+	eventID := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO notifications (
+		INSERT INTO domain_events (
+			id, aggregate_type, aggregate_id, event_type, actor_user_id, actor_kind,
+			aggregate_version, request_id, metadata_json, created_at
+		)
+		VALUES ($1, 'community_identity', $2, $3, $4, $5, 1, $6, $7, $8)
+	`, eventID, item.ID, communityidentity.NotificationEventType, nullUUID(item.GrantedBy), actorKind, requestID, metadata, now); err != nil {
+		return internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `
+			INSERT INTO notifications (
 			user_id, type, title, body, target_type, target_id, target_url,
 			source_event_type, source_event_id, dedupe_key, created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
-	`, item.UserID, communityidentity.NotificationType, "获得社区身份", "你已获得社区身份「"+identityName(item.Type)+"」。该身份记录参与经历，不代表交易信用认证、平台担保或服务能力评价。", "community_identity", item.ID, "/my/profile", communityidentity.NotificationEventType, item.ID, "community_identity:"+item.ID, now); err != nil {
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+		`, item.UserID, communityidentity.NotificationType, "获得社区身份", "你已获得社区身份「"+identityName(item.Type)+"」。该身份记录参与经历，不代表交易信用认证、平台担保或服务能力评价。", "community_identity", item.ID, "/my/profile", communityidentity.NotificationEventType, eventID, "community_identity:"+item.ID, now); err != nil {
 		return internalStoreError()
 	}
 	return nil
+}
+
+func communityIdentityGrantRequestID(item communityidentity.Identity) string {
+	return "community-identity-" + strings.ToLower(string(item.Source))
 }
 
 func scanCommunityIdentity(row scanner) (communityidentity.Identity, error) {
