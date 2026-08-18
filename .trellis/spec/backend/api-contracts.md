@@ -2536,7 +2536,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 113 (current repository target)
+  ExpectedMigrationVersion = 114 (current repository target)
 ```
 
 ### 3. Contracts
@@ -3019,4 +3019,88 @@ writePaginatedJSON(w, r, enrichAll(services))
 page, _ := repo.ListPublicAPIServices(ctx, filter, pageRequest)
 items := enrich(page.Items)
 writePageJSON(w, domain.Page[Response]{Items: items, NextCursor: page.NextCursor})
+```
+
+## Scenario: Public API Market Sort Contract
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing sort options for public API services or limited
+  API quota offers.
+- Current contract: public market sorting is shared by the frontend query
+  adapter, mock data path, OpenAPI enum, backend validation, and PostgreSQL
+  keyset pagination.
+
+### 2. Signatures
+
+```text
+api-services.sort = recommended | reputation_desc | completed_desc |
+  response_fast | updated_desc | price_asc | minimum_purchase_asc |
+  package_price_asc
+
+api-quota-offers.sort = recommended | reputation_desc | completed_desc |
+  response_fast | updated_desc | unit_price_asc | allowance_desc | delivery_asc
+```
+
+### 3. Contracts
+
+- `reputation_desc` uses the public reputation snapshot; `completed_desc`
+  uses the public 30-day completion count; `response_fast` uses the public
+  response median. The `recommended` order combines public availability,
+  reputation, response, completion, dispute, and freshness facts.
+- PostgreSQL derives the sort value and applies the complete sort predicate
+  before taking the extra row for keyset pagination. Every sort has a stable
+  ID tie-breaker.
+- Missing reputation or response data uses an explicit end sentinel, so rows
+  without the metric remain after rows with the metric and do not break cursor
+  comparisons.
+- The frontend URL, mock adapter, real request, and OpenAPI enum must use the
+  same literal sort values. `成交率` is not part of this contract because its
+  measurement window and denominator are not defined.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Empty or omitted sort | Existing default sort behavior |
+| Declared sort value | Apply the corresponding server-side order before pagination |
+| Unknown sort value | Existing validation error behavior |
+| Missing reputation/response fact | Stable final position, no SQL NULL cursor failure |
+| Sort changes while reusing an old cursor | Existing cursor/sort validation rejects the mismatch |
+| `成交率` requested | Not exposed in UI, OpenAPI, mock, or backend sort enums |
+
+### 5. Good / Base / Bad Cases
+
+- Good: page one and page two use the same derived order and return no repeated
+  or skipped item when reputation values tie.
+- Base: all rows have a metric and ID is used only as the deterministic tie
+  breaker.
+- Bad: fetch one page ordered by `updated_at`, then reorder that page in the
+  frontend as if it were a global sort.
+
+### 6. Tests Required
+
+- Unit tests for sort validation, mock ordering, and missing-metric behavior.
+- PostgreSQL integration tests for each new service and quota-offer sort,
+  including cross-page no-duplicate/no-gap assertions.
+- OpenAPI enum and generated-type drift checks, plus frontend URL/request
+  parity tests.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+SELECT ... FROM api_services ORDER BY updated_at DESC LIMIT 20
+then sort the 20 returned rows by reputation in the UI
+```
+
+#### Correct
+
+```text
+SELECT ..., <derived_sort_value>
+FROM api_services
+WHERE <filters>
+ORDER BY <derived_sort_value>, id
+LIMIT 21
 ```

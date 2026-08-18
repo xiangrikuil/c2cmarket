@@ -594,7 +594,12 @@ adds account login as a non-credential distribution method. VPS region and
 mainland direct-connect declarations remain optional. The down migration refuses
 to discard unlimited weekly limits or rewrite account-login listings.
 
-Version 113 (`000113_carpool_membership_owner_note`) adds an owner-private note
+Version 113 (`000113_community_identity`) adds independent community identity
+records for founding users and beta contributors. These labels are separate
+from reputation badges, support soft revocation with retained provenance, and
+do not affect transaction trust decisions.
+
+Version 114 (`000114_carpool_membership_owner_note`) adds an owner-private note
 to each carpool membership. The note is retained for historical memberships,
 returned only through owner-scoped membership responses, and may be cleared by
 writing an empty string. The down migration removes only the note column.

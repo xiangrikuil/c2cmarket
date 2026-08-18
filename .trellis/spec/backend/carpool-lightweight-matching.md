@@ -41,8 +41,8 @@ Create/Patch spend fields:
 
 backend/migrations/000111_carpool_lightweight_matching.{up,down}.sql
 backend/migrations/000112_carpool_optional_spend_limits_account_login.{up,down}.sql
-backend/migrations/000113_carpool_membership_owner_note.{up,down}.sql
-database.ExpectedMigrationVersion = 113
+backend/migrations/000114_carpool_membership_owner_note.{up,down}.sql
+database.ExpectedMigrationVersion = 114
 ```
 
 Migration 111 owns `carpool_listing_condition_versions`, `carpool_application_condition_acceptances`, nullable `contact_sessions.ends_at`, listing `conditions_version`, `governance_status`, `recruitment_stop_reason`, `offline_occupied_seats`, and the application/membership condition snapshots. Its down migration restores the pre-launch schema only when no carpool listings, applications, memberships, condition versions, or open-ended contact sessions exist. Deleted workflow data remains backup-only and must never be fabricated by a down migration.
@@ -127,7 +127,7 @@ carpool membership --> no review or public reputation projection
 
 ### 1. Scope / Trigger
 
-- Trigger: changes to owner member management, membership response projection, migration 113, or the owner membership note endpoint.
+- Trigger: changes to owner member management, membership response projection, migration 114, or the owner membership note endpoint.
 - The feature supports private operational notes and direct member removal in the existing carpool lifecycle. It does not add manual member creation or a new membership state.
 
 ### 2. Signatures
@@ -178,7 +178,7 @@ carpool_memberships.owner_note text NOT NULL DEFAULT ''
 
 - Router test: owner can create, clear, and read a note; buyer membership output omits `ownerNote`; empty removal reason succeeds.
 - Service/store test: note length validation, owner ownership check, version conflict, trim/clear behavior, and idempotent replay.
-- Migration/OpenAPI checks: migration 113 is documented, the generated membership type includes the optional field, and the new route has parity.
+- Migration/OpenAPI checks: migration 114 is documented, the generated membership type includes the optional field, and the new route has parity.
 - Frontend tests: real adapter sends `If-Match` and `Idempotency-Key`; mock notes survive module reload; the management page exposes active/history tabs and optional removal copy.
 
 ### 7. Wrong vs Correct

@@ -301,6 +301,38 @@ export type UsernameAvailability = {
     available: boolean;
 };
 
+export type CommunityIdentity = {
+    code: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR';
+    name: string;
+    description: string;
+    grantedAt: string;
+    revokedAt?: string | null;
+    source?: 'AUTO' | 'ADMIN' | 'BACKFILL';
+};
+
+export type CommunityIdentityGrantRequest = {
+    identityType: 'BETA_CONTRIBUTOR';
+    reason: string;
+};
+
+export type CommunityIdentityRevokeRequest = {
+    reason: string;
+};
+
+export type AdminCommunityIdentity = CommunityIdentity & {
+    id?: string;
+    source?: string;
+    qualifiedAt?: string | null;
+    grantedBy?: string;
+    grantReason?: string;
+    revokedBy?: string;
+    revokeReason?: string;
+};
+
+export type AdminCommunityIdentityList = {
+    items: Array<AdminCommunityIdentity>;
+};
+
 export type MyProfile = {
     id: string;
     username: string;
@@ -322,6 +354,7 @@ export type MyProfile = {
         [key: string]: unknown;
     };
     badges: Array<string>;
+    communityIdentities: Array<CommunityIdentity>;
     restrictions: Array<string>;
     usernameChangePolicy: {
         [key: string]: unknown;
@@ -664,6 +697,7 @@ export type PublicUserProfile = {
     linuxDoUsername: string | null;
     trustLevel: number | null;
     badges: Array<string>;
+    communityIdentities: Array<CommunityIdentity>;
     accountStatus: string;
     createdAt: string | null;
     lastActiveAt: string | null;
@@ -2065,6 +2099,10 @@ export type PublicApiService = {
     responseMedianMinutes?: number | null;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
+    /**
+     * Public community identities for a public-profile merchant. Detail responses only; omitted for store aliases and list projections.
+     */
+    communityIdentities?: Array<CommunityIdentity>;
     version: number;
     createdAt: string;
     updatedAt: string;
@@ -3342,6 +3380,10 @@ export type CarpoolListing = {
     applicationEligibility: CarpoolApplicationEligibility;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
+    /**
+     * Public community identities for the owner. Detail responses only; omitted from list and transaction projections.
+     */
+    communityIdentities?: Array<CommunityIdentity>;
     status: 'draft' | 'active' | 'stopped';
     governanceStatus: 'clear' | 'removed';
     recruitmentStopReason?: '' | 'owner' | 'full' | 'migration';
@@ -6763,7 +6805,7 @@ export type ListPublicApiServicesData = {
          * Maximum merchant multiplier for the selected package model.
          */
         packageMultiplierMax?: string;
-        sort?: 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
+        sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
     };
     url: '/api/v1/api-services';
 };
@@ -7028,7 +7070,7 @@ export type ListPublicApiQuotaOffersData = {
         maxMultiplier?: string;
         onlyOrderable?: boolean;
         saleMode?: 'continuous' | 'scheduled';
-        sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
+        sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
         /**
          * Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
          */
@@ -13242,6 +13284,130 @@ export type GetAdminUserResponses = {
 };
 
 export type GetAdminUserResponse = GetAdminUserResponses[keyof GetAdminUserResponses];
+
+export type ListAdminCommunityIdentitiesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities';
+};
+
+export type ListAdminCommunityIdentitiesErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type ListAdminCommunityIdentitiesError = ListAdminCommunityIdentitiesErrors[keyof ListAdminCommunityIdentitiesErrors];
+
+export type ListAdminCommunityIdentitiesResponses = {
+    /**
+     * Administrator-only community identity records, including grant and revoke provenance.
+     */
+    200: AdminCommunityIdentityList;
+};
+
+export type ListAdminCommunityIdentitiesResponse = ListAdminCommunityIdentitiesResponses[keyof ListAdminCommunityIdentitiesResponses];
+
+export type GrantAdminCommunityIdentityData = {
+    body: CommunityIdentityGrantRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities';
+};
+
+export type GrantAdminCommunityIdentityErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type GrantAdminCommunityIdentityError = GrantAdminCommunityIdentityErrors[keyof GrantAdminCommunityIdentityErrors];
+
+export type GrantAdminCommunityIdentityResponses = {
+    /**
+     * Community identity granted atomically with its notification.
+     */
+    200: AdminCommunityIdentity;
+};
+
+export type GrantAdminCommunityIdentityResponse = GrantAdminCommunityIdentityResponses[keyof GrantAdminCommunityIdentityResponses];
+
+export type RevokeAdminCommunityIdentityData = {
+    body: CommunityIdentityRevokeRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+        identityType: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR';
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities/{identityType}/revoke';
+};
+
+export type RevokeAdminCommunityIdentityErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RevokeAdminCommunityIdentityError = RevokeAdminCommunityIdentityErrors[keyof RevokeAdminCommunityIdentityErrors];
+
+export type RevokeAdminCommunityIdentityResponses = {
+    /**
+     * Community identity soft-revoked while retaining its history.
+     */
+    200: AdminCommunityIdentity;
+};
+
+export type RevokeAdminCommunityIdentityResponse = RevokeAdminCommunityIdentityResponses[keyof RevokeAdminCommunityIdentityResponses];
 
 export type UpdateAdminUserStatusData = {
     body: AdminUserStatusRequest;

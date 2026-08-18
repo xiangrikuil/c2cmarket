@@ -15,6 +15,7 @@ import (
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
 )
@@ -1923,6 +1924,8 @@ func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
 		}
 	}
 	if sortMode := strings.TrimSpace(filter.Sort); sortMode != "" && sortMode != PublicServiceSortUpdatedDesc &&
+		sortMode != PublicServiceSortRecommended && sortMode != PublicServiceSortReputationDesc &&
+		sortMode != PublicServiceSortCompletedDesc && sortMode != PublicServiceSortResponseFast &&
 		sortMode != PublicServiceSortPriceAsc && sortMode != PublicServiceSortMinimumPurchaseAsc && sortMode != PublicServiceSortPackagePriceAsc {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort invalid", "排序方式无效。", "sort", "invalid", "排序方式无效。")
 	}
@@ -1937,7 +1940,8 @@ func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
 
 func (filter PublicServiceFilter) NormalizedSort() string {
 	switch strings.TrimSpace(filter.Sort) {
-	case PublicServiceSortPriceAsc, PublicServiceSortMinimumPurchaseAsc, PublicServiceSortPackagePriceAsc:
+	case PublicServiceSortRecommended, PublicServiceSortReputationDesc, PublicServiceSortCompletedDesc,
+		PublicServiceSortResponseFast, PublicServiceSortPriceAsc, PublicServiceSortMinimumPurchaseAsc, PublicServiceSortPackagePriceAsc:
 		return strings.TrimSpace(filter.Sort)
 	default:
 		return PublicServiceSortUpdatedDesc
@@ -1954,6 +1958,37 @@ func sortPublicServices(services []Service, filter PublicServiceFilter) {
 				return left.ID > right.ID
 			}
 			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+		if sortMode == PublicServiceSortRecommended {
+			if comparison := comparePublicServiceRecommendation(left, right); comparison != 0 {
+				return comparison < 0
+			}
+			return left.ID < right.ID
+		}
+		if sortMode == PublicServiceSortReputationDesc {
+			leftValue, leftOK := publicServiceReputationValue(left)
+			rightValue, rightOK := publicServiceReputationValue(right)
+			if leftOK != rightOK {
+				return leftOK
+			}
+			if leftOK {
+				if comparison := leftValue.Cmp(rightValue); comparison != 0 {
+					return comparison > 0
+				}
+			}
+			return left.ID < right.ID
+		}
+		if sortMode == PublicServiceSortCompletedDesc {
+			if left.Completed30d != right.Completed30d {
+				return left.Completed30d > right.Completed30d
+			}
+			return left.ID < right.ID
+		}
+		if sortMode == PublicServiceSortResponseFast {
+			if comparison := compareNullableResponse(left.ResponseMedianMinutes, right.ResponseMedianMinutes); comparison != 0 {
+				return comparison < 0
+			}
+			return left.ID < right.ID
 		}
 
 		leftValue, leftOK := publicServiceSortValue(left, filter)
@@ -1981,6 +2016,80 @@ func publicServiceSortValue(service Service, filter PublicServiceFilter) (*big.R
 	default:
 		return nil, false
 	}
+}
+
+func compareNullableResponse(left, right *float64) int {
+	if left == nil {
+		if right == nil {
+			return 0
+		}
+		return 1
+	}
+	if right == nil {
+		return -1
+	}
+	if *left < *right {
+		return -1
+	}
+	if *left > *right {
+		return 1
+	}
+	return 0
+}
+
+func publicServiceReputationValue(service Service) (*big.Rat, bool) {
+	if service.SellerReputation == nil {
+		return nil, false
+	}
+	tierScore := map[string]int{
+		reputation.TierInsufficient: 1,
+		reputation.TierNormal:       2,
+		reputation.TierReliable:     3,
+		reputation.TierHighTrust:    4,
+	}[service.SellerReputation.Tier]
+	rating := service.SellerReputation.Metrics.WeightedRating
+	if rating == nil {
+		rating = new(float64)
+	}
+	return new(big.Rat).SetFloat64(float64(tierScore)*1000000 + *rating*1000 + float64(service.SellerReputation.Metrics.VerifiedReviewCount)), true
+}
+
+func comparePublicServiceRecommendation(left, right Service) int {
+	leftReputation, leftHasReputation := publicServiceReputationValue(left)
+	rightReputation, rightHasReputation := publicServiceReputationValue(right)
+	if leftHasReputation != rightHasReputation {
+		if leftHasReputation {
+			return -1
+		}
+		return 1
+	}
+	if leftHasReputation {
+		if comparison := leftReputation.Cmp(rightReputation); comparison != 0 {
+			return -comparison
+		}
+	}
+	if comparison := compareNullableResponse(left.ResponseMedianMinutes, right.ResponseMedianMinutes); comparison != 0 {
+		return comparison
+	}
+	if left.Completed30d != right.Completed30d {
+		if left.Completed30d > right.Completed30d {
+			return -1
+		}
+		return 1
+	}
+	if left.UnresolvedDisputes != right.UnresolvedDisputes {
+		if left.UnresolvedDisputes < right.UnresolvedDisputes {
+			return -1
+		}
+		return 1
+	}
+	if left.UpdatedAt.Equal(right.UpdatedAt) {
+		return 0
+	}
+	if left.UpdatedAt.After(right.UpdatedAt) {
+		return -1
+	}
+	return 1
 }
 
 func minimumPackagePriceForPublicFilter(service Service, filter PublicServiceFilter) (*big.Rat, bool) {

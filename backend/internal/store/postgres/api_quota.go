@@ -896,6 +896,7 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 	if appErr != nil {
 		return domain.Page[apiquota.OfferCard]{}, appErr
 	}
+	serviceSortExpression := apiServiceSortExpression("s", sortMode)
 	if page.Cursor != "" {
 		switch sortMode {
 		case apiquota.PublicOfferSortUnitPriceAsc, apiquota.PublicOfferSortAllowanceDesc:
@@ -906,6 +907,11 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 			value, err := strconv.Atoi(scalarPosition.Value)
 			if err != nil || value < 0 {
 				return domain.Page[apiquota.OfferCard]{}, invalidPageCursorError()
+			}
+		}
+		if serviceSortExpression != "" {
+			if appErr := validateNonNegativeDecimalCursor(scalarPosition); appErr != nil {
+				return domain.Page[apiquota.OfferCard]{}, appErr
 			}
 		}
 	}
@@ -927,7 +933,16 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		cursorValue, cursorID = scalarPosition.Value, nullUUID(scalarPosition.ID)
 		orderBy = `ORDER BY o.delivery_eta_minutes ASC, o.id ASC`
 	}
-	rows, err := s.pool.Query(ctx, publicAPIQuotaOffersQuery+`
+	if serviceSortExpression != "" {
+		cursorCondition = `($5 = '' OR (` + serviceSortExpression + `, o.id) > ($5::numeric, $6::uuid))`
+		cursorValue, cursorID = scalarPosition.Value, nullUUID(scalarPosition.ID)
+		orderBy = `ORDER BY ` + serviceSortExpression + ` ASC, o.id ASC`
+	}
+	query := publicAPIQuotaOffersQuery
+	if serviceSortExpression != "" {
+		query = publicAPIQuotaOffersQueryWithSort(serviceSortExpression)
+	}
+	rows, err := s.pool.Query(ctx, query+`
 		  AND ($2 = '' OR o.distribution_system = $2)
 		  AND (NOT $3 OR o.model_multiplier = 1.0000)
 		  AND (
@@ -989,7 +1004,13 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 	defer rows.Close()
 	items := make([]apiquota.OfferCard, 0, page.Limit+1)
 	for rows.Next() {
-		card, err := scanAPIQuotaOfferCard(rows)
+		var card apiquota.OfferCard
+		var err error
+		if serviceSortExpression != "" {
+			card, err = scanAPIQuotaOfferCardWithSortValue(rows)
+		} else {
+			card, err = scanAPIQuotaOfferCard(rows)
+		}
 		if err != nil {
 			return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 		}
@@ -999,6 +1020,11 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 	}
 	switch sortMode {
+	case apiquota.PublicOfferSortRecommended, apiquota.PublicOfferSortReputationDesc,
+		apiquota.PublicOfferSortCompletedDesc, apiquota.PublicOfferSortResponseFast:
+		return pageFromScalarItems(items, page, sortMode, func(item apiquota.OfferCard) (string, string) {
+			return item.PublicSortValue, item.ID
+		}), nil
 	case apiquota.PublicOfferSortUnitPriceAsc:
 		return pageFromScalarItems(items, page, sortMode, func(item apiquota.OfferCard) (string, string) { return item.CNYPerUSD, item.ID }), nil
 	case apiquota.PublicOfferSortAllowanceDesc:
@@ -2199,6 +2225,13 @@ var publicAPIQuotaOffersQuery = `
 	  AND s.moderation_status = 'clear'
 `
 
+func publicAPIQuotaOffersQueryWithSort(sortExpression string) string {
+	if strings.TrimSpace(sortExpression) == "" {
+		return publicAPIQuotaOffersQuery
+	}
+	return strings.Replace(publicAPIQuotaOffersQuery, "\n\tFROM api_quota_offers", ",\n\t       "+sortExpression+"\n\tFROM api_quota_offers", 1)
+}
+
 func getAPIQuotaBatch(ctx context.Context, q queryer, ownerUserID, batchID string, forUpdate bool) (apiquota.Batch, error) {
 	query := `
 		SELECT ` + apiQuotaBatchColumns + `
@@ -2304,11 +2337,26 @@ func listAPIQuotaAllocations(ctx context.Context, q queryer, ownerUserID, batchI
 
 func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 	var card apiquota.OfferCard
+	if err := scanAPIQuotaOfferCardValues(row, &card, nil); err != nil {
+		return apiquota.OfferCard{}, err
+	}
+	return card, nil
+}
+
+func scanAPIQuotaOfferCardWithSortValue(row scanner) (apiquota.OfferCard, error) {
+	var card apiquota.OfferCard
+	if err := scanAPIQuotaOfferCardValues(row, &card, &card.PublicSortValue); err != nil {
+		return apiquota.OfferCard{}, err
+	}
+	return card, nil
+}
+
+func scanAPIQuotaOfferCardValues(row scanner, card *apiquota.OfferCard, sortValue *string) error {
 	var currentID, currentSystemSlotKey, currentName, currentStatus string
 	var currentStarts, currentEnds, currentFulfillmentConfirmedAt *time.Time
 	var nextID, nextSystemSlotKey, nextName, nextStatus string
 	var nextStarts, nextEnds, nextFulfillmentConfirmedAt *time.Time
-	err := row.Scan(
+	destinations := []any{
 		&card.ID, &card.BatchID, &card.APIServiceID, &card.OwnerUserID,
 		&card.PreviousVersionID, &card.DistributionSystem, &card.Name,
 		&card.USDAllowance, &card.PriceCNY, &card.CNYPerUSD, &card.ModelMultiplier,
@@ -2324,9 +2372,13 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 		&currentID, &currentSystemSlotKey, &currentName, &currentStarts, &currentEnds, &currentStatus, &currentFulfillmentConfirmedAt,
 		&nextID, &nextSystemSlotKey, &nextName, &nextStarts, &nextEnds, &nextStatus, &nextFulfillmentConfirmedAt,
 		&card.AvailableCopies, &card.CredentialAvailableCopies,
-	)
+	}
+	if sortValue != nil {
+		destinations = append(destinations, sortValue)
+	}
+	err := row.Scan(destinations...)
 	if err != nil {
-		return apiquota.OfferCard{}, err
+		return err
 	}
 	if currentID != "" && currentStarts != nil && currentEnds != nil {
 		card.CurrentRound = &apiquota.SaleRound{ID: currentID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: currentSystemSlotKey, Name: currentName, StartsAt: *currentStarts, EndsAt: *currentEnds, Status: currentStatus, FulfillmentConfirmedAt: currentFulfillmentConfirmedAt}
@@ -2334,7 +2386,7 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 	if nextID != "" && nextStarts != nil && nextEnds != nil {
 		card.NextRound = &apiquota.SaleRound{ID: nextID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: nextSystemSlotKey, Name: nextName, StartsAt: *nextStarts, EndsAt: *nextEnds, Status: nextStatus, FulfillmentConfirmedAt: nextFulfillmentConfirmedAt}
 	}
-	return card, nil
+	return nil
 }
 
 func allocationAmount(allowance string, copies int) (string, bool) {

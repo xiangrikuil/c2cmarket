@@ -6,6 +6,7 @@ import type {
   CarpoolApplicationFilters,
   CarpoolProductCatalogItem,
   CarpoolWithMeta,
+  CommunityIdentity,
   ContactMethodType,
   OrderContactSnapshot,
   OrderContactSnapshotItem,
@@ -86,6 +87,7 @@ type BackendCarpoolListing = {
     expiresAt?: string
   }
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   priceMonthlyCny: string
   serviceMultiplier: string
   dailySpendLimitUsd?: string | null
@@ -410,6 +412,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     ownerUserId: listing.ownerUserId,
     trustLevel: null,
     sellerReputation: mapBackendReputationSummary(listing.sellerReputation),
+    communityIdentities: listing.communityIdentities ?? [],
     ownerType: '个人车主',
     warranty: '车主承诺',
     openingMethod: openingMethodFromAccessMode(plan.accessMode),

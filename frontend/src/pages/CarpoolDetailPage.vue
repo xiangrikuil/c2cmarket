@@ -417,6 +417,10 @@ async function shareCarpool() {
         <div class="mt-6 space-y-4 text-sm">
           <div class="flex justify-between"><span class="text-muted-foreground">车主</span><span>linux.do @{{ carpool.owner }}</span></div>
           <div class="flex justify-between"><span class="text-muted-foreground">车主类型</span><span>{{ carpool.ownerType }}</span></div>
+          <div v-if="carpool.communityIdentities?.length" class="flex flex-wrap items-center gap-2">
+            <span class="text-muted-foreground">社区身份</span>
+            <Badge v-for="identity in carpool.communityIdentities" :key="identity.code" variant="outline">{{ identity.name }}</Badge>
+          </div>
           <SourceBadges :badges="['近期确认', getCarpoolAccessArrangementLabel(carpool.accessArrangementMode), isHighRiskSubscriptionCarpool(carpool) ? '风险已确认' : '普通风险']" />
           <div class="border-t border-border pt-4">
             <ReputationSummaryCard :summary="carpool.sellerReputation" compact :framed="false" :show-source-author-verification="false" />

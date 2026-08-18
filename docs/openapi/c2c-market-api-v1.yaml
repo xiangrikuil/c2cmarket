@@ -1252,7 +1252,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [updated_desc, price_asc, minimum_purchase_asc, package_price_asc]
+            enum: [updated_desc, recommended, reputation_desc, completed_desc, response_fast, price_asc, minimum_purchase_asc, package_price_asc]
             default: updated_desc
       responses:
         "200":
@@ -1512,7 +1512,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [updated_desc, unit_price_asc, allowance_desc, delivery_asc]
+            enum: [updated_desc, recommended, reputation_desc, completed_desc, response_fast, unit_price_asc, allowance_desc, delivery_asc]
             default: updated_desc
         - name: slotKey
           in: query
@@ -6289,6 +6289,94 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/community-identities:
+    get:
+      operationId: listAdminCommunityIdentities
+      tags: [AdminUsers]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Administrator-only community identity records, including grant and revoke provenance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCommunityIdentityList"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: grantAdminCommunityIdentity
+      tags: [AdminUsers]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommunityIdentityGrantRequest"
+      responses:
+        "200":
+          description: Community identity granted atomically with its notification.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCommunityIdentity"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/community-identities/{identityType}/revoke:
+    post:
+      operationId: revokeAdminCommunityIdentity
+      tags: [AdminUsers]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - name: identityType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [FOUNDING_USER, BETA_CONTRIBUTOR]
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommunityIdentityRevokeRequest"
+      responses:
+        "200":
+          description: Community identity soft-revoked while retaining its history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCommunityIdentity"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/users/{id}/status:
     post:
       operationId: updateAdminUserStatus
@@ -9651,9 +9739,83 @@ components:
           type: string
         available:
           type: boolean
+    CommunityIdentity:
+      type: object
+      additionalProperties: false
+      required: [code, name, description, grantedAt]
+      properties:
+        code:
+          type: string
+          enum: [FOUNDING_USER, BETA_CONTRIBUTOR]
+        name:
+          type: string
+        description:
+          type: string
+        grantedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: [string, "null"]
+          format: date-time
+        source:
+          type: string
+          enum: [AUTO, ADMIN, BACKFILL]
+    CommunityIdentityGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [identityType, reason]
+      properties:
+        identityType:
+          type: string
+          enum: [BETA_CONTRIBUTOR]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    CommunityIdentityRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    AdminCommunityIdentity:
+      allOf:
+        - $ref: "#/components/schemas/CommunityIdentity"
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            source:
+              type: string
+            qualifiedAt:
+              type: [string, "null"]
+              format: date-time
+            grantedBy:
+              type: string
+              format: uuid
+            grantReason:
+              type: string
+            revokedBy:
+              type: string
+              format: uuid
+            revokeReason:
+              type: string
+    AdminCommunityIdentityList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminCommunityIdentity"
     MyProfile:
       type: object
-      required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, capabilities, linuxDoBinding, badges, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
+      required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, capabilities, linuxDoBinding, badges, communityIdentities, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
       properties:
         id:
           type: string
@@ -9702,6 +9864,10 @@ components:
           type: array
           items:
             type: string
+        communityIdentities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         restrictions:
           type: array
           items:
@@ -10631,6 +10797,7 @@ components:
         - linuxDoUsername
         - trustLevel
         - badges
+        - communityIdentities
         - accountStatus
         - createdAt
         - lastActiveAt
@@ -10660,6 +10827,10 @@ components:
           type: array
           items:
             type: string
+        communityIdentities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         accountStatus:
           type: string
         createdAt:
@@ -13533,6 +13704,11 @@ components:
             - type: "null"
         sourceAuthorVerification:
           $ref: "#/components/schemas/SourceAuthorResourceSummary"
+        communityIdentities:
+          type: array
+          description: Public community identities for a public-profile merchant. Detail responses only; omitted for store aliases and list projections.
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         version:
           type: integer
         createdAt:
@@ -16046,6 +16222,11 @@ components:
             - type: "null"
         sourceAuthorVerification:
           $ref: "#/components/schemas/SourceAuthorResourceSummary"
+        communityIdentities:
+          type: array
+          description: Public community identities for the owner. Detail responses only; omitted from list and transaction projections.
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         status:
           type: string
           enum: [draft, active, stopped]

@@ -8,6 +8,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/catalog"
+	"c2c-market/backend/internal/module/reputation"
 )
 
 type staticAPIModelResolver struct {
@@ -409,6 +410,63 @@ func TestPublicServicesSortsPackagePricesBeforePagination(t *testing.T) {
 	}
 	if len(second.Items) != 1 || second.Items[0].ID != "package-high" || second.NextCursor != nil {
 		t.Fatalf("package price sort must remain stable across pages: %+v", second)
+	}
+}
+
+func TestPublicServicesSortsRecommendationMetricsBeforePagination(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"service-low", "service-fast", "service-empty"}
+	lowService := testPublicService("service-low", PaymentMethodWechat, now.Add(time.Minute))
+	fastService := testPublicService("service-fast", PaymentMethodWechat, now.Add(2*time.Minute))
+	manager.services["service-low"] = lowService
+	manager.services["service-fast"] = fastService
+	manager.services["service-empty"] = testPublicService("service-empty", PaymentMethodWechat, now.Add(3*time.Minute))
+	lowResponse := 8.0
+	fastResponse := 3.0
+	lowRating := 4.2
+	fastRating := 4.8
+	lowService.Completed30d = 2
+	lowService.ResponseMedianMinutes = &lowResponse
+	lowService.SellerReputation = &reputation.ReputationSnapshot{
+		Tier:    reputation.TierReliable,
+		Metrics: reputation.ReputationMetrics{WeightedRating: &lowRating, VerifiedReviewCount: 4},
+	}
+	fastService.Completed30d = 5
+	fastService.ResponseMedianMinutes = &fastResponse
+	fastService.SellerReputation = &reputation.ReputationSnapshot{
+		Tier:    reputation.TierHighTrust,
+		Metrics: reputation.ReputationMetrics{WeightedRating: &fastRating, VerifiedReviewCount: 8},
+	}
+	manager.services["service-low"] = lowService
+	manager.services["service-fast"] = fastService
+
+	for _, test := range []struct {
+		name string
+		sort string
+		want []string
+	}{
+		{name: "recommended", sort: PublicServiceSortRecommended, want: []string{"service-fast", "service-low", "service-empty"}},
+		{name: "reputation", sort: PublicServiceSortReputationDesc, want: []string{"service-fast", "service-low", "service-empty"}},
+		{name: "completed", sort: PublicServiceSortCompletedDesc, want: []string{"service-fast", "service-low", "service-empty"}},
+		{name: "response", sort: PublicServiceSortResponseFast, want: []string{"service-fast", "service-low", "service-empty"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{Sort: test.sort}, domain.PageRequest{Limit: 2})
+			if appErr != nil {
+				t.Fatalf("list first sorted page: %v", appErr)
+			}
+			if len(first.Items) != 2 || first.Items[0].ID != test.want[0] || first.Items[1].ID != test.want[1] || first.NextCursor == nil {
+				t.Fatalf("unexpected first page for %s: %+v", test.name, first)
+			}
+			second, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{Sort: test.sort}, domain.PageRequest{Limit: 2, Cursor: *first.NextCursor})
+			if appErr != nil {
+				t.Fatalf("list second sorted page: %v", appErr)
+			}
+			if len(second.Items) != 1 || second.Items[0].ID != test.want[2] || second.NextCursor != nil {
+				t.Fatalf("unexpected second page for %s: %+v", test.name, second)
+			}
+		})
 	}
 }
 
