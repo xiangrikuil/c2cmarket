@@ -1022,6 +1022,8 @@ let feedbackTicketStore = readSessionStore<FeedbackTicket[]>(feedbackStorageKey,
 let notificationReadStore = readSessionStore<string[]>(notificationReadStorageKey, [])
 let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
 let myUserProfileStore = clone(myUserProfile)
+type MockAccountRecoveryState = Pick<UserProfile, 'email' | 'emailVerified' | 'emailVerifiedAt' | 'passwordConfigured'>
+const mockAccountRecoveryStore = new Map<string, MockAccountRecoveryState>()
 let myContactMethodStore = clone(myContactMethods)
 let contactMethodVersionSequence = 0
 const contactMethodVersionStore = new Map(myContactMethodStore.map(item => [item.id, nextContactMethodVersionToken(item.id)]))
@@ -1035,15 +1037,22 @@ function nextContactMethodVersionToken(contactId: string) {
 function syncMockProfileIdentity() {
   const identity = requireMockIdentity()
   const linuxDo = identity.linuxDoBinding
+  let accountRecovery = mockAccountRecoveryStore.get(identity.id)
+  if (!accountRecovery) {
+    accountRecovery = {
+      email: identity.email,
+      emailVerified: Boolean(identity.email),
+      emailVerifiedAt: identity.email ? nowText() : null,
+      passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    }
+    mockAccountRecoveryStore.set(identity.id, accountRecovery)
+  }
   myUserProfileStore = {
     ...myUserProfileStore,
     id: identity.id,
     username: identity.username,
     displayName: identity.displayName,
-    email: identity.email,
-    emailVerified: Boolean(identity.email),
-    emailVerifiedAt: identity.email ? (myUserProfileStore.emailVerifiedAt ?? nowText()) : null,
-    passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    ...accountRecovery,
     avatarMode: linuxDo.bound ? 'linuxdo' : 'custom_url',
     avatarUrl: linuxDo.avatarUrl ?? null,
     linuxDoBinding: {
@@ -1058,6 +1067,16 @@ function syncMockProfileIdentity() {
     capabilities: [...identity.capabilities],
   }
   return myUserProfileStore
+}
+
+function rememberMockAccountRecoveryState() {
+  const identity = requireMockIdentity()
+  mockAccountRecoveryStore.set(identity.id, {
+    email: myUserProfileStore.email,
+    emailVerified: myUserProfileStore.emailVerified,
+    emailVerifiedAt: myUserProfileStore.emailVerifiedAt,
+    passwordConfigured: myUserProfileStore.passwordConfigured,
+  })
 }
 
 function clone<T>(value: T): T {
@@ -3591,6 +3610,7 @@ export async function setBackupPassword(payload: SetBackupPasswordRequest) {
     ...myUserProfileStore,
     passwordConfigured: true,
   }
+  rememberMockAccountRecoveryState()
 }
 
 export async function startEmailVerification(email: string): Promise<EmailVerificationChallenge> {
@@ -3616,6 +3636,7 @@ export async function confirmEmailVerification(payload: { email: string, code: s
     emailVerified: true,
     emailVerifiedAt: nowText(),
   }
+  rememberMockAccountRecoveryState()
   syncPublicCurrentUser()
   return clone(myUserProfileStore)
 }
