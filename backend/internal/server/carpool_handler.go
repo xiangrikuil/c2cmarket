@@ -121,6 +121,7 @@ type carpoolListingResponse struct {
 	ApplicationEligibility                carpoolApplicationEligibilityResponse `json:"applicationEligibility"`
 	SellerReputation                      *reputationSummaryResponse            `json:"sellerReputation"`
 	SourceAuthorVerification              sourceAuthorResourceSummaryResponse   `json:"sourceAuthorVerification"`
+	CommunityIdentities                   []publicCommunityIdentityDTO          `json:"communityIdentities,omitempty"`
 }
 
 type createCarpoolApplicationRequest struct {
@@ -434,7 +435,14 @@ func (s *Server) handlePublicCarpool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setETag(w, listing.Version)
-	writeJSON(w, http.StatusOK, toCarpoolListingResponse(listing))
+	response := toCarpoolListingResponse(listing)
+	identities, appErr := s.communityIdentity.PublicCommunityIdentities(r.Context(), listing.OwnerUserID)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	response.CommunityIdentities = toCompactPublicCommunityIdentityDTOs(identities)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleCarpoolApplicationEligibility(w http.ResponseWriter, r *http.Request) {

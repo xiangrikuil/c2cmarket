@@ -26,6 +26,7 @@ import type {
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
   ApiService,
+  CommunityIdentity,
   ApiServiceCommercialSnapshot,
   ApiServiceSalesChannel,
   ApiServiceSalesView,
@@ -148,6 +149,7 @@ type BackendAPIService = {
     expiresAt?: string
   }
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   healthSummary?: ApiServiceHealthSummary
   quotaUsagePolicy: unknown
   distributionSystem: string
@@ -649,6 +651,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     sourceUrl: service.sourceUrl ?? '',
     sourceAuthorVerification: service.sourceAuthorVerification,
     sellerReputation,
+    communityIdentities: service.communityIdentities ?? [],
     healthSummary: service.healthSummary,
     quotaUsagePolicy: parseApiQuotaUsagePolicy(service.quotaUsagePolicy),
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
@@ -1062,7 +1065,7 @@ export async function backendAPIServicesPage(filters: ApiServiceFilters = {}, pa
   if (filters.minimumPurchaseCnyMax !== undefined) params.set('minimumIntentCnyMax', String(filters.minimumPurchaseCnyMax))
   if (filters.packagePriceCnyMax !== undefined) params.set('packagePriceCnyMax', String(filters.packagePriceCnyMax))
   if (filters.packageMultiplierMax !== undefined) params.set('packageMultiplierMax', String(filters.packageMultiplierMax))
-  if (filters.sort && filters.sort !== 'recommended' && filters.sort !== 'updated_desc') params.set('sort', filters.sort)
+  if (filters.sort && filters.sort !== 'updated_desc') params.set('sort', filters.sort)
   if (page.limit) params.set('limit', String(page.limit))
   if (page.cursor) params.set('cursor', page.cursor)
   const query = params.toString()

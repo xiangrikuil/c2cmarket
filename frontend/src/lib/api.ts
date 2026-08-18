@@ -75,6 +75,7 @@ import {
   type CarpoolProductCatalogItem,
   type ContactMethodType,
   type ContactUsageScope,
+  type CommunityIdentity,
   type CreateContactReportRequest,
   type OpeningChannelOption,
   type OrderContactSnapshot,
@@ -807,7 +808,7 @@ export type ApiQuotaOfferFilters = {
   slotKey?: string
   search?: string
   excludeSystemSlots?: boolean
-  sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
+  sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
 }
 
 export type CreateApiQuotaOrderPayload = {
@@ -1429,10 +1430,37 @@ function compareTimeDesc(a: string, b: string) {
   return new Date(b).getTime() - new Date(a).getTime()
 }
 
-function compareNullableNumberAsc(a: number | null, b: number | null) {
+export function compareNullableNumberAsc(a: number | null, b: number | null) {
   if (a === null) return b === null ? 0 : 1
   if (b === null) return -1
   return a - b
+}
+
+function apiServiceReputationScore(item?: ApiService) {
+  const reputation = item?.sellerReputation
+  if (!reputation) return null
+  const tierScore = { insufficient: 1, normal: 2, reliable: 3, high_trust: 4 }[reputation.tier] ?? 0
+  return tierScore * 1_000_000 + (reputation.weightedRating ?? 0) * 1_000 + reputation.verifiedReviewCount
+}
+
+export function compareApiServiceReputationDesc(left?: ApiService, right?: ApiService) {
+  const leftScore = apiServiceReputationScore(left)
+  const rightScore = apiServiceReputationScore(right)
+  if (leftScore === null) return rightScore === null ? 0 : 1
+  if (rightScore === null) return -1
+  return rightScore - leftScore
+}
+
+function compareApiServiceRecommendation(left: ApiService, right: ApiService) {
+  const reputationComparison = compareApiServiceReputationDesc(left, right)
+  if (reputationComparison !== 0) return reputationComparison
+  const responseComparison = compareNullableNumberAsc(left.responseMedianMinutes, right.responseMedianMinutes)
+  if (responseComparison !== 0) return responseComparison
+  const completedComparison = (right.completed30d ?? 0) - (left.completed30d ?? 0)
+  if (completedComparison !== 0) return completedComparison
+  const disputeComparison = (left.unresolvedDisputes ?? 0) - (right.unresolvedDisputes ?? 0)
+  if (disputeComparison !== 0) return disputeComparison
+  return compareTimeDesc(left.lastOnlineConfirmedAt, right.lastOnlineConfirmedAt) || left.id.localeCompare(right.id)
 }
 
 function deadlineTime(value?: string) {
@@ -2212,7 +2240,7 @@ export type ApiServiceFilters = {
   trustLevel?: number
   minimumPurchaseCnyMax?: number
   minBalance?: number
-  sort?: 'recommended' | 'multiplier_asc' | 'response_fast' | 'recent' | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc'
+  sort?: 'recommended' | 'reputation_desc' | 'completed_desc' | 'multiplier_asc' | 'response_fast' | 'recent' | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc'
   search?: string
   distributionSystem?: ApiQuotaDistributionSystem | 'all'
   maxCnyPerUsd?: number
@@ -2722,6 +2750,9 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         }))
     })
     .sort((a, b) => {
+      if (filters.sort === 'recommended') return compareApiServiceRecommendation(a, b)
+      if (filters.sort === 'reputation_desc') return compareApiServiceReputationDesc(a, b) || a.id.localeCompare(b.id)
+      if (filters.sort === 'completed_desc') return (b.completed30d ?? 0) - (a.completed30d ?? 0) || a.id.localeCompare(b.id)
       if (filters.sort === 'updated_desc') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt) || b.id.localeCompare(a.id)
       if (filters.sort === 'price_asc') return Number(a.cnyPerUsdAllowance) - Number(b.cnyPerUsdAllowance) || a.id.localeCompare(b.id)
       if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.id.localeCompare(b.id)
@@ -2841,11 +2872,38 @@ function matchesApiQuotaOfferFilters(item: PublicApiQuotaOffer, filters: ApiQuot
 
 function sortApiQuotaOffers(items: PublicApiQuotaOffer[], filters: ApiQuotaOfferFilters) {
   const rows = [...items]
+  const serviceFor = (offer: PublicApiQuotaOffer) => apiServiceStore.find(service => service.id === offer.apiServiceId)
+  if (filters.sort === 'recommended') {
+    return rows.sort((left, right) => {
+      const leftService = serviceFor(left)
+      const rightService = serviceFor(right)
+      if (leftService && rightService) {
+        const comparison = compareApiServiceRecommendation(leftService, rightService)
+        if (comparison !== 0) return comparison
+      } else if (leftService || rightService) {
+        return leftService ? -1 : 1
+      }
+      return left.id.localeCompare(right.id)
+    })
+  }
+  if (filters.sort === 'reputation_desc') {
+    return rows.sort((left, right) => {
+      const comparison = compareApiServiceReputationDesc(serviceFor(left), serviceFor(right))
+      return comparison || left.id.localeCompare(right.id)
+    })
+  }
+  if (filters.sort === 'completed_desc') {
+    return rows.sort((left, right) => (serviceFor(right)?.completed30d ?? 0) - (serviceFor(left)?.completed30d ?? 0) || left.id.localeCompare(right.id))
+  }
+  if (filters.sort === 'response_fast') {
+    return rows.sort((left, right) => compareNullableNumberAsc(serviceFor(left)?.responseMedianMinutes ?? null, serviceFor(right)?.responseMedianMinutes ?? null) || left.id.localeCompare(right.id))
+  }
   if (filters.sort === 'unit_price_asc') return rows.sort((left, right) => Number(left.cnyPerUsd) - Number(right.cnyPerUsd) || left.id.localeCompare(right.id))
   if (filters.sort === 'allowance_desc') return rows.sort((left, right) => Number(right.usdAllowance) - Number(left.usdAllowance) || right.id.localeCompare(left.id))
   if (filters.sort === 'delivery_asc') return rows.sort((left, right) => left.deliveryEtaMinutes - right.deliveryEtaMinutes || left.id.localeCompare(right.id))
   return rows
 }
+
 
 function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
   const serverNow = now.toISOString()
@@ -6941,6 +6999,7 @@ export type {
   CarpoolSeatSummary,
   ContactMethodType,
   ContactUsageScope,
+  CommunityIdentity,
   CreateContactReportRequest,
   CreateManualInterventionReportRequest,
   ModelPriceRow,

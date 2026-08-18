@@ -81,6 +81,7 @@ export type Carpool = {
   sourceUrl?: string
   sourceAuthorVerification?: SourceAuthorResourceSummary
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   hasInfoConflict: boolean
   hasUnresolvedDispute: boolean | null
   distributionMethod: CarpoolDistributionMethod
@@ -228,6 +229,15 @@ export type UserBadge = {
   type: 'identity' | 'trust' | 'merchant' | 'contributor' | 'system'
 }
 
+export type CommunityIdentity = {
+  code: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR'
+  name: string
+  description: string
+  grantedAt: string
+  source?: 'AUTO' | 'ADMIN' | 'BACKFILL'
+  revokedAt?: string | null
+}
+
 export type UserPrivacySettings = {
   showCreatedAt: boolean
   showLastActiveAt: boolean
@@ -260,6 +270,7 @@ export type UserProfile = {
     lastSyncedAt: string | null
   }
   badges: UserBadge[]
+  communityIdentities: CommunityIdentity[]
   accountStatus: UserAccountStatus
   permissions: Array<'admin'>
   capabilities: Capability[]
@@ -284,6 +295,7 @@ export type PublicUserProfile = {
   linuxDoUsername: string | null
   trustLevel: number | null
   badges: UserBadge[]
+  communityIdentities: CommunityIdentity[]
   accountStatus: UserAccountStatus
   createdAt: string | null
   lastActiveAt: string | null
@@ -702,6 +714,7 @@ export type ApiService = {
   sourceUrl?: string
   sourceAuthorVerification?: SourceAuthorResourceSummary
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   healthSummary?: ApiServiceHealthSummary
   quotaUsagePolicy: ApiQuotaUsagePolicy
   merchantId: string
@@ -1059,6 +1072,15 @@ export const myUserProfile: UserProfile = {
     { id: 'badge-linuxdo-bound', code: 'linuxdo_bound', label: '已绑定 linux.do', type: 'system' },
     { id: 'badge-personal-owner', code: 'personal_owner', label: '个人车主', type: 'identity' },
     { id: 'badge-api-merchant', code: 'api_merchant', label: 'API 商户', type: 'merchant' },
+  ],
+  communityIdentities: [
+    {
+      code: 'BETA_CONTRIBUTOR',
+      name: '内测共建者',
+      description: '帮助平台测试和改进产品的社区成员',
+      grantedAt: '2026-06-10T10:00:00+08:00',
+      source: 'ADMIN',
+    },
   ],
   accountStatus: 'normal',
   permissions: ['admin'],
@@ -2630,6 +2652,7 @@ export const publicUserProfiles: PublicUserProfile[] = [
     linuxDoUsername: 'orbit',
     trustLevel: 4,
     badges: myUserProfile.badges,
+    communityIdentities: myUserProfile.communityIdentities,
     accountStatus: 'normal',
     createdAt: myUserProfile.privacy.showCreatedAt ? '2025-11-18' : null,
     lastActiveAt: myUserProfile.privacy.showLastActiveAt ? '12 分钟前' : null,
@@ -2661,6 +2684,7 @@ export const publicUserProfiles: PublicUserProfile[] = [
       { id: 'badge-qingning-linuxdo', code: 'linuxdo_bound', label: '已绑定 linux.do', type: 'system' },
       { id: 'badge-qingning-owner', code: 'trusted_new_owner', label: '可信新车主', type: 'identity' },
     ],
+    communityIdentities: [],
     accountStatus: 'normal',
     createdAt: '2026-04-09',
     lastActiveAt: '28 分钟前',
@@ -2699,6 +2723,7 @@ export const publicUserProfiles: PublicUserProfile[] = [
       { id: 'badge-beifeng-linuxdo', code: 'linuxdo_bound', label: '已绑定 linux.do', type: 'system' },
       { id: 'badge-beifeng-api', code: 'api_merchant', label: 'API 商户', type: 'merchant' },
     ],
+    communityIdentities: [],
     accountStatus: 'under_review',
     createdAt: '2025-08-26',
     lastActiveAt: '2 小时前',

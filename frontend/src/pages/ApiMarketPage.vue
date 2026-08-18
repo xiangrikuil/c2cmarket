@@ -22,6 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  compareApiServiceReputationDesc,
+  compareNullableNumberAsc,
   getApiMerchantDisplayName,
   type ApiService,
   type ApiServiceFilters,
@@ -56,17 +58,16 @@ import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 type AvailabilityFilter = 'all' | 'available'
 type SaleModeFilter = ApiQuotaSaleMode | 'all'
 type ActiveFilterItem = { key: string, label: string }
-type LimitedSort = 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
-type PackageSort = 'recommended' | 'package_price_asc'
-type FreeSort = 'updated_desc' | 'price_asc' | 'minimum_purchase_asc'
+type MarketSort = 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast'
+type LimitedSort = MarketSort | 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
+type PackageSort = MarketSort | 'package_price_asc'
+type FreeSort = MarketSort | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc'
 
 const route = useRoute()
 const router = useRouter()
 const { data: myProfile } = useMyProfileQuery(import.meta.client)
 const activeView = ref<ApiMarketView>(apiMarketViewFromQuery(route.query.view))
 const canPublishQuota = computed(() => hasCapability(myProfile.value, CAPABILITY.apiQuotaPublish))
-const canPublishApiService = computed(() => hasCapability(myProfile.value, CAPABILITY.apiServicePublish))
-const canPublishCurrentView = computed(() => activeView.value === 'limited' ? canPublishQuota.value : canPublishApiService.value)
 const marketSearch = ref('')
 const distributionSystem = ref<ApiQuotaDistributionSystem | 'all'>('all')
 const availability = ref<AvailabilityFilter>('available')
@@ -154,7 +155,7 @@ function applyRouteFilters() {
     limitedSaleMode.value = ['continuous', 'scheduled'].includes(queryText(route.query.saleMode))
       ? queryText(route.query.saleMode) as ApiQuotaSaleMode
       : 'all'
-    limitedSort.value = ['unit_price_asc', 'allowance_desc', 'delivery_asc'].includes(queryText(route.query.sort))
+    limitedSort.value = ['recommended', 'reputation_desc', 'completed_desc', 'response_fast', 'unit_price_asc', 'allowance_desc', 'delivery_asc'].includes(queryText(route.query.sort))
       ? queryText(route.query.sort) as LimitedSort
       : 'updated_desc'
   } else if (view === 'packages') {
@@ -162,11 +163,13 @@ function applyRouteFilters() {
     packageDuration.value = ['1', '3', '7', '30'].includes(queryText(route.query.duration)) ? queryText(route.query.duration) : ''
     packagePriceMax.value = numericText(route.query.priceMax)
     packageMultiplierMax.value = numericText(route.query.multiplierMax)
-    packageSort.value = queryText(route.query.sort) === 'package_price_asc' ? 'package_price_asc' : 'recommended'
+    packageSort.value = ['reputation_desc', 'completed_desc', 'response_fast', 'package_price_asc'].includes(queryText(route.query.sort))
+      ? queryText(route.query.sort) as PackageSort
+      : 'recommended'
   } else {
     freePriceMax.value = numericText(route.query.priceMax)
     freeMinimumPurchaseMax.value = numericText(route.query.minimumMax)
-    freeSort.value = ['price_asc', 'minimum_purchase_asc'].includes(queryText(route.query.sort))
+    freeSort.value = ['recommended', 'reputation_desc', 'completed_desc', 'response_fast', 'price_asc', 'minimum_purchase_asc'].includes(queryText(route.query.sort))
       ? queryText(route.query.sort) as FreeSort
       : 'updated_desc'
   }
@@ -291,6 +294,15 @@ function packageRowsFor(services: ApiService[]) {
   const rows = rankApiPackages(services, packageModel.value, Number(packageDuration.value))
     .filter(row => numericFilter(debouncedPackagePriceMax.value) === undefined || row.package.priceCny <= numericFilter(debouncedPackagePriceMax.value)!)
     .filter(row => numericFilter(debouncedPackageMultiplierMax.value) === undefined || row.selectedModel.merchantMultiplier <= numericFilter(debouncedPackageMultiplierMax.value)!)
+  if (packageSort.value === 'reputation_desc') {
+    rows.sort((left, right) => compareApiServiceReputationDesc(left.service, right.service) || left.package.id.localeCompare(right.package.id))
+  }
+  if (packageSort.value === 'completed_desc') {
+    rows.sort((left, right) => (right.service.completed30d ?? 0) - (left.service.completed30d ?? 0) || left.package.id.localeCompare(right.package.id))
+  }
+  if (packageSort.value === 'response_fast') {
+    rows.sort((left, right) => compareNullableNumberAsc(left.service.responseMedianMinutes, right.service.responseMedianMinutes) || left.package.id.localeCompare(right.package.id))
+  }
   if (packageSort.value === 'package_price_asc') {
     rows.sort((left, right) => left.package.priceCny - right.package.priceCny || left.package.id.localeCompare(right.package.id))
   }
@@ -348,18 +360,12 @@ const freeServiceDisplayRows = computed(() => {
 const viewMeta = computed(() => ({
   limited: {
     title: '限量额度包',
-    publishLabel: '发布限量额度包',
-    publishTo: '/api-market/quota/new',
   },
   packages: {
     title: '短期流量包',
-    publishLabel: '发布短期流量包',
-    publishTo: '/api-market/new?mode=package',
   },
   free: {
     title: '自选额度',
-    publishLabel: '发布自选额度',
-    publishTo: '/api-market/new?mode=free',
   },
 })[activeView.value])
 
@@ -638,12 +644,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="api-market-catalog space-y-5">
-    <div v-if="canPublishCurrentView" class="flex justify-end">
-      <RouterLink :to="viewMeta.publishTo" class="w-full sm:w-auto">
-        <Button class="h-11 w-full gap-2 sm:h-9"><PackagePlus class="h-4 w-4" /><span class="hidden sm:inline">{{ viewMeta.publishLabel }}</span><span class="sm:hidden">发布</span></Button>
-      </RouterLink>
-    </div>
-
     <Tabs :model-value="activeView" @update:model-value="setView">
       <TabsList class="api-market-view-tabs grid h-11 w-full lg:hidden" :class="LIMITED_API_QUOTA_OFFERS_ENABLED ? 'grid-cols-3' : 'grid-cols-2'">
         <TabsTrigger v-if="LIMITED_API_QUOTA_OFFERS_ENABLED" class="min-h-11 px-2" value="limited">限量额度包</TabsTrigger>
@@ -733,6 +733,10 @@ onBeforeUnmount(() => {
           <Select v-model="limitedSort">
             <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="排序" /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="recommended">综合推荐</SelectItem>
+              <SelectItem value="reputation_desc">信誉度最高</SelectItem>
+              <SelectItem value="completed_desc">近 30 天完成单数最多</SelectItem>
+              <SelectItem value="response_fast">响应最快</SelectItem>
               <SelectItem value="updated_desc">最新发布</SelectItem>
               <SelectItem value="unit_price_asc">单价最低</SelectItem>
               <SelectItem value="allowance_desc">额度最多</SelectItem>
@@ -840,6 +844,9 @@ onBeforeUnmount(() => {
               <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="排序" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="recommended">综合推荐</SelectItem>
+                <SelectItem value="reputation_desc">信誉度最高</SelectItem>
+                <SelectItem value="completed_desc">近 30 天完成单数最多</SelectItem>
+                <SelectItem value="response_fast">响应最快</SelectItem>
                 <SelectItem value="package_price_asc">套餐价最低</SelectItem>
               </SelectContent>
             </Select>
@@ -922,6 +929,10 @@ onBeforeUnmount(() => {
             <Select v-model="freeSort">
               <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="排序" /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="recommended">综合推荐</SelectItem>
+                <SelectItem value="reputation_desc">信誉度最高</SelectItem>
+                <SelectItem value="completed_desc">近 30 天完成单数最多</SelectItem>
+                <SelectItem value="response_fast">响应最快</SelectItem>
                 <SelectItem value="updated_desc">最近更新</SelectItem>
                 <SelectItem value="price_asc">单价最低</SelectItem>
                 <SelectItem value="minimum_purchase_asc">起购最低</SelectItem>

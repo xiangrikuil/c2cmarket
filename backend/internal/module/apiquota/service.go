@@ -502,6 +502,8 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sale mode filter invalid", "销售方式筛选无效。", "saleMode", "invalid", "销售方式筛选无效。")
 	}
 	if sortMode := strings.TrimSpace(filter.Sort); sortMode != "" && sortMode != PublicOfferSortUpdatedDesc &&
+		sortMode != PublicOfferSortRecommended && sortMode != PublicOfferSortReputationDesc &&
+		sortMode != PublicOfferSortCompletedDesc && sortMode != PublicOfferSortResponseFast &&
 		sortMode != PublicOfferSortUnitPriceAsc && sortMode != PublicOfferSortAllowanceDesc && sortMode != PublicOfferSortDeliveryAsc {
 		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort invalid", "排序方式无效。", "sort", "invalid", "排序方式无效。")
 	}
@@ -524,7 +526,8 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 
 func (filter PublicOfferFilter) NormalizedSort() string {
 	switch strings.TrimSpace(filter.Sort) {
-	case PublicOfferSortUnitPriceAsc, PublicOfferSortAllowanceDesc, PublicOfferSortDeliveryAsc:
+	case PublicOfferSortRecommended, PublicOfferSortReputationDesc, PublicOfferSortCompletedDesc,
+		PublicOfferSortResponseFast, PublicOfferSortUnitPriceAsc, PublicOfferSortAllowanceDesc, PublicOfferSortDeliveryAsc:
 		return strings.TrimSpace(filter.Sort)
 	default:
 		return PublicOfferSortUpdatedDesc

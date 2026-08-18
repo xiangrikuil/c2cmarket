@@ -20,42 +20,43 @@ const (
 )
 
 type Config struct {
-	Port                    string
-	AppEnv                  string
-	DatabaseURL             string
-	Database                database.PostgresOptions
-	DatabaseSlowQueryAfter  time.Duration
-	EnableDevAuth           bool
-	FrontendOrigin          string
-	AllowedOrigins          []string
-	OAuthProviderMode       string
-	OAuthClientID           string
-	OAuthClientSecret       string
-	OAuthAuthorizeURL       string
-	OAuthTokenURL           string
-	OAuthUserInfoURL        string
-	OAuthRedirectURL        string
-	OAuthScopes             string
-	ContactEncryptionKey    string
-	ContactFingerprintKey   string
-	ContactKeyVersion       string
-	ContactEncryptionKeys   map[string]string
-	ContactFingerprintKeys  map[string]string
-	BootstrapAdminUsername  string
-	BootstrapAdminPassword  string
-	TrustXForwardedFor      bool
-	TrustedProxies          []string
-	ModelAuditAllowedHosts  []string
-	EmailVerificationPepper string
-	EmailProvider           string
-	SMTP                    SMTPConfig
-	Maintenance             MaintenanceConfig
-	APIHealth               APIHealthConfig
-	Evidence                EvidenceConfig
-	MetricsBearerToken      string
-	TurnstileSecret         string
-	TurnstileHostnames      []string
-	Sentry                  SentryConfig
+	Port                              string
+	AppEnv                            string
+	DatabaseURL                       string
+	Database                          database.PostgresOptions
+	DatabaseSlowQueryAfter            time.Duration
+	EnableDevAuth                     bool
+	FrontendOrigin                    string
+	AllowedOrigins                    []string
+	OAuthProviderMode                 string
+	OAuthClientID                     string
+	OAuthClientSecret                 string
+	OAuthAuthorizeURL                 string
+	OAuthTokenURL                     string
+	OAuthUserInfoURL                  string
+	OAuthRedirectURL                  string
+	OAuthScopes                       string
+	ContactEncryptionKey              string
+	ContactFingerprintKey             string
+	ContactKeyVersion                 string
+	ContactEncryptionKeys             map[string]string
+	ContactFingerprintKeys            map[string]string
+	BootstrapAdminUsername            string
+	BootstrapAdminPassword            string
+	TrustXForwardedFor                bool
+	TrustedProxies                    []string
+	ModelAuditAllowedHosts            []string
+	EmailVerificationPepper           string
+	EmailProvider                     string
+	SMTP                              SMTPConfig
+	Maintenance                       MaintenanceConfig
+	APIHealth                         APIHealthConfig
+	Evidence                          EvidenceConfig
+	MetricsBearerToken                string
+	TurnstileSecret                   string
+	TurnstileHostnames                []string
+	Sentry                            SentryConfig
+	CommunityIdentityFoundingCutoffAt time.Time
 }
 
 type SMTPConfig struct {
@@ -119,23 +120,25 @@ const (
 	localContactKeyVersion       = "local-dev-v1"
 	localEmailVerificationPepper = "c2cmarket-local-email-verification-pepper-v1"
 
-	defaultMaintenanceInterval            = 15 * time.Minute
-	defaultMaintenanceBatchSize           = 500
-	defaultSessionRetention               = 7 * 24 * time.Hour
-	defaultEmailVerificationRetention     = 24 * time.Hour
-	defaultReadNotificationRetention      = 90 * 24 * time.Hour
-	defaultUnreadNotificationRetention    = 365 * 24 * time.Hour
-	defaultDomainEventRetention           = 365 * 24 * time.Hour
-	defaultAPIDeliveryCredentialRetention = 30 * 24 * time.Hour
-	defaultDatabaseSlowQueryAfter         = time.Second
-	defaultAPIHealthScanInterval          = time.Minute
-	defaultAPIHealthTimeout               = 30 * time.Second
-	defaultAPIHealthConcurrency           = 4
-	defaultAPIHealthBatchSize             = 50
-	defaultAPIHealthRetention             = 8 * 24 * time.Hour
+	defaultMaintenanceInterval               = 15 * time.Minute
+	defaultMaintenanceBatchSize              = 500
+	defaultSessionRetention                  = 7 * 24 * time.Hour
+	defaultEmailVerificationRetention        = 24 * time.Hour
+	defaultReadNotificationRetention         = 90 * 24 * time.Hour
+	defaultUnreadNotificationRetention       = 365 * 24 * time.Hour
+	defaultDomainEventRetention              = 365 * 24 * time.Hour
+	defaultAPIDeliveryCredentialRetention    = 30 * 24 * time.Hour
+	defaultDatabaseSlowQueryAfter            = time.Second
+	defaultAPIHealthScanInterval             = time.Minute
+	defaultAPIHealthTimeout                  = 30 * time.Second
+	defaultAPIHealthConcurrency              = 4
+	defaultAPIHealthBatchSize                = 50
+	defaultAPIHealthRetention                = 8 * 24 * time.Hour
+	defaultCommunityIdentityFoundingCutoffAt = "2026-09-30T23:59:59+08:00"
 )
 
 func Load() (Config, error) {
+	var err error
 	cfg := Config{
 		Port:               strings.TrimSpace(os.Getenv("PORT")),
 		AppEnv:             strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
@@ -182,7 +185,10 @@ func Load() (Config, error) {
 			SecretKey: strings.TrimSpace(os.Getenv("EVIDENCE_S3_SECRET_KEY")),
 		},
 	}
-	var err error
+	cfg.CommunityIdentityFoundingCutoffAt, err = parseCommunityIdentityCutoff()
+	if err != nil {
+		return Config{}, err
+	}
 	cfg.Database, err = loadPostgresOptions()
 	if err != nil {
 		return Config{}, err
@@ -557,6 +563,18 @@ func loadPostgresOptions() (database.PostgresOptions, error) {
 		return database.PostgresOptions{}, fmt.Errorf("database pool configuration is invalid: %w", err)
 	}
 	return options, nil
+}
+
+func parseCommunityIdentityCutoff() (time.Time, error) {
+	value := strings.TrimSpace(os.Getenv("COMMUNITY_FOUNDING_USER_CUTOFF_AT"))
+	if value == "" {
+		value = defaultCommunityIdentityFoundingCutoffAt
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("COMMUNITY_FOUNDING_USER_CUTOFF_AT must be RFC3339: %w", err)
+	}
+	return parsed, nil
 }
 
 func LoadContactReencrypt() (Config, error) {

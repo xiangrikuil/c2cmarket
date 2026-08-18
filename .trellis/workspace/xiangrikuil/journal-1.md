@@ -1970,3 +1970,25 @@ Consolidated message, reputation, and support workspace entries; added authorita
 ### Status
 
 [OK] **Completed**
+
+
+## Session 66: 完善 API 市场排序筛选
+
+**Date**: 2026-08-17
+**Task**: 完善 API 市场排序筛选
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+完成 API 市场三种视图的综合推荐、信誉度、近 30 天完成单数和响应速度排序；统一 OpenAPI、前后端 Mock/真实请求和 PostgreSQL keyset 分页；补充隔离数据库分页测试、前端回归测试、代码规范和验证记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `10a37bf` | (see git log) |
+
+### Status
+
+[OK] **Completed**
