@@ -1072,8 +1072,8 @@ func seedAPIQuotaRushBuyers(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		buyerContactIDs[index] = uuid.NewString()
 		versionID := uuid.NewString()
 		userRows = append(userRows, []any{buyerIDs[index], fmt.Sprintf("quota-rush-buyer-%04d", index), "并发额度买家", "active", now, now})
-			contactRows = append(contactRows, []any{buyerContactIDs[index], buyerIDs[index], "wechat", "微信", []string{"carpool_owner", "api_merchant", "buyer", "dispute"}, true, true, now, now})
-			versionRows = append(versionRows, []any{versionID, buyerContactIDs[index], buyerIDs[index], []byte{1, 2}, make([]byte, 12), "微信用户",
+		contactRows = append(contactRows, []any{buyerContactIDs[index], buyerIDs[index], "wechat", "微信", []string{"carpool_owner", "api_merchant", "buyer", "dispute"}, true, true, now, now})
+		versionRows = append(versionRows, []any{versionID, buyerContactIDs[index], buyerIDs[index], []byte{1, 2}, make([]byte, 12), "微信用户",
 			fmt.Sprintf("quota-rush-fingerprint-%04d", index), "test-v1", "test-v1", now})
 	}
 	if _, err := pool.CopyFrom(ctx, pgx.Identifier{"users"},
@@ -1081,7 +1081,7 @@ func seedAPIQuotaRushBuyers(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		t.Fatalf("seed rush buyers: %v", err)
 	}
 	if _, err := pool.CopyFrom(ctx, pgx.Identifier{"contact_methods"},
-			[]string{"id", "user_id", "type", "label", "usage_scopes", "is_default", "enabled", "created_at", "updated_at"}, pgx.CopyFromRows(contactRows)); err != nil {
+		[]string{"id", "user_id", "type", "label", "usage_scopes", "is_default", "enabled", "created_at", "updated_at"}, pgx.CopyFromRows(contactRows)); err != nil {
 		t.Fatalf("seed rush buyer contacts: %v", err)
 	}
 	if _, err := pool.CopyFrom(ctx, pgx.Identifier{"contact_method_versions"},
