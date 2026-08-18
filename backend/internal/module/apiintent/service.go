@@ -133,6 +133,10 @@ func (s *Manager) CreateWithIdempotency(ctx context.Context, userID, routeKey, k
 			return Intent{}, idempotency.Completion{}, false, appErr
 		}
 	}
+	if !apimarket.WithOrderabilityAt(service, s.now()).IsOrderable {
+		s.idempotency.Cancel(ctx, entry)
+		return Intent{}, idempotency.Completion{}, false, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在或当前不可购买。")
+	}
 	if err := validateCreateInput(input, service); err != nil {
 		s.idempotency.Cancel(ctx, entry)
 		return Intent{}, idempotency.Completion{}, false, err

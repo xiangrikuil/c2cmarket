@@ -581,6 +581,10 @@ export type ModelCapability = 'chat' | 'vision' | 'image_generation' | 'image_ed
 export type ModelCatalogItem = {
   id: string
   provider: string
+  providerCode?: string
+  providerCategory?: string
+  providerName?: string
+  providerActive?: boolean
   name: string
   capabilities: ModelCapability[]
   officialInputPricePerMillion: number | null
@@ -759,6 +763,7 @@ export type ApiService = {
   state: ApiServiceState
   online: boolean
   publiclyOrderable: boolean
+  orderableReasons?: string[]
   lastOnlineConfirmedAt: string
   onlineExpiresAt: string
   declaredTtftBand?: ApiTTFTBand

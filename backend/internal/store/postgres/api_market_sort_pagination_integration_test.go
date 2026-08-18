@@ -111,6 +111,151 @@ func TestPostgresPublicAPIQuotaDerivedSortsPaginate(t *testing.T) {
 	assertPublicQuotaFiltersBeforePagination(t, store, owner.ID, serviceID, now)
 }
 
+func TestPostgresPublicAPIPackageDiscoveryFiltersBeforePagination(t *testing.T) {
+	store := connectLifecycleTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	suffix := strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+
+	type catalogModel struct {
+		id       string
+		modelKey string
+		provider string
+	}
+	catalogModels := make([]catalogModel, 0, 3)
+	rows, err := store.pool.Query(ctx, `
+		SELECT model.id::text, model.model_key, provider.display_name
+		FROM api_model_catalog model
+		JOIN api_model_providers provider ON provider.id = model.provider_id
+		WHERE model.status = 'active' AND provider.status = 'active'
+		ORDER BY model.sort_order, model.id
+		LIMIT 3
+	`)
+	if err != nil {
+		t.Fatalf("query package discovery catalog models: %v", err)
+	}
+	for rows.Next() {
+		var model catalogModel
+		if err := rows.Scan(&model.id, &model.modelKey, &model.provider); err != nil {
+			rows.Close()
+			t.Fatalf("scan package discovery catalog model: %v", err)
+		}
+		catalogModels = append(catalogModels, model)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate package discovery catalog rows: %v", err)
+	}
+	if len(catalogModels) != 3 {
+		t.Fatalf("package discovery test requires three active catalog models, got %d", len(catalogModels))
+	}
+
+	ownerIDs := make([]string, 0, 4)
+	serviceIDs := make([]string, 0, 4)
+	for index := 0; index < 4; index++ {
+		owner, appErr := store.EnsureUser(ctx, fmt.Sprintf("api-package-discovery-%s-%d", suffix, index), false, now)
+		if appErr != nil {
+			t.Fatalf("ensure package discovery owner %d: %v", index, appErr)
+		}
+		ownerIDs = append(ownerIDs, owner.ID)
+		serviceID := seedPublicAPISortService(t, store, owner.ID, now, index)
+		serviceIDs = append(serviceIDs, serviceID)
+		if _, err := store.pool.Exec(ctx, `
+			UPDATE api_services
+			SET billing_mode = 'fixed_package', usage_visibility = 'fixed_package_only',
+			    available_usd_allowance = NULL
+			WHERE id = $1
+		`, serviceID); err != nil {
+			t.Fatalf("mark package discovery service %d fixed: %v", index, err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, ownerID := range ownerIDs {
+			_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_service_payment_options WHERE api_service_id IN (SELECT id FROM api_services WHERE owner_user_id = $1)`, ownerID)
+			_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_services WHERE owner_user_id = $1`, ownerID)
+			_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_probe_connections WHERE owner_user_id = $1`, ownerID)
+			_, _ = store.pool.Exec(context.Background(), `UPDATE contact_methods SET current_version_id = NULL WHERE user_id = $1`, ownerID)
+			_, _ = store.pool.Exec(context.Background(), `DELETE FROM contact_method_versions WHERE owner_user_id = $1`, ownerID)
+			_, _ = store.pool.Exec(context.Background(), `DELETE FROM contact_methods WHERE user_id = $1`, ownerID)
+			_, _ = store.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, ownerID)
+		}
+	})
+
+	seedPackage := func(serviceIndex int, models []catalogModel, enabled []bool, stock int) {
+		t.Helper()
+		packageID := uuid.NewString()
+		if _, err := store.pool.Exec(ctx, `
+			INSERT INTO api_service_packages (
+				id, api_service_id, name, price_cny, duration_days, description,
+				panel_allowance, stock_total, stock_available, enabled, created_at, updated_at
+			) VALUES ($1, $2, $3, 10, 7, '公开套餐发现集成测试', 10, 2, $4, true, $5, $5)
+		`, packageID, serviceIDs[serviceIndex], fmt.Sprintf("公开套餐 %d", serviceIndex), stock, now); err != nil {
+			t.Fatalf("seed discovery package %d: %v", serviceIndex, err)
+		}
+		for modelIndex, model := range models {
+			serviceModelID := uuid.NewString()
+			if _, err := store.pool.Exec(ctx, `
+				INSERT INTO api_service_models (
+					id, api_service_id, distribution_system, model_catalog_id,
+					model_key_snapshot, provider_snapshot, merchant_multiplier,
+					enabled, created_at, updated_at
+				) VALUES ($1, $2, 'sub2api', $3, $4, $5, 1, $6, $7, $7)
+			`, serviceModelID, serviceIDs[serviceIndex], model.id, model.modelKey, model.provider, enabled[modelIndex], now); err != nil {
+				t.Fatalf("seed discovery service model %d/%d: %v", serviceIndex, modelIndex, err)
+			}
+			if _, err := store.pool.Exec(ctx, `
+				INSERT INTO api_service_package_models (
+					api_service_package_id, api_service_model_id, api_service_id, created_at
+				) VALUES ($1, $2, $3, $4)
+			`, packageID, serviceModelID, serviceIDs[serviceIndex], now); err != nil {
+				t.Fatalf("seed discovery package model %d/%d: %v", serviceIndex, modelIndex, err)
+			}
+		}
+	}
+	seedPackage(0, []catalogModel{catalogModels[0]}, []bool{false}, 2)
+	seedPackage(1, catalogModels[:2], []bool{true, true}, 2)
+	seedPackage(2, []catalogModel{catalogModels[2]}, []bool{true}, 0)
+	seedPackage(3, []catalogModel{catalogModels[0]}, []bool{true}, 2)
+
+	items := collectPublicAPIServiceIntegrationPages(t, store, apimarket.PublicServiceFilter{
+		BillingMode: apimarket.ServiceBillingModeFixedPackage,
+		PackageModelCatalogIDs: []string{
+			catalogModels[0].id,
+			catalogModels[1].id,
+		},
+	}, 1)
+	assertPublicAPIServicePageCoverage(t, items, []string{serviceIDs[1], serviceIDs[3]})
+
+	availability, appErr := store.ListPublicAPIPackageFilterAvailability(ctx)
+	if appErr != nil {
+		t.Fatalf("list package filter availability: %v", appErr)
+	}
+	availableModels := make(map[string]struct{}, len(availability.Facts))
+	availableDurations := make(map[int]struct{}, len(availability.Facts))
+	for _, fact := range availability.Facts {
+		availableModels[fact.ModelCatalogID] = struct{}{}
+		availableDurations[fact.DurationDays] = struct{}{}
+	}
+	for _, model := range catalogModels[:2] {
+		if _, ok := availableModels[model.id]; !ok {
+			t.Fatalf("available package model %s is missing from filter options: %+v", model.id, availability)
+		}
+	}
+	if _, ok := availableModels[catalogModels[2].id]; ok {
+		t.Fatalf("sold-out-only model must be absent from filter options: %+v", availability)
+	}
+	if len(availableDurations) != 1 {
+		t.Fatalf("unexpected package duration options: %+v", availability.Facts)
+	}
+
+	if _, appErr := store.GetPublicAPIService(ctx, serviceIDs[2]); appErr != nil {
+		t.Fatalf("sold-out package must remain visible by direct detail: %v", appErr)
+	}
+	if _, appErr := store.GetPublicAPIService(ctx, serviceIDs[0]); appErr == nil || appErr.Status != 404 {
+		t.Fatalf("package backed only by disabled service models must be hidden, got %+v", appErr)
+	}
+}
+
 func seedPublicAPISortService(t *testing.T, store *Store, ownerID string, now time.Time, index int) string {
 	t.Helper()
 	ctx := context.Background()

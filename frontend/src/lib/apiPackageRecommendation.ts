@@ -4,20 +4,17 @@ export type ApiPackageRecommendation = {
   service: ApiService
   package: ApiServicePackage
   selectedModel: ApiServicePackageModel
-  declaredUnitCost: number
-  score: number
-  valueScore: number
-  fulfillmentScore: number
-  responseScore: number
-  freshnessScore: number
+  matchedModels: ApiServicePackageModel[]
+  recommendationEligible: boolean
+  declaredUnitCost: number | null
+  score: number | null
+  valueScore: number | null
+  fulfillmentScore: number | null
+  responseScore: number | null
+  freshnessScore: number | null
 }
 
-type RecommendationCandidate = Omit<ApiPackageRecommendation, 'score' | 'valueScore' | 'fulfillmentScore' | 'responseScore' | 'freshnessScore'>
-
-export type ApiPackageFilterSelection = {
-  modelCatalogId: string
-  durationDays: number
-}
+type RecommendationCandidate = Omit<ApiPackageRecommendation, 'score' | 'valueScore' | 'fulfillmentScore' | 'responseScore' | 'freshnessScore'> & { declaredUnitCost: number }
 
 const finiteOr = (value: number, fallback: number) => Number.isFinite(value) ? value : fallback
 
@@ -41,44 +38,53 @@ const freshnessScore = (service: ApiService, now: Date) => {
   return 100 * Math.exp(-ageDays / 30)
 }
 
-export const getDefaultApiPackageFilter = (
-  services: ApiService[],
-  availableModelCatalogIds?: ReadonlySet<string>,
-): ApiPackageFilterSelection | null => {
-  for (const service of services) {
-    if (!service.publiclyOrderable || service.billingMode !== 'fixed_package') continue
-    for (const item of service.packages ?? []) {
-      if (!item.enabled || item.stockAvailable <= 0 || ![1, 3, 7, 30].includes(item.durationDays) || item.panelAllowance <= 0) continue
-      const model = item.models.find(candidate => !availableModelCatalogIds || availableModelCatalogIds.has(candidate.modelCatalogId))
-      if (model) return { modelCatalogId: model.modelCatalogId, durationDays: item.durationDays }
-    }
-  }
-  return null
-}
-
 export const rankApiPackages = (
   services: ApiService[],
-  modelCatalogId: string,
+  modelCatalogIds: string | string[],
   durationDays: number,
   now = new Date(),
+  multiplierMax?: number,
 ): ApiPackageRecommendation[] => {
-  if (!modelCatalogId || ![1, 3, 7, 30].includes(durationDays)) return []
+  const selectedIds = new Set((Array.isArray(modelCatalogIds) ? modelCatalogIds : [modelCatalogIds]).filter(Boolean))
+  const selectedDuration = [1, 3, 7, 30].includes(durationDays) ? durationDays : null
+  const recommendationEligible = selectedIds.size === 1 && selectedDuration !== null
 
   const candidates: RecommendationCandidate[] = []
   for (const service of services) {
     if (!service.publiclyOrderable || service.billingMode !== 'fixed_package') continue
     for (const item of service.packages ?? []) {
-      const selectedModel = item.models.find(model => model.modelCatalogId === modelCatalogId)
-      if (!item.enabled || item.stockAvailable <= 0 || item.durationDays !== durationDays || !selectedModel || item.panelAllowance <= 0) continue
+      const matchedModels = selectedIds.size
+        ? item.models.filter(model => selectedIds.has(model.modelCatalogId) && (multiplierMax === undefined || model.merchantMultiplier <= multiplierMax))
+        : item.models.filter(model => multiplierMax === undefined || model.merchantMultiplier <= multiplierMax)
+      const selectedModel = matchedModels[0]
+      if (!item.enabled || item.stockAvailable <= 0 || (selectedDuration !== null && item.durationDays !== selectedDuration) || !selectedModel || item.panelAllowance <= 0) continue
       candidates.push({
         service,
         package: item,
         selectedModel,
-        declaredUnitCost: item.priceCny * selectedModel.merchantMultiplier / item.panelAllowance,
+        matchedModels,
+        recommendationEligible,
+        declaredUnitCost: recommendationEligible ? item.priceCny * selectedModel.merchantMultiplier / item.panelAllowance : 0,
       })
     }
   }
   if (!candidates.length) return []
+
+  if (!recommendationEligible) {
+    return candidates.map(item => ({
+      ...item,
+      declaredUnitCost: null,
+      score: null,
+      valueScore: null,
+      fulfillmentScore: null,
+      responseScore: null,
+      freshnessScore: null,
+    })).sort((left, right) =>
+      new Date(right.service.serviceUpdatedAt ?? 0).getTime() - new Date(left.service.serviceUpdatedAt ?? 0).getTime()
+      || left.package.sortOrder - right.package.sortOrder
+      || left.package.id.localeCompare(right.package.id),
+    )
+  }
 
   const bestUnitCost = Math.min(...candidates.map(item => item.declaredUnitCost))
   return candidates.map(item => {

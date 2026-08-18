@@ -315,18 +315,43 @@ type ServiceAdminActionInput struct {
 }
 
 type PublicServiceFilter struct {
-	PaymentMethod         string
-	BillingMode           string
-	Search                string
-	ModelCatalogID        string
-	DistributionSystem    string
-	MaxCNYPerUSD          string
-	MinimumIntentCNYMax   string
-	PackageModelCatalogID string
-	PackageDurationDays   int
-	PackagePriceCNYMax    string
-	PackageMultiplierMax  string
-	Sort                  string
+	PaymentMethod          string
+	BillingMode            string
+	Search                 string
+	ModelCatalogID         string
+	DistributionSystem     string
+	MaxCNYPerUSD           string
+	MinimumIntentCNYMax    string
+	PackageModelCatalogID  string
+	PackageModelCatalogIDs []string
+	PackageDurationDays    int
+	PackagePriceCNYMax     string
+	PackageMultiplierMax   string
+	Sort                   string
+}
+
+type PublicPackageFilterAvailability struct {
+	Facts []PublicPackageFilterAvailabilityFact
+}
+
+type PublicPackageFilterAvailabilityFact struct {
+	ModelCatalogID string
+	DurationDays   int
+}
+
+type PublicPackageModelFilterOption struct {
+	ID                string
+	ModelKey          string
+	ProviderCode      string
+	ProviderCategory  string
+	ProviderName      string
+	ProviderSortOrder int
+	SortOrder         int
+}
+
+type PublicPackageFilterOptions struct {
+	Models    []PublicPackageModelFilterOption
+	Durations []int
 }
 
 type OwnerServiceFilter struct {

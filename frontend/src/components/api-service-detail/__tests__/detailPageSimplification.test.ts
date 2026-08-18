@@ -82,3 +82,14 @@ test('formats visible backend timestamps as Beijing time', () => {
   assert.match(prices, /formatBeijingDateTime\(service\.officialPricingUpdatedAt\)/)
   assert.doesNotMatch(prices, /最终由双方站外确认/)
 })
+
+test('keeps sold-out package detail visible and disables purchase', () => {
+  const page = pageSource('ApiServiceDetailPage')
+  const panel = componentSource('ApiPurchasePanel')
+
+  assert.match(page, /orderableReasons\?\.includes\('package_sold_out'\)/)
+  assert.match(page, /<Alert v-if="packageSoldOut">[\s\S]*短期流量包已售罄[\s\S]*创建订单已禁用/)
+  assert.match(page, /<Alert v-if="packageSoldOut">[\s\S]*<Card v-else-if="!canCreateApiOrder"/)
+  assert.match(panel, /v-else-if="packageSoldOut"[\s\S]*所有套餐已售罄[\s\S]*库存 0/)
+  assert.match(panel, /packageSoldOut \? '暂时售罄'/)
+})

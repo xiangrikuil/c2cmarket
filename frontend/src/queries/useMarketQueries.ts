@@ -47,6 +47,7 @@ import {
   getApiQuotaOffers,
   getApiQuotaOffersPage,
   getApiQuotaSaleSlots,
+  getApiPackageFilterOptions,
   getCarpoolApplicationById,
   getCarpoolApplicationEligibility,
   getCarpoolApplicationContacts,
@@ -310,6 +311,15 @@ export function useCarpoolPaymentMethods() {
 
 export function useModelCatalog() {
   return useQuery({ queryKey: ['model-catalog', 'active'], queryFn: getModelCatalog })
+}
+
+export function useApiPackageFilterOptions(enabled: Ref<boolean> | boolean = true) {
+  return useQuery({
+    queryKey: ['api-services', 'filter-options', 'fixed_package'],
+    queryFn: getApiPackageFilterOptions,
+    enabled: computed(() => valueOf(enabled)),
+    staleTime: 30_000,
+  })
 }
 
 export function useApiServices(filters: Ref<ApiServiceFilters> | ApiServiceFilters = {}) {

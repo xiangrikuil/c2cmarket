@@ -1,6 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { CAPABILITY, type Capability } from './lib/capabilities'
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from './lib/featureFlags'
+import { apiMarketPath, apiMarketQueryForView, apiMarketViewFromQuery } from './lib/apiMarketRoutes'
 
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
@@ -73,8 +74,22 @@ const apiQuotaRushPublishRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLE
   : {
       path: '/api-market/quota/new',
       name: 'api-quota-rush-new',
-      redirect: { path: '/api-market', query: { view: 'free' } },
+      redirect: { path: '/api-market/free' },
       meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
+
+const apiMarketLimitedRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLED
+  ? {
+      path: '/api-market/limited',
+      name: 'api-market-limited',
+      component: ApiMarketPage,
+      meta: { apiMarketView: 'limited' },
+    }
+  : {
+      path: '/api-market/limited',
+      name: 'api-market-limited',
+      redirect: to => ({ path: '/api-market/free', query: apiMarketQueryForView(to.query, 'free') }),
+      meta: { apiMarketView: 'limited' },
     }
 
 export type WorkspaceNavKey =
@@ -112,7 +127,17 @@ export const routes: RouteRecordRaw[] = [
     { path: '/carpools/detail', redirect: '/carpools/c1' },
     { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
-    { path: '/api-market', name: 'api-market', component: ApiMarketPage },
+    {
+      path: '/api-market',
+      name: 'api-market',
+      redirect: to => {
+        const view = apiMarketViewFromQuery(to.query.view)
+        return { path: apiMarketPath(view), query: apiMarketQueryForView(to.query, view) }
+      },
+    },
+    apiMarketLimitedRoute,
+    { path: '/api-market/packages', name: 'api-market-packages', component: ApiMarketPage, meta: { apiMarketView: 'packages' } },
+    { path: '/api-market/free', name: 'api-market-free', component: ApiMarketPage, meta: { apiMarketView: 'free' } },
     apiQuotaRushPublishRoute,
     { path: '/api-market/detail', redirect: '/api-market/a1' },
     { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },

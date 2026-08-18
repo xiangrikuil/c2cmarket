@@ -25,6 +25,18 @@ const staticSeo: Record<string, Omit<RouteSeo, 'indexable'>> = {
     title: 'API 服务市场｜C2CMarket',
     description: '比较公开 API 服务的额度售价、模型支持、最低订单、交付方式与商户承诺。',
   },
+  '/api-market/limited': {
+    title: 'API 限量额度包｜C2CMarket',
+    description: '浏览限时、限量发布的 API 额度包，比较模型、倍率、库存、销售场次与交付方式。',
+  },
+  '/api-market/packages': {
+    title: 'API 短期流量包｜C2CMarket',
+    description: '浏览可购买的 API 短期流量包，按模型、有效期、套餐价格与倍率筛选。',
+  },
+  '/api-market/free': {
+    title: 'API 自选额度｜C2CMarket',
+    description: '比较可自选金额的 API 额度服务、模型支持、额度单价、最低订单与交付方式。',
+  },
 }
 
 const privatePrefixes = [
@@ -91,6 +103,9 @@ export function breadcrumbItems(route: RouteLocationNormalizedLoaded, siteUrl: s
     'official-prices': '官网价格',
     carpools: '订阅拼车',
     'api-market': 'API 市场',
+    limited: '限量额度包',
+    packages: '短期流量包',
+    free: '自选额度',
     u: '用户主页',
   }
 
