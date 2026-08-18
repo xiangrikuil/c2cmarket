@@ -9,6 +9,7 @@ const backendAdapter = readFileSync(new URL('../apiMarketBackend.ts', import.met
 const contactSelector = readFileSync(new URL('../../components/api-service-publish/MerchantContactMethodsSection.vue', import.meta.url), 'utf8')
 const refundEvidence = readFileSync(new URL('../../components/api-order/ApiRefundPolicyEvidence.vue', import.meta.url), 'utf8')
 const router = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
+const styles = readFileSync(new URL('../../styles.css', import.meta.url), 'utf8')
 
 describe('API 订单角色视图', () => {
   it('gives the buyer a review window and explicit credential actions', () => {
@@ -17,6 +18,13 @@ describe('API 订单角色视图', () => {
     expect(detail).toContain('确认凭证可用')
     expect(detail).toContain('凭证存在问题')
     expect(detail).toContain('credentialProblemOptions')
+    expect(detail).toContain('id="delivery-credential"')
+    expect(detail).toContain('订单已完成 · 交付凭证仍可查看')
+    expect(detail).toContain('交付凭证已在上方优先展示')
+    expect(buyerList).toContain("hash: '#delivery-credential'")
+    expect(buyerList).toContain('查看交付凭证')
+    expect(router).toContain("meta: { ...userAuthMeta, scrollToTop: false }")
+    expect(detail).toContain("hash === '#delivery-credential'")
     expect(detail).not.toContain('window.confirm')
     expect(buyerList).toContain("'待核验'")
   })
@@ -93,11 +101,12 @@ describe('API 订单详情 UI 契约', () => {
     expect(source).toContain('overflow-x-auto')
   })
 
-  it('将订单、接入凭证和冻结联系方式分区展示', () => {
+  it('将交付凭证前置于订单信息和冻结联系方式', () => {
     expect(source).toContain("lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.1fr)_minmax(280px,0.8fr)]")
     expect(source).toContain('API 购买订单')
     expect(source).toContain('API 销售订单')
-    expect(source).toContain('接入凭证')
+    expect(source).toContain('交付凭证')
+    expect(source.indexOf('id="delivery-credential"')).toBeLessThan(source.indexOf('lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.1fr)_minmax(280px,0.8fr)]'))
     expect(source).not.toContain('支付凭证')
     expect(source).toContain('apiOrderMerchantContactSnapshot(order.value)')
     expect(source).toContain('apiOrderBuyerContactSnapshot(order.value)')
@@ -112,6 +121,13 @@ describe('API 订单详情 UI 契约', () => {
     expect(source).toContain("passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password)")
     expect(source).toContain('复制 API Key')
     expect(source).toContain('显示初始密码')
+  })
+
+  it('按订单列表容器宽度收起次要列并保持凭证入口可见', () => {
+    expect(styles).toContain('container-name: api-orders')
+    expect(styles).toContain('@container api-orders (max-width: 820px)')
+    expect(styles).toContain('.my-api-order-row > .my-transaction-owner { display: none; }')
+    expect(styles).toContain('@container api-orders (max-width: 560px)')
   })
 
   it('凭证销毁后仅展示审计事实且不承诺长期保存', () => {

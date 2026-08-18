@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, FileCheck2, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
@@ -163,6 +163,7 @@ const canResolveLatePayment = computed(() => isMerchantView.value && order.value
 const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
 const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
+const showCredentialPrimaryAction = computed(() => !isMerchantView.value && Boolean(order.value?.deliveryCredential))
 const canOpenDispute = computed(() => Boolean(
   order.value
 	&& !isMerchantView.value
@@ -572,6 +573,10 @@ function scrollToDeliveryForm() {
   document.getElementById('api-order-delivery-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+function scrollToDeliveryCredential(behavior: ScrollBehavior = 'smooth') {
+  document.getElementById('delivery-credential')?.scrollIntoView({ behavior, block: 'start' })
+}
+
 function deliveryPayload() {
   if (deliveryKind.value === 'login_account') {
     return {
@@ -595,7 +600,7 @@ async function submitDelivery() {
   try {
     await submitDeliveryMutation.mutateAsync({ id: order.value.id, payload: deliveryPayload(), version: order.value.version })
     await refresh(order.value.id)
-    toast.success('交付信息已提交，买家可长期查看。')
+    toast.success('交付信息已提交，买家可在保留期内查看。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交交付信息失败。')
   }
@@ -639,6 +644,20 @@ onMounted(() => {
     now.value = Date.now()
   }, 1000)
 })
+
+watch(
+  () => [route.hash, order.value?.id, order.value?.deliveryCredential?.submittedAt] as const,
+  async ([hash]) => {
+    if (!order.value) return
+    await nextTick()
+    if (hash === '#delivery-credential' && order.value.deliveryCredential) {
+      scrollToDeliveryCredential('auto')
+      return
+    }
+    window.scrollTo({ left: 0, top: 0, behavior: 'auto' })
+  },
+  { immediate: true },
+)
 
 onBeforeUnmount(() => {
   if (countdownTimer) clearInterval(countdownTimer)
@@ -831,14 +850,9 @@ onBeforeUnmount(() => {
           <Button v-else-if="canSubmitDelivery" size="lg" :disabled="actionBusy" @click="scrollToDeliveryForm">
             <KeyRound class="h-4 w-4" />继续填写交付信息
           </Button>
-          <template v-else-if="canConfirmComplete">
-            <Button size="lg" :disabled="actionBusy" @click="completionConfirmOpen = true">
-              <CheckCircle2 class="h-4 w-4" />确认凭证可用
-            </Button>
-            <Button v-if="canReportCredentialProblem" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="credentialProblemOpen = true">
-              <ShieldAlert class="h-4 w-4" />凭证存在问题
-            </Button>
-          </template>
+          <Button v-else-if="showCredentialPrimaryAction" size="lg" @click="scrollToDeliveryCredential()">
+            <KeyRound class="h-4 w-4" />查看交付凭证
+          </Button>
           <Button v-else-if="canOpenReviewCenter" size="lg" :disabled="actionBusy" @click="openReviewCenter">
             <Star class="h-4 w-4" />{{ isMerchantView ? '评价买家' : '评价卖家' }}
           </Button>
@@ -846,6 +860,81 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+    </Card>
+
+    <Alert v-if="!isMerchantView && order.status === 'completed' && order.deliveryCredential && !order.deliveryCredential.destroyedAt" class="border-success/35 bg-success/10">
+      <KeyRound class="text-success" />
+      <AlertTitle>订单已完成 · 交付凭证仍可查看</AlertTitle>
+      <AlertDescription>凭证只在平台保留期内提供，请及时保存买家专属接入信息。</AlertDescription>
+    </Alert>
+
+    <Card
+      v-if="order.deliveryCredential"
+      id="delivery-credential"
+      class="scroll-mt-24 border-primary/25 p-5"
+      aria-labelledby="delivery-credential-title"
+    >
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 id="delivery-credential-title" class="flex items-center gap-2 font-semibold"><KeyRound class="h-4 w-4 text-primary" />交付凭证</h2>
+          <p class="mt-1 text-xs text-muted-foreground">买家专属接入信息 · {{ getApiOrderDeliveryKindLabel(order.deliveryCredential.deliveryKind) }} · {{ formatOrderDateTime(order.deliveryCredential.submittedAt) }}</p>
+        </div>
+        <Badge :variant="order.deliveryCredential.destroyedAt ? 'secondary' : 'verified'">{{ order.deliveryCredential.destroyedAt ? '已销毁' : '保留期内可查看' }}</Badge>
+      </div>
+      <div v-if="order.deliveryCredential.destroyedAt" class="mt-4 rounded-md border border-border bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
+        历史凭证已按保留策略销毁，平台仅保留交付类型、提交时间和销毁时间等审计事实。
+        <div class="mt-1 text-xs">销毁时间：{{ formatOrderDateTime(order.deliveryCredential.destroyedAt) }}</div>
+      </div>
+      <div v-else class="mt-4 grid gap-3 text-sm md:grid-cols-2">
+        <div v-if="order.deliveryCredential.apiBaseUrl" class="rounded-md border border-border p-3">
+          <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">API Base URL</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.apiBaseUrl, 'API Base URL')"><Copy class="h-4 w-4" />复制</Button></div>
+          <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.apiBaseUrl }}</div>
+        </div>
+        <div v-if="order.deliveryCredential.apiKey" class="rounded-md border border-border p-3">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted-foreground">API Key</span>
+            <span class="flex gap-1.5">
+              <Button size="icon" variant="outline" :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" :aria-label="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="apiKeyVisible = !apiKeyVisible">
+                <EyeOff v-if="apiKeyVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ apiKeyVisible ? '隐藏 API Key' : '显示 API Key' }}</span>
+              </Button>
+              <Button size="icon" variant="outline" title="复制 API Key" aria-label="复制 API Key" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /><span class="sr-only">复制 API Key</span></Button>
+            </span>
+          </div>
+          <div class="mt-2 break-all font-mono text-xs">{{ apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey) }}</div>
+        </div>
+        <div v-if="order.deliveryCredential.panelLoginUrl" class="rounded-md border border-border p-3">
+          <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">登录地址</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.panelLoginUrl, '登录地址')"><Copy class="h-4 w-4" />复制</Button></div>
+          <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.panelLoginUrl }}</div>
+        </div>
+        <div v-if="order.deliveryCredential.username" class="rounded-md border border-border p-3">
+          <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">用户名</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.username, '用户名')"><Copy class="h-4 w-4" />复制</Button></div>
+          <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.username }}</div>
+        </div>
+        <div v-if="order.deliveryCredential.password" class="rounded-md border border-border p-3">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted-foreground">初始密码</span>
+            <span class="flex gap-1.5">
+              <Button size="icon" variant="outline" :title="passwordVisible ? '隐藏初始密码' : '显示初始密码'" :aria-label="passwordVisible ? '隐藏初始密码' : '显示初始密码'" @click="passwordVisible = !passwordVisible">
+                <EyeOff v-if="passwordVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ passwordVisible ? '隐藏初始密码' : '显示初始密码' }}</span>
+              </Button>
+              <Button size="icon" variant="outline" title="复制初始密码" aria-label="复制初始密码" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /><span class="sr-only">复制初始密码</span></Button>
+            </span>
+          </div>
+          <div class="mt-2 break-all font-mono text-xs">{{ passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password) }}</div>
+        </div>
+        <div v-if="order.deliveryCredential.instructions" class="whitespace-pre-line rounded-md border border-border bg-muted/40 p-3 md:col-span-2">{{ order.deliveryCredential.instructions }}</div>
+      </div>
+      <div v-if="!isMerchantView && (canConfirmComplete || canOpenReviewCenter)" class="mt-5 flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
+        <Button v-if="canReportCredentialProblem" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="credentialProblemOpen = true">
+          <ShieldAlert class="h-4 w-4" />凭证存在问题
+        </Button>
+        <Button v-if="canConfirmComplete" :disabled="actionBusy" @click="completionConfirmOpen = true">
+          <CheckCircle2 class="h-4 w-4" />确认凭证可用
+        </Button>
+        <Button v-else-if="canOpenReviewCenter" variant="outline" :disabled="actionBusy" @click="openReviewCenter">
+          <Star class="h-4 w-4" />评价卖家
+        </Button>
+      </div>
     </Card>
 
     <Alert v-if="showMerchantTimeout">
@@ -922,61 +1011,7 @@ onBeforeUnmount(() => {
       </Collapsible>
 
       <div v-auto-animate="functionalMotion" class="min-w-0 space-y-4">
-
-        <Card v-if="order.deliveryCredential" class="p-5">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h2 class="font-semibold">接入凭证</h2>
-              <p class="mt-1 text-xs text-muted-foreground">{{ getApiOrderDeliveryKindLabel(order.deliveryCredential.deliveryKind) }} · {{ formatOrderDateTime(order.deliveryCredential.submittedAt) }}</p>
-            </div>
-            <Badge :variant="order.deliveryCredential.destroyedAt ? 'secondary' : 'verified'">{{ order.deliveryCredential.destroyedAt ? '已销毁' : '保留期内可查看' }}</Badge>
-          </div>
-          <div v-if="order.deliveryCredential.destroyedAt" class="mt-4 rounded-md border border-border bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
-            历史凭证已按保留策略销毁，平台仅保留交付类型、提交时间和销毁时间等审计事实。
-            <div class="mt-1 text-xs">销毁时间：{{ formatOrderDateTime(order.deliveryCredential.destroyedAt) }}</div>
-          </div>
-          <div v-else class="mt-4 space-y-3 text-sm">
-            <div v-if="order.deliveryCredential.apiBaseUrl" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">API Base URL</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.apiBaseUrl, 'API Base URL')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.apiBaseUrl }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.apiKey" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">API Key</span>
-                <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" :aria-label="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="apiKeyVisible = !apiKeyVisible">
-                    <EyeOff v-if="apiKeyVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ apiKeyVisible ? '隐藏 API Key' : '显示 API Key' }}</span>
-                  </Button>
-                  <Button size="icon" variant="outline" title="复制 API Key" aria-label="复制 API Key" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /><span class="sr-only">复制 API Key</span></Button>
-                </span>
-              </div>
-              <div class="mt-2 break-all font-mono text-xs">{{ apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey) }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.panelLoginUrl" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">登录地址</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.panelLoginUrl, '登录地址')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.panelLoginUrl }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.username" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">用户名</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.username, '用户名')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.username }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.password" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">初始密码</span>
-                <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="passwordVisible ? '隐藏初始密码' : '显示初始密码'" :aria-label="passwordVisible ? '隐藏初始密码' : '显示初始密码'" @click="passwordVisible = !passwordVisible">
-                    <EyeOff v-if="passwordVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ passwordVisible ? '隐藏初始密码' : '显示初始密码' }}</span>
-                  </Button>
-                  <Button size="icon" variant="outline" title="复制初始密码" aria-label="复制初始密码" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /><span class="sr-only">复制初始密码</span></Button>
-                </span>
-              </div>
-              <div class="mt-2 break-all font-mono text-xs">{{ passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password) }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.instructions" class="rounded-md border border-border bg-muted/40 p-3 whitespace-pre-line">{{ order.deliveryCredential.instructions }}</div>
-          </div>
-        </Card>
-
-        <Card v-else-if="canSubmitDelivery" id="api-order-delivery-form" class="scroll-mt-4 border-primary/25 p-5">
+        <Card v-if="canSubmitDelivery" id="api-order-delivery-form" class="scroll-mt-4 border-primary/25 p-5">
           <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 class="font-semibold">填写接入信息</h2>
@@ -1013,8 +1048,9 @@ onBeforeUnmount(() => {
         </Card>
 
         <Card v-else class="p-5">
-          <h2 class="font-semibold">接入凭证</h2>
-          <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ order.status === 'cancelled' ? '订单已取消，未产生接入凭证。' : '商户确认收款并提交接入信息后，本区域将展示订单专属凭证。' }}</p>
+          <h2 class="font-semibold">交付凭证</h2>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ order.deliveryCredential ? '交付凭证已在上方优先展示，可在平台保留期内查看。' : order.status === 'cancelled' ? '订单已取消，未产生交付凭证。' : '商户确认收款并提交接入信息后，本区域将展示订单专属交付凭证。' }}</p>
+          <Button v-if="order.deliveryCredential" class="mt-3" size="sm" variant="outline" @click="scrollToDeliveryCredential()"><KeyRound class="h-4 w-4" />查看交付凭证</Button>
         </Card>
       </div>
 

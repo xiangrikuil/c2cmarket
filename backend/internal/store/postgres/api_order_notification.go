@@ -23,6 +23,7 @@ type apiOrderNotificationSpec struct {
 
 func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string) (apiOrderNotificationSpec, bool) {
 	buyerTarget := "/my/api-orders/" + order.ID
+	buyerCredentialTarget := buyerTarget + "#delivery-credential"
 	sellerTarget := "/merchant/api-orders/" + order.ID
 	switch eventType {
 	case apiorder.EventPaymentSubmitted:
@@ -65,14 +66,14 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 			RecipientUserID: order.BuyerUserID,
 			Title:           "卖家已提交交付凭证",
 			Body:            apiOrderNotificationBody(order, "卖家已提交买家专属接入信息，请在核验期内确认可用或反馈问题。"),
-			TargetURL:       buyerTarget,
+			TargetURL:       buyerCredentialTarget,
 		}, true
 	case apiorder.EventDeliveryReviewReminder:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,
 			Title:           "交付凭证核验即将截止",
 			Body:            apiOrderNotificationBody(order, "请尽快核验交付凭证；如未反馈问题，订单将在核验期结束后自动完成。"),
-			TargetURL:       buyerTarget,
+			TargetURL:       buyerCredentialTarget,
 		}, true
 	case apiorder.EventCompleted:
 		return apiOrderNotificationSpec{

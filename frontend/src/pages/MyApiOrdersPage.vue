@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { ArrowRight, CalendarClock, Code2, WalletCards } from 'lucide-vue-next'
+import { ArrowRight, CalendarClock, Code2, KeyRound, WalletCards } from 'lucide-vue-next'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -138,8 +138,13 @@ function disputeActionLabel(item: (typeof rows.value)[number]) {
             <div class="my-transaction-state">
               <StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'buyer')" />
               <StatusBadge v-if="item.disputeCaseId" status="open" label="售后处理中" />
-              <span>{{ item.disputeCaseId ? disputeActionLabel(item) : getApiOrderNextAction(item, 'buyer') }}</span>
+              <span class="my-transaction-next-action">{{ item.disputeCaseId ? disputeActionLabel(item) : getApiOrderNextAction(item, 'buyer') }}</span>
               <RouterLink v-if="item.disputeCaseId" :to="`/my/disputes/${item.disputeCaseId}?orderId=${item.id}`" class="text-xs font-medium text-primary">查看案件</RouterLink>
+              <Button v-if="item.status === 'delivery_submitted' || item.status === 'completed'" as-child size="sm" variant="outline" class="mt-1">
+                <RouterLink :to="{ path: `/my/api-orders/${item.id}`, hash: '#delivery-credential' }">
+                  <KeyRound class="h-4 w-4" />查看交付凭证
+                </RouterLink>
+              </Button>
             </div>
             <ArrowRight class="my-transaction-arrow" />
           </Card>

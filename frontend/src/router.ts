@@ -128,7 +128,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage, meta: userAuthMeta },
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage, meta: userAuthMeta },
-    { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: userAuthMeta },
+    { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: { ...userAuthMeta, scrollToTop: false } },
     { path: '/my/disputes/:id', name: 'my-api-order-dispute', component: MyApiOrderDisputePage, meta: userAuthMeta },
     { path: '/my/api-services', name: 'my-api-services', component: MyApiServicesPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/my/api-services/:id', name: 'my-api-service-detail', component: MyApiServiceDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
