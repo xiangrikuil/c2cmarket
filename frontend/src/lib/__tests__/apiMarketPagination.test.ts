@@ -168,7 +168,8 @@ describe('API 市场无限滚动接线', () => {
     assert.equal((marketQueriesSource.match(/getNextPageParam: \(lastPage, _pages, _lastPageParam, pageParams\) => nextUnseenCursor\(lastPage\.nextCursor, pageParams\)/g) ?? []).length, 2)
     assert.equal((marketQueriesSource.match(/enabled: computed\(\(\) => valueOf\(enabled\)\)/g) ?? []).length >= 2, true)
     assert.match(marketPageSource, /const visibleMarketQuery = activeView\.value === 'limited' \? quotaQuery : freeServicesQuery/)
-    assert.match(marketPageSource, /prefetchQueriesOnServer\(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery, packageFilterOptionsQuery\)/)
+    assert.match(marketPageSource, /useApiPackageFilterOptions\(computed\(\(\) => activeView\.value === 'packages'\)\)/)
+    assert.match(marketPageSource, /\.\.\.\(activeView\.value === 'packages' \? \[packageFilterOptionsQuery\] : \[\]\)/)
     assert.doesNotMatch(marketPageSource, /prefetchQueriesOnServer\(quotaQuery, freeServicesQuery/)
   })
 
