@@ -112,11 +112,7 @@ func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, route
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
 	}
-	usageScopes := DefaultUsageScopes()
-	var appErr *domain.AppError
-	if input.UsageScopes != nil {
-		usageScopes, appErr = normalizeUsageScopes(input.UsageScopes)
-	}
+	usageScopes, appErr := normalizedUsageScopesForMethod(input.Type, input.UsageScopes)
 	if appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
 	}
@@ -140,6 +136,11 @@ func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, route
 	}
 
 	s.mu.Lock()
+	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(method.UserID, "") {
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, DuplicateEnabledWechatError()
+	}
 	if method.IsDefault {
 		for id, item := range s.methods {
 			if item.UserID == method.UserID && item.IsDefault {
@@ -178,11 +179,7 @@ func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (C
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
 	}
-	usageScopes := DefaultUsageScopes()
-	var appErr *domain.AppError
-	if input.UsageScopes != nil {
-		usageScopes, appErr = normalizeUsageScopes(input.UsageScopes)
-	}
+	usageScopes, appErr := normalizedUsageScopesForMethod(input.Type, input.UsageScopes)
 	if appErr != nil {
 		return ContactMethod{}, appErr
 	}
@@ -199,6 +196,9 @@ func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (C
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(method.UserID, "") {
+		return ContactMethod{}, DuplicateEnabledWechatError()
+	}
 
 	if method.IsDefault {
 		for id, item := range s.methods {
@@ -305,7 +305,9 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
 	}
-	if input.UsageScopes != nil {
+	if input.Type == MethodTypeWechat {
+		input.UsageScopes = AllUsageScopes()
+	} else if input.UsageScopes != nil {
 		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
 		if appErr != nil {
 			return ContactMethod{}, appErr
@@ -324,6 +326,9 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	current, ok := s.methods[input.MethodID]
 	if !ok || current.UserID != input.UserID {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+	}
+	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(input.UserID, input.MethodID) {
+		return ContactMethod{}, DuplicateEnabledWechatError()
 	}
 	if input.IsDefault {
 		for id, item := range s.methods {
@@ -370,7 +375,9 @@ func (s *Service) UpdateMethodWithIdempotency(ctx context.Context, userID, route
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
 	}
-	if input.UsageScopes != nil {
+	if input.Type == MethodTypeWechat {
+		input.UsageScopes = AllUsageScopes()
+	} else if input.UsageScopes != nil {
 		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
 		if appErr != nil {
 			return ContactMethod{}, idempotency.Completion{}, false, appErr
@@ -842,6 +849,17 @@ func (s *Service) VersionForOwnerAndScope(methodID, ownerID, requiredScope strin
 	return s.VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope)
 }
 
+// WechatVersionForOwnerAndScope only returns the actor's enabled WeChat version for a transaction scope.
+func (s *Service) WechatVersionForOwnerAndScope(methodID, ownerID, requiredScope string) (ContactMethod, ContactMethodVersion, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	method, version, ok := s.VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope)
+	if !ok || method.Type != MethodTypeWechat {
+		return ContactMethod{}, ContactMethodVersion{}, false
+	}
+	return method, version, true
+}
+
 func (s *Service) VersionForOwnerLocked(methodID, ownerID string) (ContactMethod, ContactMethodVersion, bool) {
 	method, ok := s.methods[methodID]
 	if !ok || method.UserID != ownerID || method.CurrentVersionID == "" {
@@ -1056,7 +1074,7 @@ func HasUsageScope(scopes []string, requiredScope string) bool {
 	return false
 }
 
-// AllUsageScopes 返回身份绑定管理的 linux.do 联系方式使用范围全集。
+// AllUsageScopes 返回账号级交易联系方式使用范围全集。
 func AllUsageScopes() []string {
 	return []string{
 		UsageScopeCarpoolOwner,
@@ -1064,6 +1082,52 @@ func AllUsageScopes() []string {
 		UsageScopeBuyer,
 		UsageScopeDispute,
 	}
+}
+
+func normalizedUsageScopesForMethod(methodType string, input []string) ([]string, *domain.AppError) {
+	if methodType == MethodTypeWechat {
+		return AllUsageScopes(), nil
+	}
+	if input == nil {
+		return DefaultUsageScopes(), nil
+	}
+	return normalizeUsageScopes(input)
+}
+
+func (s *Service) hasOtherEnabledWechatLocked(userID, excludedMethodID string) bool {
+	for _, method := range s.methods {
+		if method.UserID == userID && method.ID != excludedMethodID && method.Enabled && method.Type == MethodTypeWechat {
+			return true
+		}
+	}
+	return false
+}
+
+func DuplicateEnabledWechatError() *domain.AppError {
+	return domain.NewFieldError(
+		http.StatusConflict,
+		domain.CodeInvalidStateTransition,
+		"WeChat contact already configured",
+		"每个账号只能配置一个启用的微信联系方式，请直接更新现有微信。",
+		"type",
+		"duplicate",
+		"微信联系方式已配置。",
+	)
+}
+
+func WechatRequiredError(field, detail string) *domain.AppError {
+	if strings.TrimSpace(detail) == "" {
+		detail = "请先在个人中心配置微信联系方式。"
+	}
+	return domain.NewFieldError(
+		http.StatusUnprocessableEntity,
+		domain.CodeContactMethodRequired,
+		"WeChat contact required",
+		detail,
+		field,
+		"wechat_required",
+		"必须使用当前账号已启用的微信联系方式。",
+	)
 }
 
 func normalizeUsageScopes(input []string) ([]string, *domain.AppError) {

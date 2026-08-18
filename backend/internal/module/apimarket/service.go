@@ -1424,7 +1424,7 @@ func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, 
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
-			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须选择有效的商户联系方式。", "ownerContactMethodIds", "invalid", "联系方式不能为空。")
+			return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
 		}
 		if _, exists := seen[value]; exists {
 			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodIds", "duplicate", "联系方式不能重复。")
@@ -1433,16 +1433,19 @@ func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, 
 		result = append(result, value)
 	}
 	if len(result) == 0 {
-		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须至少选择一种商户联系方式。", "ownerContactMethodIds", "required", "请至少选择一种联系方式。")
+		return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+	}
+	if len(result) != 1 {
+		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "One WeChat contact required", "API 服务只能使用当前账号唯一的微信联系方式。", "ownerContactMethodIds", "invalid_count", "只能提交一个微信联系方式。")
 	}
 	return result, nil
 }
 
 func (s *Manager) validateOwnerContacts(service Service, ownerUserID string) *domain.AppError {
 	for _, methodID := range service.OwnerContactMethodIDs {
-		method, _, ok := s.contact.VersionForOwnerAndScope(methodID, ownerUserID, contact.UsageScopeAPIMerchant)
+		method, _, ok := s.contact.WechatVersionForOwnerAndScope(methodID, ownerUserID, contact.UsageScopeAPIMerchant)
 		if !ok || !method.Enabled {
-			return domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用、不属于当前用户或未允许商户用途。")
+			return contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
 		}
 	}
 	return nil

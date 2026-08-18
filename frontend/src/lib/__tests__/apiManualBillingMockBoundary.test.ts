@@ -93,7 +93,7 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
   const requiredServiceDeclarations = {
     declaredMaxConcurrency: 1,
     promptAuditEnabled: false,
-    ownerContactMethodIds: ['contact-linuxdo-orbit'],
+    ownerContactMethodIds: ['contact-wechat-orbit'],
   }
   const metered = await settle(api.submitApiService({
     billingMode: 'metered_credit',

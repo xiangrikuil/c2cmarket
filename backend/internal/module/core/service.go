@@ -1981,8 +1981,10 @@ func (s *Service) CreateContactMethod(ctx context.Context, input ContactMethodIn
 	if strings.TrimSpace(input.Type) == "linuxdo" {
 		return ContactMethod{}, identityManagedContactError()
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, input.UsageScopes); appErr != nil {
-		return ContactMethod{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, input.UsageScopes); appErr != nil {
+			return ContactMethod{}, appErr
+		}
 	}
 	return s.contactService.CreateMethod(ctx, input)
 }
@@ -1992,8 +1994,10 @@ func (s *Service) CreateContactMethodWithIdempotency(ctx context.Context, user U
 	if strings.TrimSpace(input.Type) == "linuxdo" {
 		return IdempotencyCompletion{}, identityManagedContactError()
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, input.UsageScopes); appErr != nil {
-		return IdempotencyCompletion{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, input.UsageScopes); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
 	}
 	_, completion, _, appErr := s.contactService.CreateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 	return completion, appErr
@@ -2033,8 +2037,10 @@ func (s *Service) UpdateContactMethod(ctx context.Context, input contactmodule.U
 			}
 		}
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, effectiveScopes); appErr != nil {
-		return ContactMethod{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, effectiveScopes); appErr != nil {
+			return ContactMethod{}, appErr
+		}
 	}
 	return s.contactService.UpdateMethod(ctx, input)
 }
@@ -2061,8 +2067,10 @@ func (s *Service) UpdateContactMethodWithIdempotency(ctx context.Context, user U
 			}
 		}
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, effectiveScopes); appErr != nil {
-		return IdempotencyCompletion{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, effectiveScopes); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
 	}
 	_, completion, _, appErr := s.contactService.UpdateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 	return completion, appErr

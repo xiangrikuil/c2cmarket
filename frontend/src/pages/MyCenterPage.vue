@@ -68,6 +68,7 @@ import { backendErrorMessage, reauthenticatePassword, startLinuxDoLink } from '@
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 import {
   buildContactMethodPayload,
+  ALL_CONTACT_USAGE_SCOPES,
   CONTACT_USAGE_SCOPE_OPTIONS,
   contactUsageScopeOptionsForCapabilities,
   initialContactUsageScopes,
@@ -197,17 +198,13 @@ const privacySettingsDirty = computed(() => Boolean(privacySnapshot.value) && pr
 
 const wechatForm = reactive({
   displayValue: '',
-  usageScopes: [] as ContactUsageScope[],
 })
 
 const wechatContactSnapshot = ref('')
 const emailContactSnapshot = ref('')
 
 function wechatFormSignature() {
-  return JSON.stringify({
-    displayValue: wechatForm.displayValue.trim(),
-    usageScopes: [...wechatForm.usageScopes].sort(),
-  })
+  return wechatForm.displayValue.trim()
 }
 
 function emailContactFormSignature() {
@@ -598,7 +595,6 @@ function syncPrivacyDraft(currentProfile: UserProfile) {
 
 function syncWechatDraft(contact: UserContactMethod | null) {
   wechatForm.displayValue = contact?.displayValue ?? ''
-  wechatForm.usageScopes = initialContactUsageScopes(contact, defaultContactUsageScopes.value)
   wechatContactSnapshot.value = wechatFormSignature()
 }
 
@@ -825,22 +821,18 @@ function saveWechatContact() {
     toast.warning('请先填写微信号。')
     return
   }
-  if (!wechatForm.usageScopes.length) {
-    toast.warning('请至少选择一个适用场景。')
-    return
-  }
   const current = wechatContact.value
   const payload = buildContactMethodPayload({
     type: 'wechat',
     label: '微信',
     displayValue,
-    usageScopes: wechatForm.usageScopes,
+    usageScopes: ALL_CONTACT_USAGE_SCOPES,
     current,
   })
   const mutationOptions = {
     onSuccess: (savedContact: UserContactMethod) => {
       syncWechatDraft(savedContact)
-      toast.success(current ? '微信联系方式已更新。' : '微信联系方式已绑定。')
+      toast.success(current ? '微信联系方式已更新。' : '微信联系方式已配置。')
     },
     onError: (error: Error) => toast.error(error.message),
   }
@@ -1488,12 +1480,12 @@ function goToLogin() {
 
         <ContactMethodCard
           title="微信"
-          description="填写微信号后即可作为联系窗口方式，不做验证码验证。"
-          :status-label="wechatBound ? '已填写' : '未填写'"
+          description="配置微信号后即可作为联系窗口方式，平台不做外部验证。"
+          :status-label="wechatBound ? '已配置' : '未配置'"
           :status-variant="wechatBound ? 'verified' : 'secondary'"
           :dirty="wechatContactDirty"
           :is-default="wechatContact?.isDefault"
-          :current-summary="wechatContact ? `当前：${wechatContact.maskedValue} · 适用：${scopeLabels(wechatContact.usageScopes)}` : ''"
+          :current-summary="wechatContact ? `当前：${wechatContact.maskedValue} · 自动用于拼车和 API 交易` : ''"
         >
           <template #icon><MessageCircle class="h-5 w-5" /></template>
           <template v-if="wechatContact" #actions>
@@ -1512,8 +1504,8 @@ function goToLogin() {
               size="icon"
               variant="outline"
               :disabled="deleteContactMutation.isPending.value"
-              aria-label="解除微信绑定"
-              title="解除绑定"
+              aria-label="删除微信配置"
+              title="删除配置"
               @click="removeContact(wechatContact)"
             >
               <Trash2 class="h-4 w-4" />
@@ -1526,18 +1518,13 @@ function goToLogin() {
             </label>
             <Button
               class="sm:self-end"
-              :disabled="contactSaving || !wechatForm.displayValue.trim() || !wechatForm.usageScopes.length || !wechatContactDirty"
+              :disabled="contactSaving || !wechatForm.displayValue.trim() || !wechatContactDirty"
               @click="saveWechatContact"
             >
               <Save class="h-4 w-4" />保存微信
             </Button>
           </div>
-          <div class="mt-4 border-t border-border pt-4">
-            <ContactUsageScopeSelector
-              v-model="wechatForm.usageScopes"
-              :options="availableContactUsageScopeOptions"
-            />
-          </div>
+          <p class="mt-3 text-xs leading-5 text-muted-foreground">微信配置后自动用于拼车和 API 交易，不代表平台已验证该微信号。</p>
         </ContactMethodCard>
 
         <ContactMethodCard

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const apiMarketBackendSource = readFileSync(new URL('../apiMarketBackend.ts', import.meta.url), 'utf8')
 const carpoolBackendSource = readFileSync(new URL('../carpoolBackend.ts', import.meta.url), 'utf8')
+const apiFacadeSource = readFileSync(new URL('../api.ts', import.meta.url), 'utf8')
 const profileBackendSource = readFileSync(new URL('../profileBackend.ts', import.meta.url), 'utf8')
 const servicePublishSource = readFileSync(new URL('../../pages/ApiServicePublishPage.vue', import.meta.url), 'utf8')
 const rushPublishSource = readFileSync(new URL('../../pages/ApiQuotaRushPublishPage.vue', import.meta.url), 'utf8')
@@ -17,17 +18,22 @@ function sourceBetween(source: string, startMarker: string, endMarker: string) {
 }
 
 describe('API 纠纷发布与身份联系方式约束', () => {
-  it('API 购买使用买家联系方式，拼车继续使用账号绑定的 linux.do 联系方式', () => {
+  it('API 购买与拼车都只使用账号唯一的微信联系方式', () => {
     expect(sourceBetween(apiMarketBackendSource, 'export async function backendCreateAPIQuotaOrder', 'export async function backendOwnerAPIQuotaBatches'))
       .toContain('backendBuyerContactMethod()')
     expect(sourceBetween(apiMarketBackendSource, 'export async function backendCreateAPIPurchaseIntent', 'export async function backendCreateAPIOrderFromIntent'))
       .toContain('backendBuyerContactMethod()')
     expect(sourceBetween(carpoolBackendSource, 'export async function backendSubmitCarpool', 'export async function backendUpdateOwnerCarpool'))
-      .toContain('backendBoundLinuxDoContactMethod()')
+      .toContain('backendEnabledWechatContactMethod()')
     expect(sourceBetween(carpoolBackendSource, 'export async function backendCreateCarpoolApplication', 'async function ownerApplication'))
-      .toContain('backendBoundLinuxDoContactMethod()')
-    expect(apiMarketBackendSource).toContain("methods.find(method => method.enabled && method.type === 'linuxdo')")
-    expect(apiMarketBackendSource).toContain("method.usageScopes.includes('buyer')")
+      .toContain('backendEnabledWechatContactMethod()')
+    expect(apiMarketBackendSource).toContain("methods.find(method => method.enabled && method.type === 'wechat')")
+    expect(apiMarketBackendSource).toContain('请先在个人中心配置微信联系方式。')
+    const mockCarpoolContacts = sourceBetween(apiFacadeSource, 'export async function getCarpoolApplicationContacts', 'export async function createContactReport')
+    expect(mockCarpoolContacts).not.toContain("type: 'linuxdo'")
+    expect(mockCarpoolContacts).not.toContain('application.ownerUsername')
+    expect(apiFacadeSource).toContain("buyerContacts: [mockWechatContactSnapshotItem(buyerContact, 'buyer')]")
+    expect(apiFacadeSource).toContain("contactSnapshot.sellerContacts = [mockWechatContactSnapshotItem(ownerContact, 'carpool_owner')]")
   })
 
   it('两个发布入口都会提前读取活动纠纷并禁止最终提交', () => {

@@ -60,17 +60,17 @@ describe('联系方式与收款设置 UI', () => {
     expect(myCenter).not.toContain('type="radio"')
   })
 
-  it('联系方式可显式选择订单用途并把用途变化计入未保存状态', () => {
+  it('微信自动覆盖全部交易用途，邮箱仍可显式选择用途', () => {
     expect(contactUsageScopeSelector).toContain("import { Checkbox } from '@/components/ui/checkbox'")
     expect(contactUsageScopeSelector).toContain("emit('update:modelValue'")
     expect(contactUsageScopeSelector).toContain('请至少选择一个适用场景')
-    expect(myCenter.match(/<ContactUsageScopeSelector/g)).toHaveLength(2)
+    expect(myCenter.match(/<ContactUsageScopeSelector/g)).toHaveLength(1)
     expect(myCenter).toContain('availableContactUsageScopeOptions')
     expect(myCenter).toContain('wechatContactSnapshot')
     expect(myCenter).toContain('emailUsageScopesDirty')
-    expect(myCenter).toContain('usageScopes: wechatForm.usageScopes')
+    expect(myCenter).toContain('usageScopes: ALL_CONTACT_USAGE_SCOPES')
     expect(myCenter).toContain('usageScopes: contactEmailForm.usageScopes')
-    expect(publishPage).toContain("contact.enabled && contact.usageScopes.includes('api_merchant')")
+    expect(publishPage).toContain("contact.enabled && contact.type === 'wechat' && contact.usageScopes.includes('api_merchant')")
   })
 
   it('账号恢复邮箱与交易联系邮箱使用独立草稿和挑战状态', () => {

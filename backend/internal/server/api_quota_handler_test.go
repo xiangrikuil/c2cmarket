@@ -315,7 +315,7 @@ func TestAPIServicePromptAuditDeclarationIsPublicWithoutRetiredPerformanceFields
 	now := time.Now().UTC()
 	server := newTestServer(now)
 	owner := createLinuxDoSession(t, server, "quota-performance-owner")
-	ownerContact := createContactMethod(t, server, owner, "telegram", "额度包卖家", "@quota_performance_owner")
+	ownerContact := createContactMethod(t, server, owner, "wechat", "额度包卖家微信", "quota_performance_owner")
 	service := createAPIServiceWithPayload(t, server, owner, apiServicePayload(ownerContact.ID, "1.0000"), "quota-performance-create")
 	if service.DeclaredTTFTBand != "" || service.DeclaredMaxConcurrency != 8 || service.PerformanceConfirmedAt != nil || service.PromptAuditEnabled == nil || *service.PromptAuditEnabled {
 		t.Fatalf("unexpected owner publish declarations: %+v", service)

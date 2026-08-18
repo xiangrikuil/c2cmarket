@@ -43,8 +43,21 @@ async function getNotifications() {
   return api.getNotifications()
 }
 
+async function getMyContactMethods() {
+  if (shouldUseRealBackend()) {
+    const { backendMyContactMethods } = await import('@/lib/profileBackend')
+    return backendMyContactMethods()
+  }
+  const api = await import('@/lib/api')
+  return api.getMyContactMethods()
+}
+
 export function myProfileQueryKey() {
   return ['my-profile'] as const
+}
+
+export function myContactMethodsQueryKey() {
+  return ['my-contact-methods'] as const
 }
 
 export function useMyCarpools(enabled: Ref<boolean> | boolean = true) {
@@ -74,6 +87,19 @@ export function useMyProfileQuery(enabled: Ref<boolean> | boolean = true) {
     queryFn: getMyProfile,
     enabled: computed(() => valueOf(enabled)),
     retry: false,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+export function useMyContactMethodsQuery(
+  enabled: Ref<boolean> | boolean = true,
+  userId: Ref<string> | string = '',
+) {
+  return useQuery({
+    queryKey: computed(() => [...myContactMethodsQueryKey(), valueOf(userId)]),
+    queryFn: getMyContactMethods,
+    enabled: computed(() => valueOf(enabled)),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   })

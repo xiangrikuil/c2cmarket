@@ -57,7 +57,6 @@ import {
   getMerchantApiOrdersPage,
   getMerchantCarpoolApplications,
   getMerchantCarpoolApplicationsPage,
-  getMyContactMethods,
   getMyFeedbackTicket,
   getMyFeedbackTickets,
   getMyOfficialPriceLeads,
@@ -161,10 +160,10 @@ import {
 } from '@/lib/api'
 import type { OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import { nextUnseenCursor, type CursorPageRequest } from '@/lib/cursorPagination'
-import { myProfileQueryKey } from '@/queries/useAppShellQueries'
+import { myContactMethodsQueryKey, myProfileQueryKey } from '@/queries/useAppShellQueries'
 
 export { useHomeMarket } from '@/queries/useHomeMarketQuery'
-export { myProfileQueryKey, useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+export { myContactMethodsQueryKey, myProfileQueryKey, useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications, useMyContactMethodsQuery } from '@/queries/useAppShellQueries'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value
@@ -620,10 +619,6 @@ export function useImportApiQuotaCredentialsMutation() {
   })
 }
 
-export function myContactMethodsQueryKey() {
-  return ['my-contact-methods'] as const
-}
-
 export function apiPaymentAccountSettingsQueryKey() {
   return ['api-payment-account-settings'] as const
 }
@@ -705,15 +700,6 @@ export function useUseLinuxDoAvatarMutation() {
       queryClient.setQueryData(myProfileQueryKey(), data)
       queryClient.invalidateQueries({ queryKey: ['public-user-profile', data.username] })
     },
-  })
-}
-
-export function useMyContactMethodsQuery() {
-  return useQuery({
-    queryKey: myContactMethodsQueryKey(),
-    queryFn: getMyContactMethods,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
   })
 }
 

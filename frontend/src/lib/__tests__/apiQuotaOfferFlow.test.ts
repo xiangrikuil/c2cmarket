@@ -148,6 +148,8 @@ test('定时额度包固定金额下单，取消释放库存但同轮不能重�
   assert.equal(order.amountDecimal, first.priceCny)
   assert.equal(order.quotaSnapshot?.usdAllowance, first.usdAllowance)
   assert.equal(order.paymentWindowMinutes, 5)
+  assert.deepEqual(order.merchantContactChannels.map(item => item.type), ['wechat'])
+  assert.deepEqual(order.buyerContactChannels.map(item => item.type), ['wechat'])
 
   await api.cancelApiOrder(order.id, '个人原因｜我不再需要该服务', order.version)
   const released = (await api.getApiQuotaOffers()).find(item => item.id === first.id)

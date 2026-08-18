@@ -223,7 +223,7 @@ const filteredCatalog = computed(() => catalog.value.filter(item => modelProvide
 const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
 const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
-  contact.enabled && contact.usageScopes.includes('api_merchant')
+  contact.enabled && contact.type === 'wechat' && contact.usageScopes.includes('api_merchant')
 )))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === baseForm.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
@@ -245,12 +245,7 @@ watch(() => myProfile.value, profile => {
 }, { immediate: true })
 
 watch(availableOwnerContacts, contacts => {
-  const availableIds = new Set(contacts.map(contact => contact.id))
-  baseForm.ownerContactMethodIds = baseForm.ownerContactMethodIds.filter(id => availableIds.has(id))
-  if (baseForm.ownerContactMethodIds.length || !contacts.length) return
-  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
-  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
-  baseForm.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
+  baseForm.ownerContactMethodIds = contacts[0] ? [contacts[0].id] : []
 }, { immediate: true })
 
 watch(accountSettingsValue, settings => {
@@ -449,7 +444,7 @@ function validateBaseService() {
     return false
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
-	if (!baseForm.ownerContactMethodIds.length) baseErrors.ownerContactMethods = '请至少选择一种订单联系方式。'
+  if (baseForm.ownerContactMethodIds.length !== 1) baseErrors.ownerContactMethods = '请先在个人中心配置微信联系方式。'
   if (!baseForm.probeConnectionId) baseErrors.probeConnection = '请选择已验证且启用的探针连接。'
   else if (!probeConnectionReady.value) baseErrors.probeConnection = '所选探针连接当前不可用，请重新选择。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'

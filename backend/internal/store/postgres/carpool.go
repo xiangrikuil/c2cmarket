@@ -67,7 +67,7 @@ func createCarpoolListingMutationInTx(ctx context.Context, tx pgx.Tx, listing ca
 	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, listing.OwnerUserID); appErr != nil {
 		return appErr
 	}
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "发布拼车前必须先配置微信联系方式。"); appErr != nil {
 		return appErr
 	}
 	if validatePublish {
@@ -473,7 +473,7 @@ func (s *Store) updateCarpoolListingInTx(ctx context.Context, tx pgx.Tx, input c
 		return carpool.Listing{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSeatUnavailable, "Seat unavailable", "买家总名额不能小于线下已占名额与平台有效成员数之和。", "buyerSeatCapacity", "below_occupied", "总名额不能小于已占名额。")
 	}
 	previousConditions := carpool.NewListingConditionsSnapshot(listing)
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "发布拼车前必须先配置微信联系方式。"); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
 	var planPolicyVersion int64
@@ -812,7 +812,7 @@ func (s *Store) submitCarpoolListingForReviewInTx(ctx context.Context, tx pgx.Tx
 	if appErr := ensureCarpoolPlanAllowedForPublish(ctx, tx, listing.ProductPlanID); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "恢复或发布拼车前必须先配置微信联系方式。"); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
 	listing.Status = carpool.ListingStatusActive
@@ -942,7 +942,7 @@ func createCarpoolApplicationMutationInTx(ctx context.Context, tx pgx.Tx, applic
 	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
 		return appErr
 	}
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "申请拼车前必须先配置微信联系方式。"); appErr != nil {
 		return appErr
 	}
 	var listingStatus, governanceStatus, lockedPlanID, planStatus, categoryStatus string
@@ -2062,11 +2062,11 @@ func (s *Store) acceptCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, inp
 		return carpool.Application{}, domain.NewError(http.StatusConflict, domain.CodeVersionConflict, "Conditions changed", "车源条件已更新，需要买家先确认最新条件。")
 	}
 
-	_, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	_, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	if appErr != nil {
 		return carpool.Application{}, appErr
 	}
-	_, ownerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	_, ownerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "车主必须先配置微信联系方式。")
 	if appErr != nil {
 		return carpool.Application{}, appErr
 	}

@@ -1593,32 +1593,20 @@ export async function backendCreateContactMethod(payload: SaveContactMethodReque
 	return backendCreateContact(payload)
 }
 
-export async function backendBoundLinuxDoContactMethod(): Promise<UserContactMethod> {
-	const methods = await backendMyContactMethods()
-	const contact = methods.find(method => method.enabled && method.type === 'linuxdo')
-	if (!contact) {
-		throw new Error('当前账号的 linux.do 绑定联系方式尚未同步，请重新登录后再试。')
-	}
-	return contact
-}
-
 export function selectBuyerContactMethod(methods: UserContactMethod[]): UserContactMethod {
-  const eligible = methods.filter(method => (
-    method.enabled
-    && method.usageScopes.includes('buyer')
-    && (method.type !== 'email' || method.verified)
-  ))
-  const contact = eligible.find(method => method.isDefault)
-    ?? eligible.find(method => method.type === 'linuxdo')
-    ?? eligible[0]
+  const contact = methods.find(method => method.enabled && method.type === 'wechat')
   if (!contact) {
-    throw new Error('请先在个人中心配置可用于买家交易的联系方式（如微信或已验证邮箱）。')
+    throw new Error('请先在个人中心配置微信联系方式。')
   }
   return contact
 }
 
+export async function backendEnabledWechatContactMethod(): Promise<UserContactMethod> {
+	return selectBuyerContactMethod(await backendMyContactMethods())
+}
+
 export async function backendBuyerContactMethod(): Promise<UserContactMethod> {
-  return selectBuyerContactMethod(await backendMyContactMethods())
+  return backendEnabledWechatContactMethod()
 }
 
 export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
@@ -2060,10 +2048,8 @@ export async function backendSubmitAPIService(payload: Record<string, unknown>) 
   await ensureBackendSession('merchant', false)
   const merchantIdentityMode = apiServiceMerchantIdentityMode(payload.merchantIdentityMode)
   const merchantProfile = merchantIdentityMode === 'store_alias' ? await ensureMerchantProfile(payload) : null
-	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
-		? payload.ownerContactMethodIds.map(String).filter(Boolean)
-		: []
-	if (!ownerContactMethodIds.length) throw new Error('请先在个人中心添加并选择至少一种 API 订单联系方式。')
+	const ownerContact = await backendEnabledWechatContactMethod()
+	const ownerContactMethodIds = [ownerContact.id]
   let response = await backendMutation<BackendAPIService>('/api/v1/owner/api-services', toBackendServiceRequest({
     ...payload,
 		ownerContactMethodId: ownerContactMethodIds[0],

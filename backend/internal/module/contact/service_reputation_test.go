@@ -2,6 +2,7 @@ package contact
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"testing"
 	"time"
@@ -139,7 +140,7 @@ func TestContactUsageScopesAreCanonicalAndDurableInMemory(t *testing.T) {
 
 	service := NewService(nil, func() time.Time { return time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC) })
 	created, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "user-scopes", Type: "wechat", Label: "微信", Value: "scope-user", Enabled: true,
+		UserID: "user-scopes", Type: "email", Label: "邮箱", Value: "scope-user@example.com", Enabled: true,
 		UsageScopes: []string{UsageScopeDispute, UsageScopeBuyer, UsageScopeDispute},
 	})
 	if appErr != nil {
@@ -150,7 +151,7 @@ func TestContactUsageScopesAreCanonicalAndDurableInMemory(t *testing.T) {
 	}
 
 	updated, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
-		UserID: "user-scopes", MethodID: created.ID, Type: "wechat", Label: "工作微信", Value: "scope-user-2", Enabled: true,
+		UserID: "user-scopes", MethodID: created.ID, Type: "email", Label: "工作邮箱", Value: "scope-user-2@example.com", Enabled: true,
 		UsageScopes: []string{UsageScopeBuyer, UsageScopeCarpoolOwner, UsageScopeAPIMerchant},
 	})
 	if appErr != nil {
@@ -161,7 +162,7 @@ func TestContactUsageScopesAreCanonicalAndDurableInMemory(t *testing.T) {
 		t.Fatalf("updated scopes = %v, want %v", updated.UsageScopes, wantUpdated)
 	}
 	preserved, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
-		UserID: "user-scopes", MethodID: created.ID, Type: "wechat", Label: "工作微信", Value: "scope-user-3", Enabled: true,
+		UserID: "user-scopes", MethodID: created.ID, Type: "email", Label: "工作邮箱", Value: "scope-user-3@example.com", Enabled: true,
 	})
 	if appErr != nil || !slices.Equal(preserved.UsageScopes, wantUpdated) {
 		t.Fatalf("omitted update scopes must preserve the stored value: method=%+v error=%v", preserved, appErr)
@@ -200,7 +201,7 @@ func TestContactUsageScopesDefaultAndValidation(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			_, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-				UserID: "invalid-user", Type: "wechat", Label: "微信", Value: "invalid", Enabled: true, UsageScopes: test.scopes,
+				UserID: "invalid-user-" + test.name, Type: "email", Label: "邮箱", Value: "invalid@example.com", Enabled: true, UsageScopes: test.scopes,
 			})
 			if appErr == nil || appErr.Status != 422 || appErr.Code != domain.CodeValidationFailed {
 				t.Fatalf("expected 422 validation error, got %#v", appErr)
@@ -209,5 +210,34 @@ func TestContactUsageScopesDefaultAndValidation(t *testing.T) {
 				t.Fatalf("unexpected field error: %#v", appErr.FieldErrors)
 			}
 		})
+	}
+}
+
+func TestWechatScopesAreAutomaticAndOnlyOneCanBeEnabledInMemory(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(nil, nil)
+	created, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "wechat-user", Type: MethodTypeWechat, Label: "微信", Value: "wechat-user", Enabled: true,
+		UsageScopes: []string{UsageScopeBuyer},
+	})
+	if appErr != nil {
+		t.Fatalf("create WeChat contact: %v", appErr)
+	}
+	if !slices.Equal(created.UsageScopes, AllUsageScopes()) {
+		t.Fatalf("WeChat scopes = %v, want %v", created.UsageScopes, AllUsageScopes())
+	}
+	if _, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "wechat-user", Type: MethodTypeWechat, Label: "另一个微信", Value: "wechat-user-2", Enabled: true,
+	}); appErr == nil || appErr.Status != http.StatusConflict || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "duplicate" {
+		t.Fatalf("duplicate enabled WeChat error = %#v", appErr)
+	}
+
+	updated, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
+		UserID: "wechat-user", MethodID: created.ID, Type: MethodTypeWechat, Label: "常用微信", Value: "wechat-user-new", Enabled: true,
+		UsageScopes: []string{UsageScopeDispute},
+	})
+	if appErr != nil || !slices.Equal(updated.UsageScopes, AllUsageScopes()) {
+		t.Fatalf("updated WeChat scopes = %v error=%v", updated.UsageScopes, appErr)
 	}
 }

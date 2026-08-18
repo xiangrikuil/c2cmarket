@@ -1584,7 +1584,7 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 		return apiintent.Intent{}, appErr
 	}
 
-	buyerMethod, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	buyerMethod, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1936,11 +1936,11 @@ func lockAPIServiceContacts(ctx context.Context, tx pgx.Tx, service apimarket.Se
 	if len(methodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
 		methodIDs = []string{service.OwnerContactMethodID}
 	}
-	if len(methodIDs) == 0 {
-		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "至少需要一种商户联系方式。")
+	if len(methodIDs) != 1 {
+		return contact.WechatRequiredError("ownerContactMethodIds", "API 服务必须使用当前账号唯一的微信联系方式。")
 	}
 	for _, methodID := range methodIDs {
-		if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant, detail); appErr != nil {
+		if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant, "ownerContactMethodIds", detail); appErr != nil {
 			return appErr
 		}
 	}
@@ -1976,9 +1976,12 @@ func lockAPIServiceOwnerContactSnapshots(ctx context.Context, tx pgx.Tx, service
 	if len(methodIDs) == 0 {
 		return nil, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", detail)
 	}
+	if len(methodIDs) != 1 {
+		return nil, contact.WechatRequiredError("ownerContactMethodIds", "API 服务必须使用当前账号唯一的微信联系方式。")
+	}
 	snapshots := make([]apiintent.OwnerContactSnapshot, 0, len(methodIDs))
 	for _, methodID := range methodIDs {
-		method, version, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, ownerUserID, contact.UsageScopeAPIMerchant, detail)
+		method, version, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, methodID, ownerUserID, contact.UsageScopeAPIMerchant, "ownerContactMethodIds", detail)
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -2425,7 +2428,7 @@ func applyAPIServiceAdminAction(service apimarket.Service, input apimarket.Servi
 
 func validateCreateAPIPurchaseIntentForStore(input apiintent.CreateIntentInput, service apimarket.Service) *domain.AppError {
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "提交购买意向必须选择联系方式。", "buyerContactMethodId", "required", "必须选择联系方式。")
+		return contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
 	}
 	if input.BuyerUserID == service.OwnerUserID {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "不能向自己的 API 服务提交购买意向。")
