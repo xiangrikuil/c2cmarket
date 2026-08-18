@@ -196,7 +196,7 @@ backend/migrations/000064_contact_cipher_aad.{up,down}.sql
 backend/migrations/000065_remove_demands.{up,down}.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.{up,down}.sql
 backend/migrations/000067_api_account_payment_settings.{up,down}.sql
-database.ExpectedMigrationVersion = 112 (current repository target)
+database.ExpectedMigrationVersion = 113 (current repository target)
 ```
 
 Standard execution remains:
@@ -267,7 +267,7 @@ Correct:
 ```text
 backend/migrations/000066_api_service_multiplier_reconciliation.up.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.down.sql
-database.ExpectedMigrationVersion = 112 (current repository target)
+database.ExpectedMigrationVersion = 113 (current repository target)
 api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHECK (merchant_multiplier > 0)
 ```
 
@@ -326,7 +326,7 @@ DROP CONSTRAINT ck_api_service_models_sub2api_multiplier;
 ```text
 backend/migrations/000067_api_account_payment_settings.up.sql
 backend/migrations/000067_api_account_payment_settings.down.sql
-database.ExpectedMigrationVersion = 112 (current repository target)
+database.ExpectedMigrationVersion = 113 (current repository target)
 
 api_payment_account_options:
   PRIMARY KEY (user_id, payment_method)
