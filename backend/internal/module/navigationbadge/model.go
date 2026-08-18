@@ -3,8 +3,9 @@ package navigationbadge
 import "time"
 
 type RoleActions struct {
-	CarpoolActions  int
-	APIOrderActions int
+	CarpoolActions   int
+	APIOrderActions  int
+	APIOrderDisputes int
 }
 
 type AdminCounts struct {

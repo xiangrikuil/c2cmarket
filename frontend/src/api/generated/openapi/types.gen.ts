@@ -60,6 +60,7 @@ export type NotificationReadAllResult = {
 export type NavigationBadgeRoleSummary = {
     carpoolActions: number;
     apiOrderActions: number;
+    apiOrderDisputes: number;
 };
 
 export type NavigationBadgeAdminSummary = {

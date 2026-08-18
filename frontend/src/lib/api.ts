@@ -5587,6 +5587,8 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   const feedbackActionCount = currentUserFeedback
     .filter(item => item.status === 'needs_user_info' || feedbackUnread(item))
     .length
+  const buyerApiOrders = apiOrderStore.filter(item => item.buyerId === currentBuyerId)
+  const merchantApiOrders = apiOrderStore.filter(item => item.sellerId === currentMerchantId)
 
   const summary: NavigationBadgeSummary = {
     generatedAt: new Date(currentTime).toISOString(),
@@ -5596,17 +5598,17 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     supportActionCount: feedbackActionCount,
     buyer: {
       carpoolActions: buyerCarpoolActions,
-      apiOrderActions: apiOrderStore
-        .filter(item => item.buyerId === currentBuyerId)
-        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted')
+      apiOrderActions: buyerApiOrders
+        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted' || isApiOrderDisputeActive(item.disputeStatus))
         .length,
+      apiOrderDisputes: buyerApiOrders.filter(item => isApiOrderDisputeActive(item.disputeStatus)).length,
     },
     merchant: {
       carpoolActions: merchantCarpoolActions,
-      apiOrderActions: apiOrderStore
-        .filter(item => item.sellerId === currentMerchantId)
-        .filter(item => item.status === 'payment_submitted' || item.status === 'paid_confirmed')
+      apiOrderActions: merchantApiOrders
+        .filter(item => item.status === 'payment_submitted' || item.status === 'paid_confirmed' || isApiOrderDisputeActive(item.disputeStatus))
         .length,
+      apiOrderDisputes: merchantApiOrders.filter(item => isApiOrderDisputeActive(item.disputeStatus)).length,
     },
     admin: null,
   }

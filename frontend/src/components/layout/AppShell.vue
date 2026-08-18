@@ -70,6 +70,7 @@ useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
 const merchantApiActionCount = computed(() => navigationBadges.value?.merchant.apiOrderActions ?? 0)
+const merchantApiDisputeCount = computed(() => navigationBadges.value?.merchant.apiOrderDisputes ?? 0)
 const buyerCarpoolActionCount = computed(() => navigationBadges.value?.buyer.carpoolActions ?? 0)
 const ownerCarpoolActionCount = computed(() => navigationBadges.value?.merchant.carpoolActions ?? 0)
 const unreadBusinessCount = computed(() => navigationBadges.value?.notificationUnread ?? 0)
@@ -102,7 +103,7 @@ const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value
 
 type NavigationGroup = {
   title: string
-  items: Array<{ key: string, label: string, to: string, count: number | null, icon: Component, workspaceNavKey?: WorkspaceNavKey }>
+  items: Array<{ key: string, label: string, to: string, count: number | null, icon: Component, tone?: 'default' | 'danger', workspaceNavKey?: WorkspaceNavKey }>
 }
 
 const navGroups = computed(() => {
@@ -140,7 +141,7 @@ const navGroups = computed(() => {
       ] : []),
       ...(canPublishApiService.value ? [
         { key: 'my-api-services', label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-        { key: 'merchant-api-orders', label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+        { key: 'merchant-api-orders', label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch, tone: merchantApiDisputeCount.value > 0 ? 'danger' as const : 'default' as const },
       ] : []),
       ...(canManageApiProbe.value ? [{ key: 'api-probe-connections', label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable }] : []),
     ],
@@ -307,7 +308,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                   <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                   <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
                 </span>
-                <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
+                <Badge v-if="item.count && !sidebarCollapsed" :variant="item.tone === 'danger' ? 'destructive' : 'secondary'" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
               </RouterLink>
               <div
                 v-if="item.to === '/api-market' && matchesRoute(item) && !sidebarCollapsed"
@@ -388,7 +389,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                   <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                   <span class="truncate">{{ item.label }}</span>
                 </span>
-                <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
+                <Badge v-if="item.count" :variant="item.tone === 'danger' ? 'destructive' : 'secondary'">{{ formatBadgeCount(item.count) }}</Badge>
               </RouterLink>
               <div v-if="item.to === '/api-market'" class="ml-6 mt-1 grid gap-0.5 border-l border-border pl-3">
                 <RouterLink

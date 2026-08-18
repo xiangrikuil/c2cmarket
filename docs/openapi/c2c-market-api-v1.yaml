@@ -9136,12 +9136,15 @@ components:
             $ref: "#/components/schemas/Notification"
     NavigationBadgeRoleSummary:
       type: object
-      required: [carpoolActions, apiOrderActions]
+      required: [carpoolActions, apiOrderActions, apiOrderDisputes]
       properties:
         carpoolActions:
           type: integer
           minimum: 0
         apiOrderActions:
+          type: integer
+          minimum: 0
+        apiOrderDisputes:
           type: integer
           minimum: 0
     NavigationBadgeAdminSummary:

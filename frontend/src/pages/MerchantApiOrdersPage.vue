@@ -24,8 +24,10 @@ import { useCursorPagination } from '@/composables/useCursorPagination'
 import {
   confirmApiOrderPayment,
   getApiMerchantVisibilityLabel,
+  getApiOrderDisputeStatusLabel,
   getApiOrderDisplayStatus,
   getApiOrderNextAction,
+  isApiOrderDisputeActive,
   isApiOrderReceiptConfirmed,
   type ApiOrder,
   type ApiOrderStatus,
@@ -49,6 +51,10 @@ const busyId = ref('')
 
 const deliveredStatuses = ['delivery_submitted', 'completed']
 
+function hasActiveDispute(item: ApiOrder) {
+  return isApiOrderDisputeActive(item.disputeStatus)
+}
+
 const baseFilteredRows = computed(() => {
   const q = keyword.value.trim()
   const rangeMs = timeRange.value === 'today' ? 24 * 60 * 60 * 1000 : timeRange.value === '7d' ? 7 * 24 * 60 * 60 * 1000 : timeRange.value === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
@@ -69,8 +75,8 @@ const confirmedReceiptAmount = computed(() => baseFilteredRows.value
   ))
 
 const stats = computed(() => [
-  { label: '纠纷中', value: baseFilteredRows.value.filter(item => item.disputeCaseId).length },
-  { label: '纠纷待我处理', value: baseFilteredRows.value.filter(item => item.disputeNeedsAction).length },
+  { label: '纠纷中', value: baseFilteredRows.value.filter(hasActiveDispute).length },
+  { label: '纠纷待我处理', value: baseFilteredRows.value.filter(item => hasActiveDispute(item) && item.disputeNeedsAction).length },
   { label: '待买家付款', value: baseFilteredRows.value.filter(item => item.status === 'pending_payment').length },
   { label: '待确认收款', value: baseFilteredRows.value.filter(item => item.status === 'payment_submitted').length },
   { label: '等待买家补充', value: baseFilteredRows.value.filter(item => item.status === 'payment_issue').length },
@@ -157,13 +163,6 @@ function disputeActionLabel(item: ApiOrder) {
   return '纠纷处理中'
 }
 
-function disputeStatusLabel(item: ApiOrder) {
-  if (item.disputeNeedsAction) return '待你处理'
-  if (item.disputeNextActor === 'admin') return '平台处理中'
-  if (item.disputeNextActor === 'applicant') return '等待买家决定'
-  if (item.disputeNextActor === 'counterparty') return '等待买家确认'
-  return '纠纷处理中'
-}
 </script>
 
 <template>
@@ -198,7 +197,7 @@ function disputeStatusLabel(item: ApiOrder) {
     <SkeletonTable v-else-if="isLoading" :columns="6" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无订单" description="调整筛选条件后再试；新订单到达后会在这里显示。" />
     <SoftTable v-else animate-rows class="[&_table]:min-w-[760px]" :columns="['订单', '买家 / 服务', '订单金额 / 购买额度', '状态', '更新', '操作']">
-      <tr v-for="item in rows" :key="item.id" class="cursor-pointer" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
+      <tr v-for="item in rows" :key="item.id" class="cursor-pointer" :class="hasActiveDispute(item) ? 'bg-risk/5' : ''" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
         <td><div class="font-medium"><ShortId :value="item.orderNo" full copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
         <td>
           <div class="font-medium">{{ item.buyer }}</div>
@@ -213,10 +212,13 @@ function disputeStatusLabel(item: ApiOrder) {
         </td>
         <td>
           <div class="flex flex-col items-start gap-1">
-            <StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'merchant')" />
-            <StatusBadge v-if="item.disputeCaseId" status="open" :label="disputeStatusLabel(item)" />
-            <span v-if="item.disputeCaseId" class="text-xs text-muted-foreground">{{ disputeActionLabel(item) }}</span>
-            <span v-if="item.disputeCaseId && item.disputeDueAt" class="text-xs text-muted-foreground">截止 <LocalTime :value="item.disputeDueAt" /></span>
+            <StatusBadge
+              :status="item.status"
+              :tone="hasActiveDispute(item) ? 'risk' : undefined"
+              :label="hasActiveDispute(item) ? getApiOrderDisputeStatusLabel(item.disputeStatus) : getApiOrderDisplayStatus(item, 'merchant')"
+            />
+            <span v-if="hasActiveDispute(item)" class="text-xs font-medium text-risk">{{ disputeActionLabel(item) }}</span>
+            <span v-if="hasActiveDispute(item) && item.disputeDueAt" class="text-xs text-muted-foreground">截止 <LocalTime :value="item.disputeDueAt" /></span>
           </div>
         </td>
         <td class="text-xs text-muted-foreground"><LocalTime :value="item.updatedAt" /></td>
@@ -224,18 +226,18 @@ function disputeStatusLabel(item: ApiOrder) {
           <div class="flex flex-wrap gap-1">
             <RouterLink :to="`/merchant/api-orders/${item.id}`">
               <Button size="sm" variant="outline">
-                <KeyRound v-if="item.status === 'paid_confirmed'" class="h-4 w-4" />
+                <KeyRound v-if="item.status === 'paid_confirmed' && !hasActiveDispute(item)" class="h-4 w-4" />
                 <Eye v-else class="h-4 w-4" />
-                {{ item.status === 'paid_confirmed' ? '填写交付' : '查看详情' }}
+                {{ item.status === 'paid_confirmed' && !hasActiveDispute(item) ? '填写交付' : '查看详情' }}
               </Button>
             </RouterLink>
             <RouterLink v-if="item.disputeCaseId" :to="`/my/disputes/${item.disputeCaseId}?orderId=${item.id}&from=merchant`">
               <Button size="sm" variant="outline">查看案件</Button>
             </RouterLink>
-            <Button v-if="item.status === 'payment_submitted'" size="sm" :disabled="busyId === item.id" @click="runAction(item, () => confirmApiOrderPayment(item.id, item.version), '已确认收款。')">
+            <Button v-if="item.status === 'payment_submitted' && !hasActiveDispute(item)" size="sm" :disabled="busyId === item.id" @click="runAction(item, () => confirmApiOrderPayment(item.id, item.version), '已确认收款。')">
               <CheckCircle2 class="h-4 w-4" />确认已收款
             </Button>
-            <span v-if="item.status === 'delivery_submitted' || item.status === 'completed'" class="text-xs text-muted-foreground">{{ getApiOrderNextAction(item, 'merchant') }}</span>
+            <span v-if="!hasActiveDispute(item) && (item.status === 'delivery_submitted' || item.status === 'completed')" class="text-xs text-muted-foreground">{{ getApiOrderNextAction(item, 'merchant') }}</span>
           </div>
         </td>
       </tr>

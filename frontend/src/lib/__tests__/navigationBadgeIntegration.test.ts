@@ -22,6 +22,14 @@ describe('实时通知与导航徽标接入', () => {
     expect(appShellSource).not.toContain("count: 6")
   })
 
+  it('将卖家未解决纠纷计入销售订单并用红色徽章提示', () => {
+    expect(appShellSource).toContain('navigationBadges.value?.merchant.apiOrderDisputes')
+    expect(appShellSource).toContain("tone: merchantApiDisputeCount.value > 0 ? 'danger'")
+    expect(appShellSource.match(/item\.tone === 'danger' \? 'destructive' : 'secondary'/g)).toHaveLength(2)
+    expect(apiFacadeSource).toContain('isApiOrderDisputeActive(item.disputeStatus)')
+    expect(apiFacadeSource).toContain('apiOrderDisputes: merchantApiOrders.filter')
+  })
+
   it('铃铛只打开下拉并提供独立通知中心入口', () => {
     expect(appShellSource).not.toContain('@click="openNotifications"')
     expect(appShellSource).toContain('查看全部通知')

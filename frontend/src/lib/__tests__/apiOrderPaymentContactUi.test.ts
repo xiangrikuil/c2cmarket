@@ -38,7 +38,7 @@ describe('卖家 API 订单详情入口与核款区', () => {
   test('所有订单行可进入详情，待确认收款同时保留查看和确认动作', () => {
     assert.match(merchantListSource, /<tr[^>]*tabindex="0"[^>]*@click="openOrder\(\$event, item\.id\)"[^>]*@keydown\.enter="openOrder\(\$event, item\.id\)"/)
     assert.match(merchantListSource, /<RouterLink :to="`\/merchant\/api-orders\/\$\{item\.id\}`">[\s\S]*?查看详情/)
-    assert.match(merchantListSource, /<Button v-if="item\.status === 'payment_submitted'"[\s\S]*?确认已收款/)
+    assert.match(merchantListSource, /<Button v-if="item\.status === 'payment_submitted' && !hasActiveDispute\(item\)"[\s\S]*?确认已收款/)
     assert.match(merchantListSource, /event\.target instanceof Element && event\.target\.closest\('a,button'\)/)
   })
 

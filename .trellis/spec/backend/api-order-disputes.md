@@ -743,3 +743,76 @@ current claimed remedy + matching beneficiary + before deadline -> transaction t
 historical event after confirm/contest/expiry -> transaction notice
 formal restriction -> independent reputation gate
 ```
+
+## Scenario: Active Disputes Override Seller Order Presentation And Navigation Tone
+
+### 1. Scope / Trigger
+
+- Trigger: changing seller API-order list/detail status presentation, navigation badge summaries, dispute projection phases, or Mock navigation counts.
+- This contract keeps fulfillment facts intact while preventing an unresolved dispute from being visually hidden by `api_orders.status=completed`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/me/navigation-badges
+
+NavigationBadgeRoleSummary:
+  carpoolActions: integer >= 0
+  apiOrderActions: integer >= 0
+  apiOrderDisputes: integer >= 0
+
+active API-order dispute projection:
+  negotiating | pending_seller_response | pending_applicant_decision |
+  open | awaiting_fulfillment | fulfillment_confirmation
+```
+
+### 3. Contracts
+
+- `apiOrderDisputes` counts orders with an active dispute projection for that role. `none` and the legacy terminal `closed` value do not count.
+- `apiOrderActions` is the distinct union of the role's ordinary order actions and active disputed orders. PostgreSQL evaluates one `OR` predicate per order; Mock mode applies the same union with `isApiOrderDisputeActive`.
+- The seller `API 销售订单` navigation item displays `merchant.apiOrderActions` and uses destructive/red treatment whenever `merchant.apiOrderDisputes > 0`, including disputes currently waiting for the buyer or administrator.
+- Active disputes use the shared dispute label as the primary seller list/detail status and risk styling. Fulfillment status remains stored and visible through the transaction workflow; it becomes primary again only after the dispute projection is terminal.
+- Seller list controls must not expose ordinary payment/delivery mutations while the active dispute freezes the order. The linked dispute case remains the primary action route.
+- Real backend DTOs, OpenAPI-generated types, handwritten frontend adapter types, and Mock summaries add the field together; no missing-field fallback is supported.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Completed order with active dispute | Primary seller status is the shared dispute phase; navigation risk is red |
+| Active dispute also matches an ordinary action status | `apiOrderActions` increases by one, not two |
+| Active dispute waits for buyer/admin | Remains included in seller count and red tone |
+| Dispute projects to `none` or legacy `closed` | Fulfillment status becomes primary and risk count decreases |
+| Real/Mock contract omits `apiOrderDisputes` | Contract/type check fails; do not silently infer zero |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a completed order in platform review appears as `平台审核中`, links to the case, and makes the sales-order menu badge red.
+- Base: a paid-confirmed order without a dispute remains `待交付` and uses the ordinary navigation badge treatment.
+- Bad: render `已完成` first and append a smaller dispute badge, count action and dispute queues separately, or make the shell load full order lists to derive risk.
+
+### 6. Tests Required
+
+- PostgreSQL source/integration tests assert the complete active status set, terminal exclusion, and per-order `OR` union for buyer and seller counts.
+- Handler/OpenAPI tests assert `apiOrderDisputes` survives the role summary, JSON DTO, generated types, and route contract.
+- Mock tests use an order that is both ordinarily actionable and disputed, then assert total action count is one and dispute count is one; terminal history asserts zero risk.
+- Frontend tests assert dispute-first list/detail labels, risk row/panel styling, hidden ordinary seller mutations, and destructive desktop/mobile navigation badges.
+- Gates: full Go test/vet, full Vitest, Nuxt typecheck, real-mode build, OpenAPI generated-type/route checks, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+seller actions count + dispute count -> visible badge total
+disputeCaseId exists -> always override fulfillment status
+completed + active dispute -> show "已完成" first
+```
+
+#### Correct
+
+```text
+count orders where ordinary_action OR active_dispute -> visible badge total
+isApiOrderDisputeActive(disputeStatus) -> presentation priority and risk tone
+apiOrderDisputes > 0 -> red seller navigation badge
+```

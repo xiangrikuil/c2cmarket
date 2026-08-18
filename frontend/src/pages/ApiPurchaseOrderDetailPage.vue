@@ -93,6 +93,13 @@ const ordinaryActionsPaused = computed(() => Boolean(order.value && (
   isApiOrderDisputeActive(order.value.disputeStatus)
   || order.value.catalogRiskHold?.status === 'active'
 )))
+const activeDispute = computed(() => Boolean(order.value && isApiOrderDisputeActive(order.value.disputeStatus)))
+const primaryStatusLabel = computed(() => {
+  if (!order.value) return ''
+  return activeDispute.value
+    ? getApiOrderDisputeStatusLabel(order.value.disputeStatus)
+    : getApiOrderDisplayStatus(order.value, perspective.value)
+})
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
@@ -166,7 +173,7 @@ const canSubmitDispute = computed(() => Boolean(
 	&& (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim())
 	&& (order.value?.status !== 'completed' || disputeIssueOccurredAt.value),
 ))
-const canOpenReviewCenter = computed(() => order.value?.status === 'completed')
+const canOpenReviewCenter = computed(() => !activeDispute.value && order.value?.status === 'completed')
 const reviewRow = computed(() => {
   const matches = reviewCenter.value?.items.filter(item => item.transactionType === 'api_order' && item.transactionId === id.value) ?? []
   return matches.find(item => item.direction === 'pending') ?? matches.find(item => item.direction === 'sent') ?? matches[0] ?? null
@@ -291,6 +298,7 @@ const currentFlowIndex = computed(() => {
 const orderAmountText = computed(() => order.value ? formatDecimal(order.value.amountDecimal || String(order.value.amount), 2, 2) : '0.00')
 const orderAllowanceText = computed(() => order.value ? formatDecimal(order.value.requestedUsdAllowanceDecimal || String(order.value.requestedUsdAllowance), 2, 6) : '0.00')
 const activeDeadline = computed(() => {
+  if (activeDispute.value) return null
   if (order.value?.status === 'pending_payment') return order.value.paymentExpiresAt
   if (order.value?.status === 'payment_submitted') return order.value.merchantConfirmDueAt
   if (order.value?.status === 'paid_confirmed') return order.value.deliveryDueAt
@@ -580,7 +588,7 @@ onBeforeUnmount(() => {
         <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push(backPath)"><ArrowLeft class="h-4 w-4" />{{ backLabel }}</Button>
         <div v-auto-animate="functionalMotion" class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold">{{ pageTitle }}</h1>
-          <StatusBadge :key="order.status" :status="order.status" :label="getApiOrderDisplayStatus(order, perspective)" />
+          <StatusBadge :key="`${order.status}-${order.disputeStatus}`" :status="order.status" :tone="activeDispute ? 'risk' : undefined" :label="primaryStatusLabel" />
           <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限量额度包</Badge>
         </div>
         <p class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" :title="order.serviceTitle">
@@ -629,8 +637,8 @@ onBeforeUnmount(() => {
       </AlertDescription>
     </Alert>
 
-    <Alert v-if="showDisputeStatus" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
-      <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
+    <Alert v-if="showDisputeStatus" :class="activeDispute ? 'border-risk/30 bg-risk/5' : 'border-border bg-muted/20'">
+      <ShieldAlert :class="activeDispute ? 'text-risk' : 'text-muted-foreground'" />
       <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
       <AlertDescription>
         <p>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) || '该订单有历史纠纷记录，可查看最近案件的终局与申诉期限。' }}</p>
@@ -672,7 +680,7 @@ onBeforeUnmount(() => {
           <h2 id="merchant-payment-check-title" class="font-semibold">收款核对</h2>
           <p class="mt-1 text-xs leading-5 text-muted-foreground">先核对实际到账、买家备注和订单联系方式，再确认收款。</p>
         </div>
-        <Badge :variant="canConfirmPayment ? 'trust' : 'secondary'">{{ canConfirmPayment ? '待核款' : getApiOrderDisplayStatus(order, perspective) }}</Badge>
+        <Badge :variant="activeDispute ? 'destructive' : canConfirmPayment ? 'trust' : 'secondary'">{{ canConfirmPayment ? '待核款' : primaryStatusLabel }}</Badge>
       </div>
 
       <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -737,13 +745,16 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <div class="text-xs text-muted-foreground">当前状态</div>
-            <div class="mt-3 text-xl font-semibold">{{ getApiOrderDisplayStatus(order, perspective) }}</div>
-            <div class="mt-2 text-xs text-muted-foreground">{{ order.deliveryCredential ? (isMerchantView ? '你的交付任务已结束' : '交付凭证已提交') : '无需倒计时' }}</div>
+            <div class="mt-3 text-xl font-semibold" :class="activeDispute ? 'text-risk' : ''">{{ primaryStatusLabel }}</div>
+            <div class="mt-2 text-xs text-muted-foreground">{{ activeDispute ? getApiOrderDisputeStatusDescription(order.disputeStatus) : order.deliveryCredential ? (isMerchantView ? '你的交付任务已结束' : '交付凭证已提交') : '无需倒计时' }}</div>
           </template>
         </div>
         <div v-auto-animate="functionalMotion" class="flex min-w-56 flex-col justify-center gap-2 p-5">
           <div class="text-center text-xs font-medium text-muted-foreground">当前可执行操作</div>
-          <Button v-if="canSubmitPayment" size="lg" :disabled="actionBusy || paymentInstructionsQuery.isLoading.value || countdown.expired" @click="paymentDialogOpen = true">
+          <Button v-if="activeDispute && disputePanelId" size="lg" @click="router.push({ path: `/my/disputes/${disputePanelId}`, query: { from: isMerchantView ? 'merchant' : 'buyer', orderId: order.id } })">
+            <Headphones class="h-4 w-4" />进入纠纷处理
+          </Button>
+          <Button v-else-if="canSubmitPayment" size="lg" :disabled="actionBusy || paymentInstructionsQuery.isLoading.value || countdown.expired" @click="paymentDialogOpen = true">
             <QrCode class="h-4 w-4" />{{ paymentActionLabel }}
           </Button>
           <Button v-else-if="canResubmitPayment" size="lg" :disabled="actionBusy" @click="openPaymentIssueResponse">

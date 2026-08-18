@@ -52,3 +52,23 @@ func TestNavigationBadgeUsesLightweightCarpoolActions(t *testing.T) {
 		t.Fatalf("navigation badge query must count pending owner applications: %s", normalizedSQL)
 	}
 }
+
+func TestNavigationBadgeCountsActiveAPIOrderDisputesAsDistinctOrderActions(t *testing.T) {
+	normalizedSQL := strings.Join(strings.Fields(navigationBadgeSummarySQL), " ")
+	activeStatuses := "dispute_status IN ( 'negotiating', 'pending_seller_response', 'pending_applicant_decision', 'open', 'awaiting_fulfillment', 'fulfillment_confirmation' )"
+	for _, want := range []string{
+		"status = 'delivery_submitted' OR " + activeStatuses,
+		activeStatuses + ") AS buyer_api_order_disputes",
+		"status IN ('payment_submitted', 'paid_confirmed') OR " + activeStatuses,
+		activeStatuses + ") AS merchant_api_order_disputes",
+	} {
+		if !strings.Contains(normalizedSQL, want) {
+			t.Fatalf("navigation badge query is missing dispute action boundary %q: %s", want, normalizedSQL)
+		}
+	}
+	for _, terminal := range []string{"dispute_status = 'none'", "dispute_status = 'closed'"} {
+		if strings.Contains(normalizedSQL, terminal) {
+			t.Fatalf("navigation badge query must not count terminal dispute projection %q: %s", terminal, normalizedSQL)
+		}
+	}
+}

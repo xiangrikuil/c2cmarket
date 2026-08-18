@@ -50,6 +50,22 @@ describe('API 订单角色视图', () => {
     expect(merchantList).not.toContain('等待买家确认完成')
   })
 
+  it('prioritizes active dispute state across seller list and shared detail', () => {
+    expect(merchantList).toContain("baseFilteredRows.value.filter(hasActiveDispute).length")
+    expect(merchantList).toContain("hasActiveDispute(item) ? getApiOrderDisputeStatusLabel(item.disputeStatus) : getApiOrderDisplayStatus(item, 'merchant')")
+    expect(merchantList).toContain(":tone=\"hasActiveDispute(item) ? 'risk' : undefined\"")
+    expect(merchantList).toContain(":class=\"hasActiveDispute(item) ? 'bg-risk/5' : ''\"")
+    expect(merchantList).not.toContain('<StatusBadge v-if="item.disputeCaseId" status="open"')
+    expect(detail).toContain('const primaryStatusLabel = computed')
+    expect(detail).toContain('if (activeDispute.value) return null')
+    expect(detail).toContain("const canOpenReviewCenter = computed(() => !activeDispute.value && order.value?.status === 'completed')")
+    expect(detail).toContain(":tone=\"activeDispute ? 'risk' : undefined\"")
+    expect(detail).toContain("activeDispute ? 'border-risk/30 bg-risk/5'")
+    expect(detail).toContain('v-if="activeDispute && disputePanelId"')
+    expect(detail).toContain('进入纠纷处理')
+    expect(detail).toContain('{{ primaryStatusLabel }}')
+  })
+
   it('registers a read-only admin detail without rendering secret properties', () => {
     expect(router).toContain("path: '/admin/api-orders/:id'")
     expect(adminDetail).toContain('API 订单监管详情')
