@@ -195,6 +195,7 @@ type BackendCarpoolMembership = {
   endedAt?: string
   endedReason?: string
   endedByUserId?: string
+  ownerNote?: string
   version: number
   createdAt: string
   updatedAt: string
@@ -639,6 +640,8 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
     backendContactSessionId: application.contactSessionId,
     backendMembershipId: membership?.id,
     backendStatus: membership?.status ?? application.status,
+    backendMembershipJoinedAt: membership?.joinedAt,
+    ownerNote: perspective === 'owner' ? membership?.ownerNote : undefined,
     conditionsOutdated: Boolean(listing?.conditionsVersion && application.acceptedConditionsVersion !== listing.conditionsVersion),
     acceptedConditionsVersion: application.acceptedConditionsVersion,
     conditionsVersionSnapshot: application.conditionsVersionSnapshot,
@@ -979,6 +982,17 @@ export async function backendOwnerRemoveCarpool(applicationId: string, reason: s
   })
   backendMembershipsByApplicationOwner.set(response.carpoolApplicationId, response)
   return mapApplication(await ownerApplication(applicationId), 'owner')
+}
+
+export async function backendUpdateCarpoolMembershipOwnerNote(membershipId: string, note: string, version: number) {
+  await ensureBackendSession('owner', false)
+  const response = await backendMutation<BackendCarpoolMembership>(`/api/v1/owner/carpool-memberships/${membershipId}/note`, { note }, {
+    method: 'PATCH',
+    idempotencyPrefix: 'carpool-owner-note',
+    ifMatch: version,
+  })
+  backendMembershipsByApplicationOwner.set(response.carpoolApplicationId, response)
+  return mapApplication(await ownerApplication(response.carpoolApplicationId), 'owner')
 }
 
 function carpoolStatusLabel(listing: BackendCarpoolListing) {

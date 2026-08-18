@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { afterEach, test, vi } from 'vitest'
 
 const myCarpoolsSource = readFileSync(new URL('../../pages/MyCarpoolsPage.vue', import.meta.url), 'utf8')
+const managementSource = readFileSync(new URL('../../pages/CarpoolMembershipManagementPage.vue', import.meta.url), 'utf8')
 const publishSource = readFileSync(new URL('../../pages/CarpoolPublishPage.vue', import.meta.url), 'utf8')
 
 function jsonResponse(body: unknown) {
@@ -10,6 +11,15 @@ function jsonResponse(body: unknown) {
     status: 200,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function createStorage(initial: Record<string, string> = {}) {
+  const values = new Map(Object.entries(initial))
+  return {
+    getItem(key: string) { return values.get(key) ?? null },
+    setItem(key: string, value: string) { values.set(key, value) },
+    removeItem(key: string) { values.delete(key) },
+  }
 }
 
 function backendSession() {
@@ -122,6 +132,26 @@ test('risk acknowledgement participates in the visible publish checklist', () =>
   assert.match(publishSource, /riskAcknowledgement: 'carpool-task-riskAcknowledgement'/)
   assert.match(publishSource, /id="carpool-task-riskAcknowledgement"/)
   assert.match(publishSource, /key === 'accessArrangement'[\s\S]*?\? 'riskAcknowledgement'/)
+})
+
+test('carpool management keeps the owner note private and mock-persistent', async () => {
+  assert.match(myCarpoolsSource, /title="拼车管理"/)
+  assert.match(myCarpoolsSource, /管理车队/)
+  assert.match(managementSource, /车主私有备注/)
+  assert.match(managementSource, /原因可以留空/)
+
+  vi.stubGlobal('window', { sessionStorage: createStorage(), localStorage: createStorage() })
+  const api = await import('../api')
+  const member = (await api.getMerchantCarpoolApplications({ carpoolId: 'c1' })).find(item => item.status === 'active')
+  assert.ok(member)
+  await api.updateCarpoolMembershipOwnerNote(member, '已在站外确认')
+
+  vi.resetModules()
+  const reloadedApi = await import('../api')
+  const reloadedMember = (await reloadedApi.getMerchantCarpoolApplications({ carpoolId: 'c1' })).find(item => item.id === member.id)
+  assert.equal(reloadedMember?.ownerNote, '已在站外确认')
+  const buyerApplication = await reloadedApi.getCarpoolApplicationById(member.id)
+  assert.equal(buyerApplication?.ownerNote, undefined)
 })
 
 test('real carpool adapter leaves unavailable owner reputation facts null', async () => {
@@ -437,6 +467,63 @@ test('owner carpool page serializes view and cursor without forcing a default vi
 
   await backendOwnerCarpools()
   assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/me/carpools?limit=100')
+})
+
+test('owner note adapter patches the membership version and maps the updated note', async () => {
+  const membership = {
+    id: 'membership-id',
+    carpoolListingId: 'listing-id',
+    carpoolApplicationId: 'application-id',
+    buyerUserId: 'buyer-id',
+    ownerUserId: 'owner-id',
+    productPlanId: 'plan-id',
+    status: 'active',
+    seatCount: 1,
+    priceMonthlyCny: '88.00',
+    policyVersionSnapshot: 1,
+    joinedAt: '2026-08-02T01:00:00Z',
+    ownerNote: '仅车主可见',
+    version: 3,
+    createdAt: '2026-08-02T01:00:00Z',
+    updatedAt: '2026-08-02T02:00:00Z',
+  }
+  const application = {
+    id: 'application-id',
+    carpoolListingId: 'listing-id',
+    buyerUserId: 'buyer-id',
+    ownerUserId: 'owner-id',
+    productPlanId: 'plan-id',
+    buyerContactMethodId: 'contact-id',
+    status: 'joined',
+    seatCount: 1,
+    listingTitleSnapshot: '测试车源',
+    priceMonthlyCny: '88.00',
+    policyVersionSnapshot: 1,
+    conditionsVersionSnapshot: 1,
+    acceptedConditionsVersion: 1,
+    conditionsAcceptedAt: '2026-08-02T01:00:00Z',
+    joinedAt: '2026-08-02T01:00:00Z',
+    version: 2,
+    createdAt: '2026-08-02T00:00:00Z',
+    updatedAt: '2026-08-02T01:00:00Z',
+  }
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(backendSession()))
+    .mockResolvedValueOnce(jsonResponse(membership))
+    .mockResolvedValueOnce(jsonResponse(application))
+    .mockResolvedValueOnce(jsonResponse(productPlan()))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const { backendUpdateCarpoolMembershipOwnerNote } = await import('../carpoolBackend')
+  const updated = await backendUpdateCarpoolMembershipOwnerNote('membership-id', '新备注', 2)
+
+  assert.equal(updated.ownerNote, '仅车主可见')
+  assert.equal(updated.backendMembershipId, 'membership-id')
+  assert.equal(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('If-Match'), '"2"')
+  assert.match(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Idempotency-Key') ?? '', /^carpool-owner-note-/)
+  assert.deepEqual(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)), { note: '新备注' })
 })
 
 test('owner carpool edit detail maps every persisted publish field', async () => {

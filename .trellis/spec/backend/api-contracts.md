@@ -115,6 +115,7 @@ POST /api/v1/owner/carpool-applications/{id}/accept
 POST /api/v1/owner/carpool-applications/{id}/reject
 GET  /api/v1/owner/carpool-memberships
 POST /api/v1/owner/carpool-memberships/{id}/remove
+PATCH /api/v1/owner/carpool-memberships/{id}/note
 GET  /api/v1/owner/api-services
 POST /api/v1/owner/api-services
 GET  /api/v1/owner/api-probe-connections
@@ -2535,7 +2536,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 113 (current repository target)
+  ExpectedMigrationVersion = 114 (current repository target)
 ```
 
 ### 3. Contracts

@@ -4680,9 +4680,14 @@ export type CarpoolMembership = {
     endedAt?: string | null;
     endedReason?: string;
     endedByUserId?: string;
+    ownerNote?: string;
     version: number;
     createdAt: string;
     updatedAt: string;
+};
+
+export type CarpoolMembershipOwnerNoteRequest = {
+    note: string;
 };
 
 export type CarpoolMembershipList = {
@@ -9958,6 +9963,49 @@ export type RemoveOwnerCarpoolMembershipResponses = {
 };
 
 export type RemoveOwnerCarpoolMembershipResponse = RemoveOwnerCarpoolMembershipResponses[keyof RemoveOwnerCarpoolMembershipResponses];
+
+export type UpdateOwnerCarpoolMembershipNoteData = {
+    body: CarpoolMembershipOwnerNoteRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/carpool-memberships/{id}/note';
+};
+
+export type UpdateOwnerCarpoolMembershipNoteErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateOwnerCarpoolMembershipNoteError = UpdateOwnerCarpoolMembershipNoteErrors[keyof UpdateOwnerCarpoolMembershipNoteErrors];
+
+export type UpdateOwnerCarpoolMembershipNoteResponses = {
+    /**
+     * Updated private owner note.
+     */
+    200: CarpoolMembership;
+};
+
+export type UpdateOwnerCarpoolMembershipNoteResponse = UpdateOwnerCarpoolMembershipNoteResponses[keyof UpdateOwnerCarpoolMembershipNoteResponses];
 
 export type ListOwnerApiServicesData = {
     body?: never;

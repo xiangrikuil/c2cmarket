@@ -175,6 +175,7 @@ type Membership struct {
 	EndedAt                   *time.Time
 	EndedReason               string
 	EndedByUserID             string
+	OwnerNote                 string
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
 	Version                   int64
@@ -384,3 +385,15 @@ type EndMembershipInput struct {
 }
 
 type MembershipCompletionBuilder func(Membership) (idempotency.Completion, *domain.AppError)
+
+type UpdateMembershipOwnerNoteInput struct {
+	MembershipID           string
+	OwnerUserID            string
+	OwnerAudience          string
+	GovernanceActionID     string
+	GovernanceVersion      int64
+	RestrictionEffectiveAt time.Time
+	Note                   string
+	ExpectedVersion        int64
+	RequestID              string
+}

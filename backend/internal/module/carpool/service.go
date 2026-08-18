@@ -1542,6 +1542,63 @@ func (s *Service) EndMembershipWithIdempotency(ctx context.Context, userID, rout
 	return completion, nil
 }
 
+func (s *Service) UpdateMembershipOwnerNoteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input UpdateMembershipOwnerNoteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.OwnerUserID = actor.UserID
+	input.OwnerAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return s.UpdateMembershipOwnerNoteWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) UpdateMembershipOwnerNoteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input UpdateMembershipOwnerNoteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	key = strings.TrimSpace(key)
+	if err := idempotency.ValidateKey(key); err != nil {
+		return idempotency.Completion{}, err
+	}
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = userID
+	input.Note = strings.TrimSpace(input.Note)
+	if err := validateMembershipOwnerNoteInput(input); err != nil {
+		return idempotency.Completion{}, err
+	}
+
+	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateCarpoolMembershipOwnerNoteWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+
+	membership, appErr := s.updateMembershipOwnerNoteInMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(membership)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
 func (s *Service) productPlan(ctx context.Context, planID string) (catalog.ProductPlan, *domain.AppError) {
 	if s.catalog == nil {
 		return catalog.ProductPlan{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "产品目录服务不可用。")
@@ -1764,6 +1821,24 @@ func (s *Service) endMembershipInMemory(input EndMembershipInput) (Membership, *
 	return membership, nil
 }
 
+func (s *Service) updateMembershipOwnerNoteInMemory(input UpdateMembershipOwnerNoteInput) (Membership, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	membership, ok := s.memberships[input.MembershipID]
+	if !ok || membership.OwnerUserID != input.OwnerUserID {
+		return Membership{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool membership not found", "成员关系不存在。")
+	}
+	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
+		return Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	membership.OwnerNote = input.Note
+	membership.UpdatedAt = s.now()
+	membership.Version++
+	s.memberships[membership.ID] = membership
+	return membership, nil
+}
+
 func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPlan) *domain.AppError {
 	if strings.TrimSpace(input.ProductPlanID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeProductPlanResolutionRequired, "Product plan required", "必须选择产品套餐。", "productPlanId", "required", "必须选择产品套餐。")
@@ -1969,9 +2044,6 @@ func validateEndMembershipInput(input EndMembershipInput) *domain.AppError {
 	if strings.TrimSpace(input.MembershipID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership required", "必须提供成员关系。", "membershipId", "required", "必须提供成员关系。")
 	}
-	if strings.TrimSpace(input.Reason) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "必须填写结束原因。", "reason", "required", "必须填写结束原因。")
-	}
 	if input.ActorRole == JoinActorBuyer && input.TargetStatus == MembershipStatusLeft {
 		return nil
 	}
@@ -1979,6 +2051,16 @@ func validateEndMembershipInput(input EndMembershipInput) *domain.AppError {
 		return nil
 	}
 	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership action invalid", "成员关系操作不正确。", "targetStatus", "invalid", "成员关系操作不正确。")
+}
+
+func validateMembershipOwnerNoteInput(input UpdateMembershipOwnerNoteInput) *domain.AppError {
+	if strings.TrimSpace(input.MembershipID) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership required", "必须提供成员关系。", "membershipId", "required", "必须提供成员关系。")
+	}
+	if utf8.RuneCountInString(input.Note) > 500 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Owner note too long", "车主备注不能超过 500 个字符。", "note", "too_long", "车主备注不能超过 500 个字符。")
+	}
+	return nil
 }
 
 func validateRiskAcknowledgement(ack *RiskAcknowledgement, plan catalog.ProductPlan) *domain.AppError {
