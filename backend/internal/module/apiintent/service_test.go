@@ -382,6 +382,28 @@ func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	}
 }
 
+func TestCreateIntentRejectsSoldOutServiceVisibleByPublicDetail(t *testing.T) {
+	now := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)
+	duration := 7
+	service := limitedPackageIntentService(now, []apimarket.ServicePackage{{
+		ID: "sold-out", Name: "售罄套餐", PriceCNY: "9.90", PanelAllowance: "5", DurationDays: &duration,
+		StockTotal: 1, StockAvailable: 0, Enabled: true,
+		Models: []apimarket.ServicePackageModel{{ServiceModelID: "service-model-1", ModelCatalogID: "model-1"}},
+	}})
+	events := []string{}
+	manager := NewManager(nil, &createOrderingServiceResolver{events: &events, service: service}, nil, nil, func() time.Time { return now })
+
+	_, _, created, appErr := manager.CreateWithIdempotency(context.Background(), "buyer-1", "api-intent-create", "sold-out-key", "sold-out-hash", CreateIntentInput{
+		APIServiceID: service.ID,
+	}, testAPIIntentCompletion)
+	if appErr == nil || appErr.Status != http.StatusNotFound || appErr.Code != domain.CodeObjectNotFound {
+		t.Fatalf("expected strict sold-out purchase rejection, got %+v", appErr)
+	}
+	if created || len(manager.intents) != 0 {
+		t.Fatalf("sold-out purchase attempt must not create an intent: created=%v intents=%+v", created, manager.intents)
+	}
+}
+
 func limitedPackageIntentService(now time.Time, packages []apimarket.ServicePackage) apimarket.Service {
 	service := apimarket.Service{
 		ID:                   "service-1",

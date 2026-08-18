@@ -352,6 +352,7 @@ type Service interface {
 	UpdateAPIServiceProbeConnection(ctx context.Context, user auth.User, input apimarket.UpdateProbeConnectionInput) (apimarket.Service, *domain.AppError)
 	UpdateAPIServiceProbeConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.UpdateProbeConnectionInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
+	PublicAPIPackageFilterOptions(ctx context.Context, billingMode string) (apimarket.PublicPackageFilterOptions, *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
 	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	OwnerAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)

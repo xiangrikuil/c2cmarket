@@ -1174,7 +1174,7 @@ paths:
       tags: [APIMarket]
       security: []
       summary: List orderable public API services.
-      description: Returns API services that are approved, online, clear, accepting orders, have a valid 3-15 minute payment window, and have at least one enabled payment option. Public service reads do not process payment, proxy upstream calls, expose payment QR codes, or store/deliver credentials.
+      description: Returns API services that are approved, online, clear, accepting orders, have a valid 3-15 minute payment window, and have at least one enabled payment option. Fixed-package services additionally require at least one enabled package with stock and an enabled referenced service model. Package model filters use OR semantics and run before cursor pagination. Public service reads do not process payment, proxy upstream calls, expose payment QR codes, or store/deliver credentials.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -1225,8 +1225,22 @@ paths:
         - name: packageModelCatalogId
           in: query
           required: false
+          deprecated: true
+          description: Legacy singular package-model filter. It is merged into packageModelCatalogIds when both forms are supplied.
           schema:
             type: string
+        - name: packageModelCatalogIds
+          in: query
+          required: false
+          description: Repeat this parameter to match any selected package model. Values are trimmed and deduplicated; zero values means all models.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 50
+            items:
+              type: string
+              minLength: 1
         - name: packageDurationDays
           in: query
           required: false
@@ -1261,6 +1275,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PublicAPIServiceList"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/api-services/filter-options:
+    get:
+      operationId: getPublicAPIPackageFilterOptions
+      tags: [APIMarket]
+      security: []
+      summary: Get currently purchasable fixed-package filter options.
+      description: Returns only effectively active model/provider catalog entries referenced by an enabled service model and at least one publicly orderable, enabled, in-stock fixed package. Models and durations backed only by disabled or sold-out inventory are excluded.
+      parameters:
+        - name: billingMode
+          in: query
+          required: true
+          schema:
+            type: string
+            const: fixed_package
+      responses:
+        "200":
+          description: Current model and duration choices for fixed-package discovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPIPackageFilterOptions"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/api-service-promotions:
     get:
       operationId: listPublicAPIServicePromotions
@@ -1291,6 +1330,7 @@ paths:
       tags: [APIMarket]
       security: []
       summary: Get one orderable public API service.
+      description: Returns only services that currently satisfy the same public orderability contract as marketplace discovery. Sold-out fixed-package services are not publicly visible.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
       responses:
@@ -14096,6 +14136,40 @@ components:
             $ref: "#/components/schemas/PublicAPIService"
         nextCursor:
           type: [string, "null"]
+    PublicAPIPackageModelFilterOption:
+      type: object
+      additionalProperties: false
+      required: [id, modelKey, providerCode, providerCategory, providerName, providerSortOrder, sortOrder]
+      properties:
+        id:
+          type: string
+          format: uuid
+        modelKey:
+          type: string
+        providerCode:
+          type: string
+        providerCategory:
+          type: string
+        providerName:
+          type: string
+        providerSortOrder:
+          type: integer
+        sortOrder:
+          type: integer
+    PublicAPIPackageFilterOptions:
+      type: object
+      additionalProperties: false
+      required: [models, durations]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicAPIPackageModelFilterOption"
+        durations:
+          type: array
+          items:
+            type: integer
+            enum: [1, 3, 7, 30]
     APIServicePromotionPlacement:
       type: string
       enum: [api_market_top]

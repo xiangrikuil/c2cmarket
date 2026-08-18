@@ -731,6 +731,10 @@ func (s *Service) PublicAPIServices(ctx context.Context, filter apimarket.Public
 	return domain.Page[APIService]{Items: items, NextCursor: services.NextCursor}, nil
 }
 
+func (s *Service) PublicAPIPackageFilterOptions(ctx context.Context, billingMode string) (apimarket.PublicPackageFilterOptions, *domain.AppError) {
+	return s.apiMarket.PublicPackageFilterOptions(ctx, billingMode)
+}
+
 func (s *Service) PublicAPIService(ctx context.Context, serviceID string) (APIService, *domain.AppError) {
 	service, appErr := s.apiMarket.PublicService(ctx, serviceID)
 	if appErr != nil {

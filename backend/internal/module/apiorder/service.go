@@ -714,6 +714,9 @@ func (s *Service) createInMemory(ctx context.Context, input CreateInput) (Order,
 	if appErr != nil {
 		return Order{}, appErr
 	}
+	if !apimarket.WithOrderabilityAt(service, s.now()).IsOrderable {
+		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "API service not orderable", "API 服务当前不可创建订单。")
+	}
 	if s.actionChecker != nil {
 		if appErr := s.actionChecker.CheckActionAllowed(ctx, intent.OwnerUserID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
 			return Order{}, appErr

@@ -2299,6 +2299,21 @@ export type PublicApiServiceList = {
     nextCursor?: string | null;
 };
 
+export type PublicApiPackageModelFilterOption = {
+    id: string;
+    modelKey: string;
+    providerCode: string;
+    providerCategory: string;
+    providerName: string;
+    providerSortOrder: number;
+    sortOrder: number;
+};
+
+export type PublicApiPackageFilterOptions = {
+    models: Array<PublicApiPackageModelFilterOption>;
+    durations: Array<1 | 3 | 7 | 30>;
+};
+
 export type ApiServicePromotionPlacement = 'api_market_top';
 
 export type PublicApiServicePromotionPlacement = 'api_market_top' | 'api_market_reward';
@@ -6823,7 +6838,16 @@ export type ListPublicApiServicesData = {
          * Maximum accepted minimum purchase amount in CNY.
          */
         minimumIntentCnyMax?: string;
+        /**
+         * Legacy singular package-model filter. It is merged into packageModelCatalogIds when both forms are supplied.
+         *
+         * @deprecated
+         */
         packageModelCatalogId?: string;
+        /**
+         * Repeat this parameter to match any selected package model. Values are trimmed and deduplicated; zero values means all models.
+         */
+        packageModelCatalogIds?: Array<string>;
         packageDurationDays?: 1 | 3 | 7 | 30;
         /**
          * Maximum total price for an enabled package with stock.
@@ -6838,6 +6862,15 @@ export type ListPublicApiServicesData = {
     url: '/api/v1/api-services';
 };
 
+export type ListPublicApiServicesErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListPublicApiServicesError = ListPublicApiServicesErrors[keyof ListPublicApiServicesErrors];
+
 export type ListPublicApiServicesResponses = {
     /**
      * Public API services.
@@ -6846,6 +6879,33 @@ export type ListPublicApiServicesResponses = {
 };
 
 export type ListPublicApiServicesResponse = ListPublicApiServicesResponses[keyof ListPublicApiServicesResponses];
+
+export type GetPublicApiPackageFilterOptionsData = {
+    body?: never;
+    path?: never;
+    query: {
+        billingMode: 'fixed_package';
+    };
+    url: '/api/v1/api-services/filter-options';
+};
+
+export type GetPublicApiPackageFilterOptionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetPublicApiPackageFilterOptionsError = GetPublicApiPackageFilterOptionsErrors[keyof GetPublicApiPackageFilterOptionsErrors];
+
+export type GetPublicApiPackageFilterOptionsResponses = {
+    /**
+     * Current model and duration choices for fixed-package discovery.
+     */
+    200: PublicApiPackageFilterOptions;
+};
+
+export type GetPublicApiPackageFilterOptionsResponse = GetPublicApiPackageFilterOptionsResponses[keyof GetPublicApiPackageFilterOptionsResponses];
 
 export type ListPublicApiServicePromotionsData = {
     body?: never;

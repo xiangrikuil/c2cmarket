@@ -391,18 +391,19 @@ func (s *Server) handlePublicAPIServices(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	services, appErr := s.app.PublicAPIServices(r.Context(), apimarket.PublicServiceFilter{
-		PaymentMethod:         r.URL.Query().Get("paymentMethod"),
-		BillingMode:           r.URL.Query().Get("billingMode"),
-		Search:                r.URL.Query().Get("search"),
-		ModelCatalogID:        r.URL.Query().Get("modelCatalogId"),
-		DistributionSystem:    r.URL.Query().Get("distributionSystem"),
-		MaxCNYPerUSD:          r.URL.Query().Get("maxCnyPerUsd"),
-		MinimumIntentCNYMax:   r.URL.Query().Get("minimumIntentCnyMax"),
-		PackageModelCatalogID: r.URL.Query().Get("packageModelCatalogId"),
-		PackageDurationDays:   packageDurationDays,
-		PackagePriceCNYMax:    r.URL.Query().Get("packagePriceCnyMax"),
-		PackageMultiplierMax:  r.URL.Query().Get("packageMultiplierMax"),
-		Sort:                  r.URL.Query().Get("sort"),
+		PaymentMethod:          r.URL.Query().Get("paymentMethod"),
+		BillingMode:            r.URL.Query().Get("billingMode"),
+		Search:                 r.URL.Query().Get("search"),
+		ModelCatalogID:         r.URL.Query().Get("modelCatalogId"),
+		DistributionSystem:     r.URL.Query().Get("distributionSystem"),
+		MaxCNYPerUSD:           r.URL.Query().Get("maxCnyPerUsd"),
+		MinimumIntentCNYMax:    r.URL.Query().Get("minimumIntentCnyMax"),
+		PackageModelCatalogID:  r.URL.Query().Get("packageModelCatalogId"),
+		PackageModelCatalogIDs: append([]string(nil), r.URL.Query()["packageModelCatalogIds"]...),
+		PackageDurationDays:    packageDurationDays,
+		PackagePriceCNYMax:     r.URL.Query().Get("packagePriceCnyMax"),
+		PackageMultiplierMax:   r.URL.Query().Get("packageMultiplierMax"),
+		Sort:                   r.URL.Query().Get("sort"),
 	}, pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -413,6 +414,38 @@ func (s *Server) handlePublicAPIServices(w http.ResponseWriter, r *http.Request)
 		Items:      toPublicAPIServiceResponsesWithHealth(services.Items, summaries),
 		NextCursor: services.NextCursor,
 	})
+}
+
+type publicAPIPackageModelFilterOptionResponse struct {
+	ID                string `json:"id"`
+	ModelKey          string `json:"modelKey"`
+	ProviderCode      string `json:"providerCode"`
+	ProviderCategory  string `json:"providerCategory"`
+	ProviderName      string `json:"providerName"`
+	ProviderSortOrder int    `json:"providerSortOrder"`
+	SortOrder         int    `json:"sortOrder"`
+}
+
+type publicAPIPackageFilterOptionsResponse struct {
+	Models    []publicAPIPackageModelFilterOptionResponse `json:"models"`
+	Durations []int                                       `json:"durations"`
+}
+
+func (s *Server) handlePublicAPIPackageFilterOptions(w http.ResponseWriter, r *http.Request) {
+	options, appErr := s.app.PublicAPIPackageFilterOptions(r.Context(), r.URL.Query().Get("billingMode"))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	models := make([]publicAPIPackageModelFilterOptionResponse, 0, len(options.Models))
+	for _, model := range options.Models {
+		models = append(models, publicAPIPackageModelFilterOptionResponse{
+			ID: model.ID, ModelKey: model.ModelKey, ProviderCode: model.ProviderCode,
+			ProviderCategory: model.ProviderCategory, ProviderName: model.ProviderName,
+			ProviderSortOrder: model.ProviderSortOrder, SortOrder: model.SortOrder,
+		})
+	}
+	writeJSON(w, http.StatusOK, publicAPIPackageFilterOptionsResponse{Models: models, Durations: options.Durations})
 }
 
 func (s *Server) handleUpdateAPIServiceOrderSettings(w http.ResponseWriter, r *http.Request) {

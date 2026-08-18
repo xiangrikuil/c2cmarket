@@ -12,6 +12,7 @@ import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
 import ApiQuotaOfferCard from '@/components/api-market/ApiQuotaOfferCard.vue'
 import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
 import ApiMarketActiveFilters from '@/components/api-market/ApiMarketActiveFilters.vue'
+import ApiPackageModelFilter from '@/components/api-market/ApiPackageModelFilter.vue'
 import { orderSellerDeclaredApiModels, type ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
 import { usePromotionImpression, type PromotionAnalyticsProperties } from '@/composables/usePromotionImpression'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -34,11 +35,14 @@ import {
   type PublicApiQuotaOffer,
 } from '@/lib/api'
 import {
-  apiMarketViewFromQuery,
-  apiQuotaOfferErrorMessage,
+  apiMarketPath,
+  apiMarketQueryForView,
+  apiMarketViewFromPath,
   type ApiMarketView,
-} from '@/lib/apiQuotaOfferUi'
-import { getDefaultApiPackageFilter, rankApiPackages } from '@/lib/apiPackageRecommendation'
+} from '@/lib/apiMarketRoutes'
+import { apiQuotaOfferErrorMessage } from '@/lib/apiQuotaOfferUi'
+import { rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { normalizeApiPackageModelQuery } from '@/lib/apiPackageModelFilter'
 import { getApiMerchantBadges } from '@/lib/apiMerchantBadges'
 import type { ApiServicePromotion } from '@/lib/apiMarketBackend'
 import { flattenUniqueCursorPages } from '@/lib/cursorPagination'
@@ -49,7 +53,7 @@ import {
   type ConcreteProductCategoryKey,
 } from '@/lib/productCategories'
 import { getApiServiceProductCategory, getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
-import { useApiPromotions, useApiQuotaSaleSlots, useCreateApiQuotaOrderMutation, useInfiniteApiQuotaOffers, useInfiniteApiServices, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useApiPackageFilterOptions, useApiPromotions, useApiQuotaSaleSlots, useCreateApiQuotaOrderMutation, useInfiniteApiQuotaOffers, useInfiniteApiServices, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { CAPABILITY, hasCapability } from '@/lib/capabilities'
@@ -60,13 +64,13 @@ type SaleModeFilter = ApiQuotaSaleMode | 'all'
 type ActiveFilterItem = { key: string, label: string }
 type MarketSort = 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast'
 type LimitedSort = MarketSort | 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
-type PackageSort = MarketSort | 'package_price_asc'
+type PackageSort = MarketSort | 'updated_desc' | 'package_price_asc'
 type FreeSort = MarketSort | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc'
 
 const route = useRoute()
 const router = useRouter()
 const { data: myProfile } = useMyProfileQuery(import.meta.client)
-const activeView = ref<ApiMarketView>(apiMarketViewFromQuery(route.query.view))
+const activeView = ref<ApiMarketView>(apiMarketViewFromPath(route.path))
 const canPublishQuota = computed(() => hasCapability(myProfile.value, CAPABILITY.apiQuotaPublish))
 const marketSearch = ref('')
 const distributionSystem = ref<ApiQuotaDistributionSystem | 'all'>('all')
@@ -75,23 +79,22 @@ const limitedMultiplierMax = ref('')
 const limitedSaleMode = ref<SaleModeFilter>('all')
 const limitedSort = ref<LimitedSort>('updated_desc')
 const packageModel = ref('')
+const packageModels = ref<string[]>([])
 const packageDuration = ref('')
 const packagePriceMax = ref('')
 const packageMultiplierMax = ref('')
-const packageSort = ref<PackageSort>('recommended')
+const packageSort = ref<PackageSort>('updated_desc')
 const freePriceMax = ref('')
 const freeMinimumPurchaseMax = ref('')
 const freeSort = ref<FreeSort>('updated_desc')
-const packageDefaultsDismissed = ref(false)
 const mobileFiltersOpen = ref(false)
-const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
+const packageRecommendationEligible = computed(() => packageModels.value.length === 1 && Boolean(packageDuration.value))
 const now = ref(Date.now())
 const serverClockOffset = ref(0)
 const selectedSlotKey = ref('')
 const pendingOfferId = ref('')
 let refreshedBoundary = ''
 let timer: ReturnType<typeof setInterval> | undefined
-let stopPackageDefaultWatch: (() => void) | undefined
 let pendingMarketRouteWrites = 0
 
 function useDebouncedFilter(source: typeof marketSearch, delay = 400) {
@@ -127,6 +130,11 @@ function queryText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function routeQueryValueEquals(current: unknown, expected: string | string[]) {
+  if (Array.isArray(expected)) return JSON.stringify(normalizeApiPackageModelQuery(current)) === JSON.stringify(expected)
+  return queryText(current) === expected
+}
+
 function numericText(value: unknown) {
   const text = queryText(value)
   if (text === '') return ''
@@ -141,11 +149,11 @@ function numericFilter(value: unknown) {
 }
 
 function applyRouteFilters() {
-  const view = apiMarketViewFromQuery(route.query.view)
-  const previousView = activeView.value
+  const view = apiMarketViewFromPath(route.path)
   activeView.value = view
   marketSearch.value = queryText(route.query.q).slice(0, 100)
-  packageModel.value = queryText(route.query.model)
+  packageModels.value = view === 'packages' ? normalizeApiPackageModelQuery(route.query.model) : []
+  packageModel.value = view === 'packages' ? '' : queryText(route.query.model)
   distributionSystem.value = ['sub2api', 'new_api_proxy', 'other'].includes(queryText(route.query.distribution))
     ? queryText(route.query.distribution) as ApiQuotaDistributionSystem
     : 'all'
@@ -159,13 +167,14 @@ function applyRouteFilters() {
       ? queryText(route.query.sort) as LimitedSort
       : 'updated_desc'
   } else if (view === 'packages') {
-    if (previousView !== 'packages') packageDefaultsDismissed.value = false
     packageDuration.value = ['1', '3', '7', '30'].includes(queryText(route.query.duration)) ? queryText(route.query.duration) : ''
     packagePriceMax.value = numericText(route.query.priceMax)
     packageMultiplierMax.value = numericText(route.query.multiplierMax)
-    packageSort.value = ['reputation_desc', 'completed_desc', 'response_fast', 'package_price_asc'].includes(queryText(route.query.sort))
-      ? queryText(route.query.sort) as PackageSort
-      : 'recommended'
+    const exactSelection = packageModels.value.length === 1 && Boolean(packageDuration.value)
+    const requestedSort = queryText(route.query.sort)
+    packageSort.value = ['recommended', 'reputation_desc', 'completed_desc', 'response_fast', 'updated_desc', 'package_price_asc'].includes(requestedSort)
+      ? requestedSort === 'recommended' && !exactSelection ? 'updated_desc' : requestedSort as PackageSort
+      : exactSelection ? 'recommended' : 'updated_desc'
   } else {
     freePriceMax.value = numericText(route.query.priceMax)
     freeMinimumPurchaseMax.value = numericText(route.query.minimumMax)
@@ -181,14 +190,15 @@ function applyRouteFilters() {
   syncDebouncedFreeMinimumPurchaseMax(freeMinimumPurchaseMax.value)
 }
 
-watch(() => route.query, () => {
+watch([() => route.path, () => route.query], () => {
   if (pendingMarketRouteWrites === 0) applyRouteFilters()
 }, { deep: true, immediate: true })
 
-const marketQuery = computed<Record<string, string>>(() => {
-  const query: Record<string, string> = { view: activeView.value }
+const marketQuery = computed<Record<string, string | string[]>>(() => {
+  const query: Record<string, string | string[]> = {}
   if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
-  if (packageModel.value) query.model = packageModel.value
+  if (activeView.value === 'packages' && packageModels.value.length) query.model = packageModels.value
+  if (activeView.value !== 'packages' && packageModel.value) query.model = packageModel.value
   if (distributionSystem.value !== 'all' && activeView.value !== 'packages') query.distribution = distributionSystem.value
   if (activeView.value === 'limited') {
     if (availability.value === 'all') query.availability = 'all'
@@ -199,7 +209,8 @@ const marketQuery = computed<Record<string, string>>(() => {
     if (packageDuration.value) query.duration = packageDuration.value
     if (debouncedPackagePriceMax.value) query.priceMax = debouncedPackagePriceMax.value
     if (debouncedPackageMultiplierMax.value) query.multiplierMax = debouncedPackageMultiplierMax.value
-    if (packageSort.value !== 'recommended') query.sort = packageSort.value
+    const defaultSort = packageRecommendationEligible.value ? 'recommended' : 'updated_desc'
+    if (packageSort.value !== defaultSort) query.sort = packageSort.value
   } else {
     if (debouncedFreePriceMax.value) query.priceMax = debouncedFreePriceMax.value
     if (debouncedFreeMinimumPurchaseMax.value) query.minimumMax = debouncedFreeMinimumPurchaseMax.value
@@ -208,17 +219,17 @@ const marketQuery = computed<Record<string, string>>(() => {
   return query
 })
 
-function routeQueryMatches(query: Record<string, string>) {
+function routeQueryMatches(query: Record<string, string | string[]>) {
   const currentKeys = Object.keys(route.query)
   const nextKeys = Object.keys(query)
-  return currentKeys.length === nextKeys.length && nextKeys.every(key => queryText(route.query[key]) === query[key])
+  return currentKeys.length === nextKeys.length && nextKeys.every(key => routeQueryValueEquals(route.query[key], query[key]))
 }
 
 watch(marketQuery, async query => {
   if (routeQueryMatches(query)) return
   pendingMarketRouteWrites += 1
   try {
-    await router.replace({ query })
+    await router.replace({ path: apiMarketPath(activeView.value), query })
   } finally {
     pendingMarketRouteWrites -= 1
   }
@@ -244,17 +255,20 @@ const serviceFilters = computed<ApiServiceFilters>(() => ({
   distributionSystem: activeView.value === 'free' ? distributionSystem.value : undefined,
   maxCnyPerUsd: activeView.value === 'free' ? numericFilter(debouncedFreePriceMax.value) : undefined,
   minimumPurchaseCnyMax: activeView.value === 'free' ? numericFilter(debouncedFreeMinimumPurchaseMax.value) : undefined,
-  packageModelCatalogId: activeView.value === 'packages' && packageReady.value ? packageModel.value : undefined,
-  packageDurationDays: activeView.value === 'packages' && packageReady.value ? Number(packageDuration.value) : undefined,
+  packageModelCatalogIds: activeView.value === 'packages' ? packageModels.value : undefined,
+  packageDurationDays: activeView.value === 'packages' && packageDuration.value ? Number(packageDuration.value) : undefined,
   packagePriceCnyMax: activeView.value === 'packages' ? numericFilter(debouncedPackagePriceMax.value) : undefined,
   packageMultiplierMax: activeView.value === 'packages' ? numericFilter(debouncedPackageMultiplierMax.value) : undefined,
-  sort: activeView.value === 'packages' ? packageSort.value : freeSort.value,
+  sort: activeView.value === 'packages' && packageSort.value === 'recommended' && !packageRecommendationEligible.value
+    ? 'updated_desc'
+    : activeView.value === 'packages' ? packageSort.value : freeSort.value,
 }))
 const quotaQuery = useInfiniteApiQuotaOffers(quotaFilters, limitedViewEnabled)
 const slotQuery = useApiQuotaSaleSlots(limitedViewEnabled)
 const rushFilters = computed<ApiQuotaOfferFilters>(() => ({ slotKey: selectedSlotKey.value }))
 const rushQuery = useInfiniteApiQuotaOffers(rushFilters, computed(() => limitedViewEnabled.value && Boolean(selectedSlotKey.value)))
 const freeServicesQuery = useInfiniteApiServices(serviceFilters, serviceViewEnabled, activeView)
+const packageFilterOptionsQuery = useApiPackageFilterOptions(computed(() => activeView.value === 'packages'))
 const promotionQuery = useApiPromotions()
 const productCategoriesQuery = useProductCategories()
 const modelCatalogQuery = useModelCatalog()
@@ -262,7 +276,7 @@ const { data: catalogCategories } = productCategoriesQuery
 const createOrderMutation = useCreateApiQuotaOrderMutation()
 const { setPromotionElement, trackPromotionClick } = usePromotionImpression()
 const visibleMarketQuery = activeView.value === 'limited' ? quotaQuery : freeServicesQuery
-prefetchQueriesOnServer(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery)
+prefetchQueriesOnServer(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery, packageFilterOptionsQuery)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const quotaHasLoadedPages = computed(() => Boolean(quotaQuery.data.value?.pages.length))
 const rushHasLoadedPages = computed(() => Boolean(rushQuery.data.value?.pages.length))
@@ -274,26 +288,55 @@ const quotaRows = computed(() => {
 const loadedServices = computed(() => flattenUniqueCursorPages(freeServicesQuery.data.value?.pages))
 const freeServices = computed(() => loadedServices.value.filter(service => service.billingMode !== 'fixed_package'))
 const packageServices = computed(() => loadedServices.value.filter(service => service.billingMode === 'fixed_package'))
-const packageModelOptions = computed(() => {
+const publicModelOptions = computed(() => {
   return (modelCatalogQuery.data.value ?? [])
     .filter(item => item.active)
     .map(item => ({ id: item.id, name: item.name }))
     .sort((left, right) => left.name.localeCompare(right.name))
 })
+const packageModelOptions = computed(() => packageFilterOptionsQuery.data.value?.models ?? [])
+const packageDurationOptions = computed(() => packageFilterOptionsQuery.data.value?.durations ?? [])
 
-const modelNameByID = computed(() => new Map(packageModelOptions.value.map(item => [item.id, item.name])))
+const modelNameByID = computed(() => new Map([
+  ...publicModelOptions.value.map(item => [item.id, item.name] as const),
+  ...packageModelOptions.value.map(item => [item.id, item.modelKey] as const),
+]))
 const modelFilterValue = computed({
   get: () => packageModel.value || 'all_models',
   set: (value: string) => {
     packageModel.value = value === 'all_models' ? '' : value
-    if (value === 'all_models') packageDefaultsDismissed.value = true
+  },
+})
+const packageDurationValue = computed({
+  get: () => packageDuration.value || 'all_durations',
+  set: (value: string) => {
+    packageDuration.value = value === 'all_durations' ? '' : value
   },
 })
 
+watch(() => packageFilterOptionsQuery.data.value, (options) => {
+  if (!options) return
+  const availableIds = new Set(options.models.map(model => model.id))
+  const nextModels = packageModels.value.filter(id => availableIds.has(id))
+  if (nextModels.length !== packageModels.value.length) packageModels.value = nextModels
+  if (packageDuration.value && !options.durations.includes(Number(packageDuration.value))) packageDuration.value = ''
+}, { immediate: true })
+
+watch(packageRecommendationEligible, (eligible, wasEligible) => {
+  if (activeView.value !== 'packages' || eligible === wasEligible) return
+  if (eligible && packageSort.value === 'updated_desc' && !queryText(route.query.sort)) packageSort.value = 'recommended'
+  if (!eligible && packageSort.value === 'recommended') packageSort.value = 'updated_desc'
+})
+
 function packageRowsFor(services: ApiService[]) {
-  const rows = rankApiPackages(services, packageModel.value, Number(packageDuration.value))
+  const rows = rankApiPackages(
+    services,
+    packageModels.value,
+    Number(packageDuration.value),
+    new Date(),
+    numericFilter(debouncedPackageMultiplierMax.value),
+  )
     .filter(row => numericFilter(debouncedPackagePriceMax.value) === undefined || row.package.priceCny <= numericFilter(debouncedPackagePriceMax.value)!)
-    .filter(row => numericFilter(debouncedPackageMultiplierMax.value) === undefined || row.selectedModel.merchantMultiplier <= numericFilter(debouncedPackageMultiplierMax.value)!)
   if (packageSort.value === 'reputation_desc') {
     rows.sort((left, right) => compareApiServiceReputationDesc(left.service, right.service) || left.package.id.localeCompare(right.package.id))
   }
@@ -305,6 +348,9 @@ function packageRowsFor(services: ApiService[]) {
   }
   if (packageSort.value === 'package_price_asc') {
     rows.sort((left, right) => left.package.priceCny - right.package.priceCny || left.package.id.localeCompare(right.package.id))
+  }
+  if (packageSort.value === 'updated_desc') {
+    rows.sort((left, right) => new Date(right.service.serviceUpdatedAt ?? 0).getTime() - new Date(left.service.serviceUpdatedAt ?? 0).getTime() || left.package.id.localeCompare(right.package.id))
   }
   return rows
 }
@@ -343,7 +389,7 @@ const packageDisplayRows = computed(() => {
       return rows.find(row => row.row.service.id === item.service.id)
         ?? (promotedRow ? { row: promotedRow, rank: 0, promotion: undefined, promotionPosition: undefined } : undefined)
     },
-    item => item.row.service.id,
+    item => item.row.package.id,
   )
 })
 const freeServiceDisplayRows = computed(() => {
@@ -373,6 +419,11 @@ function selectedModelLabel() {
   return modelNameByID.value.get(packageModel.value) ?? packageModel.value
 }
 
+function selectedPackageModelsLabel() {
+  if (packageModels.value.length === 1) return modelNameByID.value.get(packageModels.value[0]) ?? packageModels.value[0]
+  return `已选 ${packageModels.value.length} 个`
+}
+
 const limitedActiveFilters = computed<ActiveFilterItem[]>(() => [
   ...(marketSearch.value.trim() ? [{ key: 'search', label: `关键词：${marketSearch.value.trim()}` }] : []),
   ...(packageModel.value ? [{ key: 'model', label: `模型：${selectedModelLabel()}` }] : []),
@@ -384,7 +435,7 @@ const limitedActiveFilters = computed<ActiveFilterItem[]>(() => [
 
 const packageActiveFilters = computed<ActiveFilterItem[]>(() => [
   ...(marketSearch.value.trim() ? [{ key: 'search', label: `关键词：${marketSearch.value.trim()}` }] : []),
-  ...(packageModel.value ? [{ key: 'model', label: `模型：${selectedModelLabel()}` }] : []),
+  ...(packageModels.value.length ? [{ key: 'model', label: `模型：${selectedPackageModelsLabel()}` }] : []),
   ...(packageDuration.value ? [{ key: 'duration', label: `有效期：${packageDuration.value} 天` }] : []),
   ...(packagePriceMax.value ? [{ key: 'priceMax', label: `套餐价 ≤ ¥${packagePriceMax.value}` }] : []),
   ...(packageMultiplierMax.value ? [{ key: 'multiplierMax', label: `倍率 ≤ ${packageMultiplierMax.value}x` }] : []),
@@ -407,15 +458,14 @@ const currentActiveFilters = computed(() => activeView.value === 'limited'
 function removeActiveFilter(key: string) {
   if (key === 'search') marketSearch.value = ''
   if (key === 'model') {
-    packageModel.value = ''
-    packageDefaultsDismissed.value = true
+    if (activeView.value === 'packages') packageModels.value = []
+    else packageModel.value = ''
   }
   if (key === 'distribution') distributionSystem.value = 'all'
   if (key === 'availability') availability.value = 'available'
   if (key === 'saleMode') limitedSaleMode.value = 'all'
   if (key === 'duration') {
     packageDuration.value = ''
-    packageDefaultsDismissed.value = true
   }
   if (key === 'priceMax') {
     if (activeView.value === 'packages') packagePriceMax.value = ''
@@ -487,7 +537,11 @@ watch(selectedSlotKey, () => {
 })
 
 function setView(value: string | number) {
-  activeView.value = apiMarketViewFromQuery(value)
+  if (value !== 'limited' && value !== 'packages' && value !== 'free') return
+  const view = value as ApiMarketView
+  const query = apiMarketQueryForView(marketQuery.value, view)
+  if (view !== 'packages' && Array.isArray(query.model)) query.model = query.model[0]
+  void router.push({ path: apiMarketPath(view), query })
 }
 
 function formatSlotDate(slot: ApiQuotaSystemSaleSlot) {
@@ -623,13 +677,6 @@ function refreshAtSlotBoundary() {
 }
 
 onMounted(() => {
-  stopPackageDefaultWatch = watch([activeView, packageServices, packageModelOptions], ([view, services, modelOptions]) => {
-    if (view !== 'packages' || packageDefaultsDismissed.value || packageModel.value || packageDuration.value) return
-    const selection = getDefaultApiPackageFilter(services, new Set(modelOptions.map(model => model.id)))
-    if (!selection) return
-    packageModel.value = selection.modelCatalogId
-    packageDuration.value = String(selection.durationDays)
-  }, { immediate: true })
   timer = setInterval(() => {
     now.value = Date.now() + serverClockOffset.value
     refreshAtSlotBoundary()
@@ -637,7 +684,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  stopPackageDefaultWatch?.()
   if (timer) clearInterval(timer)
 })
 </script>
@@ -686,7 +732,7 @@ onBeforeUnmount(() => {
                 <div class="mt-2 font-medium">本场暂无额度包</div>
                 <p class="mt-1 text-sm text-muted-foreground">可以切换其他场次，或发布自己的限量额度包。</p>
                 <div class="mt-3 flex flex-wrap justify-center gap-2">
-                  <Button class="h-11 sm:h-9" size="sm" variant="outline" @click="activeView = 'free'">查看自选额度</Button>
+                  <Button class="h-11 sm:h-9" size="sm" variant="outline" @click="setView('free')">查看自选额度</Button>
                   <RouterLink v-if="canPublishQuota" to="/api-market/quota/new"><Button class="h-11 sm:h-9" size="sm">发布额度包</Button></RouterLink>
                 </div>
               </div>
@@ -748,7 +794,7 @@ onBeforeUnmount(() => {
               <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="支持模型" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all_models">全部模型</SelectItem>
-                <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
+                <SelectItem v-for="model in publicModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -795,7 +841,7 @@ onBeforeUnmount(() => {
           <template #action>
             <div class="flex flex-wrap justify-center gap-2">
               <RouterLink v-if="canPublishQuota" to="/api-market/quota/new"><Button class="h-11 gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限量额度包</Button></RouterLink>
-              <Button class="h-11 sm:h-9" variant="outline" @click="activeView = 'free'">查看自选额度</Button>
+              <Button class="h-11 sm:h-9" variant="outline" @click="setView('free')">查看自选额度</Button>
             </div>
           </template>
         </EmptyState>
@@ -829,7 +875,7 @@ onBeforeUnmount(() => {
         <Alert>
           <PackageOpen />
           <AlertTitle>短期流量包</AlertTitle>
-          <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果；平台测量只代表当前探测模型与平台节点。</AlertDescription>
+          <AlertDescription>默认展示全部可购买套餐，可按一个或多个模型、有效期进一步筛选。仅选择一个模型和一个有效期时提供综合推荐；平台测量只代表当前探测模型与平台节点。</AlertDescription>
         </Alert>
         <div class="api-market-filter-toolbar space-y-3 rounded-md border border-border bg-muted/25 p-3">
           <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-4 lg:items-center xl:grid-cols-7">
@@ -843,7 +889,8 @@ onBeforeUnmount(() => {
             <Select v-model="packageSort">
               <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="排序" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="recommended">综合推荐</SelectItem>
+                <SelectItem value="recommended" :disabled="!packageRecommendationEligible">综合推荐（需单模型和单有效期）</SelectItem>
+                <SelectItem value="updated_desc">最近更新</SelectItem>
                 <SelectItem value="reputation_desc">信誉度最高</SelectItem>
                 <SelectItem value="completed_desc">近 30 天完成单数最多</SelectItem>
                 <SelectItem value="response_fast">响应最快</SelectItem>
@@ -851,21 +898,14 @@ onBeforeUnmount(() => {
               </SelectContent>
             </Select>
             <div class="hidden lg:block">
-              <Select v-model="packageModel">
-                <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="精确模型" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
-                </SelectContent>
-              </Select>
+              <ApiPackageModelFilter v-model="packageModels" :options="packageModelOptions" />
             </div>
             <div class="hidden lg:block">
-              <Select v-model="packageDuration">
-                <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="有效期" /></SelectTrigger>
+              <Select v-model="packageDurationValue">
+                <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="全部有效期" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="1">1 天</SelectItem>
-                  <SelectItem value="3">3 天</SelectItem>
-                  <SelectItem value="7">7 天</SelectItem>
-                  <SelectItem value="30">30 天</SelectItem>
+                  <SelectItem value="all_durations">全部有效期</SelectItem>
+                  <SelectItem v-for="duration in packageDurationOptions" :key="duration" :value="String(duration)">{{ duration }} 天</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -881,8 +921,7 @@ onBeforeUnmount(() => {
         <ErrorState v-if="freeServicesQuery.error.value && !servicesHaveLoadedPages" description="短期流量包暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="6" />
         <template v-else>
-          <EmptyState v-if="!packageReady" title="先选择精确模型和有效期" description="选择完成后才会展示可购买套餐和综合推荐顺序。" />
-          <EmptyState v-else-if="packageDisplayRows.length === 0" title="暂无匹配的短期流量包" description="当前条件下没有可购买库存。" />
+          <EmptyState v-if="packageDisplayRows.length === 0" title="暂无匹配的短期流量包" description="当前条件下没有可购买库存。" />
           <div v-else class="api-product-card-grid">
             <div
               v-for="entry in packageDisplayRows"
@@ -895,6 +934,7 @@ onBeforeUnmount(() => {
                 :rank="entry.rank"
                 :product-icon-src="freeServiceIconSrc(entry.row.service)"
                 :promoted="Boolean(entry.promotion)"
+                :recommendation-ranked="packageSort === 'recommended'"
                 @activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"
               >
                 <template #health><ApiServiceHealthPanel :summary="entry.row.service.healthSummary" /></template>
@@ -943,7 +983,7 @@ onBeforeUnmount(() => {
                 <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="精确模型" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all_models">全部模型</SelectItem>
-                  <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
+                  <SelectItem v-for="model in publicModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1011,7 +1051,7 @@ onBeforeUnmount(() => {
               <SelectTrigger class="data-[size=default]:h-11"><SelectValue placeholder="支持模型" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all_models">全部模型</SelectItem>
-                <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
+                <SelectItem v-for="model in publicModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
               </SelectContent>
             </Select>
             <Select v-model="distributionSystem">
@@ -1042,19 +1082,12 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-else-if="activeView === 'packages'" class="mt-4 grid gap-3">
-            <Select v-model="packageModel">
-              <SelectTrigger class="data-[size=default]:h-11"><SelectValue placeholder="精确模型" /></SelectTrigger>
+            <ApiPackageModelFilter v-model="packageModels" :options="packageModelOptions" inline />
+            <Select v-model="packageDurationValue">
+              <SelectTrigger class="data-[size=default]:h-11"><SelectValue placeholder="全部有效期" /></SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select v-model="packageDuration">
-              <SelectTrigger class="data-[size=default]:h-11"><SelectValue placeholder="有效期" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">1 天</SelectItem>
-                <SelectItem value="3">3 天</SelectItem>
-                <SelectItem value="7">7 天</SelectItem>
-                <SelectItem value="30">30 天</SelectItem>
+                <SelectItem value="all_durations">全部有效期</SelectItem>
+                <SelectItem v-for="duration in packageDurationOptions" :key="duration" :value="String(duration)">{{ duration }} 天</SelectItem>
               </SelectContent>
             </Select>
             <Input v-model="packagePriceMax" class="h-11" type="number" min="0" step="0.01" aria-label="最高套餐价格" placeholder="最高套餐价" />
@@ -1066,7 +1099,7 @@ onBeforeUnmount(() => {
               <SelectTrigger class="data-[size=default]:h-11"><SelectValue placeholder="精确模型" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all_models">全部模型</SelectItem>
-                <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
+                <SelectItem v-for="model in publicModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
               </SelectContent>
             </Select>
             <Input v-model="freePriceMax" class="h-11" type="number" min="0" step="0.01" aria-label="最高额度单价" placeholder="最高单价 / $1" />

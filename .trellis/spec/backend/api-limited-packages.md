@@ -11,7 +11,7 @@
 - Trigger: any change to `fixed_package` API services, package publishing, merchant contact selection, package-model associations, package inventory, purchase-intent/order snapshots, package expiry, after-sales eligibility, or package recommendation UI.
 - One API service has exactly one billing mode. Existing `metered_usd_quota` behavior remains independent from `fixed_package`.
 - A marketplace row/card represents one package, not one service or merchant.
-- Limited packages remain inside `/api-market`; publishing remains inside `/api-market/new`. Do not add a separate top-level marketplace route.
+- Limited packages use the canonical `/api-market/packages` child route; publishing remains inside `/api-market/new`. Do not add a separate top-level marketplace.
 - Package value uses the API service's merchant-declared default multiplier. UI copy must label the estimate `按商家声明估算`; the platform does not claim to verify the multiplier.
 
 ### 2. Signatures
@@ -20,6 +20,7 @@
 POST  /api/v1/owner/api-services
 PATCH /api/v1/owner/api-services/{id}
 GET   /api/v1/api-services
+GET   /api/v1/api-services/filter-options?billingMode=fixed_package
 GET   /api/v1/api-services/{id}
 POST  /api/v1/api-services/{id}/purchase-intents
 POST  /api/v1/me/api-purchase-intents/{id}/orders
@@ -28,9 +29,12 @@ POST  /api/v1/owner/api-orders/{id}/confirm-payment
 POST  /api/v1/owner/api-orders/{id}/submit-delivery
 
 Frontend routes:
-  /api-market?panel=packages
+  /api-market/packages
   /api-market/{serviceId}?package={packageId}
   /api-market/new
+
+Legacy redirect:
+  /api-market?view=packages -> /api-market/packages
 ```
 
 ```text
@@ -100,6 +104,10 @@ newStockAvailable = oldStockAvailable + newStockTotal - oldStockTotal
 
 `PublicAPIService` exposes `packages`, merchant identity fields (`merchantDisplayName`, `merchantProfileSlug`, `merchantAvatarUrl`), `completed30d`, `unresolvedDisputes`, `responseMedianMinutes`, and `updatedAt`.
 
+`GET /api/v1/api-services` accepts repeated `packageModelCatalogIds` with OR semantics. The legacy singular `packageModelCatalogId` is merged into the normalized, first-occurrence-ordered set for compatibility. Every package filter, including the model set, duration, price, and multiplier, is applied before keyset pagination and uses the same conditions for package-price sorting and cursor scalar calculation.
+
+`GET /api/v1/api-services/filter-options?billingMode=fixed_package` returns only durations and model rows referenced by a publicly orderable, enabled, in-stock package through an enabled service model. Model metadata comes from the effective public catalog and preserves `providerCode`, `providerCategory`, provider display/sort metadata, model sort order, and active model/provider lifecycle.
+
 ```text
 APIServicePackage:
   id, name, priceCny, panelAllowance, durationDays
@@ -112,15 +120,18 @@ APIServicePackageModel:
 ```
 
 - Exact canonical model keys are displayed from snapshots, including values such as `gpt-5.5` and `gpt-5.6`.
-- Package results are not shown until both an exact `modelCatalogId` and a duration in `1 | 3 | 7 | 30` are selected. When the buyer first opens the package view with both filters empty, the frontend selects the first publicly orderable, enabled, in-stock package/model pair from the loaded results so a published package is immediately discoverable; this default must not mix models or durations in one ranking.
-- Candidates must be publicly orderable `fixed_package` services with an enabled, in-stock package matching the exact model and duration.
+- Package browsing starts with zero selected models and no duration. Zero models means all available models; one or more selected models use OR semantics. The frontend never auto-selects an arbitrary model or duration.
+- Package model URL state uses repeated `model=<catalogId>` values with stable deduplication. Stale model IDs and unsupported durations are removed after filter options load. A provider header has a tri-state selection checkbox and a separate expand/collapse control.
+- Provider grouping uses backend catalog metadata, not display-name inference: `xai`/`grok` map to xAI and `google`/`gemini` map to Google.
+- Candidates must be publicly orderable `fixed_package` services with an enabled, in-stock package matching the optional duration and any selected model. One package is rendered once even when several selected models match, and the card shows each matched model with its exact multiplier.
+- Zero or multiple models, or a missing duration, use neutral `updated_desc` ordering by default and do not compute or display recommendation scores. Exactly one model plus one duration enables the existing comparable recommendation score. An explicit `sort=updated_desc` remains authoritative and must not be replaced by the recommendation watcher.
 - Declared unit cost for the selected model is:
 
 ```text
 declaredUnitCost = priceCny * merchantMultiplier / panelAllowance
 ```
 
-- Comprehensive recommendation is the only ranking mode:
+- Comprehensive recommendation is available only for one exact model and one exact duration:
 
 ```text
 value       = 100 * bestDeclaredUnitCost / declaredUnitCost
@@ -131,10 +142,11 @@ freshness   = 100 * exp(-max(0, ageDays) / 30)
 score       = 0.60 * value + 0.25 * fulfillment + 0.10 * response + 0.05 * freshness
 ```
 
-- Sort by descending score, lower declared unit cost, higher available stock, newer service update, then package ID.
+- Recommendation sort uses descending score, lower declared unit cost, higher available stock, newer service update, then package ID. Explicit reputation, completion, response, package-price, and update-time sorts remain deterministic. The `综合推荐` badge appears only when recommendation sorting is active.
 - Cards use two columns on desktop and one on mobile, maintain stable dimensions, and show no more than three model chips plus `+N`.
 - Package cards consume the same `merchantAvatarUrl` projection as other API-market cards. They render an image when present and the merchant/store-name initial only when absent.
 - Opening a card navigates to `/api-market/{serviceId}?package={packageId}`. Detail preselects that valid package and fixes the intent/order amount to its CNY price.
+- Sold-out packages are absent from every buyer-facing public read: discovery, search, pagination, filter options, and direct detail. Public detail uses the same positive-stock orderability predicate as the list and returns `404 OBJECT_NOT_FOUND` after the final enabled package sells out. Merchant management continues to expose zero-stock inventory, while purchase and `FOR UPDATE` paths retain their independent positive-stock checks.
 
 #### Inventory, Snapshots, And Expiry
 
@@ -177,10 +189,14 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 | Stock total is negative | 422 | `VALIDATION_FAILED`, `packages.N.stockTotal` invalid |
 | Package model subset is empty | 422 | `VALIDATION_FAILED`, `packages.N.modelCatalogIds` required |
 | Package references a disabled/unselected model | 422 | `VALIDATION_FAILED`, nested model ID invalid |
+| Repeated `packageModelCatalogIds` contains an empty value or more than 50 values | 422 | `VALIDATION_FAILED`, `packageModelCatalogIds` `invalid` / `max_items` |
 | Duplicate model, package ID, or package-model ID | 422 | `VALIDATION_FAILED`, matching field `duplicate` |
 | Update supplies an unknown/foreign package ID | 422 | `VALIDATION_FAILED`, `packages` / `invalid_id` |
 | New stock total is below already reserved/consumed units | 422 | `VALIDATION_FAILED`, `packages` / `stock_below_committed` |
 | Intent selects a missing, disabled, or sold-out package | 422 | `VALIDATION_FAILED`, `selectedPackageId` invalid |
+| Buyer lists a sold-out fixed package | Omitted from results | No discoverable row and no sold-out-only filter option |
+| Buyer opens a sold-out package detail | 404 | `OBJECT_NOT_FOUND`; no public package facts |
+| Package links only disabled service models | 404 from public detail and omitted from list | No public/filter-option projection |
 | Concurrent order loses the final-stock reservation race | 409 | `INVALID_STATE_TRANSITION`; refresh/retry message |
 | Delivery snapshot is missing/invalid for a fixed package | 409 | `INVALID_STATE_TRANSITION`; delivery is rejected |
 | Package expiry is set without fixed-package delivery | Database rejection | `ck_api_orders_package_expiry` |
@@ -192,6 +208,8 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 ### 5. Good/Base/Bad Cases
 
 - Good: a merchant publishes 1-, 3-, 7-, and 30-day packages and enables exact models; every package/model row inherits that service's `0.0100` default while another self-hosted service keeps `1.0000`.
+- Good: the package route opens with all models and durations, then a buyer selects OpenAI plus xAI; packages matching either provider are returned once and show only matching model/multiplier pairs.
+- Good: after the last package sells, buyer list, search, filter options, and direct detail all stop exposing it, while the owner management view still shows zero stock.
 - Good: two buyers race for the last unit; exactly one order commits and the other receives a stock conflict.
 - Good: a 3-day package is delivered at time T; its frozen expiry is T plus 3 calendar days even if the merchant edits or disables the package later.
 - Good: the service selected WeChat then linux.do; the intent preserves both frozen versions in that order, and a completed dispute reported before `packageExpiresAt+24h` records an occurrence during package validity.
@@ -199,20 +217,20 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 - Base: missing response history receives neutral response score 50; no fabricated response time is persisted or returned.
 - Bad: recreate every package on edit, changing IDs and breaking existing intent/order references.
 - Bad: restore package stock after payment confirmation, delivery, completion, or dispute.
-- Bad: rank different models or durations together, or present the declared multiplier as platform-verified value.
+- Bad: calculate a hidden recommendation score while browsing multiple models, overwrite explicit `sort=updated_desc`, infer xAI/Google from model names, or present the declared multiplier as platform-verified value.
 - Bad: read the merchant's current contact profile for an old order, extend package validity by 24 hours, or treat the refund-rule label as an automatic refund promise.
 
 ### 6. Tests Required
 
 - Migration checks: version 51 is documented; package stock/allowance/duration constraints and package-model ownership foreign keys exist; non-1 multipliers such as `1.2000` insert successfully.
-- API-market domain tests: allowed durations, positive decimals, exact model subsets, duplicate/foreign IDs, stable package/model IDs, disabled omissions, and stock-delta rejection.
+- API-market domain tests: allowed durations, positive decimals, exact model subsets, repeated/legacy model normalization, zero/one/many OR matching without duplication, stable package/model IDs, disabled omissions, sold-out public-detail exclusion, and stock-delta rejection.
 - Intent tests: package availability and a full immutable snapshot containing exact model name, multiplier, model price-version ID, commercial facts, and historical explicit-null behavior.
 - Contact tests: non-empty unique ownership validation, stable selected order, all frozen immutable versions, legacy first-contact compatibility, and no placeholder contact creation.
 - Order tests: last-unit reservation, cancellation and timeout release exactly once, payment-confirmation consumption, no later release, and delivery-based expiry from the frozen snapshot.
 - After-sales tests: `packageExpiresAt` wins validity priority, exact 24-hour reporting boundary, required completed-order occurrence time, and rejection after package validity.
-- PostgreSQL integration: reservation/update/release occurs in the order transaction and cannot oversell under competing writes.
+- PostgreSQL integration: reservation/update/release occurs in the order transaction and cannot oversell under competing writes; multi-model OR matching, sold-out exclusion, sold-out-only option exclusion, disabled-model detail exclusion, later-page matching, and cursor ordering run against an isolated fully migrated database.
 - OpenAPI/router checks: publish/public response fields, snapshot/order lifecycle fields, route parity, and strict YAML parsing.
-- Frontend unit tests: uniform service-default multiplier mapping with no model/package override, adapter mapping, mock lifecycle parity, exact model/duration filtering, all score components, deterministic tie breakers, and sold-out exclusion.
+- Frontend unit tests: uniform service-default multiplier mapping with no model/package override, xAI/Google adapter mapping, mock lifecycle parity including sold-out public-detail exclusion, canonical/legacy routing, repeated URL params, provider grouping and tri-state selection, browse-first projection, all score components, deterministic tie breakers, and recommendation gating.
 - Merchant projection tests: both `public_profile` and `store_alias` preserve their correct avatar boundary through storage, API response, frontend adapter, and shared card component.
 - Frontend gates: `vue-tsc`, Vitest, real-backend production build, plus desktop/mobile browser checks for package cards, query preselection, fixed order amount, publish controls, and viewport overflow.
 - Metered-quota regression tests must continue passing after every package change.
@@ -248,4 +266,22 @@ packageExpiresAt = deliverySubmittedAt + currentPackage.durationDays
 ```text
 durationDays = parse(order.selectedPackageSnapshot).durationDays
 packageExpiresAt = deliverySubmittedAt + durationDays
+```
+
+#### Wrong: Filter Or Deduplicate Only The Loaded Frontend Page
+
+```text
+fetch one cursor page
+filter package models in the browser
+deduplicate by service ID
+```
+
+This loses matching packages on later pages and collapses distinct package inventory belonging to one service.
+
+#### Correct: Filter Before Pagination And Project By Package ID
+
+```text
+backend WHERE package model = ANY(selectedModelIds)
+backend keyset pagination uses the same package predicate
+frontend renders one row per package ID with matchedModels[]
 ```

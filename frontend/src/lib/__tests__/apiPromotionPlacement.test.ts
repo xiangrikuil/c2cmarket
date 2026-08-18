@@ -87,4 +87,23 @@ describe('API 市场分类内推广排序', () => {
     expect(result.map(row => row.promotion?.promotionId).filter(Boolean)).toEqual(['operator'])
     expect(result.map(row => row.serviceId)).toEqual(['shared', 'natural'])
   })
+
+  it('同一服务的多个套餐只提升命中的套餐行', () => {
+    const operator = promotion('operator-package', service('shared', 'fixed_package'), 'operator')
+    type PackageRow = Row & { packageId: string }
+    const rows: PackageRow[] = [
+      { serviceId: 'shared', packageId: 'package-a' },
+      { serviceId: 'shared', packageId: 'package-b' },
+      { serviceId: 'other', packageId: 'package-c' },
+    ]
+    const result = placePromotions(
+      rows,
+      { operator },
+      naturalRows => naturalRows.find(row => row.serviceId === 'shared'),
+      row => row.packageId,
+    )
+
+    expect(result.map(row => row.packageId)).toEqual(['package-a', 'package-b', 'package-c'])
+    expect(result[0]?.promotion?.promotionId).toBe('operator-package')
+  })
 })

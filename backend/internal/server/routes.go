@@ -88,6 +88,7 @@ func (s *Server) routes() {
 		r.Get("/api-models", s.handleAPIModels)
 		r.Get("/api-models/{id}", s.handleAPIModel)
 		r.Get("/api-services", s.handlePublicAPIServices)
+		r.Get("/api-services/filter-options", s.handlePublicAPIPackageFilterOptions)
 		r.Get("/api-service-promotions", s.handlePublicAPIPromotions)
 		r.Get("/promotion-rewards/public-config", s.handlePromotionRewardPublicConfig)
 		r.Get("/api-services/{id}", s.handlePublicAPIService)

@@ -2,6 +2,9 @@ package apimarket
 
 import (
 	"context"
+	"net/http"
+	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,6 +20,17 @@ type staticAPIModelResolver struct {
 
 func (r staticAPIModelResolver) APIModel(_ context.Context, modelID string) (catalog.APIModelCatalog, *domain.AppError) {
 	return r.models[modelID], nil
+}
+
+func (r staticAPIModelResolver) APIModels(context.Context) ([]catalog.APIModelCatalog, *domain.AppError) {
+	models := make([]catalog.APIModelCatalog, 0, len(r.models))
+	for _, model := range r.models {
+		models = append(models, model)
+	}
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].ID < models[j].ID
+	})
+	return models, nil
 }
 
 func TestNormalizeOwnerServiceFilterDefaultsToActiveAndRejectsUnknownViews(t *testing.T) {
@@ -341,6 +355,85 @@ func TestPublicServicesFiltersPackagesBeforePagination(t *testing.T) {
 	}
 }
 
+func TestNormalizePublicServiceFilterMergesRepeatedAndLegacyPackageModels(t *testing.T) {
+	filter, appErr := normalizePublicServiceFilter(PublicServiceFilter{
+		PackageModelCatalogIDs: []string{" model-b ", "model-a", "model-b"},
+		PackageModelCatalogID:  " model-c ",
+	})
+	if appErr != nil {
+		t.Fatalf("normalize package model filters: %v", appErr)
+	}
+	want := []string{"model-b", "model-a", "model-c"}
+	if len(filter.PackageModelCatalogIDs) != len(want) {
+		t.Fatalf("unexpected normalized model ids: got %v want %v", filter.PackageModelCatalogIDs, want)
+	}
+	for index := range want {
+		if filter.PackageModelCatalogIDs[index] != want[index] {
+			t.Fatalf("normalization must preserve first occurrence order: got %v want %v", filter.PackageModelCatalogIDs, want)
+		}
+	}
+	if filter.PackageModelCatalogID != "" {
+		t.Fatalf("legacy singular model id must be merged and cleared, got %q", filter.PackageModelCatalogID)
+	}
+
+	_, appErr = normalizePublicServiceFilter(PublicServiceFilter{PackageModelCatalogIDs: []string{"model-a", " "}})
+	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "packageModelCatalogIds" {
+		t.Fatalf("expected empty repeated value rejection, got %+v", appErr)
+	}
+
+	tooMany := make([]string, 51)
+	for index := range tooMany {
+		tooMany[index] = "model-" + strconv.Itoa(index)
+	}
+	_, appErr = normalizePublicServiceFilter(PublicServiceFilter{PackageModelCatalogIDs: tooMany})
+	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "max_items" {
+		t.Fatalf("expected repeated model count rejection, got %+v", appErr)
+	}
+}
+
+func TestPublicServicesPackageModelFiltersUseORSemanticsWithoutDuplicates(t *testing.T) {
+	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"package-ab", "package-c"}
+	packageAB := testPublicPackageService("package-ab", "model-a", 7, now.Add(2*time.Minute))
+	packageAB.Models = append(packageAB.Models, ServiceModel{ID: "package-ab-model-b", ModelCatalogID: "model-b", Enabled: true})
+	packageAB.Packages[0].Models = append(packageAB.Packages[0].Models, ServicePackageModel{
+		ServiceModelID: "package-ab-model-b",
+		ModelCatalogID: "model-b",
+	})
+	disabledDuration := 3
+	packageAB.Models = append(packageAB.Models, ServiceModel{ID: "package-ab-model-disabled", ModelCatalogID: "model-disabled", Enabled: false})
+	packageAB.Packages = append(packageAB.Packages, ServicePackage{
+		ID: "package-ab-disabled-model", Enabled: true, StockAvailable: 1, DurationDays: &disabledDuration,
+		PriceCNY: "1.000000", Models: []ServicePackageModel{{ServiceModelID: "package-ab-model-disabled", ModelCatalogID: "model-disabled"}},
+	})
+	manager.services[packageAB.ID] = packageAB
+	manager.services["package-c"] = testPublicPackageService("package-c", "model-c", 7, now.Add(time.Minute))
+
+	all, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{BillingMode: ServiceBillingModeFixedPackage}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(all.Items) != 2 {
+		t.Fatalf("zero model selection must return all packages: page=%+v err=%v", all, appErr)
+	}
+	one, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{
+		BillingMode: ServiceBillingModeFixedPackage, PackageModelCatalogIDs: []string{"model-b"},
+	}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(one.Items) != 1 || one.Items[0].ID != "package-ab" {
+		t.Fatalf("single model selection returned unexpected services: page=%+v err=%v", one, appErr)
+	}
+	many, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{
+		BillingMode: ServiceBillingModeFixedPackage, PackageModelCatalogIDs: []string{"model-a", "model-b", "model-c"},
+	}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(many.Items) != 2 || many.Items[0].ID != "package-ab" || many.Items[1].ID != "package-c" {
+		t.Fatalf("multi-model OR selection must return each service once: page=%+v err=%v", many, appErr)
+	}
+	disabledOnly, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{
+		BillingMode: ServiceBillingModeFixedPackage, PackageDurationDays: disabledDuration,
+	}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(disabledOnly.Items) != 0 {
+		t.Fatalf("package filters must ignore packages backed only by disabled service models: page=%+v err=%v", disabledOnly, appErr)
+	}
+}
+
 func TestPublicServicesSortsBeforePagination(t *testing.T) {
 	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
 	manager := NewManager(nil, nil, nil, func() time.Time { return now })
@@ -410,6 +503,129 @@ func TestPublicServicesSortsPackagePricesBeforePagination(t *testing.T) {
 	}
 	if len(second.Items) != 1 || second.Items[0].ID != "package-high" || second.NextCursor != nil {
 		t.Fatalf("package price sort must remain stable across pages: %+v", second)
+	}
+}
+
+func TestPublicServicesSortsByMinimumPriceAcrossSelectedModels(t *testing.T) {
+	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"package-b", "package-ab"}
+	packageAB := testPublicPackageService("package-ab", "model-a", 7, now.Add(time.Minute))
+	packageAB.Packages[0].PriceCNY = "30.000000"
+	packageAB.Models = append(packageAB.Models, ServiceModel{ID: "package-ab-model-b", ModelCatalogID: "model-b", Enabled: true})
+	packageAB.Packages = append(packageAB.Packages, ServicePackage{
+		ID: "package-ab-cheap", Enabled: true, StockAvailable: 1, DurationDays: packageAB.Packages[0].DurationDays,
+		PriceCNY: "5.000000", Models: []ServicePackageModel{{ServiceModelID: "package-ab-model-b", ModelCatalogID: "model-b"}},
+	})
+	packageB := testPublicPackageService("package-b", "model-b", 7, now.Add(2*time.Minute))
+	packageB.Packages[0].PriceCNY = "10.000000"
+	manager.services[packageAB.ID] = packageAB
+	manager.services[packageB.ID] = packageB
+
+	page, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{
+		BillingMode: ServiceBillingModeFixedPackage, PackageModelCatalogIDs: []string{"model-a", "model-b"},
+		PackageDurationDays: 7, Sort: PublicServiceSortPackagePriceAsc,
+	}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(page.Items) != 2 || page.Items[0].ID != "package-ab" || page.Items[1].ID != "package-b" {
+		t.Fatalf("package price sort must use the minimum across selected models: page=%+v err=%v", page, appErr)
+	}
+}
+
+func TestMinimumPackagePriceIgnoresPackagesBackedOnlyByDisabledModels(t *testing.T) {
+	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
+	service := testPublicPackageService("package-price", "model-active", 7, now)
+	service.Packages[0].PriceCNY = "30.000000"
+	service.Models = append(service.Models, ServiceModel{ID: "package-price-model-disabled", ModelCatalogID: "model-disabled", Enabled: false})
+	service.Packages = append(service.Packages, ServicePackage{
+		ID: "package-price-disabled", Enabled: true, StockAvailable: 1, DurationDays: service.Packages[0].DurationDays,
+		PriceCNY: "1.000000", Models: []ServicePackageModel{{ServiceModelID: "package-price-model-disabled", ModelCatalogID: "model-disabled"}},
+	})
+
+	price, ok := minimumPackagePriceForPublicFilter(service, PublicServiceFilter{PackageDurationDays: 7})
+	if !ok || price.RatString() != "30" {
+		t.Fatalf("minimum price must use the enabled package model set, got %v ok=%v", price, ok)
+	}
+}
+
+func TestPublicPackageFilterOptionsExposeOnlyPurchasableActiveModels(t *testing.T) {
+	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
+	resolver := staticAPIModelResolver{models: map[string]catalog.APIModelCatalog{
+		"model-openai":            {ID: "model-openai", ModelKey: "gpt-5.6", ProviderCode: "openai", ProviderCategory: "gpt", Provider: "OpenAI", Active: true, ProviderActive: true, SortOrder: 20},
+		"model-xai":               {ID: "model-xai", ModelKey: "grok-4", ProviderCode: "xai", ProviderCategory: "grok", Provider: "xAI", Active: true, ProviderActive: true, SortOrder: 10},
+		"model-inactive":          {ID: "model-inactive", ModelKey: "old", ProviderCode: "openai", Provider: "OpenAI", Active: false, ProviderActive: true},
+		"model-provider-inactive": {ID: "model-provider-inactive", ModelKey: "paused", ProviderCode: "google", Provider: "Google", Active: true, ProviderActive: false},
+		"model-sold-out":          {ID: "model-sold-out", ModelKey: "sold-out", ProviderCode: "anthropic", Provider: "Anthropic", Active: true, ProviderActive: true},
+	}}
+	manager := NewManager(nil, resolver, nil, func() time.Time { return now })
+	service := testPublicPackageService("package-options", "model-openai", 7, now.Add(time.Minute))
+	service.Models = append(service.Models,
+		ServiceModel{ID: "package-options-model-xai", ModelCatalogID: "model-xai", Enabled: true},
+		ServiceModel{ID: "package-options-model-inactive", ModelCatalogID: "model-inactive", Enabled: true},
+		ServiceModel{ID: "package-options-model-provider-inactive", ModelCatalogID: "model-provider-inactive", Enabled: true},
+		ServiceModel{ID: "package-options-model-disabled", ModelCatalogID: "model-disabled", Enabled: false},
+	)
+	service.Packages[0].Models = append(service.Packages[0].Models,
+		ServicePackageModel{ServiceModelID: "package-options-model-xai", ModelCatalogID: "model-xai"},
+		ServicePackageModel{ServiceModelID: "package-options-model-inactive", ModelCatalogID: "model-inactive"},
+		ServicePackageModel{ServiceModelID: "package-options-model-provider-inactive", ModelCatalogID: "model-provider-inactive"},
+	)
+	disabledDuration := 30
+	service.Packages = append(service.Packages, ServicePackage{
+		ID: "disabled-model-package", Enabled: true, StockAvailable: 1, DurationDays: &disabledDuration,
+		Models: []ServicePackageModel{{ServiceModelID: "package-options-model-disabled", ModelCatalogID: "model-disabled"}},
+	})
+	inactiveCatalogDuration := 3
+	service.Packages = append(service.Packages, ServicePackage{
+		ID: "inactive-catalog-package", Enabled: true, StockAvailable: 1, DurationDays: &inactiveCatalogDuration,
+		Models: []ServicePackageModel{{ServiceModelID: "package-options-model-inactive", ModelCatalogID: "model-inactive"}},
+	})
+	manager.services[service.ID] = service
+	manager.serviceOrder = append(manager.serviceOrder, service.ID)
+	soldOut := testPublicPackageService("sold-out", "model-sold-out", 3, now.Add(2*time.Minute))
+	soldOut.Packages[0].StockAvailable = 0
+	manager.services[soldOut.ID] = soldOut
+	manager.serviceOrder = append(manager.serviceOrder, soldOut.ID)
+
+	options, appErr := manager.PublicPackageFilterOptions(context.Background(), ServiceBillingModeFixedPackage)
+	if appErr != nil {
+		t.Fatalf("list package filter options: %v", appErr)
+	}
+	if len(options.Models) != 2 || options.Models[0].ID != "model-openai" || options.Models[1].ID != "model-xai" {
+		t.Fatalf("unexpected active purchasable model options: %+v", options.Models)
+	}
+	if options.Models[0].ProviderSortOrder != 10 || options.Models[1].ProviderSortOrder != 20 {
+		t.Fatalf("unexpected provider ordering metadata: %+v", options.Models)
+	}
+	if len(options.Durations) != 1 || options.Durations[0] != 7 {
+		t.Fatalf("disabled, inactive-catalog, and sold-out durations must be excluded: %+v", options.Durations)
+	}
+}
+
+func TestSoldOutPackageIsHiddenFromPublicListAndDetail(t *testing.T) {
+	now := time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	service := testPublicPackageService("sold-out", "model-a", 7, now)
+	service.Packages[0].StockAvailable = 0
+	manager.services[service.ID] = service
+	manager.serviceOrder = []string{service.ID}
+
+	page, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{BillingMode: ServiceBillingModeFixedPackage}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(page.Items) != 0 {
+		t.Fatalf("sold-out package must be hidden from discovery: page=%+v err=%v", page, appErr)
+	}
+	if _, appErr := manager.PublicService(context.Background(), service.ID); appErr == nil || appErr.Status != http.StatusNotFound {
+		t.Fatalf("sold-out package detail must be hidden, got %+v", appErr)
+	}
+
+	service.Packages[0].StockAvailable = 1
+	service.Models[0].Enabled = false
+	manager.services[service.ID] = service
+	page, appErr = manager.PublicServices(context.Background(), PublicServiceFilter{BillingMode: ServiceBillingModeFixedPackage}, domain.PageRequest{Limit: 10})
+	if appErr != nil || len(page.Items) != 0 {
+		t.Fatalf("package backed only by disabled service models must be hidden from discovery: page=%+v err=%v", page, appErr)
+	}
+	if _, appErr := manager.PublicService(context.Background(), service.ID); appErr == nil || appErr.Status != 404 {
+		t.Fatalf("detail backed only by disabled service models must remain hidden, got %+v", appErr)
 	}
 }
 
@@ -509,6 +725,11 @@ func testPublicPackageService(id, modelCatalogID string, durationDays int, updat
 	service.BillingMode = ServiceBillingModeFixedPackage
 	service.AvailableUSDAllowance = ""
 	service.QuotaExpiresAt = nil
+	service.Models = []ServiceModel{{
+		ID:             id + "-model",
+		ModelCatalogID: modelCatalogID,
+		Enabled:        true,
+	}}
 	service.Packages = []ServicePackage{{
 		ID:             id + "-package",
 		Enabled:        true,

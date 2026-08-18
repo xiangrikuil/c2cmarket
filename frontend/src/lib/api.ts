@@ -180,6 +180,7 @@ import {
   backendAdminAPIOrderRows,
   backendAdminAPIOrderRowsPage,
   backendAPIServiceById,
+  backendAPIPackageFilterOptions,
   backendAPIServices,
   backendAPIServicesPage,
   backendAdminAPIServiceRows,
@@ -2289,8 +2290,23 @@ export type ApiServiceFilters = {
   packagePriceCnyMax?: number
   packageMultiplierMax?: number
   billingMode?: ApiBillingMode
-  packageModelCatalogId?: string
+  packageModelCatalogIds?: string[]
   packageDurationDays?: number
+}
+
+export type ApiPackageFilterModel = {
+  id: string
+  modelKey: string
+  providerCode: string
+  providerCategory: string
+  providerName: string
+  providerSortOrder: number
+  sortOrder: number
+}
+
+export type ApiPackageFilterOptions = {
+  models: ApiPackageFilterModel[]
+  durations: number[]
 }
 
 export type MinimumPurchaseFilter = 'all' | 'lte_20' | 'between_21_50' | 'gt_50'
@@ -2775,10 +2791,11 @@ export async function getModelCatalog() {
 
 function filterApiServices(filters: ApiServiceFilters = {}) {
   const keyword = filters.search?.trim().toLowerCase()
+  const packageModelCatalogIds = new Set(filters.packageModelCatalogIds ?? [])
   const packagePrice = (item: ApiService) => Math.min(...(item.packages ?? [])
     .filter(packageItem => packageItem.enabled && packageItem.stockAvailable > 0)
     .filter(packageItem => !filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
-    .filter(packageItem => !filters.packageModelCatalogId || packageItem.models.some(model => model.modelCatalogId === filters.packageModelCatalogId))
+    .filter(packageItem => packageModelCatalogIds.size === 0 || packageItem.models.some(model => packageModelCatalogIds.has(model.modelCatalogId)))
     .map(packageItem => packageItem.priceCny))
   return apiServiceStore
     .filter(item => {
@@ -2802,12 +2819,12 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         ))
         && (filters.maxCnyPerUsd === undefined || Number(item.cnyPerUsdAllowance) <= filters.maxCnyPerUsd)
         && (!filters.billingMode || item.billingMode === filters.billingMode)
-        && ((!filters.packageModelCatalogId && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
+        && ((filters.billingMode !== 'fixed_package' && packageModelCatalogIds.size === 0 && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
           return packageItem.enabled
             && packageItem.stockAvailable > 0
             && (!filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
             && (filters.packagePriceCnyMax === undefined || packageItem.priceCny <= filters.packagePriceCnyMax)
-            && packageItem.models.some(model => (!filters.packageModelCatalogId || model.modelCatalogId === filters.packageModelCatalogId)
+            && packageItem.models.some(model => (packageModelCatalogIds.size === 0 || packageModelCatalogIds.has(model.modelCatalogId))
               && (filters.packageMultiplierMax === undefined || model.merchantMultiplier <= filters.packageMultiplierMax))
         }))
     })
@@ -2904,6 +2921,43 @@ export async function getApiServicesPage(filters: ApiServiceFilters = {}, page: 
   if (shouldUseRealBackend()) return backendAPIServicesPage(filters, page)
   await wait()
   return clone(paginateCursorItems(filterApiServices(filters), page))
+}
+
+function packageProviderSortOrder(code: string) {
+  return ({ openai: 10, xai: 20, anthropic: 30, google: 40 } as Record<string, number>)[code.toLowerCase()] ?? 100
+}
+
+export async function getApiPackageFilterOptions(): Promise<ApiPackageFilterOptions> {
+  if (shouldUseRealBackend()) return backendAPIPackageFilterOptions()
+  await wait()
+  const catalog = getMockPublicAPIModels()
+  const catalogById = new Map(catalog.map(model => [model.id, model]))
+  const modelIds = new Set<string>()
+  const durations = new Set<number>()
+  for (const service of apiServiceStore) {
+    if (service.billingMode !== 'fixed_package' || !isApiServicePubliclyOrderable(service)) continue
+    const enabledModelIds = new Set(service.modelPriceRows.map(model => model.modelId))
+    for (const item of service.packages ?? []) {
+      if (!item.enabled || item.stockAvailable <= 0) continue
+      const availableModels = item.models.filter(model => enabledModelIds.has(model.modelCatalogId) && catalogById.has(model.modelCatalogId))
+      if (!availableModels.length) continue
+      availableModels.forEach(model => modelIds.add(model.modelCatalogId))
+      durations.add(item.durationDays)
+    }
+  }
+  const models = catalog
+    .filter(model => model.active && model.providerActive !== false && modelIds.has(model.id))
+    .map(model => ({
+      id: model.id,
+      modelKey: model.name,
+      providerCode: model.providerCode ?? model.provider,
+      providerCategory: model.providerCategory ?? model.provider,
+      providerName: model.providerName ?? model.provider,
+      providerSortOrder: packageProviderSortOrder(model.providerCode ?? model.provider),
+      sortOrder: model.sortOrder ?? 0,
+    }))
+    .sort((left, right) => left.providerSortOrder - right.providerSortOrder || left.sortOrder - right.sortOrder || left.modelKey.localeCompare(right.modelKey))
+  return { models: clone(models), durations: [...durations].sort((left, right) => left - right) }
 }
 
 export async function getSub2ApiMarketServices(filters: Sub2ApiMarketFilters = {}) {

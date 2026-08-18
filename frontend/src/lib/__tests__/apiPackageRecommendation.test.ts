@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ApiService, ApiServicePackage } from '@/lib/api'
-import { getDefaultApiPackageFilter, rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { rankApiPackages } from '@/lib/apiPackageRecommendation'
 
 const packageRow = (overrides: Partial<ApiServicePackage> = {}): ApiServicePackage => ({
   id: 'package-1',
@@ -126,33 +126,33 @@ describe('rankApiPackages', () => {
 
     expect(rows[0].fulfillmentScore).toBe(50)
   })
-})
 
-describe('getDefaultApiPackageFilter', () => {
-  it('selects the first available package combination so the package view is not initially empty', () => {
-    const soldOut = packageRow({ id: 'sold-out', stockAvailable: 0 })
-    const available = packageRow({
-      id: 'available',
-      durationDays: 7,
+  it('browses all models without recommendation scoring and keeps one row per package', () => {
+    const pack = packageRow({
       models: [
-        { ...packageRow().models[0], modelCatalogId: 'inactive-model' },
-        { ...packageRow().models[0], modelCatalogId: 'active-model' },
+        packageRow().models[0],
+        { ...packageRow().models[0], serviceModelId: 'service-model-2', modelCatalogId: 'model-2', modelName: 'Grok 4', merchantMultiplier: 0.8 },
       ],
     })
+    const rows = rankApiPackages([service('multi-model', pack)], [], 0)
 
-    expect(getDefaultApiPackageFilter([
-      service('sold-out', soldOut),
-      service('available', available),
-    ], new Set(['active-model']))).toEqual({
-      modelCatalogId: 'active-model',
-      durationDays: 7,
-    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.matchedModels.map(model => model.modelCatalogId)).toEqual(['model-1', 'model-2'])
+    expect(rows[0]?.recommendationEligible).toBe(false)
+    expect(rows[0]?.score).toBeNull()
   })
 
-  it('does not default to packages that buyers cannot order', () => {
-    expect(getDefaultApiPackageFilter([
-      service('offline', packageRow(), { publiclyOrderable: false }),
-      service('metered', packageRow(), { billingMode: 'metered_credit' }),
-    ], new Set(['model-1']))).toBeNull()
+  it('uses OR model matching and applies multiplier limits to every displayed match', () => {
+    const pack = packageRow({
+      models: [
+        { ...packageRow().models[0], merchantMultiplier: 1.4 },
+        { ...packageRow().models[0], serviceModelId: 'service-model-2', modelCatalogId: 'model-2', modelName: 'Grok 4', merchantMultiplier: 0.8 },
+      ],
+    })
+    const rows = rankApiPackages([service('multi-model', pack)], ['model-1', 'model-2'], 0, new Date(), 1)
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.matchedModels.map(model => model.modelCatalogId)).toEqual(['model-2'])
+    expect(rows[0]?.selectedModel.modelCatalogId).toBe('model-2')
   })
 })
