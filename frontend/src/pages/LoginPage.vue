@@ -14,7 +14,7 @@ import {
   type BackendSession,
   type EmailRegistrationConfig,
 } from '@/lib/backendClient'
-import { normalizeReturnTo } from '@/lib/authNavigation'
+import { normalizeReturnTo, wechatOnboardingRoute } from '@/lib/authNavigation'
 import { trackAnalytics } from '@/lib/analytics'
 import { captureReferralCode } from '@/lib/referralCapture'
 
@@ -25,6 +25,7 @@ const router = useRouter()
 const runtimeConfig = useRuntimeConfig()
 const authMode = ref<AuthMode>('login')
 const loadingSession = ref(true)
+const loginRedirecting = ref(false)
 const sessionLoadError = ref('')
 const registrationConfig = ref<EmailRegistrationConfig | null>(null)
 const registrationConfigLoading = ref(true)
@@ -77,12 +78,29 @@ const setAuthMode = (value: unknown) => {
 }
 
 const routeAuthenticatedSession = async (session: BackendSession) => {
-  if (session.audience === 'restricted_business') {
-    await router.push('/restricted-business')
+  if (authMode.value === 'student-register') {
+    if (session.audience === 'restricted_business') {
+      await router.push('/restricted-business')
+      return
+    }
+    toast.success('学生账号已创建，请绑定微信。')
+    await router.push(wechatOnboardingRoute(route.query.returnTo))
     return
   }
-  toast.success(authMode.value === 'student-register' ? '学生账号已创建并登录。' : '已登录。')
-  await router.push(returnTo.value)
+
+  loginRedirecting.value = true
+  sessionLoadError.value = ''
+  try {
+    if (session.audience === 'restricted_business') {
+      await router.push('/restricted-business')
+      return
+    }
+    toast.success('已登录。')
+    await router.push(returnTo.value)
+  } catch {
+    loginRedirecting.value = false
+    sessionLoadError.value = '登录已完成，但页面跳转失败，请重试。'
+  }
 }
 
 </script>
@@ -91,6 +109,14 @@ const routeAuthenticatedSession = async (session: BackendSession) => {
   <AuthPageShell>
     <div v-if="loadingSession" class="grid min-h-72 place-items-center text-sm text-muted-foreground" aria-live="polite">
       <span class="inline-flex items-center gap-2"><Loader2 class="h-4 w-4 animate-spin" />读取会话</span>
+    </div>
+
+    <div v-else-if="loginRedirecting" class="grid min-h-72 place-items-center text-center" aria-live="polite" aria-busy="true">
+      <div>
+        <Loader2 class="mx-auto h-7 w-7 animate-spin text-primary" />
+        <p class="mt-3 font-medium">登录成功</p>
+        <p class="mt-1 text-sm text-muted-foreground">正在进入 C2CMarket...</p>
+      </div>
     </div>
 
     <Tabs v-else :model-value="authMode" class="gap-5" @update:model-value="setAuthMode">

@@ -105,6 +105,13 @@ versions:
 | `000096_api_order_launch_hardening` | immutable merchant-confirm and delivery deadlines, constrained late-payment recovery, buyer pending-order capacity, and rush-round fulfillment confirmation |
 | `000097_dynamic_catalog_lifecycle` | three-state catalog lifecycle, Grok/xAI seed data, immutable core identity, and API-order catalog risk holds |
 | `000098_password_reset` | purpose-isolated active password-reset challenge uniqueness for immutable student-email recovery |
+| `000109_announcement_critical_delivery` | critical global delivery, acknowledgement receipts, and publish-time recipient snapshots |
+| `000111_carpool_lightweight_matching` | one-step carpool matching, recruitment/governance separation, USD spend-limit naming, and immutable condition snapshots |
+| `000112_carpool_optional_spend_limits_account_login` | independent optional spend limits and account-login distribution |
+| `000113_community_identity` | independent founding-user and beta-contributor community identity records |
+| `000114_carpool_membership_owner_note` | owner-private notes on carpool memberships |
+| `000115_wechat_contact_single_mapping` | one enabled WeChat contact per user for new transaction snapshots |
+| `000116_required_wechat_contact` | required all-purpose WeChat contact scopes for account-level transaction communication |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -508,6 +515,112 @@ booleans with `active | deprecated | blocked` lifecycle state, adds immutable
 core identity markers, seeds Grok/xAI, and persists independent API-order
 catalog risk holds. Its down migration refuses rollback after blocked state or
 risk-hold data has been used.
+
+Version 99 (`000099_api_order_active_dispute_history`) separates the current
+API-order dispute projection from immutable history, enforces one active case
+per order, and lets accepted participant settlements create auditable remedies
+before closure.
+
+Version 100 (`000100_api_order_remedy_progress_lateness`) separates remedy
+fulfillment progress from objective and administrator-reviewed lateness. A due
+timestamp or `late_unreviewed` fact does not itself create a sanction.
+
+Version 101 (`000101_api_order_appeal_governance`) freezes final reasons,
+30-day appeal deadlines, and adversely affected participant IDs while allowing
+one reversible reputation outcome per affected subject.
+
+Version 102 (`000102_api_order_commercial_outcome_reviews`) adds independent
+API-order commercial outcomes, freezes them into review rows, pauses mutable
+reviews during an active dispute, and derives the open review window from the
+final commercial outcome time plus 14 days.
+
+Version 103 (`000103_api_order_deadline_facts_reminders`) persists merchant and
+delivery overdue facts plus one idempotent delivery reminder in the final three
+minutes. These facts never cancel an order, release inventory, refund, or apply
+a restriction automatically.
+
+Version 104 (`000104_api_order_quota_validity_issue`) records a rejected first
+delivery whose frozen validity has less than 60 minutes remaining. It does not
+replace credentials, extend expiry, resurrect inventory, or reopen an order.
+
+Version 105 (`000105_api_order_evidence_assets`) adds private, append-only image
+evidence, binding authorization, quarantine, and bounded lifecycle cleanup for
+API-order disputes.
+
+Version 106 (`000106_api_order_platform_escalation_context`) records the actual
+off-site or in-site negotiation channels, confirms that bilateral negotiation
+has ended, freezes the final disagreement and requested platform action, and
+marks pending settlement proposals as superseded when platform intervention
+starts.
+
+Version 107 (`000107_api_order_platform_handling_simplification`) moves new API
+order disputes directly into platform handling. It freezes the applicant's
+statement and fact snapshot, permits one immutable respondent answer, records
+the current actor and deadline, adds applicant withdrawal and offline-resolution
+outcomes, and preserves old messages and settlement proposals as read-only
+history. Its down migration refuses to discard data written by the new flow.
+
+Version 108 (`000108_api_order_refund_style_disputes`) changes new API-order
+cases to a seller-first after-sales flow. The seller has 24 hours to accept or
+reject; rejection gives the buyer three days to request platform intervention,
+while acceptance creates a neutral voluntary remedy with separate fulfillment
+and confirmation deadlines. It also permits API-order platform intervention
+without recording off-site communication channels and allows voluntary closure
+without adverse facts or appeal eligibility. Its down migration refuses to
+discard seller decisions, applicant-decision deadlines, or voluntary remedies.
+
+Version 109 (`000109_announcement_critical_delivery`) adds critical announcement
+delivery through global bars and required-acknowledgement dialogs, stores durable
+acknowledgement receipts, and snapshots role or explicit-user audiences at the
+current delivery revision. Its down migration degrades critical notices to
+important notices and removes global-only delivery state.
+
+Version 110 (`000110_contact_email_verification`) gives transaction-contact
+email addresses an ownership challenge independent from the account recovery
+email. Each active challenge is purpose-isolated and bound to the current user,
+contact method, immutable contact-method version, and normalized email. The
+down migration removes only contact-email challenges before restoring the
+previous purpose constraint.
+
+Version 111 (`000111_carpool_lightweight_matching`) replaces the pre-launch
+reservation and bilateral-confirmation workflow with owner acceptance directly
+creating an active membership. It preserves listings while clearing disposable
+application, membership, contact-session, and carpool-review test data; separates
+owner recruitment state from administrator governance; records offline and
+platform seats independently; renames daily and weekly quota values to USD spend
+limits; and adds versioned full-condition snapshots. Carpool matching no longer
+creates review or public reputation facts. The down migration restores the old
+schema only on a database without carpool data or open-ended contact sessions.
+Deleted pre-launch workflow data remains recoverable only from a backup.
+
+Version 112 (`000112_carpool_optional_spend_limits_account_login`) lets carpool
+owners declare daily and weekly spend limits independently as unlimited, and
+adds account login as a non-credential distribution method. VPS region and
+mainland direct-connect declarations remain optional. The down migration refuses
+to discard unlimited weekly limits or rewrite account-login listings.
+
+Version 113 (`000113_community_identity`) adds independent community identity
+records for founding users and beta contributors. These labels are separate
+from reputation badges, support soft revocation with retained provenance, and
+do not affect transaction trust decisions.
+
+Version 114 (`000114_carpool_membership_owner_note`) adds an owner-private note
+to each carpool membership. The note is retained for historical memberships,
+returned only through owner-scoped membership responses, and may be cleared by
+writing an empty string. The down migration removes only the note column.
+
+Version 115 (`000115_wechat_contact_single_mapping`) enforces at most one
+enabled WeChat contact per user. WeChat remains stored through encrypted,
+versioned contact methods and is the sole contact type accepted by new carpool
+and API quota transaction writes. The down migration drops only the partial
+unique index.
+
+Version 116 (`000116_required_wechat_contact`) makes WeChat an account-level
+required transaction contact. Existing WeChat rows receive the complete carpool
+owner, API merchant, buyer, and dispute scope set, and a database constraint
+prevents later scope narrowing. Application services separately reject disabling,
+deleting, or converting a bound WeChat method. The down migration removes only
+the new constraint because prior user-selected scope sets cannot be reconstructed.
 
 ## Docker Compose
 

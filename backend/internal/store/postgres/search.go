@@ -99,30 +99,21 @@ SELECT
 	'车源' AS type,
 	l.title AS title,
 	'¥' || l.price_monthly_cny::text || '/月 · 可用席位 ' ||
-	GREATEST(l.buyer_seat_capacity - l.active_buyer_members - COALESCE(reserved.reserved_seats, 0), 0)::text ||
-	' · 每天' || l.quota_label || ' ' || COALESCE(l.daily_quota_amount::text, '未声明') || ' ' || l.quota_unit ||
-	' · 每周' || l.quota_label || ' ' || l.weekly_quota_amount::text || ' ' || l.quota_unit AS subtitle,
+	GREATEST(l.buyer_seat_capacity - l.offline_occupied_seats - l.active_buyer_members, 0)::text ||
+	' · 每日最大花费 ' || COALESCE('$' || l.daily_spend_limit_usd::text, '不限') ||
+	' · 每周最大花费 ' || COALESCE('$' || l.weekly_spend_limit_usd::text, '不限') AS subtitle,
 	l.status AS badge,
 	'/carpools/' || l.id::text AS to,
 	l.updated_at AS rank_time
 FROM carpool_listings l
-LEFT JOIN LATERAL (
-	SELECT COALESCE(SUM(a.seat_count), 0)::int AS reserved_seats
-	FROM carpool_applications a
-	WHERE a.carpool_listing_id = l.id
-	  AND a.status = 'accepted_reserved'
-	  AND a.reservation_expires_at > now()
-) reserved ON true
 WHERE ` + publicCarpoolListingPredicate("l") + `
   AND (
 	LOWER(l.title || ' ' || l.summary || ' ' || l.access_arrangement) ILIKE $1 ESCAPE '\'
 	OR LOWER(
 		COALESCE(l.source_url, '') || ' ' ||
 		l.price_monthly_cny::text || ' ' ||
-		COALESCE(l.daily_quota_amount::text, '') || ' ' ||
-		l.weekly_quota_amount::text || ' ' ||
-		l.quota_label || ' ' ||
-		l.quota_unit
+		COALESCE(l.daily_spend_limit_usd::text, '') || ' ' ||
+		COALESCE(l.weekly_spend_limit_usd::text, '')
 	) ILIKE $1 ESCAPE '\'
   )
 ORDER BY l.updated_at DESC

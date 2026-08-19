@@ -77,7 +77,7 @@ function trackAnalytics(eventName: AnalyticsEventName, props?: Record<string, un
 | Qualified activity | One `user_activity_daily` row per authenticated user and Shanghai calendar date. Background polling, health, auth callback/session, logout, and asset routes do not create activity. |
 | Buyer activation | Earliest `carpool_applications.created_at` or `api_orders.created_at`, within registration through registration plus 7 times 24 hours. |
 | Seller activation | Earliest immutable `carpool_listings.first_published_at` or `api_services.first_published_at`, within registration through registration plus 7 times 24 hours. |
-| Completed carpool transaction | `carpool_memberships.status = 'completed'` and `carpool_memberships.ended_at` in the selected window. There is no authoritative `carpool_memberships.completed_at` column. |
+| Completed carpool transaction | Retired compatibility metric; migration 111 removed the `completed` membership state, so the value remains zero until a replacement activation metric is explicitly designed. |
 | Completed API transaction | `api_orders.status = 'completed'` and `api_orders.completed_at` in the selected window. |
 
 - All business-day boundaries and date labels use `Asia/Shanghai`; storage timestamps remain `timestamptz`/UTC instants.
@@ -124,11 +124,11 @@ function trackAnalytics(eventName: AnalyticsEventName, props?: Record<string, un
 ### 5. Good/Base/Bad Cases
 
 - Good: an OAuth-created user gets a random analytics ID, a single first-touch attribution row, a Shanghai activity row, and a one-time `registration_success` event containing no business identity.
-- Good: a carpool membership completed at `ended_at` and an API order completed at `completed_at` each increment only their own transaction counter.
+- Good: active/left/removed carpool memberships do not increment the retired completion metric; an API order completed at `completed_at` increments the API transaction counter.
 - Good: on 2026-08-02 Shanghai time, the 2026-08-01 D1 and 2026-07-26 D7 observation days remain `null` because those observation days have not ended.
 - Base: a period with registrations but no mature cohorts shows registration counts while activation/retention values remain unavailable.
 - Bad: use Umami Visitors as the denominator for registration conversion, registered DAU, activation, or retention.
-- Bad: count a carpool transaction using a nonexistent `carpool_memberships.completed_at`, or count non-completed rows because a timestamp happens to be populated.
+- Bad: reinterpret `left` or `removed` as a completed carpool transaction, or count rows because an end timestamp happens to be populated.
 - Bad: call `identify(user.id)`, send email/username/order/listing IDs to Umami, persist a full referrer URL, or overwrite first-touch attribution on login.
 
 ### 6. Tests Required

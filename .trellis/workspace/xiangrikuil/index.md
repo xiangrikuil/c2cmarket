@@ -7,9 +7,9 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-1.md`
-- **Total Sessions**: 56
-- **Last Active**: 2026-08-14
+- **Active File**: `journal-2.md`
+- **Total Sessions**: 69
+- **Last Active**: 2026-08-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1749 | Active |
+| `journal-2.md` | ~75 | Active |
+| `journal-1.md` | ~1994 | Archived |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +30,19 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 69 | 2026-08-19 | 卖家纠纷状态与红色待办徽章 | `498f4c8` | `codex/api-order-delivery-content-view` |
+| 68 | 2026-08-19 | API delivery, account, commerce, and inline probe workflows | `ae60091`, `cfeeef2`, `ced709a` | `codex/api-order-delivery-content-view` |
+| 67 | 2026-08-18 | 修复 API 服务排序参数 422 | `9c8aa43` | `staging` |
+| 66 | 2026-08-17 | 完善 API 市场排序筛选 | `10a37bf` | `staging` |
+| 65 | 2026-08-17 | 拼车一次性撮合与完整车源条件 | `667f213` | `codex/carpool-lightweight-matching` |
+| 64 | 2026-08-16 | API 市场卡片身份、模型与图标修复 | `bfdffae` | `staging` |
+| 63 | 2026-08-16 | Consolidate workspace navigation | `59c89c4` | `staging` |
+| 62 | 2026-08-16 | 公告分级强触达与回执闭环 | `54a8cf0` | `staging` |
+| 61 | 2026-08-16 | 修复 PR #39 CI 发布门禁 | `7e35f46` | `codex/api-order-after-sales` |
+| 60 | 2026-08-16 | API 订单售后与纠纷合并并提交评审 | `966373e`, `348c977`, `fbcfe33`, `56cb94c` | `codex/api-order-after-sales` |
+| 59 | 2026-08-16 | 管理员售后处理记录时间线 | `56cb94c` | `codex/api-after-sales-selected` |
+| 58 | 2026-08-15 | 简化 API 订单纠纷平台处理流程 | `348c977` | `codex/api-after-sales-selected` |
+| 57 | 2026-08-15 | 完成 API 订单售后合并 | `966373e` | `codex/api-after-sales-selected` |
 | 56 | 2026-08-14 | 修复 PR 36 CI 并中文化摘要 | `2c9afc0` | `codex/login-student-registration-redesign` |
 | 55 | 2026-08-14 | Login and student registration redesign | `afc96ff`, `23565ed` | `codex/login-student-registration-redesign` |
 | 54 | 2026-08-14 | API order and rush-sale launch hardening | `38333b6` | `codex/transaction-review-dialog` |

@@ -40,6 +40,10 @@ const (
 	PaymentMethodAlipay = "alipay"
 
 	PublicServiceSortUpdatedDesc        = "updated_desc"
+	PublicServiceSortRecommended        = "recommended"
+	PublicServiceSortReputationDesc     = "reputation_desc"
+	PublicServiceSortCompletedDesc      = "completed_desc"
+	PublicServiceSortResponseFast       = "response_fast"
 	PublicServiceSortPriceAsc           = "price_asc"
 	PublicServiceSortMinimumPurchaseAsc = "minimum_purchase_asc"
 	PublicServiceSortPackagePriceAsc    = "package_price_asc"
@@ -125,6 +129,8 @@ type Service struct {
 	SellerReputation                 *reputation.ReputationSnapshot
 	SourceAuthorVerification         reputation.SourceAuthorResourceSummary
 	SalesSummary                     ServiceSalesSummary
+	// PublicSortValue 仅用于公开列表的 keyset 游标，不属于公共响应字段。
+	PublicSortValue string `json:"-"`
 }
 
 type ServiceAccessMode struct {
@@ -309,18 +315,43 @@ type ServiceAdminActionInput struct {
 }
 
 type PublicServiceFilter struct {
-	PaymentMethod         string
-	BillingMode           string
-	Search                string
-	ModelCatalogID        string
-	DistributionSystem    string
-	MaxCNYPerUSD          string
-	MinimumIntentCNYMax   string
-	PackageModelCatalogID string
-	PackageDurationDays   int
-	PackagePriceCNYMax    string
-	PackageMultiplierMax  string
-	Sort                  string
+	PaymentMethod          string
+	BillingMode            string
+	Search                 string
+	ModelCatalogID         string
+	DistributionSystem     string
+	MaxCNYPerUSD           string
+	MinimumIntentCNYMax    string
+	PackageModelCatalogID  string
+	PackageModelCatalogIDs []string
+	PackageDurationDays    int
+	PackagePriceCNYMax     string
+	PackageMultiplierMax   string
+	Sort                   string
+}
+
+type PublicPackageFilterAvailability struct {
+	Facts []PublicPackageFilterAvailabilityFact
+}
+
+type PublicPackageFilterAvailabilityFact struct {
+	ModelCatalogID string
+	DurationDays   int
+}
+
+type PublicPackageModelFilterOption struct {
+	ID                string
+	ModelKey          string
+	ProviderCode      string
+	ProviderCategory  string
+	ProviderName      string
+	ProviderSortOrder int
+	SortOrder         int
+}
+
+type PublicPackageFilterOptions struct {
+	Models    []PublicPackageModelFilterOption
+	Durations []int
 }
 
 type OwnerServiceFilter struct {

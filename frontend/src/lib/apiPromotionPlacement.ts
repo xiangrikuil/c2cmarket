@@ -28,8 +28,8 @@ export function placePromotions<T extends { promotion?: ApiServicePromotion, pro
   const operatorRow = operator ? resolvePromotedRow(naturalRows, operator) : undefined
   const rewardRow = reward ? resolvePromotedRow(naturalRows, reward) : undefined
   const promotedServiceIds = new Set([
-    ...(operatorRow && operator ? [operator.service.id] : []),
-    ...(rewardRow && reward ? [reward.service.id] : []),
+    ...(operatorRow ? [serviceId(operatorRow)] : []),
+    ...(rewardRow ? [serviceId(rewardRow)] : []),
   ])
   const remaining = naturalRows.filter(row => !promotedServiceIds.has(serviceId(row)))
   const result: T[] = []

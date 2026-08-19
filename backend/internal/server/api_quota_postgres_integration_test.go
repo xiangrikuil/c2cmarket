@@ -39,9 +39,9 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 	owner := createLinuxDoSession(t, server, "pg-quota-owner-"+suffix)
 	buyer := createSession(t, server, "pg-quota-buyer-"+suffix, false)
 	secondBuyer := createSession(t, server, "pg-quota-second-buyer-"+suffix, false)
-	ownerContact := createContactMethod(t, server, owner, "telegram", "额度包卖家 "+suffix, "@pg_quota_owner_"+strings.ReplaceAll(suffix, ".", "_"))
-	buyerContact := createContactMethod(t, server, buyer, "telegram", "额度包买家 "+suffix, "@pg_quota_buyer_"+strings.ReplaceAll(suffix, ".", "_"))
-	secondBuyerContact := createContactMethod(t, server, secondBuyer, "telegram", "额度包买家二 "+suffix, "@pg_quota_buyer_two_"+strings.ReplaceAll(suffix, ".", "_"))
+	ownerContact := createContactMethod(t, server, owner, "wechat", "额度包卖家微信 "+suffix, "pg_quota_owner_"+strings.ReplaceAll(suffix, ".", "_"))
+	buyerContact := createContactMethod(t, server, buyer, "wechat", "额度包买家微信 "+suffix, "pg_quota_buyer_"+strings.ReplaceAll(suffix, ".", "_"))
+	secondBuyerContact := createContactMethod(t, server, secondBuyer, "wechat", "额度包买家二微信 "+suffix, "pg_quota_buyer_two_"+strings.ReplaceAll(suffix, ".", "_"))
 
 	now := time.Now().UTC()
 	service := createPostgresAPIService(t, databaseURL, server, owner, ownerContact.ID, "pg-quota-service-create-"+suffix)

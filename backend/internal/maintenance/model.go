@@ -33,7 +33,9 @@ type Result struct {
 	APIOrdersPaymentExpired            int64
 	APIOrderReviewReminders            int64
 	APIOrdersAutoCompleted             int64
+	DisputeRemedyConfirmationReminders int64
 	DisputeRemedyConfirmationsExpired  int64
+	AfterSalesApplicationsExpired      int64
 	APIOrderCredentialsDestroyed       int64
 	APIQuotaCredentialsDestroyed       int64
 	APIProbeSamplesDeleted             int64

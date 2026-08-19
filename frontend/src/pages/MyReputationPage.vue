@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Activity, BadgeCheck, Info, ShieldAlert } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,23 +14,41 @@ import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import ReputationMetricsGrid from '@/components/reputation/ReputationMetricsGrid.vue'
 import ReputationProgressList from '@/components/reputation/ReputationProgressList.vue'
 import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
+import WorkspaceSectionTabs from '@/components/workspace/WorkspaceSectionTabs.vue'
 import {
   reputationRoleLabel,
   reputationScopeLabel,
   snapshotToSummary,
 } from '@/lib/reputationPresentation'
 import { useMyReputationQuery } from '@/queries/useReputationQueries'
+import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 import type { ReputationRole, ReputationScope } from '@/types/reputation'
 
 const role = ref<ReputationRole>('buyer')
 const scope = ref<ReputationScope>('overall')
+const promotionNoticeConsumed = ref(false)
+const route = useRoute()
+const router = useRouter()
 const { data, isLoading, error, refetch } = useMyReputationQuery()
+const promotionConfigQuery = usePromotionRewardPublicConfig()
+const promotionTabEnabled = computed(() => promotionConfigQuery.isSuccess.value
+  ? promotionConfigQuery.data.value?.programEnabled === true
+  : undefined)
 
 const snapshot = computed(() => data.value?.items.find(item =>
   item.role === role.value && item.scope === scope.value,
 ) ?? null)
 const summary = computed(() => snapshot.value ? snapshotToSummary(snapshot.value) : null)
 const activeRestrictions = computed(() => data.value?.activeRestrictions ?? [])
+
+watch(() => route.query.notice, notice => {
+  if (notice !== 'promotion-disabled' || promotionNoticeConsumed.value) return
+  promotionNoticeConsumed.value = true
+  if (import.meta.client) toast.info('当前推广活动未开放，已返回信誉成长。')
+  const query = { ...route.query }
+  delete query.notice
+  router.replace({ query })
+}, { immediate: true })
 
 function restrictionImpactLabel(actionCode: string) {
   const labels: Record<string, string> = {
@@ -48,9 +68,11 @@ function restrictionImpactLabel(actionCode: string) {
 <template>
   <div class="space-y-6">
     <PageTitle
-      title="信誉与成长"
+      title="信誉与权益"
       description="查看买家和卖家在不同交易范围内的可验证履约事实、风险状态与成长进度。"
     />
+
+    <WorkspaceSectionTabs section="reputation-rights" :promotion-enabled="promotionTabEnabled" />
 
     <section v-if="activeRestrictions.length" class="border-y border-destructive/30 py-5" aria-labelledby="active-restrictions-title">
       <div class="flex flex-wrap items-center justify-between gap-3">

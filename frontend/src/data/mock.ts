@@ -81,6 +81,7 @@ export type Carpool = {
   sourceUrl?: string
   sourceAuthorVerification?: SourceAuthorResourceSummary
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   hasInfoConflict: boolean
   hasUnresolvedDispute: boolean | null
   distributionMethod: CarpoolDistributionMethod
@@ -117,21 +118,14 @@ export type CarpoolAccessArrangementMode =
   | 'other_off_platform'
   | 'not_allowed'
 
-export type CarpoolDistributionMethod = 'sub2api' | 'other'
+export type CarpoolDistributionMethod = 'sub2api' | 'account_login' | 'other'
 
 export type CarpoolApplicationStatus =
   | 'pending_owner'
-  | 'accepted_reserved'
-  | 'waiting_contact'
-  | 'contacted'
-  | 'joined_pending_confirmation'
   | 'active'
-  | 'pending_completion'
-  | 'completed'
   | 'rejected'
   | 'cancelled_by_buyer'
   | 'cancelled_by_owner'
-  | 'expired'
   | 'disputed'
 
 export type CarpoolApplicationActorRole = 'buyer' | 'owner' | 'admin' | 'system'
@@ -139,16 +133,7 @@ export type CarpoolApplicationEventType =
   | 'application_created'
   | 'owner_accepted'
   | 'owner_rejected'
-  | 'buyer_contacted'
-  | 'buyer_confirmed_joined'
-  | 'owner_confirmed_joined'
-  | 'service_started'
-  | 'pending_completion'
-  | 'buyer_confirmed_completed'
-  | 'owner_confirmed_completed'
-  | 'completed'
   | 'cancelled'
-  | 'expired'
   | 'disputed'
   | 'admin_updated'
 
@@ -158,7 +143,7 @@ export type CarpoolSeatSummary = {
   carpoolId: string
   totalSeats: number
   activeMemberCount: number
-  reservedSeatCount: number
+  occupiedSeatCount: number
   availableSeats: number
 }
 
@@ -168,6 +153,7 @@ export type CarpoolApplicationSnapshot = {
   regionName: string
   monthlyPriceCny: number
   serviceMultiplier?: number
+  dailyQuotaAmount?: number
   weeklyQuotaAmount?: number
   quotaLabel?: string
   quotaUnit?: string
@@ -198,13 +184,6 @@ export type CarpoolApplicantStats = {
   unresolvedDisputes: number | null
 }
 
-export type CarpoolApplicationReview = {
-  rating: number
-  tags: string[]
-  note: string
-  createdAt: string
-}
-
 export type CarpoolApplication = {
   id: string
   carpoolId: string
@@ -217,22 +196,11 @@ export type CarpoolApplication = {
   status: CarpoolApplicationStatus
   seatsRequested: number
   snapshot: CarpoolApplicationSnapshot
-  reservedUntil: string | null
-  buyerContactedAt: string | null
-  buyerConfirmedJoinedAt: string | null
-  ownerConfirmedJoinedAt: string | null
   startedAt: string | null
-  expectedEndAt: string | null
-  buyerConfirmedCompletedAt: string | null
-  ownerConfirmedCompletedAt: string | null
-  completedAt: string | null
-  completionMode: 'mutual' | 'automatic' | 'admin' | null
   cancellationReasonCode: string | null
   cancellationReasonText: string | null
   responsibility: CarpoolCancellationResponsibility | null
   disputeReason: string | null
-  buyerReview?: CarpoolApplicationReview
-  ownerReview?: CarpoolApplicationReview
   createdAt: string
   updatedAt: string
 }
@@ -259,6 +227,15 @@ export type UserBadge = {
   code: string
   label: string
   type: 'identity' | 'trust' | 'merchant' | 'contributor' | 'system'
+}
+
+export type CommunityIdentity = {
+  code: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR'
+  name: string
+  description: string
+  grantedAt: string
+  source?: 'AUTO' | 'ADMIN' | 'BACKFILL'
+  revokedAt?: string | null
 }
 
 export type UserPrivacySettings = {
@@ -293,6 +270,7 @@ export type UserProfile = {
     lastSyncedAt: string | null
   }
   badges: UserBadge[]
+  communityIdentities: CommunityIdentity[]
   accountStatus: UserAccountStatus
   permissions: Array<'admin'>
   capabilities: Capability[]
@@ -317,6 +295,7 @@ export type PublicUserProfile = {
   linuxDoUsername: string | null
   trustLevel: number | null
   badges: UserBadge[]
+  communityIdentities: CommunityIdentity[]
   accountStatus: UserAccountStatus
   createdAt: string | null
   lastActiveAt: string | null
@@ -602,12 +581,19 @@ export type ModelCapability = 'chat' | 'vision' | 'image_generation' | 'image_ed
 export type ModelCatalogItem = {
   id: string
   provider: string
+  providerCode?: string
+  providerCategory?: string
+  providerName?: string
+  providerActive?: boolean
   name: string
   capabilities: ModelCapability[]
   officialInputPricePerMillion: number | null
   officialCachedInputPricePerMillion: number | null
   officialOutputPricePerMillion: number | null
   active: boolean
+  sortOrder?: number
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type ApiContactChannel = {
@@ -732,6 +718,7 @@ export type ApiService = {
   sourceUrl?: string
   sourceAuthorVerification?: SourceAuthorResourceSummary
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   healthSummary?: ApiServiceHealthSummary
   quotaUsagePolicy: ApiQuotaUsagePolicy
   merchantId: string
@@ -741,7 +728,7 @@ export type ApiService = {
   merchantDisplayName: string
   merchantAvatarUrl?: string
   trustLevel: number | null
-  merchantType: '个人车主' | '商户' | '可信新车主'
+  merchantType: '个人车主' | '个人卖家' | '商户' | '可信新车主'
   models: string[]
   modelMultipliers: ApiModelMultiplier[]
   rate: string
@@ -776,6 +763,7 @@ export type ApiService = {
   state: ApiServiceState
   online: boolean
   publiclyOrderable: boolean
+  orderableReasons?: string[]
   lastOnlineConfirmedAt: string
   onlineExpiresAt: string
   declaredTtftBand?: ApiTTFTBand
@@ -1090,6 +1078,15 @@ export const myUserProfile: UserProfile = {
     { id: 'badge-personal-owner', code: 'personal_owner', label: '个人车主', type: 'identity' },
     { id: 'badge-api-merchant', code: 'api_merchant', label: 'API 商户', type: 'merchant' },
   ],
+  communityIdentities: [
+    {
+      code: 'BETA_CONTRIBUTOR',
+      name: '内测共建者',
+      description: '帮助平台测试和改进产品的社区成员',
+      grantedAt: '2026-06-10T10:00:00+08:00',
+      source: 'ADMIN',
+    },
+  ],
   accountStatus: 'normal',
   permissions: ['admin'],
   capabilities: [
@@ -1140,7 +1137,7 @@ export const myContactMethods: UserContactMethod[] = [
     label: '微信',
     maskedValue: 'c2c_***',
     displayValue: 'c2c_orbit',
-    usageScopes: ['carpool_owner', 'api_merchant'],
+    usageScopes: ['carpool_owner', 'api_merchant', 'buyer', 'dispute'],
     isDefault: true,
     enabled: true,
     verified: false,
@@ -1266,16 +1263,7 @@ export const carpoolApplications: CarpoolApplication[] = [
     status: 'pending_owner',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c1,
-    reservedUntil: null,
-    buyerContactedAt: null,
-    buyerConfirmedJoinedAt: null,
-    ownerConfirmedJoinedAt: null,
     startedAt: null,
-    expectedEndAt: null,
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1291,19 +1279,10 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 2, completed30d: 1, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-orbit',
     ownerUsername: 'orbit',
-    status: 'accepted_reserved',
+    status: 'active',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c1,
-    reservedUntil: '2026-06-19 17:05',
-    buyerContactedAt: null,
-    buyerConfirmedJoinedAt: null,
-    ownerConfirmedJoinedAt: null,
-    startedAt: null,
-    expectedEndAt: null,
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
+    startedAt: '2026-06-19 16:35',
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1322,16 +1301,7 @@ export const carpoolApplications: CarpoolApplication[] = [
     status: 'active',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-06-18 20:12',
-    buyerConfirmedJoinedAt: '2026-06-18 20:24',
-    ownerConfirmedJoinedAt: '2026-06-18 20:26',
     startedAt: '2026-06-18 20:26',
-    expectedEndAt: '2026-07-18 20:26',
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1347,19 +1317,10 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 2, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-beifeng',
     ownerUsername: '北风',
-    status: 'pending_completion',
+    status: 'active',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c3,
-    reservedUntil: null,
-    buyerContactedAt: '2026-05-19 12:30',
-    buyerConfirmedJoinedAt: '2026-05-19 12:45',
-    ownerConfirmedJoinedAt: '2026-05-19 12:48',
     startedAt: '2026-05-19 12:48',
-    expectedEndAt: '2026-06-19 12:48',
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -1375,25 +1336,14 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 2, completed30d: 0, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-qingning',
     ownerUsername: '青柠',
-    status: 'completed',
+    status: 'cancelled_by_buyer',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-05-10 10:12',
-    buyerConfirmedJoinedAt: '2026-05-10 10:20',
-    ownerConfirmedJoinedAt: '2026-05-10 10:22',
     startedAt: '2026-05-10 10:22',
-    expectedEndAt: '2026-06-10 10:22',
-    buyerConfirmedCompletedAt: '2026-06-10 12:00',
-    ownerConfirmedCompletedAt: '2026-06-10 12:04',
-    completedAt: '2026-06-10 12:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'buyer_left',
+    cancellationReasonText: '买家已退出成员关系。',
+    responsibility: 'buyer',
     disputeReason: null,
-    buyerReview: { rating: 5, tags: ['规则清楚', '服务稳定'], note: '本地 mock 已验证评价。', createdAt: '2026-06-10 12:08' },
-    ownerReview: { rating: 4, tags: ['付款及时', '确认及时'], note: '买家付款和确认都很及时。', createdAt: '2026-06-10 12:10' },
     createdAt: '2026-05-10 10:00',
     updatedAt: '2026-06-10 12:10',
   },
@@ -1405,24 +1355,14 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-qingning',
     ownerUsername: '青柠',
-    status: 'completed',
+    status: 'cancelled_by_owner',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-07-23 18:12',
-    buyerConfirmedJoinedAt: '2026-07-23 18:20',
-    ownerConfirmedJoinedAt: '2026-07-23 18:22',
     startedAt: '2026-07-23 18:22',
-    expectedEndAt: '2026-07-24 09:00',
-    buyerConfirmedCompletedAt: '2026-07-24 09:02',
-    ownerConfirmedCompletedAt: '2026-07-24 09:04',
-    completedAt: '2026-07-24 09:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'owner_removed',
+    cancellationReasonText: '车主已移除该成员。',
+    responsibility: 'owner',
     disputeReason: null,
-    ownerReview: { rating: 5, tags: ['付款及时', '确认及时'], note: '付款和确认都很及时，沟通顺畅。', createdAt: '2026-07-24 09:15' },
     createdAt: '2026-07-23 17:55',
     updatedAt: '2026-07-24 09:15',
   },
@@ -1434,24 +1374,14 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-beifeng',
     ownerUsername: '北风',
-    status: 'completed',
+    status: 'cancelled_by_buyer',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c3,
-    reservedUntil: null,
-    buyerContactedAt: '2026-07-22 11:12',
-    buyerConfirmedJoinedAt: '2026-07-22 11:20',
-    ownerConfirmedJoinedAt: '2026-07-22 11:22',
     startedAt: '2026-07-22 11:22',
-    expectedEndAt: '2026-07-23 12:00',
-    buyerConfirmedCompletedAt: '2026-07-23 12:02',
-    ownerConfirmedCompletedAt: '2026-07-23 12:04',
-    completedAt: '2026-07-23 12:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'buyer_left',
+    cancellationReasonText: '买家已退出成员关系。',
+    responsibility: 'buyer',
     disputeReason: null,
-    buyerReview: { rating: 4, tags: ['沟通顺畅', '规则清晰'], note: '自己的评价在双盲期内仍可查看和修改。', createdAt: '2026-07-23 12:18' },
     createdAt: '2026-07-22 10:55',
     updatedAt: '2026-07-23 12:18',
   },
@@ -1463,22 +1393,13 @@ export const carpoolApplications: CarpoolApplication[] = [
     applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-qingning',
     ownerUsername: '青柠',
-    status: 'completed',
+    status: 'cancelled_by_owner',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c2,
-    reservedUntil: null,
-    buyerContactedAt: '2026-06-30 18:12',
-    buyerConfirmedJoinedAt: '2026-06-30 18:20',
-    ownerConfirmedJoinedAt: '2026-06-30 18:22',
     startedAt: '2026-06-30 18:22',
-    expectedEndAt: '2026-07-01 09:00',
-    buyerConfirmedCompletedAt: '2026-07-01 09:02',
-    ownerConfirmedCompletedAt: '2026-07-01 09:04',
-    completedAt: '2026-07-01 09:04',
-    completionMode: 'mutual',
-    cancellationReasonCode: null,
-    cancellationReasonText: null,
-    responsibility: null,
+    cancellationReasonCode: 'owner_removed',
+    cancellationReasonText: '车主已移除该成员。',
+    responsibility: 'owner',
     disputeReason: null,
     createdAt: '2026-06-30 17:55',
     updatedAt: '2026-07-01 09:04',
@@ -1494,16 +1415,7 @@ export const carpoolApplications: CarpoolApplication[] = [
     status: 'disputed',
     seatsRequested: 1,
     snapshot: carpoolApplicationSnapshots.c3,
-    reservedUntil: null,
-    buyerContactedAt: '2026-06-16 09:30',
-    buyerConfirmedJoinedAt: '2026-06-16 09:50',
-    ownerConfirmedJoinedAt: '2026-06-16 09:52',
     startedAt: '2026-06-16 09:52',
-    expectedEndAt: '2026-07-16 09:52',
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: 'undetermined',
@@ -1516,11 +1428,10 @@ export const carpoolApplications: CarpoolApplication[] = [
 export const carpoolApplicationEvents: CarpoolApplicationEvent[] = [
   { id: 'ride-event-1', applicationId: 'ride-app-1', actorId: 'buyer-zhichuan', actorLabel: '纸船', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请，等待车主处理。', createdAt: '2026-06-19 16:18' },
   { id: 'ride-event-2', applicationId: 'ride-app-2', actorId: 'buyer-muzhou', actorLabel: '木舟', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请。', createdAt: '2026-06-19 15:55' },
-  { id: 'ride-event-3', applicationId: 'ride-app-2', actorId: 'owner-orbit', actorLabel: 'orbit', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'accepted_reserved', note: '车主接受申请，预留 1 席 30 分钟。', createdAt: '2026-06-19 16:35' },
-  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录与车主完成联系。', createdAt: '2026-06-18 20:12' },
-  { id: 'ride-event-5', applicationId: 'ride-app-3', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'service_started', fromStatus: 'joined_pending_confirmation', toStatus: 'active', note: '双方确认后进入服务中。', createdAt: '2026-06-18 20:26' },
-  { id: 'ride-event-6', applicationId: 'ride-app-4', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'pending_completion', fromStatus: 'active', toStatus: 'pending_completion', note: '服务周期到期，等待双方确认完成。', createdAt: '2026-06-19 12:48' },
-  { id: 'ride-event-7', applicationId: 'ride-app-5', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'completed', fromStatus: 'pending_completion', toStatus: 'completed', note: '双方确认完成，评价可用。', createdAt: '2026-06-10 12:04' },
+  { id: 'ride-event-3', applicationId: 'ride-app-2', actorId: 'owner-orbit', actorLabel: 'orbit', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'active', note: '车主确认上车，成员关系立即生效。', createdAt: '2026-06-19 16:35' },
+  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'owner-qingning', actorLabel: '青柠', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'active', note: '车主确认上车，成员关系立即生效。', createdAt: '2026-06-18 20:26' },
+  { id: 'ride-event-5', applicationId: 'ride-app-5', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'cancelled', fromStatus: 'active', toStatus: 'cancelled_by_buyer', note: '买家已退出成员关系。', createdAt: '2026-06-10 12:04' },
+  { id: 'ride-event-6', applicationId: 'ride-app-7', actorId: 'owner-qingning', actorLabel: '青柠', actorRole: 'owner', type: 'cancelled', fromStatus: 'active', toStatus: 'cancelled_by_owner', note: '车主已移除该成员。', createdAt: '2026-07-24 09:04' },
   { id: 'ride-event-8', applicationId: 'ride-app-6', actorId: 'buyer-yuji', actorLabel: '雨季', actorRole: 'buyer', type: 'disputed', fromStatus: 'active', toStatus: 'disputed', note: '买家发起纠纷，等待管理员处理。', createdAt: '2026-06-18 15:30' },
 ]
 
@@ -1978,7 +1889,7 @@ export const apiServices: ApiService[] = [
         actualOutputPricePerMillion: 15,
       },
     ],
-    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }, { type: 'telegram', label: 'Telegram', value: '@xiaokui_api' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }],
   },
   {
     id: 'a2',
@@ -2102,7 +2013,7 @@ export const apiServices: ApiService[] = [
         ],
       },
     ],
-    contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@qingning' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'qingning_wechat' }],
   },
   {
     id: 'a3',
@@ -2194,7 +2105,7 @@ export const apiServices: ApiService[] = [
         actualOutputPricePerMillion: 1.05,
       },
     ],
-    contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@beifeng-api' }, { type: 'email', label: '邮箱', value: 'support@example.dev' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'beifeng_api' }],
   },
 ]
 
@@ -2375,7 +2286,8 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
       requiresFirstLoginPasswordReset: false,
       note: '购买意向已创建，商户联系方式已向买家展示，商户可查看买家选择的联系方式',
     },
-    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }, { type: 'telegram', label: 'Telegram', value: '@xiaokui_api' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }],
+    buyerContactChannels: [{ type: 'wechat', label: '微信', value: 'demo_wechat' }],
     merchantResponseDeadline: '2026-06-19 16:33',
     createdAt: '2026-06-19 16:30',
     updatedAt: '2026-06-19 16:32',
@@ -2425,12 +2337,13 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     handoff: {
       intentId: 'api-intent-1002',
       selectedDeliveryMode: 'sub2api_panel_account',
-      offPlatformContactChannel: 'Telegram',
+      offPlatformContactChannel: '微信',
       status: 'contacted',
       requiresFirstLoginPasswordReset: true,
       note: '商户已记录已进行站外联系',
     },
-    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }, { type: 'telegram', label: 'Telegram', value: '@xiaokui_api' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }],
+    buyerContactChannels: [{ type: 'wechat', label: '微信', value: 'muzhou_wechat' }],
     merchantResponseDeadline: '2026-06-19 15:53',
     createdAt: '2026-06-19 15:50',
     updatedAt: '2026-06-19 16:01',
@@ -2480,12 +2393,13 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     handoff: {
       intentId: 'api-intent-1003',
       selectedDeliveryMode: 'api_key_endpoint',
-      offPlatformContactChannel: 'linux.do 私信',
+      offPlatformContactChannel: '微信',
       status: 'contacted',
       requiresFirstLoginPasswordReset: false,
       note: '商户已记录已进行站外联系',
     },
-    contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@qingning' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'qingning_wechat' }],
+    buyerContactChannels: [{ type: 'wechat', label: '微信', value: 'demo_wechat' }],
     merchantResponseDeadline: '2026-06-19 13:06',
     createdAt: '2026-06-19 13:03',
     updatedAt: '2026-06-19 13:18',
@@ -2535,12 +2449,13 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     handoff: {
       intentId: 'api-intent-0998',
       selectedDeliveryMode: 'sub2api_panel_account',
-      offPlatformContactChannel: 'Telegram',
+      offPlatformContactChannel: '微信',
       status: 'closed',
       requiresFirstLoginPasswordReset: true,
       note: '商户已关闭本次意向记录',
     },
-    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }, { type: 'telegram', label: 'Telegram', value: '@xiaokui_api' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'c2c_xiaokui' }],
+    buyerContactChannels: [{ type: 'wechat', label: '微信', value: 'demo_wechat' }],
     merchantResponseDeadline: '2026-06-18 19:23',
     createdAt: '2026-06-18 19:20',
     updatedAt: '2026-06-18 19:52',
@@ -2596,7 +2511,8 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
       requiresFirstLoginPasswordReset: true,
       note: '商户关闭该购买意向',
     },
-    contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@beifeng-api' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'beifeng_api' }],
+    buyerContactChannels: [{ type: 'wechat', label: '微信', value: 'demo_wechat' }],
     merchantResponseDeadline: '2026-06-18 16:03',
     createdAt: '2026-06-18 16:00',
     updatedAt: '2026-06-18 16:12',
@@ -2648,12 +2564,13 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     handoff: {
       intentId: 'api-intent-0996',
       selectedDeliveryMode: 'sub2api_panel_account',
-      offPlatformContactChannel: '邮箱',
+      offPlatformContactChannel: '微信',
       status: 'closed',
       requiresFirstLoginPasswordReset: true,
       note: '买家取消该购买意向',
     },
-    contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@beifeng-api' }, { type: 'email', label: '邮箱', value: 'support@example.dev' }],
+    contactChannels: [{ type: 'wechat', label: '微信', value: 'beifeng_api' }],
+    buyerContactChannels: [{ type: 'wechat', label: '微信', value: 'muzhou_wechat' }],
     merchantResponseDeadline: '2026-06-17 21:18',
     createdAt: '2026-06-17 21:15',
     updatedAt: '2026-06-17 22:05',
@@ -2665,11 +2582,11 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
 export const apiPurchaseIntentEvents: ApiPurchaseIntentEvent[] = [
   { id: 'api-event-1', intentId: 'api-intent-1001', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'intent_created', toStatus: 'open', metadata: { amount: 80, deliveryMode: 'api_key_endpoint' }, createdAt: '2026-06-19 16:30' },
   { id: 'api-event-2', intentId: 'api-intent-1002', actorId: 'buyer-muzhou', actorLabel: '木舟', actorRole: 'buyer', type: 'intent_created', toStatus: 'open', metadata: { amount: 120, deliveryMode: 'sub2api_panel_account' }, createdAt: '2026-06-19 15:50' },
-  { id: 'api-event-3', intentId: 'api-intent-1002', actorId: 'merchant-orbit', actorLabel: 'orbit', actorRole: 'merchant', type: 'contacted', fromStatus: 'open', toStatus: 'contacted', metadata: { channel: 'Telegram' }, createdAt: '2026-06-19 16:01' },
+  { id: 'api-event-3', intentId: 'api-intent-1002', actorId: 'merchant-orbit', actorLabel: 'orbit', actorRole: 'merchant', type: 'contacted', fromStatus: 'open', toStatus: 'contacted', metadata: { channel: '微信' }, createdAt: '2026-06-19 16:01' },
   { id: 'api-event-4', intentId: 'api-intent-1003', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'intent_created', toStatus: 'open', metadata: { amount: 30, deliveryMode: 'api_key_endpoint' }, createdAt: '2026-06-19 13:03' },
-  { id: 'api-event-5', intentId: 'api-intent-1003', actorId: 'merchant-qingning', actorLabel: '青柠', actorRole: 'merchant', type: 'contacted', fromStatus: 'open', toStatus: 'contacted', metadata: { channel: 'linux.do 私信' }, createdAt: '2026-06-19 13:18' },
+  { id: 'api-event-5', intentId: 'api-intent-1003', actorId: 'merchant-qingning', actorLabel: '青柠', actorRole: 'merchant', type: 'contacted', fromStatus: 'open', toStatus: 'contacted', metadata: { channel: '微信' }, createdAt: '2026-06-19 13:18' },
   { id: 'api-event-6', intentId: 'api-intent-0998', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'intent_created', toStatus: 'open', metadata: { amount: 60, deliveryMode: 'sub2api_panel_account' }, createdAt: '2026-06-18 19:20' },
-  { id: 'api-event-7', intentId: 'api-intent-0998', actorId: 'merchant-orbit', actorLabel: 'orbit', actorRole: 'merchant', type: 'contacted', fromStatus: 'open', toStatus: 'contacted', metadata: { channel: 'Telegram' }, createdAt: '2026-06-18 19:28' },
+  { id: 'api-event-7', intentId: 'api-intent-0998', actorId: 'merchant-orbit', actorLabel: 'orbit', actorRole: 'merchant', type: 'contacted', fromStatus: 'open', toStatus: 'contacted', metadata: { channel: '微信' }, createdAt: '2026-06-18 19:28' },
   { id: 'api-event-8', intentId: 'api-intent-0998', actorId: 'merchant-orbit', actorLabel: 'orbit', actorRole: 'merchant', type: 'owner_closed', fromStatus: 'contacted', toStatus: 'owner_closed', createdAt: '2026-06-18 19:52' },
   { id: 'api-event-9', intentId: 'api-intent-0997', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'intent_created', toStatus: 'open', metadata: { amount: 100, deliveryMode: 'sub2api_panel_account' }, createdAt: '2026-06-18 16:00' },
   { id: 'api-event-10', intentId: 'api-intent-0997', actorId: 'merchant-beifeng', actorLabel: '北风商户', actorRole: 'merchant', type: 'owner_closed', fromStatus: 'open', toStatus: 'owner_closed', createdAt: '2026-06-18 16:12' },
@@ -2746,6 +2663,7 @@ export const publicUserProfiles: PublicUserProfile[] = [
     linuxDoUsername: 'orbit',
     trustLevel: 4,
     badges: myUserProfile.badges,
+    communityIdentities: myUserProfile.communityIdentities,
     accountStatus: 'normal',
     createdAt: myUserProfile.privacy.showCreatedAt ? '2025-11-18' : null,
     lastActiveAt: myUserProfile.privacy.showLastActiveAt ? '12 分钟前' : null,
@@ -2777,6 +2695,7 @@ export const publicUserProfiles: PublicUserProfile[] = [
       { id: 'badge-qingning-linuxdo', code: 'linuxdo_bound', label: '已绑定 linux.do', type: 'system' },
       { id: 'badge-qingning-owner', code: 'trusted_new_owner', label: '可信新车主', type: 'identity' },
     ],
+    communityIdentities: [],
     accountStatus: 'normal',
     createdAt: '2026-04-09',
     lastActiveAt: '28 分钟前',
@@ -2815,6 +2734,7 @@ export const publicUserProfiles: PublicUserProfile[] = [
       { id: 'badge-beifeng-linuxdo', code: 'linuxdo_bound', label: '已绑定 linux.do', type: 'system' },
       { id: 'badge-beifeng-api', code: 'api_merchant', label: 'API 商户', type: 'merchant' },
     ],
+    communityIdentities: [],
     accountStatus: 'under_review',
     createdAt: '2025-08-26',
     lastActiveAt: '2 小时前',
@@ -2865,15 +2785,27 @@ export const publicDisputeRecords: PublicDisputeRecord[] = [
 
 export const orderContactSnapshots: OrderContactSnapshot[] = [
   {
+    id: 'contact-snapshot-ride-app-1',
+    orderType: 'carpool_application',
+    orderId: 'ride-app-1',
+    sellerContacts: [],
+    buyerContacts: [
+      { type: 'wechat', label: '微信', maskedValue: 'zhi***', displayValue: 'zhichuan_wechat', verified: false, usageScope: 'buyer' },
+    ],
+    contactWindowEndsAt: null,
+    canView: false,
+    unavailableReason: '车主确认上车并建立有效成员关系后才展示联系方式。',
+    createdAt: '2026-06-19 16:18',
+  },
+  {
     id: 'contact-snapshot-ride-app-2',
     orderType: 'carpool_application',
     orderId: 'ride-app-2',
     sellerContacts: [
       { type: 'wechat', label: '微信', maskedValue: 'c2c_***', displayValue: 'c2c_orbit', verified: false, usageScope: 'carpool_owner' },
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@orbit', displayValue: '@orbit', verified: true, usageScope: 'carpool_owner', actionUrl: 'https://linux.do/u/orbit/summary' },
     ],
     buyerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@muzhou', displayValue: '@muzhou', verified: true, usageScope: 'buyer', actionUrl: 'https://linux.do/u/muzhou/summary' },
+      { type: 'wechat', label: '微信', maskedValue: 'muz***', displayValue: 'muzhou_wechat', verified: false, usageScope: 'buyer' },
     ],
     contactWindowEndsAt: '2026-06-19 17:05',
     canView: true,
@@ -2885,15 +2817,30 @@ export const orderContactSnapshots: OrderContactSnapshot[] = [
     orderType: 'carpool_application',
     orderId: 'ride-app-3',
     sellerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@qingning', displayValue: '@qingning', verified: true, usageScope: 'carpool_owner', actionUrl: 'https://linux.do/u/qingning/summary' },
+      { type: 'wechat', label: '微信', maskedValue: 'qin***', displayValue: 'qingning_wechat', verified: false, usageScope: 'carpool_owner' },
     ],
     buyerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@demo_user', displayValue: '@demo_user', verified: true, usageScope: 'buyer', actionUrl: 'https://linux.do/u/demo_user/summary' },
+      { type: 'wechat', label: '微信', maskedValue: 'dem***', displayValue: 'demo_wechat', verified: false, usageScope: 'buyer' },
     ],
     contactWindowEndsAt: '2026-06-18 20:42',
     canView: true,
     unavailableReason: null,
     createdAt: '2026-06-18 20:12',
+  },
+  {
+    id: 'contact-snapshot-ride-app-4',
+    orderType: 'carpool_application',
+    orderId: 'ride-app-4',
+    sellerContacts: [
+      { type: 'wechat', label: '微信', maskedValue: 'bei***', displayValue: 'beifeng_wechat', verified: false, usageScope: 'carpool_owner' },
+    ],
+    buyerContacts: [
+      { type: 'wechat', label: '微信', maskedValue: 'dem***', displayValue: 'demo_wechat', verified: false, usageScope: 'buyer' },
+    ],
+    contactWindowEndsAt: null,
+    canView: true,
+    unavailableReason: null,
+    createdAt: '2026-05-19 12:48',
   },
 ]
 

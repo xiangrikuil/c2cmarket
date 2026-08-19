@@ -462,6 +462,35 @@ test('development persona login has no mock-mode fallback', async () => {
   assert.equal(fetchMock.mock.calls.length, 0)
 })
 
+test('development persona login rejects a response without a normal audience', async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+    persona: 'buyer',
+    csrfToken: 'buyer-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'buyer-id',
+      analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+      username: 'dev-buyer',
+      displayName: '开发买家',
+      isAdmin: false,
+      permissions: [],
+      capabilities: [],
+      studentClaim: null,
+      linuxDoBinding: { bound: true },
+    },
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+  const client = await loadBackendClient({ apiMode: 'real' })
+
+  await assert.rejects(
+    () => client.createDevPersonaSession('buyer'),
+    /Normal session endpoint returned a non-normal audience/,
+  )
+})
+
 test('OAuth start sends only the stored bounded registration attribution', async () => {
   const values = new Map<string, string>()
   const sessionStorage = {

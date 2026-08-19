@@ -269,3 +269,82 @@ image SHA. The second command is permitted only after that zero exit. The
 normal GitHub workflow enforces this order through
 `scripts/install-vps-release.sh`, which launches the deployment child with
 stdin redirected from `/dev/null`.
+
+## Scenario: Local Compose Backend Source/Image Parity
+
+### 1. Scope / Trigger
+
+- Trigger: local backend source, OpenAPI, validation, or query-contract changes
+  while the development backend container is already running.
+- This contract prevents a frontend from using a newer API contract against an
+  older `c2cmarket-backend:local` image.
+
+### 2. Signatures
+
+```bash
+docker compose build backend
+docker compose up -d backend
+curl -fsS http://127.0.0.1:8080/readyz
+```
+
+```text
+GET /api/v1/api-services?billingMode=metered_usd_quota&sort=<sort>&limit=1
+sort = recommended | reputation_desc | completed_desc | response_fast
+```
+
+### 3. Contracts
+
+- `compose.yaml` local development keeps `build.context` and names the local
+  backend image `c2cmarket-backend:local` unless overridden.
+- After a backend source or API contract change, `docker compose up -d backend`
+  alone is insufficient when the image was built before the change. Rebuild the
+  backend image first, then recreate the service.
+- Readiness must report `status=ok`, `database=ok`, `schemaDirty=false`, and the
+  expected schema version before testing business endpoints.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Source supports a request value but the running endpoint returns 422 | Rebuild the local backend image before changing the contract |
+| Backend image rebuilt but container was not recreated | `docker compose up -d backend` must be run |
+| `/readyz` reports dirty or unexpected schema | Stop validation and repair the local runtime state |
+| Four public API sort values are requested after rebuild | Each returns a non-422 response |
+| Frontend page is checked after backend restart | Page returns 200 and its API request no longer fails on sort validation |
+
+### 5. Good / Base / Bad Cases
+
+- Good: build the backend from the current worktree, recreate it, verify
+  `/readyz`, then exercise each changed API contract value.
+- Base: no backend source changed; a normal restart is sufficient after a
+  readiness check.
+- Bad: observe a 422 from an old container and remove the new frontend option
+  even though the current backend source already accepts it.
+
+### 6. Tests Required
+
+- `docker compose build backend` and `docker compose up -d backend` complete
+  successfully.
+- `/readyz` confirms database readiness and clean schema state.
+- Curl or integration checks cover every newly exposed query enum and assert
+  the HTTP status is not 422.
+- Run the relevant Go tests, frontend tests/typecheck, OpenAPI snapshot check,
+  and `git diff --check` before handoff.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```bash
+git pull
+docker compose restart backend
+# The old c2cmarket-backend:local image still serves the old validation code.
+```
+
+#### Correct
+
+```bash
+docker compose build backend
+docker compose up -d backend
+curl -fsS http://127.0.0.1:8080/readyz
+```

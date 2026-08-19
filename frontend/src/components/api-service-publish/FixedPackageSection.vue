@@ -5,45 +5,65 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
-import { createDefaultApiServicePackage } from './packages'
-import { sellingModeLabels, type ApiServicePublishForm } from './types'
+import { applyApiServicePackageDraft, cloneApiServicePackageDraft, createDefaultApiServicePackage } from './packages'
+import { sellingModeLabels, type ApiServicePackage, type ApiServicePublishForm } from './types'
 
 const props = defineProps<{
   form: ApiServicePublishForm
   errors: Partial<Record<string, string>>
 }>()
 
-const selectedPackageId = ref<string | null>(props.form.packages[0]?.id ?? null)
 const packageListRef = ref<HTMLElement | null>(null)
 const draggedPackageId = ref<string | null>(null)
 const dragOverPackageId = ref<string | null>(null)
+const packageEditorOpen = ref(false)
+const editingPackageDraft = ref<ApiServicePackage | null>(null)
 
-const selectedPackageIndex = computed(() => props.form.packages.findIndex(item => item.id === selectedPackageId.value))
-const selectedPackage = computed(() => props.form.packages[selectedPackageIndex.value] ?? null)
+const editingPackageIndex = computed(() => props.form.packages.findIndex(item => item.id === editingPackageDraft.value?.id))
 
 const setDurationDays = (value: unknown) => {
   if (typeof value !== 'string' && typeof value !== 'number') return
   const durationDays = Number(value)
   if ([1, 3, 7, 30].includes(durationDays)) {
-    selectedPackage.value!.durationDays = durationDays as 1 | 3 | 7 | 30
+    editingPackageDraft.value!.durationDays = durationDays as 1 | 3 | 7 | 30
   }
 }
 
 watch(
   () => props.form.packages.map(item => item.id),
   (packageIds) => {
-    if (!selectedPackageId.value || !packageIds.includes(selectedPackageId.value)) {
-      selectedPackageId.value = packageIds[0] ?? null
+    if (editingPackageDraft.value && !packageIds.includes(editingPackageDraft.value.id)) {
+      packageEditorOpen.value = false
+      editingPackageDraft.value = null
     }
   },
-  { immediate: true },
 )
 
-const selectPackage = (packageId: string) => {
-  selectedPackageId.value = packageId
+const openPackageEditor = (packageId: string) => {
+  const item = props.form.packages.find(candidate => candidate.id === packageId)
+  if (!item) return
+  editingPackageDraft.value = cloneApiServicePackageDraft(item)
+  packageEditorOpen.value = true
+}
+
+const setPackageEditorOpen = (open: boolean) => {
+  packageEditorOpen.value = open
+  if (!open) editingPackageDraft.value = null
+}
+
+const savePackage = () => {
+  if (!editingPackageDraft.value) return
+  const target = props.form.packages.find(item => item.id === editingPackageDraft.value?.id)
+  if (!target) {
+    setPackageEditorOpen(false)
+    return
+  }
+  applyApiServicePackageDraft(target, editingPackageDraft.value)
+  setPackageEditorOpen(false)
 }
 
 const addPackage = async () => {
@@ -51,7 +71,7 @@ const addPackage = async () => {
     props.form.selectedModels.filter(model => model.enabled).map(model => model.modelId),
   )
   props.form.packages.push(item)
-  selectedPackageId.value = item.id
+  openPackageEditor(item.id)
   await nextTick()
   packageListRef.value
     ?.querySelector<HTMLElement>(`[data-package-id="${item.id}"]`)
@@ -61,9 +81,8 @@ const addPackage = async () => {
 const removePackage = (index: number) => {
   if (props.form.packages.length === 1) return
   const item = props.form.packages[index]
-  const fallbackId = props.form.packages[index + 1]?.id ?? props.form.packages[index - 1]?.id ?? null
   props.form.packages.splice(index, 1)
-  if (selectedPackageId.value === item?.id) selectedPackageId.value = fallbackId
+  if (editingPackageDraft.value?.id === item?.id) setPackageEditorOpen(false)
 }
 
 const movePackage = (index: number, offset: number) => {
@@ -127,7 +146,7 @@ const endPackageDrag = () => {
           :data-package-id="item.id"
           class="group grid min-h-[62px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-background px-2.5 py-2 text-left transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-3 sm:px-3"
           :class="[
-            selectedPackageId === item.id ? 'border-primary/60 bg-primary/5' : 'border-border hover:border-primary/30 hover:bg-muted/30',
+            packageEditorOpen && editingPackageDraft?.id === item.id ? 'border-primary/60 bg-primary/5' : 'border-border hover:border-primary/30 hover:bg-muted/30',
             dragOverPackageId === item.id && draggedPackageId !== item.id ? 'border-primary bg-primary/10' : '',
           ]"
           @dragenter.prevent="dragOverPackageId = item.id"
@@ -151,8 +170,7 @@ const endPackageDrag = () => {
             variant="ghost"
             class="h-auto min-w-0 justify-start rounded-sm p-0 text-left font-normal hover:bg-transparent"
             :aria-label="`编辑套餐 ${index + 1}：${item.name || '未命名套餐'}`"
-            :aria-pressed="selectedPackageId === item.id"
-            @click="selectPackage(item.id)"
+            @click="openPackageEditor(item.id)"
           >
             <div class="flex min-w-0 items-center gap-2">
               <span class="truncate text-sm font-medium">{{ item.name || `套餐 ${index + 1}` }}</span>
@@ -188,47 +206,60 @@ const endPackageDrag = () => {
               :disabled="index === form.packages.length - 1"
               @click="movePackage(index, 1)"
             ><ArrowDown class="h-4 w-4" /></Button>
-            <Button size="icon" variant="ghost" title="编辑套餐" aria-label="编辑套餐" @click="selectPackage(item.id)"><Pencil class="h-4 w-4" /></Button>
+            <Button size="icon" variant="ghost" title="编辑套餐" aria-label="编辑套餐" @click="openPackageEditor(item.id)"><Pencil class="h-4 w-4" /></Button>
             <Button size="icon" variant="ghost" title="删除套餐" aria-label="删除套餐" :disabled="form.packages.length === 1" @click="removePackage(index)"><Trash2 class="h-4 w-4" /></Button>
           </div>
         </div>
       </div>
 
-      <div v-if="selectedPackage" class="border-t border-border pt-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex items-center gap-2">
-            <div class="text-sm font-semibold">编辑套餐</div>
-            <Badge variant="secondary">套餐 {{ selectedPackageIndex + 1 }}</Badge>
-          </div>
-          <label class="flex items-center gap-2 text-xs text-muted-foreground">
-            <Checkbox
-              :model-value="selectedPackage.enabled"
-              @update:model-value="value => selectedPackage!.enabled = Boolean(value)"
-            />
-            启用该套餐
-          </label>
-        </div>
+    </div>
+  </Card>
 
-        <div class="mt-4 grid gap-3 md:grid-cols-2">
-          <label class="space-y-1.5 md:col-span-2">
+  <Dialog :open="packageEditorOpen" @update:open="setPackageEditorOpen">
+    <DialogContent class="grid max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <DialogHeader class="border-b border-border px-4 py-4 pr-12 text-left sm:px-6 sm:py-5">
+        <div class="flex flex-wrap items-center gap-2">
+          <DialogTitle>编辑套餐</DialogTitle>
+          <Badge v-if="editingPackageIndex >= 0" variant="secondary">套餐 {{ editingPackageIndex + 1 }}</Badge>
+        </div>
+        <DialogDescription>调整价格、额度、有效期、库存和买家可见说明，保存后应用到当前发布内容。</DialogDescription>
+      </DialogHeader>
+
+      <div v-if="editingPackageDraft" class="min-h-0 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
+        <label class="flex items-center justify-between gap-4 rounded-md border border-border bg-muted/25 px-3 py-2.5 text-sm">
+          <span>
+            <span class="block font-medium">启用该套餐</span>
+            <span class="mt-0.5 block text-xs text-muted-foreground">停用后不会继续向买家展示。</span>
+          </span>
+          <Checkbox
+            :model-value="editingPackageDraft.enabled"
+            aria-label="启用该套餐"
+            @update:model-value="value => editingPackageDraft!.enabled = Boolean(value)"
+          />
+        </label>
+
+        <p v-if="errors.packages" class="text-xs text-destructive" role="alert">{{ errors.packages }}</p>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="space-y-1.5 sm:col-span-2">
             <span class="text-xs font-medium">套餐名称</span>
-            <Input v-model="selectedPackage.name" />
+            <Input v-model="editingPackageDraft.name" />
           </label>
           <label class="space-y-1.5">
             <span class="text-xs font-medium">价格（元）</span>
-            <Input :model-value="selectedPackage.priceCny" min="0.01" step="0.01" type="number" @update:model-value="value => selectedPackage!.priceCny = Number(value)" />
+            <Input :model-value="editingPackageDraft.priceCny" min="0.01" step="0.01" type="number" @update:model-value="value => editingPackageDraft!.priceCny = Number(value)" />
           </label>
           <label class="space-y-1.5">
             <span class="text-xs font-medium">美元额度</span>
             <div class="flex overflow-hidden rounded-md border border-input bg-background">
               <span class="grid w-9 shrink-0 place-items-center border-r border-border text-sm text-muted-foreground">$</span>
-              <Input class="border-0 shadow-none focus-visible:ring-0" :model-value="selectedPackage.panelAllowance" min="0.000001" step="0.01" type="number" @update:model-value="value => selectedPackage!.panelAllowance = Number(value)" />
+              <Input class="border-0 shadow-none focus-visible:ring-0" :model-value="editingPackageDraft.panelAllowance" min="0.000001" step="0.01" type="number" @update:model-value="value => editingPackageDraft!.panelAllowance = Number(value)" />
             </div>
           </label>
           <label class="space-y-1.5">
             <span class="text-xs font-medium">有效期</span>
             <Select
-              :model-value="String(selectedPackage.durationDays)"
+              :model-value="String(editingPackageDraft.durationDays)"
               @update:model-value="setDurationDays"
             >
               <SelectTrigger class="w-full"><SelectValue placeholder="选择有效期" /></SelectTrigger>
@@ -242,20 +273,25 @@ const endPackageDrag = () => {
           </label>
           <label class="space-y-1.5">
             <span class="text-xs font-medium">总库存</span>
-            <Input :model-value="selectedPackage.stockTotal" min="0" step="1" type="number" @update:model-value="value => selectedPackage!.stockTotal = Number(value)" />
+            <Input :model-value="editingPackageDraft.stockTotal" min="0" step="1" type="number" @update:model-value="value => editingPackageDraft!.stockTotal = Number(value)" />
+          </label>
+          <label class="space-y-1.5 sm:col-span-2">
+            <span class="text-xs font-medium">套餐说明</span>
+            <Input v-model="editingPackageDraft.description" />
           </label>
         </div>
 
-        <label class="mt-3 block space-y-1.5">
-          <span class="text-xs font-medium">套餐说明</span>
-          <Input v-model="selectedPackage.description" />
-        </label>
-        <div class="mt-4 border-t border-border pt-4">
-          <ApiQuotaPolicyFields v-model="selectedPackage.quotaUsagePolicy" :error="errors.packages" />
+        <div class="border-t border-border pt-4">
+          <ApiQuotaPolicyFields v-model="editingPackageDraft.quotaUsagePolicy" />
         </div>
       </div>
-    </div>
-  </Card>
+
+      <DialogFooter class="border-t border-border px-4 py-4 sm:px-6">
+        <Button type="button" variant="outline" @click="setPackageEditorOpen(false)">取消</Button>
+        <Button type="button" :disabled="!editingPackageDraft" @click="savePackage">保存套餐</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <style scoped>

@@ -91,7 +91,7 @@ function formatAbsoluteTime(value: string) {
       <div class="api-product-card__header">
         <div class="flex items-start gap-2.5">
           <span class="api-product-card__icon">
-            <img v-if="iconSrc" :src="iconSrc" alt="" class="h-6 w-6 object-contain" />
+            <img v-if="iconSrc" :src="iconSrc" alt="" />
             <PackageOpen v-else class="h-5 w-5" />
           </span>
           <div class="min-w-0 flex-1">

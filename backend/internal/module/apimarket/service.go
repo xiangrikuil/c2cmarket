@@ -15,12 +15,14 @@ import (
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
 )
 
 type APIModelResolver interface {
 	APIModel(ctx context.Context, modelID string) (catalog.APIModelCatalog, *domain.AppError)
+	APIModels(ctx context.Context) ([]catalog.APIModelCatalog, *domain.AppError)
 }
 
 type Manager struct {
@@ -375,8 +377,10 @@ func (s *Manager) UpdateProbeConnectionWithIdempotency(ctx context.Context, user
 }
 
 func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
-	if err := validatePublicServiceFilter(filter); err != nil {
-		return domain.Page[Service]{}, err
+	var appErr *domain.AppError
+	filter, appErr = normalizePublicServiceFilter(filter)
+	if appErr != nil {
+		return domain.Page[Service]{}, appErr
 	}
 	if s.repo != nil {
 		return s.repo.ListPublicAPIServices(ctx, filter, page)
@@ -388,12 +392,118 @@ func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter
 	now := s.now()
 	for _, id := range s.serviceOrder {
 		service := WithOrderabilityAt(s.services[id], now)
-		if service.IsOrderable && matchesPublicServiceFilter(service, filter) {
+		if service.IsOrderable && (service.BillingMode != ServiceBillingModeFixedPackage || hasEnabledPackageModel(service)) && matchesPublicServiceFilter(service, filter) {
 			services = append(services, service)
 		}
 	}
 	sortPublicServices(services, filter)
 	return domain.PageItems(services, page)
+}
+
+func (s *Manager) PublicPackageFilterOptions(ctx context.Context, billingMode string) (PublicPackageFilterOptions, *domain.AppError) {
+	if strings.TrimSpace(billingMode) != ServiceBillingModeFixedPackage {
+		return PublicPackageFilterOptions{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode invalid", "筛选选项仅支持短期流量包。", "billingMode", "invalid", "仅支持 fixed_package。")
+	}
+	var availability PublicPackageFilterAvailability
+	if s.repo != nil {
+		var appErr *domain.AppError
+		availability, appErr = s.repo.ListPublicAPIPackageFilterAvailability(ctx)
+		if appErr != nil {
+			return PublicPackageFilterOptions{}, appErr
+		}
+	} else {
+		s.mu.Lock()
+		facts := map[PublicPackageFilterAvailabilityFact]struct{}{}
+		for _, id := range s.serviceOrder {
+			service := WithOrderabilityAt(s.services[id], s.now())
+			if !service.IsOrderable || service.BillingMode != ServiceBillingModeFixedPackage {
+				continue
+			}
+			enabledServiceModels := map[string]struct{}{}
+			for _, model := range service.Models {
+				if model.Enabled {
+					enabledServiceModels[model.ModelCatalogID] = struct{}{}
+				}
+			}
+			for _, pack := range service.Packages {
+				if !pack.Enabled || pack.StockAvailable <= 0 || pack.DurationDays == nil {
+					continue
+				}
+				for _, model := range pack.Models {
+					if _, ok := enabledServiceModels[model.ModelCatalogID]; ok {
+						modelID := strings.TrimSpace(model.ModelCatalogID)
+						if modelID != "" {
+							facts[PublicPackageFilterAvailabilityFact{ModelCatalogID: modelID, DurationDays: *pack.DurationDays}] = struct{}{}
+						}
+					}
+				}
+			}
+		}
+		s.mu.Unlock()
+		for fact := range facts {
+			availability.Facts = append(availability.Facts, fact)
+		}
+	}
+	if s.catalog == nil {
+		return PublicPackageFilterOptions{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Catalog unavailable", "API 模型目录暂不可用。")
+	}
+	models, appErr := s.catalog.APIModels(ctx)
+	if appErr != nil {
+		return PublicPackageFilterOptions{}, appErr
+	}
+	availableIDs := make(map[string]struct{}, len(availability.Facts))
+	for _, fact := range availability.Facts {
+		availableIDs[strings.TrimSpace(fact.ModelCatalogID)] = struct{}{}
+	}
+	options := make([]PublicPackageModelFilterOption, 0, len(availableIDs))
+	activeIDs := make(map[string]struct{}, len(availableIDs))
+	for _, model := range models {
+		if _, ok := availableIDs[model.ID]; !ok || !model.Active || !model.ProviderActive {
+			continue
+		}
+		activeIDs[model.ID] = struct{}{}
+		options = append(options, PublicPackageModelFilterOption{
+			ID: model.ID, ModelKey: model.ModelKey, ProviderCode: model.ProviderCode,
+			ProviderCategory: model.ProviderCategory, ProviderName: model.Provider,
+			ProviderSortOrder: publicProviderSortOrder(model.ProviderCode), SortOrder: model.SortOrder,
+		})
+	}
+	sort.Slice(options, func(i, j int) bool {
+		if options[i].ProviderSortOrder != options[j].ProviderSortOrder {
+			return options[i].ProviderSortOrder < options[j].ProviderSortOrder
+		}
+		if options[i].SortOrder != options[j].SortOrder {
+			return options[i].SortOrder < options[j].SortOrder
+		}
+		return options[i].ModelKey < options[j].ModelKey
+	})
+	durations := map[int]struct{}{}
+	for _, fact := range availability.Facts {
+		if _, ok := activeIDs[fact.ModelCatalogID]; ok {
+			durations[fact.DurationDays] = struct{}{}
+		}
+	}
+	durationOptions := make([]int, 0, len(durations))
+	for duration := range durations {
+		durationOptions = append(durationOptions, duration)
+	}
+	sort.Ints(durationOptions)
+	return PublicPackageFilterOptions{Models: options, Durations: durationOptions}, nil
+}
+
+func publicProviderSortOrder(code string) int {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "openai":
+		return 10
+	case "xai":
+		return 20
+	case "anthropic":
+		return 30
+	case "google":
+		return 40
+	default:
+		return 100
+	}
 }
 
 func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service, *domain.AppError) {
@@ -404,10 +514,34 @@ func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service,
 	defer s.mu.Unlock()
 
 	service, ok := s.services[serviceID]
-	if !ok || !IsOrderableService(service) {
+	if !ok {
 		return Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
 	}
-	return WithOrderability(service), nil
+	service = WithOrderabilityAt(service, s.now())
+	if !service.IsOrderable || service.BillingMode == ServiceBillingModeFixedPackage && !hasEnabledPackageModel(service) {
+		return Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
+	}
+	return service, nil
+}
+
+func hasEnabledPackageModel(service Service) bool {
+	enabledModelIDs := make(map[string]struct{}, len(service.Models))
+	for _, model := range service.Models {
+		if model.Enabled {
+			enabledModelIDs[model.ID] = struct{}{}
+		}
+	}
+	for _, pack := range service.Packages {
+		if !pack.Enabled {
+			continue
+		}
+		for _, model := range pack.Models {
+			if _, ok := enabledModelIDs[model.ServiceModelID]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Manager) OwnerServices(ctx context.Context, user auth.User, filter OwnerServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
@@ -1423,7 +1557,7 @@ func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, 
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
-			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须选择有效的商户联系方式。", "ownerContactMethodIds", "invalid", "联系方式不能为空。")
+			return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
 		}
 		if _, exists := seen[value]; exists {
 			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodIds", "duplicate", "联系方式不能重复。")
@@ -1432,16 +1566,19 @@ func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, 
 		result = append(result, value)
 	}
 	if len(result) == 0 {
-		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须至少选择一种商户联系方式。", "ownerContactMethodIds", "required", "请至少选择一种联系方式。")
+		return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+	}
+	if len(result) != 1 {
+		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "One WeChat contact required", "API 服务只能使用当前账号唯一的微信联系方式。", "ownerContactMethodIds", "invalid_count", "只能提交一个微信联系方式。")
 	}
 	return result, nil
 }
 
 func (s *Manager) validateOwnerContacts(service Service, ownerUserID string) *domain.AppError {
 	for _, methodID := range service.OwnerContactMethodIDs {
-		method, _, ok := s.contact.VersionForOwnerAndScope(methodID, ownerUserID, contact.UsageScopeAPIMerchant)
+		method, _, ok := s.contact.WechatVersionForOwnerAndScope(methodID, ownerUserID, contact.UsageScopeAPIMerchant)
 		if !ok || !method.Enabled {
-			return domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用、不属于当前用户或未允许商户用途。")
+			return contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
 		}
 	}
 	return nil
@@ -1747,11 +1884,12 @@ func matchesPublicServiceFilter(service Service, filter PublicServiceFilter) boo
 		!decimalFilterAtMost(service.MinimumIntentCNY, filter.MinimumIntentCNYMax) {
 		return false
 	}
-	packageModelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
-	if packageModelCatalogID == "" && filter.PackageDurationDays == 0 &&
+	packageModelCatalogIDs := normalizedPackageModelCatalogIDs(filter)
+	if len(packageModelCatalogIDs) == 0 && filter.PackageDurationDays == 0 &&
 		strings.TrimSpace(filter.PackagePriceCNYMax) == "" && strings.TrimSpace(filter.PackageMultiplierMax) == "" {
 		return true
 	}
+	enabledModelIDs := enabledServiceModelIDs(service)
 	for _, item := range service.Packages {
 		if !item.Enabled || item.StockAvailable <= 0 {
 			continue
@@ -1762,11 +1900,9 @@ func matchesPublicServiceFilter(service Service, filter PublicServiceFilter) boo
 		if !decimalFilterAtMost(item.PriceCNY, filter.PackagePriceCNYMax) {
 			continue
 		}
-		if packageModelCatalogID == "" && strings.TrimSpace(filter.PackageMultiplierMax) == "" {
-			return true
-		}
 		for _, model := range item.Models {
-			if (packageModelCatalogID == "" || model.ModelCatalogID == packageModelCatalogID) &&
+			if _, ok := enabledModelIDs[model.ServiceModelID]; ok &&
+				(len(packageModelCatalogIDs) == 0 || containsString(packageModelCatalogIDs, model.ModelCatalogID)) &&
 				decimalFilterAtMost(model.MerchantMultiplier, filter.PackageMultiplierMax) {
 				return true
 			}
@@ -1923,6 +2059,8 @@ func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
 		}
 	}
 	if sortMode := strings.TrimSpace(filter.Sort); sortMode != "" && sortMode != PublicServiceSortUpdatedDesc &&
+		sortMode != PublicServiceSortRecommended && sortMode != PublicServiceSortReputationDesc &&
+		sortMode != PublicServiceSortCompletedDesc && sortMode != PublicServiceSortResponseFast &&
 		sortMode != PublicServiceSortPriceAsc && sortMode != PublicServiceSortMinimumPurchaseAsc && sortMode != PublicServiceSortPackagePriceAsc {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort invalid", "排序方式无效。", "sort", "invalid", "排序方式无效。")
 	}
@@ -1935,9 +2073,53 @@ func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
 	return nil
 }
 
+func normalizePublicServiceFilter(filter PublicServiceFilter) (PublicServiceFilter, *domain.AppError) {
+	for _, value := range filter.PackageModelCatalogIDs {
+		if strings.TrimSpace(value) == "" {
+			return PublicServiceFilter{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package model invalid", "套餐模型筛选不能包含空值。", "packageModelCatalogIds", "invalid", "模型 ID 不能为空。")
+		}
+	}
+	filter.PackageModelCatalogIDs = normalizedPackageModelCatalogIDs(filter)
+	if len(filter.PackageModelCatalogIDs) > 50 {
+		return PublicServiceFilter{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Too many package models", "套餐模型筛选最多支持 50 项。", "packageModelCatalogIds", "max_items", "最多选择 50 个模型。")
+	}
+	filter.PackageModelCatalogID = ""
+	if appErr := validatePublicServiceFilter(filter); appErr != nil {
+		return PublicServiceFilter{}, appErr
+	}
+	return filter, nil
+}
+
+func normalizedPackageModelCatalogIDs(filter PublicServiceFilter) []string {
+	seen := map[string]struct{}{}
+	values := make([]string, 0, len(filter.PackageModelCatalogIDs)+1)
+	for _, value := range append(append([]string(nil), filter.PackageModelCatalogIDs...), filter.PackageModelCatalogID) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return values
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (filter PublicServiceFilter) NormalizedSort() string {
 	switch strings.TrimSpace(filter.Sort) {
-	case PublicServiceSortPriceAsc, PublicServiceSortMinimumPurchaseAsc, PublicServiceSortPackagePriceAsc:
+	case PublicServiceSortRecommended, PublicServiceSortReputationDesc, PublicServiceSortCompletedDesc,
+		PublicServiceSortResponseFast, PublicServiceSortPriceAsc, PublicServiceSortMinimumPurchaseAsc, PublicServiceSortPackagePriceAsc:
 		return strings.TrimSpace(filter.Sort)
 	default:
 		return PublicServiceSortUpdatedDesc
@@ -1954,6 +2136,37 @@ func sortPublicServices(services []Service, filter PublicServiceFilter) {
 				return left.ID > right.ID
 			}
 			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+		if sortMode == PublicServiceSortRecommended {
+			if comparison := comparePublicServiceRecommendation(left, right); comparison != 0 {
+				return comparison < 0
+			}
+			return left.ID < right.ID
+		}
+		if sortMode == PublicServiceSortReputationDesc {
+			leftValue, leftOK := publicServiceReputationValue(left)
+			rightValue, rightOK := publicServiceReputationValue(right)
+			if leftOK != rightOK {
+				return leftOK
+			}
+			if leftOK {
+				if comparison := leftValue.Cmp(rightValue); comparison != 0 {
+					return comparison > 0
+				}
+			}
+			return left.ID < right.ID
+		}
+		if sortMode == PublicServiceSortCompletedDesc {
+			if left.Completed30d != right.Completed30d {
+				return left.Completed30d > right.Completed30d
+			}
+			return left.ID < right.ID
+		}
+		if sortMode == PublicServiceSortResponseFast {
+			if comparison := compareNullableResponse(left.ResponseMedianMinutes, right.ResponseMedianMinutes); comparison != 0 {
+				return comparison < 0
+			}
+			return left.ID < right.ID
 		}
 
 		leftValue, leftOK := publicServiceSortValue(left, filter)
@@ -1983,8 +2196,83 @@ func publicServiceSortValue(service Service, filter PublicServiceFilter) (*big.R
 	}
 }
 
+func compareNullableResponse(left, right *float64) int {
+	if left == nil {
+		if right == nil {
+			return 0
+		}
+		return 1
+	}
+	if right == nil {
+		return -1
+	}
+	if *left < *right {
+		return -1
+	}
+	if *left > *right {
+		return 1
+	}
+	return 0
+}
+
+func publicServiceReputationValue(service Service) (*big.Rat, bool) {
+	if service.SellerReputation == nil {
+		return nil, false
+	}
+	tierScore := map[string]int{
+		reputation.TierInsufficient: 1,
+		reputation.TierNormal:       2,
+		reputation.TierReliable:     3,
+		reputation.TierHighTrust:    4,
+	}[service.SellerReputation.Tier]
+	rating := service.SellerReputation.Metrics.WeightedRating
+	if rating == nil {
+		rating = new(float64)
+	}
+	return new(big.Rat).SetFloat64(float64(tierScore)*1000000 + *rating*1000 + float64(service.SellerReputation.Metrics.VerifiedReviewCount)), true
+}
+
+func comparePublicServiceRecommendation(left, right Service) int {
+	leftReputation, leftHasReputation := publicServiceReputationValue(left)
+	rightReputation, rightHasReputation := publicServiceReputationValue(right)
+	if leftHasReputation != rightHasReputation {
+		if leftHasReputation {
+			return -1
+		}
+		return 1
+	}
+	if leftHasReputation {
+		if comparison := leftReputation.Cmp(rightReputation); comparison != 0 {
+			return -comparison
+		}
+	}
+	if comparison := compareNullableResponse(left.ResponseMedianMinutes, right.ResponseMedianMinutes); comparison != 0 {
+		return comparison
+	}
+	if left.Completed30d != right.Completed30d {
+		if left.Completed30d > right.Completed30d {
+			return -1
+		}
+		return 1
+	}
+	if left.UnresolvedDisputes != right.UnresolvedDisputes {
+		if left.UnresolvedDisputes < right.UnresolvedDisputes {
+			return -1
+		}
+		return 1
+	}
+	if left.UpdatedAt.Equal(right.UpdatedAt) {
+		return 0
+	}
+	if left.UpdatedAt.After(right.UpdatedAt) {
+		return -1
+	}
+	return 1
+}
+
 func minimumPackagePriceForPublicFilter(service Service, filter PublicServiceFilter) (*big.Rat, bool) {
-	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	modelCatalogIDs := normalizedPackageModelCatalogIDs(filter)
+	enabledModelIDs := enabledServiceModelIDs(service)
 	var minimum *big.Rat
 	for _, item := range service.Packages {
 		if !item.Enabled || item.StockAvailable <= 0 ||
@@ -1998,7 +2286,8 @@ func minimumPackagePriceForPublicFilter(service Service, filter PublicServiceFil
 		}
 		matchesModel := false
 		for _, model := range item.Models {
-			if (modelCatalogID == "" || model.ModelCatalogID == modelCatalogID) &&
+			if _, ok := enabledModelIDs[model.ServiceModelID]; ok &&
+				(len(modelCatalogIDs) == 0 || containsString(modelCatalogIDs, model.ModelCatalogID)) &&
 				decimalFilterAtMost(model.MerchantMultiplier, filter.PackageMultiplierMax) {
 				matchesModel = true
 				break
@@ -2009,6 +2298,16 @@ func minimumPackagePriceForPublicFilter(service Service, filter PublicServiceFil
 		}
 	}
 	return minimum, minimum != nil
+}
+
+func enabledServiceModelIDs(service Service) map[string]struct{} {
+	ids := make(map[string]struct{}, len(service.Models))
+	for _, model := range service.Models {
+		if model.Enabled {
+			ids[model.ID] = struct{}{}
+		}
+	}
+	return ids
 }
 
 func decimalFilterAtMost(actual, maximum string) bool {

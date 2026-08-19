@@ -107,7 +107,7 @@ describe('API 市场分页适配', () => {
       online: true,
       billingMode: 'fixed_package',
       search: 'target seller',
-      packageModelCatalogId: 'model-1',
+      packageModelCatalogIds: ['model-1', 'model-2'],
       packageDurationDays: 7,
       packagePriceCnyMax: 20,
       packageMultiplierMax: 1.2,
@@ -134,9 +134,11 @@ describe('API 市场分页适配', () => {
 
     const [servicePath, serviceQuery = ''] = String(fetchMock.mock.calls[1]?.[0]).split('?')
     assert.equal(servicePath, '/api/v1/api-services')
-    assert.deepEqual(Object.fromEntries(new URLSearchParams(serviceQuery)), {
+    const serviceParams = new URLSearchParams(serviceQuery)
+    assert.deepEqual(serviceParams.getAll('packageModelCatalogIds'), ['model-1', 'model-2'])
+    assert.deepEqual(Object.fromEntries(serviceParams), {
       billingMode: 'fixed_package',
-      packageModelCatalogId: 'model-1',
+      packageModelCatalogIds: 'model-2',
       packageDurationDays: '7',
       search: 'target seller',
       packagePriceCnyMax: '20',
@@ -155,7 +157,8 @@ describe('API 市场无限滚动接线', () => {
     assert.match(marketQueriesSource, /queryFn: \(\{ pageParam \}\) => getApiServicesPage\(valueOf\(filters\), \{ limit: 20, cursor: pageParam \|\| undefined \}\)/)
     assert.match(marketPageSource, /useInfiniteApiServices\(serviceFilters, serviceViewEnabled, activeView\)/)
     assert.match(marketPageSource, /billingMode: activeView\.value === 'packages' \? 'fixed_package' : 'metered_credit'/)
-    assert.match(marketPageSource, /packageModelCatalogId: activeView\.value === 'packages' && packageReady\.value \? packageModel\.value : undefined/)
+    assert.match(marketPageSource, /packageModelCatalogIds: activeView\.value === 'packages' \? packageModels\.value : undefined/)
+    assert.match(marketPageSource, /packageDurationDays: activeView\.value === 'packages' && packageDuration\.value \? Number\(packageDuration\.value\) : undefined/)
     assert.match(marketPageSource, /search: debouncedSearch\.value\.trim\(\) \|\| undefined/)
     assert.match(marketPageSource, /modelCatalogId: packageModel\.value \|\| undefined/)
     assert.match(marketPageSource, /packagePriceCnyMax:/)
@@ -165,7 +168,8 @@ describe('API 市场无限滚动接线', () => {
     assert.equal((marketQueriesSource.match(/getNextPageParam: \(lastPage, _pages, _lastPageParam, pageParams\) => nextUnseenCursor\(lastPage\.nextCursor, pageParams\)/g) ?? []).length, 2)
     assert.equal((marketQueriesSource.match(/enabled: computed\(\(\) => valueOf\(enabled\)\)/g) ?? []).length >= 2, true)
     assert.match(marketPageSource, /const visibleMarketQuery = activeView\.value === 'limited' \? quotaQuery : freeServicesQuery/)
-    assert.match(marketPageSource, /prefetchQueriesOnServer\(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery\)/)
+    assert.match(marketPageSource, /useApiPackageFilterOptions\(computed\(\(\) => activeView\.value === 'packages'\)\)/)
+    assert.match(marketPageSource, /\.\.\.\(activeView\.value === 'packages' \? \[packageFilterOptionsQuery\] : \[\]\)/)
     assert.doesNotMatch(marketPageSource, /prefetchQueriesOnServer\(quotaQuery, freeServicesQuery/)
   })
 

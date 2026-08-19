@@ -11,6 +11,7 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 
@@ -502,6 +503,8 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sale mode filter invalid", "销售方式筛选无效。", "saleMode", "invalid", "销售方式筛选无效。")
 	}
 	if sortMode := strings.TrimSpace(filter.Sort); sortMode != "" && sortMode != PublicOfferSortUpdatedDesc &&
+		sortMode != PublicOfferSortRecommended && sortMode != PublicOfferSortReputationDesc &&
+		sortMode != PublicOfferSortCompletedDesc && sortMode != PublicOfferSortResponseFast &&
 		sortMode != PublicOfferSortUnitPriceAsc && sortMode != PublicOfferSortAllowanceDesc && sortMode != PublicOfferSortDeliveryAsc {
 		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort invalid", "排序方式无效。", "sort", "invalid", "排序方式无效。")
 	}
@@ -524,7 +527,8 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 
 func (filter PublicOfferFilter) NormalizedSort() string {
 	switch strings.TrimSpace(filter.Sort) {
-	case PublicOfferSortUnitPriceAsc, PublicOfferSortAllowanceDesc, PublicOfferSortDeliveryAsc:
+	case PublicOfferSortRecommended, PublicOfferSortReputationDesc, PublicOfferSortCompletedDesc,
+		PublicOfferSortResponseFast, PublicOfferSortUnitPriceAsc, PublicOfferSortAllowanceDesc, PublicOfferSortDeliveryAsc:
 		return strings.TrimSpace(filter.Sort)
 	default:
 		return PublicOfferSortUpdatedDesc
@@ -834,8 +838,12 @@ func validateCreateOrderInput(input CreateOrderInput) *domain.AppError {
 			return fieldError("saleRoundId", "放量轮次无效。")
 		}
 	}
-	if _, err := uuid.Parse(strings.TrimSpace(input.BuyerContactMethodID)); err != nil {
-		return fieldError("buyerContactMethodId", "必须选择有效的买家联系方式。")
+	buyerContactMethodID := strings.TrimSpace(input.BuyerContactMethodID)
+	if buyerContactMethodID == "" {
+		return contact.WechatRequiredError("buyerContactMethodId", "购买额度包前必须先配置微信联系方式。")
+	}
+	if _, err := uuid.Parse(buyerContactMethodID); err != nil {
+		return fieldError("buyerContactMethodId", "微信联系方式无效，请刷新后重试。")
 	}
 	if strings.TrimSpace(input.SelectedAccessMode) == "" {
 		return fieldError("selectedAccessMode", "必须选择接入方式。")

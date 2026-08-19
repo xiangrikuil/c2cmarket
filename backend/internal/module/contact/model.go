@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	MethodTypeWechat       = "wechat"
 	UsageScopeCarpoolOwner = "carpool_owner"
 	UsageScopeAPIMerchant  = "api_merchant"
 	UsageScopeBuyer        = "buyer"
@@ -82,6 +83,36 @@ type ContactMethodAuditEvent struct {
 	CreatedAt        time.Time
 }
 
+type ContactEmailVerificationChallenge struct {
+	ContactMethodID        string
+	ContactMethodVersionID string
+	Email                  string
+	ExpiresAt              time.Time
+	DevCode                string
+}
+
+type ContactEmailVerificationCode struct {
+	UserID                 string
+	ContactMethodID        string
+	ContactMethodVersionID string
+	Email                  string
+	CodeHash               string
+	ExpiresAt              time.Time
+	AttemptCount           int
+	Consumed               bool
+	CreatedAt              time.Time
+}
+
+type ConfirmContactEmailInput struct {
+	UserID                 string
+	ContactMethodID        string
+	ContactMethodVersionID string
+	Email                  string
+	CodeHash               string
+	RequestID              string
+	Now                    time.Time
+}
+
 type MethodCompletionBuilder func(ContactMethod) (idempotency.Completion, *domain.AppError)
 
 type UpdateContactMethodInput struct {
@@ -106,7 +137,7 @@ type CreateContactSessionInput struct {
 
 type ContactSessionView struct {
 	SessionID string
-	EndsAt    time.Time
+	EndsAt    *time.Time
 	Items     []ContactItemView
 }
 

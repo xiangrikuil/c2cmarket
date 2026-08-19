@@ -11,7 +11,7 @@ import {
   TimerReset,
 } from 'lucide-vue-next'
 import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
-import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
+import { orderSellerDeclaredApiModels, type ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Badge } from '@/components/ui/badge'
@@ -74,7 +74,7 @@ const previewRows = computed(() => {
 const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
   title: title.value,
   delivery: distributionLabels[props.form.distributionSystem],
-  models: selectedModels.value.map(item => item.name),
+  models: orderSellerDeclaredApiModels(selectedModels.value.map(item => item.name), selectedModels.value),
   category: props.form.providerCategory,
   categoryLabel: providerCategoryLabel(props.form.providerCategory),
   iconSrc: providerIconSrc.value,
@@ -88,6 +88,8 @@ const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
   promptAuditEnabled: props.form.promptAuditEnabled,
   paymentWindowMinutes: props.form.paymentWindowMinutes,
   merchantName: props.form.merchantDisplayName.trim() || merchantDisplayName.value,
+  merchantIdentityMode: props.form.merchantIdentityMode,
+  merchantAvatarUrl: undefined,
   merchantType: props.form.merchantIdentityMode === 'store_alias' ? '商户' : '个人卖家',
   expiresAt: quotaExpiresAtLabel.value,
 	accountPoolLabel: accountPoolLabel(props.form),

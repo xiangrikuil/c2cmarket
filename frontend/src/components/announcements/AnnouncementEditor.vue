@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
-import { Eye, Save, Send } from 'lucide-vue-next'
+import { Eye, Save, Send, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import AnnouncementDetailContent from '@/components/announcements/AnnouncementDetailContent.vue'
 import { Badge } from '@/components/ui/badge'
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { defaultAdminUserDirectoryQuery } from '@/lib/adminUserBackend'
 import {
   announcementCategoryLabels,
   announcementChannelLabels,
@@ -30,12 +31,14 @@ import {
   usePublishAnnouncement,
   useUpdateAnnouncement,
 } from '@/queries/useAnnouncementQueries'
+import { useAdminUserDirectory } from '@/queries/useAdminUserQueries'
 import type {
   Announcement,
   AnnouncementCategory,
   AnnouncementChannel,
   AnnouncementFormInput,
   AnnouncementLevel,
+  AnnouncementAudienceRole,
 } from '@/types/announcement'
 
 type EditorMode = 'create' | 'edit'
@@ -46,6 +49,8 @@ type EditorField =
   | 'category'
   | 'level'
   | 'channels'
+  | 'audience.roles'
+  | 'audience.userIds'
   | 'publishAt'
   | 'expireAt'
   | 'ctaLabel'
@@ -66,6 +71,7 @@ const hasActionButton = ref(false)
 const lastSavedId = ref('')
 const initialSnapshot = ref('')
 const errors = reactive<Partial<Record<EditorField, string>>>({})
+const userSearch = ref('')
 
 const form = reactive({
   title: '',
@@ -74,6 +80,11 @@ const form = reactive({
   category: 'platform' as AnnouncementCategory,
   level: 'normal' as AnnouncementLevel,
   homeBanner: false,
+  globalBar: false,
+  requiresAck: false,
+  audienceType: 'all' as 'all' | 'roles' | 'specific_users',
+  audienceRoles: [] as AnnouncementAudienceRole[],
+  audienceUserIds: [] as string[],
   isPinned: false,
   isDismissible: true,
   publishAtLocal: '',
@@ -81,6 +92,10 @@ const form = reactive({
   ctaLabel: '',
   ctaUrl: '',
 })
+const userDirectoryQuery = useAdminUserDirectory(computed(() => ({
+  ...defaultAdminUserDirectoryQuery,
+  search: userSearch.value.trim(),
+})), computed(() => form.audienceType === 'specific_users'))
 
 const categoryOptions = Object.entries(announcementCategoryLabels) as Array<[AnnouncementCategory, string]>
 const levelOptions = Object.entries(announcementLevelLabels) as Array<[AnnouncementLevel, string]>
@@ -92,6 +107,21 @@ const effectiveAnnouncementId = computed(() => props.announcement?.id ?? lastSav
 const previewInput = computed(() => buildInput())
 const hasErrors = computed(() => Object.values(errors).some(Boolean))
 const dirty = computed(() => serializeForm() !== initialSnapshot.value)
+const audienceRoleOptions: Array<{ value: AnnouncementAudienceRole, label: string }> = [
+  { value: 'buyer', label: '买家' },
+  { value: 'merchant', label: '卖家' },
+  { value: 'admin', label: '管理员' },
+]
+const audienceTypeOptions = [
+  { value: 'all', label: '全部用户' },
+  { value: 'roles', label: '按角色' },
+  { value: 'specific_users', label: '指定用户' },
+] as const
+const directoryUsers = computed(() => userDirectoryQuery.data.value?.items ?? [])
+const selectedAudienceUsers = computed(() => form.audienceUserIds.map((id) => {
+  const user = directoryUsers.value.find(candidate => candidate.id === id)
+  return user ?? { id, displayName: '已选用户', username: id }
+}))
 
 watch(
   () => props.announcement,
@@ -110,6 +140,11 @@ function resetForm(input: AnnouncementFormInput) {
   form.category = input.category
   form.level = input.level
   form.homeBanner = input.channels.includes('home_banner')
+  form.globalBar = input.channels.includes('global_bar')
+  form.requiresAck = input.requiresAck
+  form.audienceType = input.audience.type
+  form.audienceRoles = input.audience.type === 'roles' ? [...input.audience.roles] : []
+  form.audienceUserIds = input.audience.type === 'specific_users' ? [...input.audience.userIds] : []
   form.isPinned = input.isPinned
   form.isDismissible = input.isDismissible
   form.publishAtLocal = toDateTimeLocalValue(input.publishAt)
@@ -125,6 +160,13 @@ function resetForm(input: AnnouncementFormInput) {
 function buildInput(): AnnouncementFormInput {
   const channels: AnnouncementChannel[] = ['message_center']
   if (form.homeBanner) channels.push('home_banner')
+  if (form.globalBar) channels.push('global_bar')
+  if (form.level === 'critical') channels.push('modal')
+  const audience = form.audienceType === 'roles'
+    ? { type: 'roles' as const, roles: [...form.audienceRoles] }
+    : form.audienceType === 'specific_users'
+      ? { type: 'specific_users' as const, userIds: [...form.audienceUserIds] }
+      : { type: 'all' as const }
   return {
     title: form.title,
     summary: form.summary,
@@ -134,6 +176,8 @@ function buildInput(): AnnouncementFormInput {
     channels,
     isPinned: form.isPinned,
     isDismissible: form.isDismissible,
+    requiresAck: form.requiresAck,
+    audience,
     publishAt: fromDateTimeLocalValue(form.publishAtLocal),
     expireAt: form.expireAtLocal ? fromDateTimeLocalValue(form.expireAtLocal) : undefined,
     ctaLabel: hasActionButton.value ? form.ctaLabel.trim() || undefined : undefined,
@@ -228,6 +272,29 @@ function setHasActionButton(value: boolean) {
   delete errors.ctaUrl
 }
 
+function toggleAudienceRole(role: AnnouncementAudienceRole, checked: boolean) {
+  form.audienceRoles = checked
+    ? Array.from(new Set([...form.audienceRoles, role]))
+    : form.audienceRoles.filter(value => value !== role)
+}
+
+function toggleAudienceUser(userId: string, checked: boolean) {
+  form.audienceUserIds = checked
+    ? Array.from(new Set([...form.audienceUserIds, userId]))
+    : form.audienceUserIds.filter(value => value !== userId)
+}
+
+watch(() => form.level, (level, previous) => {
+  if (level === 'critical') {
+    form.globalBar = true
+    form.requiresAck = true
+    form.isDismissible = false
+    return
+  }
+  if (previous === 'critical') form.requiresAck = false
+  if (level === 'normal') form.globalBar = false
+})
+
 function serializeForm() {
   return JSON.stringify({
     title: form.title,
@@ -236,6 +303,11 @@ function serializeForm() {
     category: form.category,
     level: form.level,
     homeBanner: form.homeBanner,
+    globalBar: form.globalBar,
+    requiresAck: form.requiresAck,
+    audienceType: form.audienceType,
+    audienceRoles: form.audienceRoles,
+    audienceUserIds: form.audienceUserIds,
     isPinned: form.isPinned,
     isDismissible: form.isDismissible,
     publishAtLocal: form.publishAtLocal,
@@ -337,13 +409,78 @@ onBeforeRouteLeave(() => {
             </label>
           </div>
           <div class="flex items-start gap-3 text-sm">
-            <Switch id="announcement-dismissible" v-model="form.isDismissible" class="mt-0.5" />
+            <Switch id="announcement-global-bar" v-model="form.globalBar" class="mt-0.5" :disabled="form.level === 'normal' || form.level === 'critical'" />
+            <label for="announcement-global-bar" class="cursor-pointer">
+              <span class="font-medium">{{ announcementChannelLabels.global_bar }}</span>
+              <span class="mt-0.5 block text-xs text-muted-foreground">重要公告可选；紧急公告固定开启。</span>
+            </label>
+          </div>
+          <div class="flex items-start gap-3 text-sm">
+            <Switch id="announcement-requires-ack" v-model="form.requiresAck" class="mt-0.5" disabled />
+            <label for="announcement-requires-ack">
+              <span class="font-medium">要求确认知悉</span>
+              <span class="mt-0.5 block text-xs text-muted-foreground">仅紧急公告启用，并由服务端持久记录。</span>
+            </label>
+          </div>
+          <div class="flex items-start gap-3 text-sm">
+            <Switch id="announcement-dismissible" v-model="form.isDismissible" class="mt-0.5" :disabled="form.level === 'critical'" />
             <label for="announcement-dismissible" class="cursor-pointer">
               <span class="font-medium">允许关闭首页公告</span>
               <span class="mt-0.5 block text-xs text-muted-foreground">重要公告通常不允许关闭。</span>
             </label>
           </div>
           <p v-if="errors.channels" class="text-xs text-destructive md:col-span-2">{{ errors.channels }}</p>
+        </div>
+
+        <div class="rounded-md border border-border bg-muted/30 p-4">
+          <div class="grid gap-4 md:grid-cols-[12rem_minmax(0,1fr)]">
+            <label class="space-y-2">
+              <span class="text-sm font-medium">通知对象</span>
+              <Select v-model="form.audienceType">
+                <SelectTrigger class="w-full bg-background"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="option in audienceTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+
+            <div v-if="form.audienceType === 'roles'" class="grid gap-2 sm:grid-cols-3">
+              <label v-for="option in audienceRoleOptions" :key="option.value" class="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
+                <Checkbox
+                  :model-value="form.audienceRoles.includes(option.value)"
+                  @update:model-value="value => toggleAudienceRole(option.value, value === true)"
+                />
+                {{ option.label }}
+              </label>
+              <p v-if="errors['audience.roles']" class="text-xs text-destructive sm:col-span-3">{{ errors['audience.roles'] }}</p>
+            </div>
+
+            <div v-else-if="form.audienceType === 'specific_users'" class="space-y-3">
+              <Input v-model="userSearch" placeholder="搜索用户名或显示名称" />
+              <div v-if="selectedAudienceUsers.length" class="flex flex-wrap gap-2">
+                <span v-for="user in selectedAudienceUsers" :key="user.id" class="inline-flex min-w-0 items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs">
+                  <span class="max-w-48 truncate">{{ user.displayName }} <span class="text-muted-foreground">@{{ user.username }}</span></span>
+                  <Button type="button" size="icon" variant="ghost" class="h-5 w-5" :aria-label="`移除 ${user.displayName}`" @click="toggleAudienceUser(user.id, false)">
+                    <X class="h-3 w-3" />
+                  </Button>
+                </span>
+              </div>
+              <div class="max-h-44 space-y-1 overflow-y-auto rounded-md border bg-background p-2">
+                <label v-for="user in directoryUsers" :key="user.id" class="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted">
+                  <Checkbox
+                    :model-value="form.audienceUserIds.includes(user.id)"
+                    @update:model-value="value => toggleAudienceUser(user.id, value === true)"
+                  />
+                  <span class="min-w-0 flex-1 truncate">{{ user.displayName }} <span class="text-muted-foreground">@{{ user.username }}</span></span>
+                </label>
+                <p v-if="directoryUsers.length === 0" class="px-2 py-3 text-center text-xs text-muted-foreground">未找到用户</p>
+              </div>
+              <p class="text-xs text-muted-foreground">已选择 {{ form.audienceUserIds.length }} 位用户</p>
+              <p v-if="errors['audience.userIds']" class="text-xs text-destructive">{{ errors['audience.userIds'] }}</p>
+            </div>
+
+            <p v-else class="self-center text-sm text-muted-foreground">所有可访问站点的用户；全站重要或紧急通知也会对匿名访客展示。</p>
+          </div>
         </div>
 
         <div class="grid gap-4 md:grid-cols-2">
@@ -425,7 +562,7 @@ onBeforeRouteLeave(() => {
         <div v-if="previewVisible" class="mt-5 space-y-4">
           <div class="flex flex-wrap items-center gap-2">
             <Badge variant="outline">{{ announcementCategoryLabels[previewInput.category] }}</Badge>
-            <Badge :variant="previewInput.level === 'important' ? 'default' : 'secondary'">{{ announcementLevelLabels[previewInput.level] }}</Badge>
+            <Badge :variant="previewInput.level === 'critical' ? 'destructive' : previewInput.level === 'important' ? 'default' : 'secondary'">{{ announcementLevelLabels[previewInput.level] }}</Badge>
             <Badge v-if="previewInput.isPinned" variant="secondary">置顶</Badge>
           </div>
           <div>

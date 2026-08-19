@@ -2,7 +2,7 @@
 
 Date: 2026-07-24
 Executor: Codex
-Updated: 2026-08-01
+Updated: 2026-08-17
 
 ## Scenario: Truthful Reputation Facts And Transaction Exclusions
 
@@ -40,14 +40,13 @@ PostgreSQL:
 
 ### 3. Contracts
 
-- Carpool completion comes only from `carpool_memberships.status='completed'`; API completion comes only from `api_orders.status='completed'`.
+- Carpool applications and memberships do not produce completion, cancellation-responsibility, review, or public reputation facts. API normal-completion facts come only from `api_orders.commercial_outcome='normal_fulfillment'`; refund, partial refund, continued fulfillment, pending, and unverified closure must not inflate normal completion counts.
 - Purchase intents, accepted applications, payment submission, delivery submission, or other intermediate states must not be inferred as completed transactions.
-- Buyer and seller facts remain separate. Carpool and API facts remain separate. `overall` is the service-layer sum of the two business scopes for one role.
+- Buyer and seller API facts remain separate. Carpool scope is retained only as a zero-valued compatibility projection and must not query carpool applications or memberships. `overall` is the service-layer API fact projection for one role.
 - The recent completion window is 90 days from the repository `now` argument. Compatibility DTO field names must not change the calculation window.
 - A responsibility cancellation is counted only when durable status/event data identifies that role as responsible. The system executor and the business-responsible participant are separate concepts; a system-created timeout event must not be rewritten with a participant actor.
 - An API order cancelled with `cancel_reason='payment_timeout'` is buyer responsibility even though `api_order.payment_timeout_cancelled` has no actor. The seller receives neither a responsible nor an unknown cancellation fact for that order.
-- An expired `accepted_reserved` carpool application uses `carpool_join_confirmations` as responsibility evidence. A missing buyer confirmation is buyer responsibility, a missing owner confirmation is seller responsibility, and both missing confirmations create one responsibility cancellation for each role. A participant who confirmed is not affected.
-- Historical cancellation without durable status, event, reason, or confirmation evidence increments the unknown count and must not be guessed. An impossible expired carpool application with both confirmations is also unknown for both participants.
+- Historical carpool reservation/cancellation rows are removed by migration 111 and must not be reintroduced as reputation evidence.
 - Unresolved disputes are `open|waiting_info` cases mapped through the actual transaction participants. A dispute is not a responsibility decision.
 - An active transaction exclusion removes all facts from that transaction for both participants. Restore makes the facts eligible again without rewriting the transaction terminal state.
 - Exclusion events are append-only and record administrator, action, reason code, reason, and time. Restore updates the current exclusion row and appends a new event.
@@ -69,14 +68,14 @@ PostgreSQL:
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a completed carpool membership contributes one buyer/carpool completion and one seller/carpool completion; an API order does not affect carpool facts.
+- Good: carpool membership changes leave all reputation facts unchanged; only an API order with `commercial_outcome=normal_fulfillment` contributes API normal-completion facts.
 - Good: an administrator excludes a disputed API order, both participants lose that order's facts, and restore makes them visible again while preserving two audit events.
 - Base: a requested user has no matching terminal transactions; a successful batch query returns explicit zero facts for every role/scope.
-- Bad: count a purchase intent as an API completion, assign every expired reservation to the buyer without checking confirmations, use the system timeout executor as the event actor, or run one SQL query per profile row.
+- Bad: count a carpool membership or purchase intent as a completion, reconstruct removed reservation responsibility, use the system timeout executor as the event actor, or run one SQL query per profile row.
 
 ### 6. Tests Required
 
-- Unit tests must cover empty input, duplicate IDs, role/scope merge, 90-day window behavior, unknown cancellation, API payment-timeout responsibility, role-specific carpool confirmation expiry, and exclusion validation.
+- Unit tests must cover empty input, duplicate IDs, role/scope merge, 90-day window behavior, unknown cancellation, API payment-timeout responsibility, zero-valued carpool compatibility projections, and exclusion validation.
 - Repository SQL tests must assert terminal predicates, participant joins, the shared cumulative/window responsibility matrix, active-exclusion predicates, and one UUID-array batch parameter.
 - PostgreSQL integration must apply the complete migration chain, aggregate an empty user, exclude/restore a transaction, and prove exclusion events reject update/delete.
 - Profile/DTO tests must prove repository-backed zero is distinct from unavailable `null`.
@@ -104,7 +103,7 @@ facts, appErr := reputationService.AggregateFacts(ctx, userIDs)
 
 ```sql
 SELECT ... FROM api_orders
-WHERE status = 'completed'
+WHERE commercial_outcome = 'normal_fulfillment'
   AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL);
 ```
 
@@ -208,7 +207,7 @@ restriction.revoked_at is null
 - Action checks run before the protected side effect. Contact checks run before decrypting or returning contact values and before inserting a contact access log.
 - `contact_view` resolves the current viewer as buyer or seller from the resource relationship; it must not use one fixed role for every viewer.
 - Creating or publishing a carpool, applying, accepting, publishing an API service, creating an API order, viewing participant contacts, and submitting a review must call the shared action contract with the matching role/action pair.
-- Approving an appeal linked to an active outcome reverses that outcome and revokes restrictions whose `source_dispute_outcome_id` matches, in the same transaction as the appeal state change.
+- Approving an appeal reverses only the appellant-subject outcome, restrictions sourced from that outcome, and any appellant-owned confirmed-lateness fact, in the same transaction as the appeal state change. Multi-subject cases must filter every lookup by `subject_user_id=appellant_user_id`; reversal must never select an arbitrary case-level row.
 - Dispute appeal authorization and reputation outcome creation serialize on the dispute row. A submitted or approved appeal blocks creating a later outcome, so an appeal cannot be invalidated by changing the dispute subject or by reapplying a reversed responsibility decision.
 - `reputation_governance_events` is append-only. Administrators create outcomes/restrictions or reverse/revoke them through domain actions; there is no API that directly edits a user's reputation tier.
 - Password login, OAuth callback, and existing session validation independently reject any account whose `account_status` is not `active`. Account status must not be inferred from reputation restrictions.
@@ -227,12 +226,15 @@ restriction.revoked_at is null
 | Unknown role, action, responsibility, severity, or invalid period | `422 VALIDATION_FAILED` with the matching field |
 | Protected action matches an active restriction | `403 REPUTATION_ACTION_RESTRICTED` with `public_reason` |
 | Restriction is expired, not started, revoked, or belongs to another role/action | Allow the action |
+| Appeal appellant is not the outcome/restriction/lateness subject | Do not reverse that row; never fall back to another subject in the case |
+| Appellant-owned lateness was already reversed | Idempotent no-op; retain the original timeline and reversal audit |
 | Password, OAuth, or session user is not `active` | `403 ACCOUNT_RESTRICTED`; do not create/continue a session |
 | Update/delete of a governance event | PostgreSQL rejects the mutation |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a resolved dispute receives one seller/high outcome, a seller `api_service_publish` restriction blocks only that action, and an approved appeal reverses both records while preserving their history.
+- Good: a multi-subject case has buyer and seller outcomes; approving the buyer's appeal reverses only buyer-owned outcome/restriction/lateness records.
 - Good: a restricted buyer requests a contact window; the API returns `403`, contains no plaintext contact value, and does not append a contact access log.
 - Base: an unresolved dispute with a subject increments caution facts but does not block either role. A time-limited restriction stops applying exactly at `ends_at`.
 - Bad: penalize a report author because they appear in `primary_user_id`, apply a buyer restriction to seller actions, or decrypt contacts before checking the restriction.
@@ -243,7 +245,7 @@ restriction.revoked_at is null
 - Core/contact tests must cover every protected action call site and prove contact disclosure checks happen before plaintext response and audit insertion.
 - Authentication tests must cover non-active OAuth, password, and existing-session paths.
 - Router tests must cover admin authority, CSRF, `Idempotency-Key`, `If-Match`, stale versions, and the three OpenAPI routes.
-- PostgreSQL integration must apply the complete migration chain through the current expected version and prove unresolved-outcome rejection, active/expired/revoked restrictions, appeal reversal, append-only events, and restricted contact non-disclosure.
+- PostgreSQL integration must apply the complete migration chain through the current expected version and prove unresolved-outcome rejection, active/expired/revoked restrictions, appellant-filtered multi-subject appeal reversal, reversed lateness exclusion, valid dispute-event entity types, append-only events, and restricted contact non-disclosure.
 - Run `go test -count=1 ./...`, `go vet ./...`, OpenAPI YAML parsing, runtime/OpenAPI route parity, migration-doc validation, and `git diff --check`.
 
 ### 7. Wrong vs Correct
@@ -256,6 +258,9 @@ if dispute.PrimaryUserID == userID {
 }
 contacts := decryptContactValues(session)
 checkRestriction(userID)
+
+outcome := loadFirstOutcomeForCase(dispute.ID)
+reverse(outcome)
 ```
 
 #### Correct
@@ -270,6 +275,9 @@ if appErr := reputationService.CheckActionAllowed(
     return nil, appErr
 }
 contacts := decryptContactValues(session)
+
+outcome := loadActiveOutcome(dispute.ID, appeal.AppellantUserID)
+reverseOnlyAppellantOwnedFacts(outcome, appeal.AppellantUserID)
 ```
 
 ## Scenario: Verified Bidirectional Transaction Reviews
@@ -283,7 +291,7 @@ contacts := decryptContactValues(session)
 
 ```text
 transaction_type:
-  carpool_membership | api_order
+  api_order
 
 reviewer_role / reviewee_role:
   buyer | seller
@@ -291,11 +299,17 @@ reviewer_role / reviewee_role:
 review status:
   sealed | published | removed
 
-review window:
-  [transaction.completed_at, transaction.completed_at + 14 days)
+API-order commercial outcome:
+  pending | cancelled_unpaid | normal_fulfillment | full_refund |
+  partial_refund | continued_fulfillment | closed_unverified
+
+API-order review window:
+  [commercial_outcome_updated_at, commercial_outcome_updated_at + 14 days)
 
 GET /api/v1/me/reviews:
   ReviewCenterRow.allowedTags[] = { code, label, polarity }
+  ReviewCenterRow.commercialOutcome
+  ReviewCenterRow.reviewPaused
   ReviewCenterRow does not expose counterparty submission state
 
 POST|PUT /api/v1/me/transactions/{transactionType}/{transactionId}/review:
@@ -308,7 +322,9 @@ PostgreSQL:
 
 ### 3. Contracts
 
-- A verified review points to one platform-confirmed completed carpool membership or API order and to the actual buyer/seller participants. Purchase intents, applications, payment submission, and delivery submission are not verified review sources.
+- A verified review points to one API order with a reviewable commercial outcome: `normal_fulfillment|full_refund|partial_refund|continued_fulfillment`. Carpool memberships, purchase intents, applications, payment/delivery submission, `pending`, `cancelled_unpaid`, and `closed_unverified` are not review sources.
+- API-order review eligibility and deadline are independent of `api_orders.status` and `completed_at`. Mutable rows snapshot `commercial_outcome`; when a dispute finalizes, unfrozen rows refresh to the new outcome and `commercial_outcome_updated_at + 14 days`.
+- Any active API-order dispute pauses review creation, sealed-review editing, deadline auto-publication, public/reputation aggregation, and deadline-driven recalculation. Published/frozen rows remain immutable. Closing the active dispute resumes only mutable rows under the final commercial outcome.
 - Buyer and seller may each create one review of the other participant. Direction and role are preserved so future reputation aggregation can keep buyer and seller behavior separate.
 - The first review remains sealed. The author can edit it before the deadline, but the counterparty and public surfaces cannot read its rating, tags, or note.
 - Before publication, ordinary-user responses must not expose whether the counterparty submitted. Do not return a counterparty-submission boolean or a received sealed row; both are observable signals even when content is null.
@@ -331,7 +347,9 @@ PostgreSQL:
 | More than five tags or a tag not allowed for the resolved roles | `422 VALIDATION_FAILED`, field `tags` |
 | Both tags and trimmed note are empty | `422 VALIDATION_FAILED`, field `content` |
 | Current user is not a participant | `404 OBJECT_NOT_FOUND` |
-| Transaction is not completed or is actively excluded | `409 INVALID_STATE_TRANSITION` |
+| Transaction type is carpool or otherwise unsupported | `422 VALIDATION_FAILED` |
+| API commercial outcome is not reviewable or transaction is actively excluded | `409 INVALID_STATE_TRANSITION` |
+| API order has an active dispute | Return `reviewPaused=true`; reject create/edit and skip auto-publication/aggregation without exposing a received sealed row |
 | Submission/edit at or after the deadline | `409 INVALID_STATE_TRANSITION` |
 | Edit targets a published, removed, or otherwise frozen review | `409 INVALID_STATE_TRANSITION` |
 | Received review is sealed | Omit the row so submission itself is not observable |
@@ -341,15 +359,17 @@ PostgreSQL:
 ### 5. Good/Base/Bad Cases
 
 - Good: an API buyer and seller both submit; both reviews become verified public facts with opposite role directions in one commit.
+- Good: a confirmed full refund starts a new 14-day review window at `commercial_outcome_updated_at`; both participants may review, but the order does not count as a normal fulfillment.
+- Good: an active dispute pauses an author's sealed review; it is neither editable nor auto-published nor aggregated until the dispute closes.
 - Good: seller-to-buyer `quick_payment` is stored as a code, rendered as `付款及时`, and included in the positive reputation-tag aggregate.
-- Good: one carpool review reaches its deadline, materializes as published, and remains immutable while its revision history records the transition.
+- Good: a carpool review submission is rejected and no carpool row appears in the review center or public profile.
 - Base: an administrator removes abusive published text. Public reads omit it, while frozen content and audited removal history remain stored.
 - Bad: return `counterpartySubmitted`, return a received sealed placeholder row, accept a tag in the wrong role direction, or display weighted rating as the ordinary public average.
 
 ### 6. Tests Required
 
-- Service and repository tests must cover both transaction types, both directions, no counterparty-submission signal, the 14-day boundary, tag-or-note validation, scenario tag rejection, historical aliases, active exclusion, and post-publication immutability.
-- PostgreSQL integration must prove second-submit atomic publication, deadline materialization, append-only revisions, legacy review preservation, and audited removal.
+- Service and repository tests must cover both API-order directions, carpool-source rejection, no counterparty-submission signal, commercial-outcome eligibility, the outcome-time 14-day boundary, active-dispute pause, tag-or-note validation, scenario tag rejection, historical aliases, active exclusion, and post-publication immutability.
+- PostgreSQL integration must prove confirmed refunds remain reviewable without counting as normal completion, active disputes pause create/edit/auto-publication/reputation aggregation, mutable deadline refresh, second-submit atomic publication, append-only revisions, legacy review preservation, and audited removal.
 - Public-profile tests must prove only published, non-removed, non-excluded rows appear and role/type fields survive the API boundary.
 - Run the full backend suite, vet, OpenAPI parsing and route parity, migration documentation checks, and `git diff --check`.
 
@@ -360,6 +380,9 @@ PostgreSQL:
 ```go
 response.CounterpartySubmitted = counterpartyReview != nil
 response.Items = append(response.Items, receivedSealedPlaceholder)
+
+deadline := order.CompletedAt.Add(14 * 24 * time.Hour)
+if order.Status == "completed" { allowReview() }
 ```
 
 #### Correct
@@ -368,6 +391,10 @@ response.Items = append(response.Items, receivedSealedPlaceholder)
 if row.Direction == DirectionReceived && row.Visibility == VisibilitySealed {
     continue
 }
+if transaction.ReviewPaused {
+    skipMutationPublicationAndAggregation()
+}
+deadline := ReviewDeadlineForAPIOrder(order.CommercialOutcomeUpdatedAt)
 row.AllowedTags = AllowedTags(row.TransactionType, row.ReviewerRole, row.RevieweeRole)
 ```
 
@@ -403,6 +430,7 @@ PostgreSQL:
 ### 3. Contracts
 
 - `reputation-v2` calculates six independent snapshots per user: buyer/seller crossed with overall/carpool/API. The version upgrade changes timeout responsibility attribution only; tier, state, confidence, and scoring thresholds remain unchanged.
+- Carpool snapshots remain zero-valued compatibility projections. Carpool applications, memberships, reviews, disputes, outcomes, and carpool-scoped restrictions do not enter public reputation aggregation; their governance and action-enforcement records remain authoritative in their own modules.
 - A cached `reputation-v1` snapshot is stale. The next list, detail, profile, or explicit recalculation read rebuilds and persists it as `reputation-v2` from current durable facts.
 - `tier`, `state`, `confidence`, metrics, progress, warnings, and badges come from one pure evaluator and one versioned rule set.
 - Verified review ratings use a Bayesian prior weight of 5. The platform prior is the same role/scope public-review average, or 4.0 while that sample has fewer than 20 reviews.

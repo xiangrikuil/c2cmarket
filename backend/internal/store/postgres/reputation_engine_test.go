@@ -21,7 +21,7 @@ func TestAggregateReputationEngineFactsSQLCoversRulesAndTimeBoundaries(t *testin
 		"outcome.responsibility IN ('responsible', 'shared')",
 		"dispute.target_type <> 'api_order'",
 		"FROM api_order_dispute_remedies remedy",
-		") = 'overdue'",
+		") = 'late_confirmed'",
 		"outcome_candidates.severity IN ('high', 'critical')",
 		"restriction_candidates.starts_at <= $2",
 		"restriction.revoked_at IS NULL",
@@ -37,17 +37,13 @@ func TestAggregateReputationEngineFactsSQLCoversRulesAndTimeBoundaries(t *testin
 func TestAggregateReputationEngineFactsSQLUsesSameTimeoutResponsibilityMatrix(t *testing.T) {
 	t.Parallel()
 
-	for _, required := range []string{
-		"api_order.cancel_reason = 'payment_timeout'",
-		"FROM carpool_join_confirmations confirmation",
-		"confirmation.actor_role = 'buyer'",
-		"confirmation.actor_role = 'owner'",
-		"participants.role = 'buyer' AND NOT confirmations.buyer_confirmed",
-		"participants.role = 'seller' AND NOT confirmations.owner_confirmed",
-	} {
+	for _, required := range []string{"api_order.cancel_reason = 'payment_timeout'"} {
 		if !strings.Contains(aggregateReputationEngineFactsSQL, required) {
 			t.Fatalf("engine aggregate SQL missing responsibility evidence %q", required)
 		}
+	}
+	if strings.Contains(aggregateReputationEngineFactsSQL, "FROM carpool_join_confirmations confirmation") {
+		t.Fatal("removed carpool confirmation tables must not feed public reputation")
 	}
 }
 

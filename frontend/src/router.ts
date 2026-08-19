@@ -1,5 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { CAPABILITY, type Capability } from './lib/capabilities'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from './lib/featureFlags'
+import { apiMarketPath, apiMarketQueryForView, apiMarketViewFromQuery } from './lib/apiMarketRoutes'
 
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
@@ -15,6 +17,7 @@ const ApiServicePublishPage = () => import('@/pages/ApiServicePublishPage.vue')
 const SearchPage = () => import('@/pages/SearchPage.vue')
 const MyCenterPage = () => import('@/pages/MyCenterPage.vue')
 const MyCarpoolsPage = () => import('@/pages/MyCarpoolsPage.vue')
+const CarpoolMembershipManagementPage = () => import('@/pages/CarpoolMembershipManagementPage.vue')
 const MyRidesPage = () => import('@/pages/MyRidesPage.vue')
 const CarpoolApplicationDetailPage = () => import('@/pages/CarpoolApplicationDetailPage.vue')
 const MyApiOrdersPage = () => import('@/pages/MyApiOrdersPage.vue')
@@ -23,9 +26,10 @@ const MyApiServiceDetailPage = () => import('@/pages/MyApiServiceDetailPage.vue'
 const MyApiProbeConnectionsPage = () => import('@/pages/MyApiProbeConnectionsPage.vue')
 const ApiModelTesterPage = () => import('@/pages/ApiModelTesterPage.vue')
 const ApiPurchaseOrderDetailPage = () => import('@/pages/ApiPurchaseOrderDetailPage.vue')
+const ApiOrderDeliveryContentPage = () => import('@/pages/ApiOrderDeliveryContentPage.vue')
+const MyApiOrderDisputePage = () => import('@/pages/MyApiOrderDisputePage.vue')
 const LegacyApiIntentRedirectPage = () => import('@/pages/LegacyApiIntentRedirectPage.vue')
 const MerchantApiOrdersPage = () => import('@/pages/MerchantApiOrdersPage.vue')
-const MerchantCarpoolApplicationsPage = () => import('@/pages/MerchantCarpoolApplicationsPage.vue')
 const MyFavoritesPage = () => import('@/pages/MyFavoritesPage.vue')
 const MyReviewsPage = () => import('@/pages/MyReviewsPage.vue')
 const MyReputationPage = () => import('@/pages/MyReputationPage.vue')
@@ -61,6 +65,42 @@ const ForbiddenPage = () => import('@/pages/ForbiddenPage.vue')
 const userAuthMeta = { auth: 'user' } as const
 const capabilityAuthMeta = (capability: Capability) => ({ auth: 'user', capability } as const)
 const adminAuthMeta = { auth: 'admin', capability: CAPABILITY.adminAccess } as const
+const apiQuotaRushPublishRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLED
+  ? {
+      path: '/api-market/quota/new',
+      name: 'api-quota-rush-new',
+      component: ApiQuotaRushPublishPage,
+      meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
+  : {
+      path: '/api-market/quota/new',
+      name: 'api-quota-rush-new',
+      redirect: { path: '/api-market/free' },
+      meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
+
+const apiMarketLimitedRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLED
+  ? {
+      path: '/api-market/limited',
+      name: 'api-market-limited',
+      component: ApiMarketPage,
+      meta: { apiMarketView: 'limited' },
+    }
+  : {
+      path: '/api-market/limited',
+      name: 'api-market-limited',
+      redirect: to => ({ path: '/api-market/free', query: apiMarketQueryForView(to.query, 'free') }),
+      meta: { apiMarketView: 'limited' },
+    }
+
+export type WorkspaceNavKey =
+  | 'personal-center'
+  | 'account-settings'
+  | 'reputation-rights'
+  | 'support-center'
+  | 'message-center'
+
+const workspaceUserAuthMeta = (workspaceNavKey: WorkspaceNavKey) => ({ ...userAuthMeta, workspaceNavKey } as const)
 
 const adminChildren = [
   ['carpools', '车源管理', '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。'],
@@ -88,40 +128,53 @@ export const routes: RouteRecordRaw[] = [
     { path: '/carpools/detail', redirect: '/carpools/c1' },
     { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
-    { path: '/api-market', name: 'api-market', component: ApiMarketPage },
-    { path: '/api-market/quota/new', name: 'api-quota-rush-new', component: ApiQuotaRushPublishPage, meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish) },
+    {
+      path: '/api-market',
+      name: 'api-market',
+      redirect: to => {
+        const view = apiMarketViewFromQuery(to.query.view)
+        return { path: apiMarketPath(view), query: apiMarketQueryForView(to.query, view) }
+      },
+    },
+    apiMarketLimitedRoute,
+    { path: '/api-market/packages', name: 'api-market-packages', component: ApiMarketPage, meta: { apiMarketView: 'packages' } },
+    { path: '/api-market/free', name: 'api-market-free', component: ApiMarketPage, meta: { apiMarketView: 'free' } },
+    apiQuotaRushPublishRoute,
     { path: '/api-market/detail', redirect: '/api-market/a1' },
     { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/api-market/:id', name: 'api-detail', component: ApiServiceDetailPage },
-    { path: '/my', name: 'my', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/profile', name: 'my-profile', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/contacts', name: 'my-contacts', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: userAuthMeta },
+    { path: '/my', name: 'my', component: MyCenterPage, meta: workspaceUserAuthMeta('personal-center') },
+    { path: '/my/profile', name: 'my-profile', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/contacts', name: 'my-contacts', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
+    { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
     { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
+    { path: '/my/carpools/:id/manage', name: 'my-carpool-management', component: CarpoolMembershipManagementPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/carpools/:id/edit', name: 'my-carpool-edit', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage, meta: userAuthMeta },
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage, meta: userAuthMeta },
     { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: userAuthMeta },
+    { path: '/my/api-orders/:id/delivery', name: 'my-api-order-delivery', component: ApiOrderDeliveryContentPage, meta: userAuthMeta },
+    { path: '/my/disputes/:id', name: 'my-api-order-dispute', component: MyApiOrderDisputePage, meta: userAuthMeta },
     { path: '/my/api-services', name: 'my-api-services', component: MyApiServicesPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/my/api-services/:id', name: 'my-api-service-detail', component: MyApiServiceDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/my/api-probe-connections', name: 'my-api-probe-connections', component: MyApiProbeConnectionsPage, meta: capabilityAuthMeta(CAPABILITY.apiProbeManage) },
     { path: '/tools/api-model-tester', name: 'api-model-tester', component: ApiModelTesterPage, meta: userAuthMeta },
     { path: '/api-intents/:id', name: 'legacy-api-intent-detail', component: LegacyApiIntentRedirectPage, meta: userAuthMeta },
-    { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', component: MerchantCarpoolApplicationsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
+    { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', redirect: { path: '/my/carpools', query: { view: 'applications' } }, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/merchant/carpool-applications/:id', name: 'merchant-carpool-application-detail', component: CarpoolApplicationDetailPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/merchant/api-orders', name: 'merchant-api-orders', component: MerchantApiOrdersPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/merchant/api-orders/:id', name: 'merchant-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/my/favorites', name: 'my-favorites', component: MyFavoritesPage, meta: userAuthMeta },
     { path: '/my/reviews', name: 'my-reviews', component: MyReviewsPage, meta: userAuthMeta },
-    { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: userAuthMeta },
-    { path: '/my/promotion-benefits', name: 'my-promotion-benefits', component: MyPromotionBenefitsPage, meta: userAuthMeta },
-    { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage, meta: userAuthMeta },
-    { path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: userAuthMeta },
-    { path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: userAuthMeta },
-    { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage, meta: userAuthMeta },
-    { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage, meta: userAuthMeta },
+    { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: workspaceUserAuthMeta('reputation-rights') },
+    { path: '/my/promotion-benefits', name: 'my-promotion-benefits', component: MyPromotionBenefitsPage, meta: workspaceUserAuthMeta('reputation-rights') },
+    { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage, meta: workspaceUserAuthMeta('message-center') },
+    { path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: workspaceUserAuthMeta('support-center') },
+    { path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: workspaceUserAuthMeta('support-center') },
+    { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage, meta: workspaceUserAuthMeta('support-center') },
+    { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage, meta: workspaceUserAuthMeta('support-center') },
     { path: '/announcements/:slug', name: 'announcement-detail', component: AnnouncementDetailPage },
     { path: '/u/:username', name: 'public-user', component: PublicUserPage },
     { path: '/admin', name: 'admin', component: AdminPage, meta: adminAuthMeta },

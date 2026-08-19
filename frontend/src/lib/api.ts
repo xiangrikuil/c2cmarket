@@ -69,13 +69,13 @@ import {
   type CarpoolApplicationEligibilityCode,
   type CarpoolApplicationEvent,
   type CarpoolApplicationEventType,
-  type CarpoolApplicationReview,
   type CarpoolApplicationStatus,
   type CarpoolCancellationResponsibility,
   type CarpoolSeatSummary,
   type CarpoolProductCatalogItem,
   type ContactMethodType,
   type ContactUsageScope,
+  type CommunityIdentity,
   type CreateContactReportRequest,
   type OpeningChannelOption,
   type OrderContactSnapshot,
@@ -113,7 +113,8 @@ import {
 export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { ALL_CONTACT_USAGE_SCOPES } from '@/lib/contactUsageScopes'
 export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -140,8 +141,7 @@ import {
   backendAdminCarpoolRowsPage,
   backendBuyerLeaveCarpool,
   backendCancelCarpoolApplication,
-  backendBuyerConfirmCarpoolCompleted,
-  backendBuyerConfirmCarpoolJoined,
+  backendConfirmCarpoolApplicationConditions,
   backendCarpoolApplicationEligibility,
   backendCarpoolApplicationById,
   backendCarpoolApplicationContacts,
@@ -162,14 +162,13 @@ import {
   backendMyCarpoolApplications,
   backendMyCarpoolApplicationsPage,
   backendOwnerRemoveCarpool,
-  backendOwnerConfirmCarpoolCompleted,
-  backendOwnerConfirmCarpoolJoined,
+  backendUpdateCarpoolMembershipOwnerNote,
   backendRejectCarpoolApplication,
   backendRunAdminCarpoolAction,
   backendSubmitCarpool,
 	backendUpdateOwnerCarpool,
   backendUpdateAdminCarpoolStatus,
-  backendWithdrawCarpoolAcceptance,
+  backendUpdateCarpoolRecruitment,
 } from '@/lib/carpoolBackend'
 import type { CarpoolPageFilters } from '@/lib/carpoolBackend'
 import {
@@ -182,6 +181,7 @@ import {
   backendAdminAPIOrderRows,
   backendAdminAPIOrderRowsPage,
   backendAPIServiceById,
+  backendAPIPackageFilterOptions,
   backendAPIServices,
   backendAPIServicesPage,
   backendAdminAPIServiceRows,
@@ -213,6 +213,7 @@ import {
   backendOwnerAPIOrder,
   backendOwnerAPIOrders,
   backendOwnerAPIOrdersPage,
+  backendSellerCommerceStatus,
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
@@ -243,22 +244,23 @@ import { productMatchesCategory, productMatchesPlan, type ProductCategoryKey } f
 import { isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
 import { isApiServiceAdminActionStatus, isApiServiceExceptionStatus, isApiServicePublicStatus } from '@/lib/apiServiceModeration'
 import {
+  backendConfirmContactEmailVerification,
+  backendConfirmEmailVerification,
   backendCreateContact,
   backendDeleteContact,
   backendMyContactMethods,
   backendMyMerchantProfile,
   backendMyProfile,
-  backendConfirmEmailVerification,
   backendPublicMerchantProfile,
   backendPublicUserProfile,
   backendSetDefaultContact,
   backendSetPassword,
+  backendStartContactEmailVerification,
   backendStartEmailVerification,
   backendUpdateContact,
   backendUpdateMyProfile,
   backendUpsertMerchantProfile,
   backendUseLinuxDoAvatar,
-  backendVerifyContact,
   type BackendMerchantProfile,
 } from '@/lib/profileBackend'
 import { backendReviewCenterPage, backendReviewCenterRows, backendSubmitReview } from '@/lib/reviewBackend'
@@ -391,7 +393,7 @@ export type CarpoolNotification = {
 
 export type UnifiedNotification = {
   id: string
-  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒'
+  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒' | '交易待办' | '交易通知'
   title: string
   detail: string
   time: string
@@ -426,7 +428,7 @@ export type SearchResult = {
 
 export type ReviewCenterRow = {
   id: string
-  transactionType: 'carpool_membership' | 'api_order'
+  transactionType: 'api_order'
   transactionId: string
   direction: 'pending' | 'sent' | 'received'
   target: string
@@ -434,7 +436,7 @@ export type ReviewCenterRow = {
   counterpartyUsername: string
   reviewerRole: 'buyer' | 'seller'
   revieweeRole: 'buyer' | 'seller'
-  status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
+  status: 'reviewable' | 'paused' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
   allowedTags: ReviewTag[]
   canCreate: boolean
@@ -444,6 +446,8 @@ export type ReviewCenterRow = {
   note: string | null
   completedAt: string
   reviewDeadlineAt: string
+  commercialOutcome: '' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'legacy_fulfillment'
+  reviewPaused: boolean
   submittedAt: string | null
   visibleAt: string | null
   frozenAt: string | null
@@ -556,6 +560,10 @@ export type SubmitReviewPayload = {
   note: string
 }
 
+type MockApiOrderReview = Pick<SubmitReviewPayload, 'rating' | 'tags' | 'note'> & {
+  createdAt: string
+}
+
 export type CreatePublicProfileReportRequest = CreatePublicUserReportRequest
 
 export type TransactionTrendRange = '7d' | '30d' | '90d'
@@ -576,6 +584,33 @@ export type ApiOrderLatePaymentStatus = 'reported' | 'not_received' | 'received_
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
 export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
 export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
+
+export type SellerCommerceRestrictionLevel = 'normal' | 'service_limited' | 'account_limited'
+export type SellerCommerceReason = 'service_multiple_buyers' | 'seller_response_overdue' | 'account_multiple_buyers' | 'remedy_fulfillment_overdue'
+
+export type SellerCommerceDispute = {
+  disputeId: string
+  orderId: string
+  orderNo: string
+  apiServiceId: string
+  serviceTitle: string
+  status: ApiOrderDisputeStatus
+  nextActor: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none'
+  dueAt?: string | null
+  restrictionLevel: SellerCommerceRestrictionLevel
+  reasonCodes: SellerCommerceReason[]
+}
+
+export type SellerCommerceStatus = {
+  level: SellerCommerceRestrictionLevel
+  activeDisputeCount: number
+  activeBuyerCount: number
+  blockingDisputeCount: number
+  affectedServiceIds: string[]
+  reasonCodes: SellerCommerceReason[]
+  disputes: SellerCommerceDispute[]
+  nextReleaseAt?: string | null
+}
 
 export type ApiQuotaOrderSnapshot = ApiServiceCommercialSnapshot & {
   batchId: string
@@ -646,6 +681,15 @@ export type ApiOrder = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  latestDisputeCaseId?: string
+  hasDisputeHistory: boolean
+  disputeNextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none'
+  disputeDueAt?: string
+  disputeNeedsAction?: boolean
+  disputeResponseOverdue?: boolean
+  disputeAvailableActions?: ApiOrderDisputeAction[]
+  activeRemedyAction?: ApiOrderDisputeResolution
+  activeRemedySource?: ApiOrderDisputeRemedySource
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitle: string
   amount: number
@@ -659,16 +703,23 @@ export type ApiOrder = {
   paymentSubmittedAt?: string
   merchantConfirmDueAt?: string
   merchantConfirmOverdue?: boolean
+  merchantConfirmOverdueAt?: string
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
   deliveryDueAt?: string
   deliveryOverdue?: boolean
+  deliveryOverdueAt?: string
+  deliveryDueRemindedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
   deliveryCredential?: ApiOrderDeliveryCredential
+  commercialOutcome: ApiOrderCommercialOutcome
+  commercialOutcomeUpdatedAt?: string
+  quotaValidityIssueAt?: string
+  quotaValidityIssueReason?: 'delivery_insufficient'
   completionSource?: ApiOrderCompletionSource
   completedAt?: string
   cancelledAt?: string
@@ -722,6 +773,15 @@ export type AdminApiOrderDetail = {
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  latestDisputeCaseId?: string
+  hasDisputeHistory: boolean
+  disputeNextActor?: ApiOrder['disputeNextActor']
+  disputeDueAt?: string
+  disputeNeedsAction?: boolean
+  disputeResponseOverdue?: boolean
+  disputeAvailableActions?: ApiOrderDisputeAction[]
+  activeRemedyAction?: ApiOrderDisputeResolution
+  activeRemedySource?: ApiOrderDisputeRemedySource
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -736,15 +796,22 @@ export type AdminApiOrderDetail = {
   paymentSubmittedAt?: string
   merchantConfirmDueAt?: string
   merchantConfirmOverdue?: boolean
+  merchantConfirmOverdueAt?: string
   paymentIssueReason?: ApiOrderPaymentIssueReason
   paymentIssueNote?: string
   paymentIssueReportedAt?: string
   paidConfirmedAt?: string
   deliveryDueAt?: string
   deliveryOverdue?: boolean
+  deliveryOverdueAt?: string
+  deliveryDueRemindedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
   deliveryReviewExpiresAt?: string
+  commercialOutcome: ApiOrderCommercialOutcome
+  commercialOutcomeUpdatedAt?: string
+  quotaValidityIssueAt?: string
+  quotaValidityIssueReason?: 'delivery_insufficient'
   completionSource?: ApiOrderCompletionSource
   completedAt?: string
   cancelledAt?: string
@@ -772,7 +839,7 @@ export type ApiQuotaOfferFilters = {
   slotKey?: string
   search?: string
   excludeSystemSlots?: boolean
-  sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
+  sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
 }
 
 export type CreateApiQuotaOrderPayload = {
@@ -883,8 +950,14 @@ export type BackendResourceMeta = {
   backendStatus?: string
 }
 
-export type CarpoolWithMeta = Carpool & BackendResourceMeta & { seatSummary?: CarpoolSeatSummary }
-export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta
+export type CarpoolWithMeta = Carpool & BackendResourceMeta & { seatSummary?: CarpoolSeatSummary, offlineOccupiedSeats?: number, recruitmentStopReason?: string }
+export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta & {
+  conditionsOutdated?: boolean
+  acceptedConditionsVersion?: number
+  conditionsVersionSnapshot?: number
+  backendMembershipJoinedAt?: string
+  ownerNote?: string
+}
 export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
@@ -951,6 +1024,8 @@ const apiQuotaRoundStorageKey = 'c2cmarket.apiQuotaRounds.v1'
 const apiQuotaCredentialSummaryStorageKey = 'c2cmarket.apiQuotaCredentialSummaries.v1'
 const carpoolApplicationStorageKey = 'c2cmarket.carpoolApplications.v1'
 const carpoolApplicationEventStorageKey = 'c2cmarket.carpoolApplicationEvents.v1'
+const carpoolContactSnapshotStorageKey = 'c2cmarket.carpoolContactSnapshots.v1'
+const carpoolOwnerNoteStorageKey = 'c2cmarket.carpoolOwnerNotes.v1'
 const adminAuditLogStorageKey = 'c2cmarket.adminAuditLogs.v1'
 const officialPriceStorageKey = 'c2cmarket.officialPrices.v1'
 const carpoolStorageKey = 'c2cmarket.carpools.v1'
@@ -962,13 +1037,14 @@ const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
 const favoriteStorageKey = 'c2cmarket.favorites.v1'
 const apiOrderNumberAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const carpoolApplyAllowedStatuses: Carpool['status'][] = ['可上车']
-const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation', 'active', 'pending_completion', 'completed', 'disputed']
+const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['active']
 const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'ordered', 'buyer_cancelled', 'owner_closed']
 
 let apiPurchaseIntentStore = normalizeApiPurchaseIntentStore(readSessionStore(apiPurchaseIntentStorageKey, apiPurchaseIntents))
 let apiPurchaseIntentEventStore = normalizeApiPurchaseIntentEventStore(readSessionStore(apiPurchaseIntentEventStorageKey, apiPurchaseIntentEvents))
 const loadedApiOrders = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
 let apiOrderStore = normalizeApiOrderStore(loadedApiOrders)
+const mockApiOrderReviewStore = new Map<string, MockApiOrderReview>()
 if (loadedApiOrders.some(order => !order.orderNo)) persistApiOrderStore()
 let apiQuotaBatchStore = readSessionStore<ApiQuotaBatch[]>(apiQuotaBatchStorageKey, apiQuotaBatches)
 let apiQuotaOfferStore = normalizeApiQuotaOfferStore(readSessionStore<PublicApiQuotaOffer[]>(apiQuotaOfferStorageKey, apiQuotaOffers))
@@ -976,6 +1052,8 @@ let apiQuotaRoundStore = readSessionStore<ApiQuotaRound[]>(apiQuotaRoundStorageK
 let apiQuotaCredentialSummaryStore = readSessionStore<ApiQuotaCredentialSummary[]>(apiQuotaCredentialSummaryStorageKey, apiQuotaCredentialSummaries)
 let carpoolApplicationStore = readSessionStore(carpoolApplicationStorageKey, carpoolApplications)
 let carpoolApplicationEventStore = readSessionStore(carpoolApplicationEventStorageKey, carpoolApplicationEvents)
+let carpoolContactSnapshotStore = readSessionStore(carpoolContactSnapshotStorageKey, orderContactSnapshots)
+let carpoolOwnerNoteStore = readSessionStore<Record<string, string>>(carpoolOwnerNoteStorageKey, {})
 let adminAuditLogStore = readSessionStore(adminAuditLogStorageKey, adminAuditLogs)
 let officialPriceStore = readSessionStore<OfficialPrice[]>(officialPriceStorageKey, officialPrices)
 let carpoolStore = normalizeCarpoolStore(readSessionStore<Carpool[]>(carpoolStorageKey, carpools))
@@ -986,20 +1064,65 @@ let feedbackTicketStore = readSessionStore<FeedbackTicket[]>(feedbackStorageKey,
 let notificationReadStore = readSessionStore<string[]>(notificationReadStorageKey, [])
 let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
 let myUserProfileStore = clone(myUserProfile)
+type MockAccountRecoveryState = Pick<UserProfile, 'email' | 'emailVerified' | 'emailVerifiedAt' | 'passwordConfigured'>
+const mockAccountRecoveryStore = new Map<string, MockAccountRecoveryState>()
 let myContactMethodStore = clone(myContactMethods)
+let contactMethodVersionSequence = 0
+const contactMethodVersionStore = new Map(myContactMethodStore.map(item => [item.id, nextContactMethodVersionToken(item.id)]))
+const contactEmailVerificationStore = new Map<string, { email: string, code: string, expiresAt: string, contactMethodVersionId: string, attemptCount: number }>()
+
+function enabledMockWechatContact(): UserContactMethod {
+  const contact = myContactMethodStore.find(item => item.enabled && item.type === 'wechat')
+  if (!contact) throw new Error('请先在个人中心配置微信联系方式。')
+  return contact
+}
+
+function mockWechatContactChannel(): ApiContactChannel {
+  const contact = enabledMockWechatContact()
+  return { type: 'wechat', label: contact.label || '微信', value: contact.displayValue }
+}
+
+function mockWechatContactSnapshotItem(contact: UserContactMethod, usageScope: ContactUsageScope): OrderContactSnapshotItem {
+  return {
+    type: 'wechat',
+    label: contact.label || '微信',
+    maskedValue: contact.maskedValue,
+    displayValue: contact.displayValue,
+    verified: false,
+    usageScope,
+  }
+}
+
+function mockMerchantWechatContactChannels(channels: ApiContactChannel[]): ApiContactChannel[] {
+  const contact = channels.find(channel => channel.type === 'wechat')
+  if (!contact) throw new Error('商户尚未配置可用的微信联系方式。')
+  return [{ ...contact }]
+}
+
+function nextContactMethodVersionToken(contactId: string) {
+  contactMethodVersionSequence += 1
+  return `${contactId}:v${contactMethodVersionSequence}`
+}
 
 function syncMockProfileIdentity() {
   const identity = requireMockIdentity()
   const linuxDo = identity.linuxDoBinding
+  let accountRecovery = mockAccountRecoveryStore.get(identity.id)
+  if (!accountRecovery) {
+    accountRecovery = {
+      email: identity.email,
+      emailVerified: Boolean(identity.email),
+      emailVerifiedAt: identity.email ? nowText() : null,
+      passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    }
+    mockAccountRecoveryStore.set(identity.id, accountRecovery)
+  }
   myUserProfileStore = {
     ...myUserProfileStore,
     id: identity.id,
     username: identity.username,
     displayName: identity.displayName,
-    email: identity.email,
-    emailVerified: Boolean(identity.email),
-    emailVerifiedAt: identity.email ? (myUserProfileStore.emailVerifiedAt ?? nowText()) : null,
-    passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    ...accountRecovery,
     avatarMode: linuxDo.bound ? 'linuxdo' : 'custom_url',
     avatarUrl: linuxDo.avatarUrl ?? null,
     linuxDoBinding: {
@@ -1014,6 +1137,16 @@ function syncMockProfileIdentity() {
     capabilities: [...identity.capabilities],
   }
   return myUserProfileStore
+}
+
+function rememberMockAccountRecoveryState() {
+  const identity = requireMockIdentity()
+  mockAccountRecoveryStore.set(identity.id, {
+    email: myUserProfileStore.email,
+    emailVerified: myUserProfileStore.emailVerified,
+    emailVerifiedAt: myUserProfileStore.emailVerifiedAt,
+    passwordConfigured: myUserProfileStore.passwordConfigured,
+  })
 }
 
 function clone<T>(value: T): T {
@@ -1079,7 +1212,9 @@ function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
     ...order,
     orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
 		purchaseKind: order.purchaseKind ?? 'api_service',
-		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
+			disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
+		hasDisputeHistory: order.hasDisputeHistory ?? Boolean(order.disputeCaseId || order.latestDisputeCaseId || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none'),
+		commercialOutcome: order.commercialOutcome ?? (order.status === 'completed' ? 'normal_fulfillment' : order.status === 'cancelled' ? 'cancelled_unpaid' : 'pending'),
     completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
       ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
@@ -1092,6 +1227,14 @@ function mockApiOrderValidityExpiresAt(order: ApiOrder) {
 }
 
 function applyMockApiOrderAfterSales(order: ApiOrder, currentTime = Date.now()) {
+	order.hasDisputeHistory = Boolean(order.hasDisputeHistory || order.disputeCaseId || order.latestDisputeCaseId || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none')
+	if (order.commercialOutcome === 'pending' && order.status === 'completed' && !isApiOrderDisputeActive(order.disputeStatus)) {
+		order.commercialOutcome = 'normal_fulfillment'
+		order.commercialOutcomeUpdatedAt = order.completedAt ?? order.updatedAt
+	} else if (order.commercialOutcome === 'pending' && order.status === 'cancelled') {
+		order.commercialOutcome = 'cancelled_unpaid'
+		order.commercialOutcomeUpdatedAt = order.cancelledAt ?? order.updatedAt
+	}
 	const validityExpiresAt = mockApiOrderValidityExpiresAt(order)
 	const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
 	const afterSalesTimestamp = Number.isFinite(validityTimestamp) ? validityTimestamp + 24 * 60 * 60 * 1000 : Number.NaN
@@ -1313,6 +1456,8 @@ function persistCarpoolApplicationStores() {
   if (typeof window === 'undefined') return
   window.sessionStorage.setItem(carpoolApplicationStorageKey, JSON.stringify(carpoolApplicationStore))
   window.sessionStorage.setItem(carpoolApplicationEventStorageKey, JSON.stringify(carpoolApplicationEventStore))
+  window.sessionStorage.setItem(carpoolContactSnapshotStorageKey, JSON.stringify(carpoolContactSnapshotStore))
+  window.sessionStorage.setItem(carpoolOwnerNoteStorageKey, JSON.stringify(carpoolOwnerNoteStore))
 }
 
 function persistAdminStores() {
@@ -1375,10 +1520,37 @@ function compareTimeDesc(a: string, b: string) {
   return new Date(b).getTime() - new Date(a).getTime()
 }
 
-function compareNullableNumberAsc(a: number | null, b: number | null) {
+export function compareNullableNumberAsc(a: number | null, b: number | null) {
   if (a === null) return b === null ? 0 : 1
   if (b === null) return -1
   return a - b
+}
+
+function apiServiceReputationScore(item?: ApiService) {
+  const reputation = item?.sellerReputation
+  if (!reputation) return null
+  const tierScore = { insufficient: 1, normal: 2, reliable: 3, high_trust: 4 }[reputation.tier] ?? 0
+  return tierScore * 1_000_000 + (reputation.weightedRating ?? 0) * 1_000 + reputation.verifiedReviewCount
+}
+
+export function compareApiServiceReputationDesc(left?: ApiService, right?: ApiService) {
+  const leftScore = apiServiceReputationScore(left)
+  const rightScore = apiServiceReputationScore(right)
+  if (leftScore === null) return rightScore === null ? 0 : 1
+  if (rightScore === null) return -1
+  return rightScore - leftScore
+}
+
+function compareApiServiceRecommendation(left: ApiService, right: ApiService) {
+  const reputationComparison = compareApiServiceReputationDesc(left, right)
+  if (reputationComparison !== 0) return reputationComparison
+  const responseComparison = compareNullableNumberAsc(left.responseMedianMinutes, right.responseMedianMinutes)
+  if (responseComparison !== 0) return responseComparison
+  const completedComparison = (right.completed30d ?? 0) - (left.completed30d ?? 0)
+  if (completedComparison !== 0) return completedComparison
+  const disputeComparison = (left.unresolvedDisputes ?? 0) - (right.unresolvedDisputes ?? 0)
+  if (disputeComparison !== 0) return disputeComparison
+  return compareTimeDesc(left.lastOnlineConfirmedAt, right.lastOnlineConfirmedAt) || left.id.localeCompare(right.id)
 }
 
 function deadlineTime(value?: string) {
@@ -1609,6 +1781,11 @@ export type EmailVerificationChallenge = {
   devCode?: string
 }
 
+export type ContactEmailVerificationChallenge = EmailVerificationChallenge & {
+  contactMethodId: string
+  contactMethodVersionId: string
+}
+
 export type SaveContactMethodRequest = {
   type: ContactMethodType
   label: string
@@ -1667,7 +1844,9 @@ export function getReadableStatus(value: string | null | undefined) {
     under_review: '申诉复核中',
     need_more_information: '需要补充信息',
     pending_owner: '待车主处理',
-    accepted_reserved: '席位已预留',
+    active: '有效成员',
+    cancelled_by_buyer: '买家已退出',
+    cancelled_by_owner: '车主已移除',
     open: '意向已创建',
     contacted: '商户已记录联系',
     ordered: '已生成订单',
@@ -1759,7 +1938,9 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'paid_confirmed') return '等待商户交付'
     if (order.status === 'delivery_submitted') {
       switch (normalizeApiOrderDisputeStatus(order.disputeStatus)) {
-        case 'negotiating': return '继续协商订单问题'
+        case 'negotiating': return '继续查看历史协商案件'
+        case 'pending_seller_response': return '等待卖家处理售后申请'
+        case 'pending_applicant_decision': return '决定是否申请平台介入'
         case 'open': return '等待平台处理凭证问题'
         case 'awaiting_fulfillment': return '等待裁决要求履行'
         case 'fulfillment_confirmation': return '确认履行结果'
@@ -1802,62 +1983,43 @@ export function isHighRiskSubscriptionCarpool(carpool: Pick<Carpool, 'product' |
 export function getCarpoolApplicationStatusLabel(status: CarpoolApplicationStatus) {
   const labels: Record<CarpoolApplicationStatus, string> = {
     pending_owner: '等待车主处理',
-    accepted_reserved: '席位已预留',
-    waiting_contact: '等待买家联系车主',
-    contacted: '已联系车主',
-    joined_pending_confirmation: '等待车主确认已上车',
-    active: '服务中',
-    pending_completion: '等待双方确认本次完成',
-    completed: '已完成',
+		active: '有效成员',
     rejected: '已拒绝',
     cancelled_by_buyer: '买家已取消',
-    cancelled_by_owner: '车主已取消',
-    expired: '联系窗口已过期',
+		cancelled_by_owner: '车主已移除',
     disputed: '纠纷中',
   }
   return labels[status]
 }
 
 export function isCarpoolBuyerActionRequired(application: CarpoolApplication) {
-  return ['accepted_reserved', 'waiting_contact', 'contacted', 'pending_completion', 'disputed'].includes(application.status)
+	return application.status === 'disputed'
 }
 
 export function isCarpoolOwnerActionRequired(application: CarpoolApplication) {
-  return ['pending_owner', 'joined_pending_confirmation', 'pending_completion', 'disputed'].includes(application.status)
+	return ['pending_owner', 'disputed'].includes(application.status)
 }
 
 export function getCarpoolApplicationNextAction(application: CarpoolApplication, role: 'buyer' | 'owner') {
-  if (role === 'buyer') {
-    if (application.status === 'pending_owner') return '等待车主处理'
-    if (application.status === 'accepted_reserved' || application.status === 'waiting_contact') return '已联系车主'
-    if (application.status === 'contacted') return '确认已经上车'
-    if (application.status === 'joined_pending_confirmation') return '等待车主确认'
-    if (application.status === 'active') return '查看服务记录'
-    if (application.status === 'pending_completion') return '确认本次完成'
-    if (application.status === 'completed' && !application.buyerReview) return '评价车主'
+	if (role === 'buyer') {
+		if (application.status === 'pending_owner') return '等待车主处理'
+		if (application.status === 'active') return '查看成员关系'
     if (application.status === 'disputed') return '查看纠纷'
     return '查看详情'
   }
 
   if (application.status === 'pending_owner') return '处理申请'
-  if (application.status === 'accepted_reserved' || application.status === 'waiting_contact') return '等待买家联系'
-  if (application.status === 'contacted') return '确认用户已上车'
-  if (application.status === 'joined_pending_confirmation') return '确认用户已上车'
-  if (application.status === 'pending_completion') return '确认本次完成'
+	if (application.status === 'active') return '查看成员关系'
   if (application.status === 'disputed') return '处理纠纷'
   return '查看详情'
 }
 
 function isOngoingCarpoolApplication(status: CarpoolApplicationStatus) {
-  return !['completed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'].includes(status)
-}
-
-function isReservedCarpoolApplication(status: CarpoolApplicationStatus) {
-  return ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation'].includes(status)
+  return status === 'pending_owner' || status === 'active' || status === 'disputed'
 }
 
 function isActiveCarpoolApplication(status: CarpoolApplicationStatus) {
-  return ['active', 'pending_completion'].includes(status)
+  return status === 'active'
 }
 
 function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] {
@@ -1890,20 +2052,13 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
 }
 
 export function getCarpoolSeatSummary(carpool: Carpool): CarpoolSeatSummary {
-  const related = carpoolApplicationStore.filter(item => item.carpoolId === carpool.id)
-  const reservedSeatCount = related
-    .filter(item => isReservedCarpoolApplication(item.status))
-    .reduce((sum, item) => sum + item.seatsRequested, 0)
-  const activeSessionSeats = related
-    .filter(item => isActiveCarpoolApplication(item.status))
-    .reduce((sum, item) => sum + item.seatsRequested, 0)
-  const activeMemberCount = carpool.currentConfirmedMembers + activeSessionSeats
+  const activeMemberCount = carpool.currentConfirmedMembers
   return {
     carpoolId: carpool.id,
     totalSeats: carpool.maxMembers,
     activeMemberCount,
-    reservedSeatCount,
-    availableSeats: Math.max(0, carpool.maxMembers - activeMemberCount - reservedSeatCount),
+    occupiedSeatCount: activeMemberCount,
+    availableSeats: Math.max(0, carpool.maxMembers - activeMemberCount),
   }
 }
 
@@ -1942,22 +2097,6 @@ function updateCarpoolApplication(id: string, updater: (application: CarpoolAppl
   application.updatedAt = nowText()
   persistCarpoolApplicationStores()
   return clone(application)
-}
-
-function startCarpoolServiceIfBothConfirmed(application: CarpoolApplication) {
-  if (!application.buyerConfirmedJoinedAt || !application.ownerConfirmedJoinedAt) return false
-  application.status = 'active'
-  application.startedAt = application.startedAt ?? nowText()
-  application.expectedEndAt = application.expectedEndAt ?? minutesFromNow(30 * 24 * 60)
-  return true
-}
-
-function completeCarpoolIfBothConfirmed(application: CarpoolApplication) {
-  if (!application.buyerConfirmedCompletedAt || !application.ownerConfirmedCompletedAt) return false
-  application.status = 'completed'
-  application.completedAt = application.completedAt ?? nowText()
-  application.completionMode = 'mutual'
-  return true
 }
 
 export function isBuyerActionRequired(intent: ApiPurchaseIntent) {
@@ -2121,27 +2260,10 @@ function dateFromDateTime(value: string | null | undefined) {
   return value.split(' ')[0]
 }
 
-function buildPublicReviewFromCarpoolApplication(application: CarpoolApplication): PublicReviewRecord | null {
-  if (application.status !== 'completed' || !application.buyerReview) return null
-  return {
-    id: `public-carpool-review-${application.id}`,
-    username: application.ownerUsername,
-    date: dateFromDateTime(application.buyerReview.createdAt ?? application.completedAt ?? application.updatedAt),
-    serviceType: application.snapshot.productName,
-    rating: application.buyerReview.rating,
-    tags: application.buyerReview.tags,
-    note: application.buyerReview.note,
-    verified: true,
-  }
-}
-
 function publicReviewsForProfile(username: string) {
   const staticReviews = publicReviewRecords.filter(item => item.verified && profileMatchesUsername(item.username, username))
-  const carpoolReviews = carpoolApplicationStore
-    .map(buildPublicReviewFromCarpoolApplication)
-    .filter((item): item is PublicReviewRecord => item !== null && profileMatchesUsername(item.username, username))
   const byId = new Map<string, PublicReviewRecord>()
-  for (const review of [...staticReviews, ...carpoolReviews]) {
+  for (const review of staticReviews) {
     byId.set(review.id, review)
   }
   return Array.from(byId.values()).sort((a, b) => compareTimeDesc(a.date, b.date))
@@ -2187,7 +2309,7 @@ export type ApiOrderFilters = {
   search?: string
   dateRange?: 'all' | 'today' | '7d' | '30d'
   sort?: 'default_buyer' | 'default_merchant' | 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
-  dispute?: 'all' | 'active' | 'none'
+  dispute?: 'all' | 'active' | 'none' | 'needs_action' | 'waiting_counterparty' | 'platform_review'
   minAmount?: string
   maxAmount?: string
   risk?: 'all' | 'high' | 'has_note'
@@ -2208,15 +2330,30 @@ export type ApiServiceFilters = {
   trustLevel?: number
   minimumPurchaseCnyMax?: number
   minBalance?: number
-  sort?: 'recommended' | 'multiplier_asc' | 'response_fast' | 'recent' | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc'
+  sort?: 'recommended' | 'reputation_desc' | 'completed_desc' | 'multiplier_asc' | 'response_fast' | 'recent' | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc'
   search?: string
   distributionSystem?: ApiQuotaDistributionSystem | 'all'
   maxCnyPerUsd?: number
   packagePriceCnyMax?: number
   packageMultiplierMax?: number
   billingMode?: ApiBillingMode
-  packageModelCatalogId?: string
+  packageModelCatalogIds?: string[]
   packageDurationDays?: number
+}
+
+export type ApiPackageFilterModel = {
+  id: string
+  modelKey: string
+  providerCode: string
+  providerCategory: string
+  providerName: string
+  providerSortOrder: number
+  sortOrder: number
+}
+
+export type ApiPackageFilterOptions = {
+  models: ApiPackageFilterModel[]
+  durations: number[]
 }
 
 export type MinimumPurchaseFilter = 'all' | 'lte_20' | 'between_21_50' | 'gt_50'
@@ -2256,8 +2393,6 @@ export type CreateApiPurchaseIntentPayload = {
   selectedPackageId?: string
   buyerNote?: string
 }
-
-export type ReviewCarpoolApplicationPayload = Pick<CarpoolApplicationReview, 'rating' | 'tags' | 'note'>
 
 export type CarpoolApplicationFilters = {
   buyerId?: string
@@ -2336,12 +2471,18 @@ export function filterApiOrderRows(source: readonly ApiOrder[], filters: ApiOrde
     const createdAt = new Date(item.createdAt).getTime()
     const amount = item.amountDecimal ?? String(item.amount)
     const activeDispute = isApiOrderDisputeActive(item.disputeStatus)
+    const disputeFilterMatches = !filters.dispute || filters.dispute === 'all'
+      || filters.dispute === 'active' && activeDispute
+      || filters.dispute === 'none' && !activeDispute
+      || filters.dispute === 'needs_action' && activeDispute && Boolean(item.disputeNeedsAction)
+      || filters.dispute === 'waiting_counterparty' && activeDispute && !item.disputeNeedsAction && item.disputeNextActor !== 'admin'
+      || filters.dispute === 'platform_review' && activeDispute && item.disputeNextActor === 'admin'
     return (!filters.buyerId || item.buyerId === filters.buyerId)
       && (!filters.sellerId || item.sellerId === filters.sellerId)
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
       && (createdAfter === null || createdAt >= createdAfter)
-      && (!filters.dispute || filters.dispute === 'all' || filters.dispute === 'active' && activeDispute || filters.dispute === 'none' && !activeDispute)
+      && disputeFilterMatches
       && (minAmount === null || compareDecimal(amount, minAmount) >= 0)
       && (maxAmount === null || compareDecimal(amount, maxAmount) <= 0)
       && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
@@ -2370,7 +2511,6 @@ function defaultCarpoolSortForRole(role: 'buyer' | 'owner') {
     const aAction = role === 'buyer' ? isCarpoolBuyerActionRequired(a) : isCarpoolOwnerActionRequired(a)
     const bAction = role === 'buyer' ? isCarpoolBuyerActionRequired(b) : isCarpoolOwnerActionRequired(b)
     return Number(bAction) - Number(aAction)
-      || deadlineTime(a.reservedUntil ?? undefined) - deadlineTime(b.reservedUntil ?? undefined)
       || compareTimeDesc(a.updatedAt, b.updatedAt)
   }
 }
@@ -2392,6 +2532,26 @@ function filterCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
     if (sort === 'default_owner') return defaultCarpoolSortForRole('owner')(a, b)
     if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt)
     return compareTimeDesc(a.updatedAt, b.updatedAt)
+  })
+}
+
+function mockOwnerCarpoolApplicationMetadata(rows: CarpoolApplication[]): CarpoolApplicationWithMeta[] {
+  return rows.map(item => {
+    const membershipStatus = item.status === 'active'
+      ? 'active'
+      : item.status === 'cancelled_by_buyer'
+        ? 'left'
+        : item.status === 'cancelled_by_owner'
+          ? 'removed'
+          : undefined
+    return {
+      ...item,
+      backendMembershipId: membershipStatus ? `mock-membership-${item.id}` : undefined,
+      backendMembershipJoinedAt: membershipStatus ? item.startedAt ?? undefined : undefined,
+      backendStatus: membershipStatus ?? item.status,
+      backendVersion: membershipStatus ? 1 : undefined,
+      ownerNote: membershipStatus ? carpoolOwnerNoteStore[item.id] ?? '' : undefined,
+    }
   })
 }
 
@@ -2540,8 +2700,8 @@ export async function getCarpoolApplicationEligibility(id: string): Promise<Carp
   const carpool = carpoolStore.find(item => item.id === id)
   if (!carpool) throw new Error('车源不存在。')
   const related = carpoolApplicationStore.filter(item => item.carpoolId === id && item.applicantUserId === currentBuyerId)
-  const hasActiveMembership = related.some(item => ['active', 'pending_completion'].includes(item.status))
-  const hasOngoingApplication = related.some(item => !['completed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'].includes(item.status))
+  const hasActiveMembership = related.some(item => isActiveCarpoolApplication(item.status))
+  const hasOngoingApplication = related.some(item => isOngoingCarpoolApplication(item.status))
   return clone(evaluateCarpoolApplicationEligibility(carpool, getCarpoolSeatSummary(carpool), hasOngoingApplication, currentBuyerId, hasActiveMembership))
 }
 
@@ -2631,7 +2791,7 @@ export async function updateMyCarpool(id: string, payload: SaveCarpoolDraftPaylo
 		dailyQuotaAmount: payload.dailyQuotaAmount ?? undefined,
 		weeklyQuotaAmount: payload.weeklyQuotaAmount ?? undefined,
 		followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
-		vpsRegion: payload.vpsRegion,
+		vpsRegion: payload.vpsRegion.trim() || null,
 		supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
 		currentConfirmedMembers: payload.occupiedSeats,
 		maxMembers: payload.totalSeats,
@@ -2641,7 +2801,7 @@ export async function updateMyCarpool(id: string, payload: SaveCarpoolDraftPaylo
 		customPaymentMethod: payload.customPaymentMethod || null,
 		distributionMethod: payload.distributionMethod || 'other',
 		distributionMethodNote: payload.distributionMethodNote ?? '',
-		providesAdminAccount: Boolean(payload.providesAdminAccount),
+		providesAdminAccount: payload.distributionMethod === 'account_login' ? false : Boolean(payload.providesAdminAccount),
 		accessArrangementMode: payload.accessArrangementMode,
 		accessArrangementNote: payload.accessArrangementNote,
 		status: submitForReview ? '审核中' : '暂停',
@@ -2684,10 +2844,11 @@ export async function getModelCatalog() {
 
 function filterApiServices(filters: ApiServiceFilters = {}) {
   const keyword = filters.search?.trim().toLowerCase()
+  const packageModelCatalogIds = new Set(filters.packageModelCatalogIds ?? [])
   const packagePrice = (item: ApiService) => Math.min(...(item.packages ?? [])
     .filter(packageItem => packageItem.enabled && packageItem.stockAvailable > 0)
     .filter(packageItem => !filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
-    .filter(packageItem => !filters.packageModelCatalogId || packageItem.models.some(model => model.modelCatalogId === filters.packageModelCatalogId))
+    .filter(packageItem => packageModelCatalogIds.size === 0 || packageItem.models.some(model => packageModelCatalogIds.has(model.modelCatalogId)))
     .map(packageItem => packageItem.priceCny))
   return apiServiceStore
     .filter(item => {
@@ -2711,16 +2872,19 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         ))
         && (filters.maxCnyPerUsd === undefined || Number(item.cnyPerUsdAllowance) <= filters.maxCnyPerUsd)
         && (!filters.billingMode || item.billingMode === filters.billingMode)
-        && ((!filters.packageModelCatalogId && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
+        && ((filters.billingMode !== 'fixed_package' && packageModelCatalogIds.size === 0 && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
           return packageItem.enabled
             && packageItem.stockAvailable > 0
             && (!filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
             && (filters.packagePriceCnyMax === undefined || packageItem.priceCny <= filters.packagePriceCnyMax)
-            && packageItem.models.some(model => (!filters.packageModelCatalogId || model.modelCatalogId === filters.packageModelCatalogId)
+            && packageItem.models.some(model => (packageModelCatalogIds.size === 0 || packageModelCatalogIds.has(model.modelCatalogId))
               && (filters.packageMultiplierMax === undefined || model.merchantMultiplier <= filters.packageMultiplierMax))
         }))
     })
     .sort((a, b) => {
+      if (filters.sort === 'recommended') return compareApiServiceRecommendation(a, b)
+      if (filters.sort === 'reputation_desc') return compareApiServiceReputationDesc(a, b) || a.id.localeCompare(b.id)
+      if (filters.sort === 'completed_desc') return (b.completed30d ?? 0) - (a.completed30d ?? 0) || a.id.localeCompare(b.id)
       if (filters.sort === 'updated_desc') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt) || b.id.localeCompare(a.id)
       if (filters.sort === 'price_asc') return Number(a.cnyPerUsdAllowance) - Number(b.cnyPerUsdAllowance) || a.id.localeCompare(b.id)
       if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.id.localeCompare(b.id)
@@ -2812,6 +2976,43 @@ export async function getApiServicesPage(filters: ApiServiceFilters = {}, page: 
   return clone(paginateCursorItems(filterApiServices(filters), page))
 }
 
+function packageProviderSortOrder(code: string) {
+  return ({ openai: 10, xai: 20, anthropic: 30, google: 40 } as Record<string, number>)[code.toLowerCase()] ?? 100
+}
+
+export async function getApiPackageFilterOptions(): Promise<ApiPackageFilterOptions> {
+  if (shouldUseRealBackend()) return backendAPIPackageFilterOptions()
+  await wait()
+  const catalog = getMockPublicAPIModels()
+  const catalogById = new Map(catalog.map(model => [model.id, model]))
+  const modelIds = new Set<string>()
+  const durations = new Set<number>()
+  for (const service of apiServiceStore) {
+    if (service.billingMode !== 'fixed_package' || !isApiServicePubliclyOrderable(service)) continue
+    const enabledModelIds = new Set(service.modelPriceRows.map(model => model.modelId))
+    for (const item of service.packages ?? []) {
+      if (!item.enabled || item.stockAvailable <= 0) continue
+      const availableModels = item.models.filter(model => enabledModelIds.has(model.modelCatalogId) && catalogById.has(model.modelCatalogId))
+      if (!availableModels.length) continue
+      availableModels.forEach(model => modelIds.add(model.modelCatalogId))
+      durations.add(item.durationDays)
+    }
+  }
+  const models = catalog
+    .filter(model => model.active && model.providerActive !== false && modelIds.has(model.id))
+    .map(model => ({
+      id: model.id,
+      modelKey: model.name,
+      providerCode: model.providerCode ?? model.provider,
+      providerCategory: model.providerCategory ?? model.provider,
+      providerName: model.providerName ?? model.provider,
+      providerSortOrder: packageProviderSortOrder(model.providerCode ?? model.provider),
+      sortOrder: model.sortOrder ?? 0,
+    }))
+    .sort((left, right) => left.providerSortOrder - right.providerSortOrder || left.sortOrder - right.sortOrder || left.modelKey.localeCompare(right.modelKey))
+  return { models: clone(models), durations: [...durations].sort((left, right) => left - right) }
+}
+
 export async function getSub2ApiMarketServices(filters: Sub2ApiMarketFilters = {}) {
   if (shouldUseRealBackend()) return backendSub2APIServices(filters)
   await wait()
@@ -2840,11 +3041,38 @@ function matchesApiQuotaOfferFilters(item: PublicApiQuotaOffer, filters: ApiQuot
 
 function sortApiQuotaOffers(items: PublicApiQuotaOffer[], filters: ApiQuotaOfferFilters) {
   const rows = [...items]
+  const serviceFor = (offer: PublicApiQuotaOffer) => apiServiceStore.find(service => service.id === offer.apiServiceId)
+  if (filters.sort === 'recommended') {
+    return rows.sort((left, right) => {
+      const leftService = serviceFor(left)
+      const rightService = serviceFor(right)
+      if (leftService && rightService) {
+        const comparison = compareApiServiceRecommendation(leftService, rightService)
+        if (comparison !== 0) return comparison
+      } else if (leftService || rightService) {
+        return leftService ? -1 : 1
+      }
+      return left.id.localeCompare(right.id)
+    })
+  }
+  if (filters.sort === 'reputation_desc') {
+    return rows.sort((left, right) => {
+      const comparison = compareApiServiceReputationDesc(serviceFor(left), serviceFor(right))
+      return comparison || left.id.localeCompare(right.id)
+    })
+  }
+  if (filters.sort === 'completed_desc') {
+    return rows.sort((left, right) => (serviceFor(right)?.completed30d ?? 0) - (serviceFor(left)?.completed30d ?? 0) || left.id.localeCompare(right.id))
+  }
+  if (filters.sort === 'response_fast') {
+    return rows.sort((left, right) => compareNullableNumberAsc(serviceFor(left)?.responseMedianMinutes ?? null, serviceFor(right)?.responseMedianMinutes ?? null) || left.id.localeCompare(right.id))
+  }
   if (filters.sort === 'unit_price_asc') return rows.sort((left, right) => Number(left.cnyPerUsd) - Number(right.cnyPerUsd) || left.id.localeCompare(right.id))
   if (filters.sort === 'allowance_desc') return rows.sort((left, right) => Number(right.usdAllowance) - Number(left.usdAllowance) || right.id.localeCompare(left.id))
   if (filters.sort === 'delivery_asc') return rows.sort((left, right) => left.deliveryEtaMinutes - right.deliveryEtaMinutes || left.id.localeCompare(right.id))
   return rows
 }
+
 
 function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
   const serverNow = now.toISOString()
@@ -3533,6 +3761,7 @@ export async function setBackupPassword(payload: SetBackupPasswordRequest) {
     ...myUserProfileStore,
     passwordConfigured: true,
   }
+  rememberMockAccountRecoveryState()
 }
 
 export async function startEmailVerification(email: string): Promise<EmailVerificationChallenge> {
@@ -3558,6 +3787,7 @@ export async function confirmEmailVerification(payload: { email: string, code: s
     emailVerified: true,
     emailVerifiedAt: nowText(),
   }
+  rememberMockAccountRecoveryState()
   syncPublicCurrentUser()
   return clone(myUserProfileStore)
 }
@@ -3605,7 +3835,11 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
   await wait()
   if (payload.type === 'linuxdo') throw new Error('linux.do 联系方式来自绑定账号，不能手动伪造')
   if (!payload.displayValue.trim()) throw new Error('联系方式内容不能为空')
+  if (payload.type === 'wechat' && payload.enabled && myContactMethodStore.some(item => item.enabled && item.type === 'wechat')) {
+    throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
+  }
   const createdAt = nowText()
+  const wechat = payload.type === 'wechat'
   const contact: UserContactMethod = {
     id: `contact-${Date.now()}`,
     userId: myUserProfileStore.id,
@@ -3613,9 +3847,9 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: [...payload.usageScopes],
+    usageScopes: wechat ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: payload.enabled,
+    enabled: wechat ? true : payload.enabled,
     verified: false,
     createdAt,
     updatedAt: createdAt,
@@ -3624,6 +3858,7 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     myContactMethodStore = myContactMethodStore.map(item => item.usageScopes.some(scope => contact.usageScopes.includes(scope)) ? { ...item, isDefault: false } : item)
   }
   myContactMethodStore = [contact, ...myContactMethodStore]
+  contactMethodVersionStore.set(contact.id, nextContactMethodVersionToken(contact.id))
   return clone(contact)
 }
 
@@ -3633,22 +3868,32 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo' && payload.displayValue !== current.displayValue) throw new Error('linux.do 联系方式不能手动修改')
+  if (current.type === 'wechat' && payload.type !== 'wechat') throw new Error('微信是必填联系方式，不能转换为其他类型')
+  if (current.type === 'wechat' && !payload.enabled) throw new Error('微信是必填联系方式，不能停用')
+  const nextType = current.type === 'linuxdo' ? 'linuxdo' : payload.type
+  if (nextType === 'wechat' && payload.enabled && myContactMethodStore.some(item => item.id !== contactId && item.enabled && item.type === 'wechat')) {
+    throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
+  }
+  const currentVersionValue = nextType === 'email' ? current.displayValue.trim().toLowerCase() : current.displayValue.trim()
+  const nextVersionValue = nextType === 'email' ? payload.displayValue.trim().toLowerCase() : payload.displayValue.trim()
+  const valueChanged = current.type !== nextType || currentVersionValue !== nextVersionValue
   const updated: UserContactMethod = {
     ...current,
-    type: current.type === 'linuxdo' ? 'linuxdo' : payload.type,
+    type: nextType,
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(current.type === 'linuxdo' ? 'linuxdo' : payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: [...payload.usageScopes],
+    usageScopes: nextType === 'wechat' ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: payload.enabled,
-    verified: current.type === payload.type ? current.verified : false,
+    enabled: nextType === 'wechat' ? true : payload.enabled,
+    verified: valueChanged ? false : current.verified,
     updatedAt: nowText(),
   }
   myContactMethodStore = myContactMethodStore.map(item => item.id === contactId ? updated : item)
   if (updated.isDefault) {
     myContactMethodStore = myContactMethodStore.map(item => item.id !== updated.id && item.usageScopes.some(scope => updated.usageScopes.includes(scope)) ? { ...item, isDefault: false } : item)
   }
+  if (valueChanged) contactMethodVersionStore.set(contactId, nextContactMethodVersionToken(contactId))
   return clone(updated)
 }
 
@@ -3658,7 +3903,10 @@ export async function deleteContactMethod(contactId: string) {
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo') throw new Error('linux.do 绑定联系方式不能删除')
+  if (current.type === 'wechat') throw new Error('微信是必填联系方式，不能删除')
   myContactMethodStore = myContactMethodStore.filter(item => item.id !== contactId)
+  contactMethodVersionStore.delete(contactId)
+  contactEmailVerificationStore.delete(contactId)
   return clone(current)
 }
 
@@ -3675,19 +3923,41 @@ export async function setDefaultContactMethod(contactId: string) {
   return clone(myContactMethodStore.find(item => item.id === contactId)!)
 }
 
-export async function sendContactVerification(contactId: string) {
+export async function startContactEmailVerification(contactId: string): Promise<ContactEmailVerificationChallenge> {
+  if (shouldUseRealBackend()) return backendStartContactEmailVerification(contactId)
   await wait()
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type !== 'email') throw new Error('当前仅邮箱支持验证码验证')
-  return clone({ contactId, sentAt: nowText() })
+  if (!current.enabled) throw new Error('联系方式已停用')
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+  const contactMethodVersionId = contactMethodVersionStore.get(contactId) ?? nextContactMethodVersionToken(contactId)
+  contactMethodVersionStore.set(contactId, contactMethodVersionId)
+  contactEmailVerificationStore.set(contactId, { email: current.displayValue.trim().toLowerCase(), code: '123456', expiresAt, contactMethodVersionId, attemptCount: 0 })
+  return clone({
+    contactMethodId: contactId,
+    contactMethodVersionId,
+    email: current.displayValue.trim().toLowerCase(),
+    expiresAt,
+    devCode: '123456',
+  })
 }
 
-export async function verifyContactMethod(contactId: string) {
-  if (shouldUseRealBackend()) return backendVerifyContact(contactId)
+export async function confirmContactEmailVerification(contactId: string, code: string) {
+  if (shouldUseRealBackend()) return backendConfirmContactEmailVerification(contactId, code)
   await wait()
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
+  const challenge = contactEmailVerificationStore.get(contactId)
+  if (!current.enabled || current.type !== 'email' || !challenge || challenge.contactMethodVersionId !== contactMethodVersionStore.get(contactId) || challenge.email !== current.displayValue.trim().toLowerCase() || Date.now() >= Date.parse(challenge.expiresAt) || challenge.attemptCount >= 5) {
+    throw new Error('验证码无效或已过期')
+  }
+  if (challenge.code !== code.trim()) {
+    challenge.attemptCount += 1
+    contactEmailVerificationStore.set(contactId, challenge)
+    throw new Error('验证码无效或已过期')
+  }
+  contactEmailVerificationStore.delete(contactId)
   myContactMethodStore = myContactMethodStore.map(item => item.id === contactId ? { ...item, verified: true, updatedAt: nowText() } : item)
   return clone(myContactMethodStore.find(item => item.id === contactId)!)
 }
@@ -3753,12 +4023,13 @@ export async function getPublicUserProfile(username: string) {
 	        refundCommitment: Boolean(item.merchantRefundCommitment),
 	        updatedAt: item.serviceUpdatedAt ?? item.lastOnlineConfirmedAt,
 	      })),
-	    completions: publicCompletionRecords
-	      .filter(item => item.username === username)
-	      .slice(0, 10)
-	      .map(item => ({
-	        id: item.id,
-	        kind: item.serviceType.includes('API') ? 'api_order' as const : 'carpool' as const,
+		    completions: publicCompletionRecords
+		      .filter(item => item.username === username)
+		      .filter(item => item.serviceType.includes('API'))
+		      .slice(0, 10)
+		      .map(item => ({
+		        id: item.id,
+		        kind: 'api_order' as const,
 	        title: item.serviceType,
 	        role: 'buyer' as const,
 	        completedAt: item.date,
@@ -3780,7 +4051,7 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
   if (shouldUseRealBackend()) return backendCarpoolApplicationContacts(applicationId)
   await wait()
   const application = carpoolApplicationStore.find(item => item.id === applicationId)
-  const snapshot = orderContactSnapshots.find(item => item.orderType === 'carpool_application' && item.orderId === applicationId)
+  const snapshot = carpoolContactSnapshotStore.find(item => item.orderType === 'carpool_application' && item.orderId === applicationId)
   if (!application) throw new Error(`Carpool application not found: ${applicationId}`)
   const canView = carpoolContactVisibleStatuses.includes(application.status)
   if (!canView) {
@@ -3790,26 +4061,14 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
       orderId: applicationId,
       sellerContacts: [],
       buyerContacts: [],
-      contactWindowEndsAt: application.reservedUntil,
+      contactWindowEndsAt: null,
       canView: false,
-      unavailableReason: '车主接受申请并预留席位后才展示联系窗口联系方式。',
+      unavailableReason: '车主确认上车并建立有效成员关系后才展示联系方式。',
       createdAt: application.createdAt,
     })
   }
-  if (snapshot) return clone(contactSnapshotForVisibility(snapshot, canView, null, application.reservedUntil))
-  return clone({
-    id: `contact-snapshot-${applicationId}`,
-    orderType: 'carpool_application',
-    orderId: applicationId,
-    sellerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: linuxDoProfileSummaryUrl(application.ownerUsername) },
-    ],
-    buyerContacts: [],
-    contactWindowEndsAt: application.reservedUntil,
-    canView: true,
-    unavailableReason: null,
-    createdAt: application.updatedAt,
-  })
+  if (snapshot) return clone(contactSnapshotForVisibility(snapshot, canView, null, null))
+  throw new Error('拼车联系方式快照不存在，请刷新后重试。')
 }
 
 export async function createContactReport(payload: CreateContactReportRequest) {
@@ -3914,6 +4173,15 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     status: order.status,
     disputeStatus: order.disputeStatus,
     disputeCaseId: order.disputeCaseId,
+    latestDisputeCaseId: order.latestDisputeCaseId,
+    hasDisputeHistory: order.hasDisputeHistory,
+    disputeNextActor: order.disputeNextActor,
+    disputeDueAt: order.disputeDueAt,
+    disputeNeedsAction: order.disputeNeedsAction,
+    disputeResponseOverdue: order.disputeResponseOverdue,
+    disputeAvailableActions: order.disputeAvailableActions ?? [],
+    activeRemedyAction: order.activeRemedyAction,
+    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitle,
     selectedPackageId: order.selectedPackageId,
@@ -3924,13 +4192,24 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     selectedPaymentMethod: order.selectedPaymentMethod,
     paymentExpiresAt: order.paymentExpiresAt,
     paymentSubmittedAt: order.paymentSubmittedAt,
+    merchantConfirmDueAt: order.merchantConfirmDueAt,
+    merchantConfirmOverdue: order.merchantConfirmOverdue,
+    merchantConfirmOverdueAt: order.merchantConfirmOverdueAt,
     paymentIssueReason: order.paymentIssueReason,
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt,
     paidConfirmedAt: order.paidConfirmedAt,
+    deliveryDueAt: order.deliveryDueAt,
+    deliveryOverdue: order.deliveryOverdue,
+    deliveryOverdueAt: order.deliveryOverdueAt,
+    deliveryDueRemindedAt: order.deliveryDueRemindedAt,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt,
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt,
+    commercialOutcome: order.commercialOutcome,
+    commercialOutcomeUpdatedAt: order.commercialOutcomeUpdatedAt,
+    quotaValidityIssueAt: order.quotaValidityIssueAt,
+    quotaValidityIssueReason: order.quotaValidityIssueReason,
     completionSource: order.completionSource,
     completedAt: order.completedAt,
     cancelledAt: order.cancelledAt,
@@ -4584,8 +4863,8 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (!payload.distributionMethod) {
     throw new Error('请选择分发方式。')
   }
-  if (payload.distributionMethod !== 'sub2api' && payload.distributionMethod !== 'other') {
-    throw new Error('分发方式只能选择 Sub2API 或其他。')
+  if (payload.distributionMethod !== 'sub2api' && payload.distributionMethod !== 'account_login' && payload.distributionMethod !== 'other') {
+    throw new Error('分发方式只能选择 Sub2API、账号登录或其他。')
   }
   const distributionNote = payload.distributionMethodNote?.trim() ?? ''
   if (payload.distributionMethod === 'other' && !distributionNote) {
@@ -4594,15 +4873,13 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (distributionNote && hasCredentialSharingLanguage(distributionNote)) {
     throw new Error('分发方式说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。')
   }
-  if (typeof payload.providesAdminAccount !== 'boolean') {
+  if (payload.distributionMethod !== 'account_login' && typeof payload.providesAdminAccount !== 'boolean') {
     throw new Error('请选择是否提供管理员账号。')
   }
-  if (!payload.dailyQuotaAmount || payload.dailyQuotaAmount <= 0 || !payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0) {
-    throw new Error('请填写有效的每天额度与每周额度。')
+  if ((payload.dailyQuotaAmount !== null && payload.dailyQuotaAmount <= 0) || (payload.weeklyQuotaAmount !== null && payload.weeklyQuotaAmount <= 0)) {
+    throw new Error('请填写有效的每日最大花费额度与每周最大花费额度。')
   }
   if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
-  if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
-  if (typeof payload.supportsMainlandChinaDirectConnection !== 'boolean') throw new Error('请选择是否支持国内直连。')
   if (!payload.openingChannelCode || (payload.openingChannelCode === 'other' && !payload.customOpeningChannel.trim())) {
     throw new Error('请选择或填写开通渠道。')
   }
@@ -4702,6 +4979,7 @@ export async function submitOfficialPriceLead(payload: Record<string, unknown>) 
 export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   if (shouldUseRealBackend()) return backendSubmitCarpool(payload)
   await wait()
+  enabledMockWechatContact()
   const product = carpoolProductCatalog.find(item => item.id === payload.productId)
   const region = carpoolRegions.find(item => item.code === payload.regionCode)
   const regionName = payload.customRegionName?.trim() || region?.displayName || '其他'
@@ -4709,8 +4987,8 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
   const monthly = payload.monthlyPriceCny ?? 0
-  const dailyQuotaAmount = payload.dailyQuotaAmount ?? 0
-  const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? 0
+  const dailyQuotaAmount = payload.dailyQuotaAmount ?? undefined
+  const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? undefined
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
@@ -4748,7 +5026,7 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
     hasUnresolvedDispute: false,
     distributionMethod: payload.distributionMethod || 'other',
     distributionMethodNote: payload.distributionMethodNote?.trim() || '站外分发方式待确认。',
-    providesAdminAccount: Boolean(payload.providesAdminAccount),
+    providesAdminAccount: payload.distributionMethod === 'account_login' ? false : Boolean(payload.providesAdminAccount),
     accessArrangementMode: payload.accessArrangementMode ?? 'other_off_platform',
     accessArrangementNote: payload.accessArrangementNote?.trim() || '待管理员复核访问安排',
     riskAcknowledged: carpoolRequiresRiskAck(product, payload.riskNoticeCode) ? Boolean(payload.riskAcknowledged) : undefined,
@@ -4778,12 +5056,10 @@ export async function submitApiService(payload: Record<string, unknown>) {
 	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
 		? payload.ownerContactMethodIds.map(value => String(value).trim()).filter(Boolean)
 		: []
-	if (new Set(ownerContactMethodIds).size !== ownerContactMethodIds.length) {
-		throw new Error('订单联系方式不能重复选择。')
-	}
+	if (ownerContactMethodIds.length !== 1) throw new Error('API 服务只能使用当前账号唯一的微信联系方式。')
 	const ownerContacts = ownerContactMethodIds.map(id => myContactMethodStore.find(contact => contact.id === id))
-	if (!ownerContactMethodIds.length || ownerContacts.some(contact => !contact || !contact.enabled || !contact.usageScopes.includes('api_merchant'))) {
-		throw new Error('请先在个人中心添加并选择至少一种可用的 API 订单联系方式。')
+	if (ownerContacts.some(contact => !contact || !contact.enabled || contact.type !== 'wechat' || !contact.usageScopes.includes('api_merchant'))) {
+		throw new Error('请先在个人中心配置微信联系方式。')
 	}
   const probeConnectionId = stringValue(payload.probeConnectionId, '')
   const probeConnection = (await getOwnerAPIProbeConnections()).find(connection => connection.id === probeConnectionId)
@@ -5307,7 +5583,7 @@ function markReadState<T extends { id: string, unread: boolean }>(items: T[]) {
 async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
   const carpoolRows: UnifiedNotification[] = carpoolApplicationStore
     .filter(item => [currentBuyerId, currentOwnerId].includes(item.applicantUserId) || [currentBuyerId, currentOwnerId].includes(item.ownerUserId))
-    .filter(item => ['pending_owner', 'accepted_reserved', 'contacted', 'joined_pending_confirmation', 'pending_completion', 'disputed', 'rejected'].includes(item.status))
+    .filter(item => ['pending_owner', 'active', 'disputed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner'].includes(item.status))
     .map(item => {
       const isOwner = item.ownerUserId === currentOwnerId
       return {
@@ -5406,41 +5682,42 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   const currentTime = Date.now()
   const isPendingPaymentActive = (order: ApiOrder) => order.status === 'pending_payment'
     && new Date(order.paymentExpiresAt).getTime() > currentTime
-  const reservedStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation']
-  const hasActiveReservation = (application: CarpoolApplication) => reservedStatuses.includes(application.status)
-    && Boolean(application.reservedUntil)
-    && new Date(application.reservedUntil!).getTime() > currentTime
   const buyerCarpoolActions = carpoolApplicationStore.filter(item => item.applicantUserId === currentBuyerId)
-    .filter(item => (hasActiveReservation(item) && !item.buyerConfirmedJoinedAt)
-      || (['active', 'pending_completion'].includes(item.status) && Boolean(item.ownerConfirmedCompletedAt) && !item.buyerConfirmedCompletedAt))
+    .filter(isCarpoolBuyerActionRequired)
     .length
   const merchantCarpoolActions = carpoolApplicationStore.filter(item => item.ownerUserId === currentOwnerId)
-    .filter(item => item.status === 'pending_owner'
-      || (hasActiveReservation(item) && Boolean(item.buyerConfirmedJoinedAt) && !item.ownerConfirmedJoinedAt)
-      || (['active', 'pending_completion'].includes(item.status) && Boolean(item.buyerConfirmedCompletedAt) && !item.ownerConfirmedCompletedAt))
+    .filter(item => item.status === 'pending_owner')
     .length
+  const currentUserFeedback = feedbackTicketStore
+    .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
+  const feedbackUnreadCount = currentUserFeedback
+    .filter(feedbackUnread)
+    .length
+  const feedbackActionCount = currentUserFeedback
+    .filter(item => item.status === 'needs_user_info' || feedbackUnread(item))
+    .length
+  const buyerApiOrders = apiOrderStore.filter(item => item.buyerId === currentBuyerId)
+  const merchantApiOrders = apiOrderStore.filter(item => item.sellerId === currentMerchantId)
 
   const summary: NavigationBadgeSummary = {
     generatedAt: new Date(currentTime).toISOString(),
     notificationUnread: notifications.filter(item => item.unread).length,
     importantAnnouncementUnread,
-    feedbackUnread: feedbackTicketStore
-      .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
-      .filter(feedbackUnread)
-      .length,
+    feedbackUnread: feedbackUnreadCount,
+    supportActionCount: feedbackActionCount,
     buyer: {
       carpoolActions: buyerCarpoolActions,
-      apiOrderActions: apiOrderStore
-        .filter(item => item.buyerId === currentBuyerId)
-        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted')
+      apiOrderActions: buyerApiOrders
+        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted' || isApiOrderDisputeActive(item.disputeStatus))
         .length,
+      apiOrderDisputes: buyerApiOrders.filter(item => isApiOrderDisputeActive(item.disputeStatus)).length,
     },
     merchant: {
       carpoolActions: merchantCarpoolActions,
-      apiOrderActions: apiOrderStore
-        .filter(item => item.sellerId === currentMerchantId)
-        .filter(item => item.status === 'payment_submitted' || item.status === 'paid_confirmed')
+      apiOrderActions: merchantApiOrders
+        .filter(item => item.status === 'payment_submitted' || item.status === 'paid_confirmed' || isApiOrderDisputeActive(item.disputeStatus))
         .length,
+      apiOrderDisputes: merchantApiOrders.filter(item => isApiOrderDisputeActive(item.disputeStatus)).length,
     },
     admin: null,
   }
@@ -5600,126 +5877,66 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
 export async function getReviewCenterRows(): Promise<ReviewCenterData> {
   if (shouldUseRealBackend()) return backendReviewCenterRows()
   await wait()
+  materializeMockApiOrderReviews()
   const reviewWindowMs = 14 * 24 * 60 * 60 * 1000
-  const carpoolRows = carpoolApplicationStore
-    .filter(item => item.status === 'completed' && (item.applicantUserId === currentBuyerId || item.ownerUserId === currentOwnerId))
-    .flatMap((item): ReviewCenterRow[] => {
-      const currentIsBuyer = item.applicantUserId === currentBuyerId
-      const ownReview = currentIsBuyer ? item.buyerReview : item.ownerReview
-      const counterpartyReview = currentIsBuyer ? item.ownerReview : item.buyerReview
+  const rows = apiOrderStore
+    .filter(item => item.status === 'completed' && item.buyerId === currentBuyerId)
+    .map((item): ReviewCenterRow => {
+      const ownReview = mockApiOrderReviewStore.get(item.id)
       const completedAt = item.completedAt ?? item.updatedAt
       const completedAtMs = Date.parse(completedAt)
       if (!Number.isFinite(completedAtMs)) throw new Error(`评价交易完成时间无效：${item.id}`)
       const reviewDeadlineAt = new Date(completedAtMs + reviewWindowMs).toISOString()
       const deadlinePassed = Date.now() >= Date.parse(reviewDeadlineAt)
-      const bothSubmitted = Boolean(ownReview && counterpartyReview)
-      const published = bothSubmitted || deadlinePassed
-      const visibleAt = published
-        ? bothSubmitted
-          ? new Date(Math.max(Date.parse(ownReview!.createdAt), Date.parse(counterpartyReview!.createdAt))).toISOString()
-          : reviewDeadlineAt
-        : null
-      const counterparty = currentIsBuyer ? item.ownerUsername : item.applicantUsername
-      const ownReviewerRole = currentIsBuyer ? 'buyer' as const : 'seller' as const
-      const ownRevieweeRole = currentIsBuyer ? 'seller' as const : 'buyer' as const
-      const rows: ReviewCenterRow[] = []
-      const allowedTags = mockReviewTags.filter(tag => (
-        ['smooth_comm', 'quick_response', 'clear_rules', 'good_coop', 'slow_response', 'hard_to_comm', 'late_change'].includes(tag.code)
-        || (ownReviewerRole === 'buyer' && ['true_desc', 'good_aftercare', 'desc_diff'].includes(tag.code))
-        || (ownReviewerRole === 'seller' && ['quick_payment', 'quick_confirm', 'clear_needs', 'kept_agreement'].includes(tag.code))
-      ))
-
-      if (ownReview) {
-        rows.push({
-          id: `review-carpool-${item.id}-sent`,
-          transactionType: 'carpool_membership',
-          transactionId: item.id,
-          direction: 'sent',
-          target: item.snapshot.productName,
-          counterparty,
-          counterpartyUsername: counterparty,
-          reviewerRole: ownReviewerRole,
-          revieweeRole: ownRevieweeRole,
-          status: published ? 'published' : 'sealed',
-          visibility: published ? 'published' : 'sealed',
-          allowedTags,
-          canCreate: false,
-          canEdit: !published,
-          rating: ownReview.rating,
-          tags: [...ownReview.tags],
-          note: ownReview.note,
-          completedAt,
-          reviewDeadlineAt,
-          submittedAt: ownReview.createdAt,
-          visibleAt,
-          frozenAt: visibleAt,
-          createdAt: ownReview.createdAt,
-          updatedAt: ownReview.createdAt,
-          version: 1,
-        })
-      } else {
-        rows.push({
-          id: `reviewable-carpool-${item.id}`,
-          transactionType: 'carpool_membership',
-          transactionId: item.id,
-          direction: 'pending',
-          target: item.snapshot.productName,
-          counterparty,
-          counterpartyUsername: counterparty,
-          reviewerRole: ownReviewerRole,
-          revieweeRole: ownRevieweeRole,
-          status: deadlinePassed ? 'expired' : 'reviewable',
-          visibility: 'none',
-          allowedTags,
-          canCreate: !deadlinePassed,
-          canEdit: false,
-          rating: null,
-          tags: [],
-          note: null,
-          completedAt,
-          reviewDeadlineAt,
-          submittedAt: null,
-          visibleAt: null,
-          frozenAt: null,
-          createdAt: completedAt,
-          updatedAt: completedAt,
-          version: 0,
-        })
+      const reviewPaused = isApiOrderDisputeActive(item.disputeStatus)
+      const published = Boolean(ownReview && deadlinePassed)
+      const allowedTags = mockReviewTags.filter(tag => [
+        'smooth_comm',
+        'quick_response',
+        'clear_rules',
+        'good_coop',
+        'slow_response',
+        'hard_to_comm',
+        'late_change',
+        'true_desc',
+        'good_aftercare',
+        'desc_diff',
+      ].includes(tag.code))
+      const commercialOutcome = ['normal_fulfillment', 'continued_fulfillment', 'full_refund', 'partial_refund'].includes(item.commercialOutcome)
+        ? item.commercialOutcome as ReviewCenterRow['commercialOutcome']
+        : 'legacy_fulfillment'
+      return {
+        id: ownReview ? `review-api-order-${item.id}-sent` : `reviewable-api-order-${item.id}`,
+        transactionType: 'api_order',
+        transactionId: item.id,
+        direction: ownReview ? 'sent' : 'pending',
+        target: item.serviceTitle,
+        counterparty: item.seller,
+        counterpartyUsername: item.seller,
+        reviewerRole: 'buyer',
+        revieweeRole: 'seller',
+        status: reviewPaused ? 'paused' : ownReview ? published ? 'published' : 'sealed' : deadlinePassed ? 'expired' : 'reviewable',
+        visibility: ownReview ? published ? 'published' : 'sealed' : 'none',
+        allowedTags,
+        canCreate: !ownReview && !deadlinePassed && !reviewPaused,
+        canEdit: Boolean(ownReview && !deadlinePassed && !reviewPaused),
+        rating: ownReview?.rating ?? null,
+        tags: ownReview ? [...ownReview.tags] : [],
+        note: ownReview?.note ?? null,
+        completedAt,
+        reviewDeadlineAt,
+        commercialOutcome,
+        reviewPaused,
+        submittedAt: ownReview?.createdAt ?? null,
+        visibleAt: published ? reviewDeadlineAt : null,
+        frozenAt: published ? reviewDeadlineAt : null,
+        createdAt: ownReview?.createdAt ?? completedAt,
+        updatedAt: ownReview?.createdAt ?? completedAt,
+        version: ownReview ? 1 : 0,
       }
-
-      if (counterpartyReview && published) {
-        rows.push({
-          id: `review-carpool-${item.id}-received`,
-          transactionType: 'carpool_membership',
-          transactionId: item.id,
-          direction: 'received',
-          target: item.snapshot.productName,
-          counterparty,
-          counterpartyUsername: counterparty,
-          reviewerRole: ownRevieweeRole,
-          revieweeRole: ownReviewerRole,
-          status: published ? 'published' : 'sealed',
-          visibility: published ? 'published' : 'sealed',
-          allowedTags: [],
-          canCreate: false,
-          canEdit: false,
-          rating: published ? counterpartyReview.rating : null,
-          tags: published ? [...counterpartyReview.tags] : [],
-          note: published ? counterpartyReview.note : null,
-          completedAt,
-          reviewDeadlineAt,
-          submittedAt: counterpartyReview.createdAt,
-          visibleAt,
-          frozenAt: visibleAt,
-          createdAt: counterpartyReview.createdAt,
-          updatedAt: counterpartyReview.createdAt,
-          version: 1,
-        })
-      }
-      return rows
     })
   return {
-    items: clone(carpoolRows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
+    items: clone(rows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
     presetTags: mockReviewTags,
   }
 }
@@ -5736,13 +5953,23 @@ export async function getReviewCenterPage(direction: ReviewCenterRow['direction'
 export async function submitReview(payload: SubmitReviewPayload) {
   if (shouldUseRealBackend()) return backendSubmitReview(payload)
   await wait()
-  await reviewCarpoolApplication(payload.transactionId, {
-    rating: payload.rating,
-    tags: payload.tags,
-    note: payload.note,
-  })
+  if (payload.transactionType !== 'api_order') throw new Error('拼车不支持评价。')
+  const order = apiOrderStore.find(item => item.id === payload.transactionId && item.buyerId === currentBuyerId)
+  if (!order || order.status !== 'completed') throw new Error('只有已完成的 API 订单可以评价。')
+  const completedAt = Date.parse(order.completedAt ?? order.updatedAt)
+  if (!Number.isFinite(completedAt)) throw new Error('API 订单完成时间无效。')
+  if (Date.now() >= completedAt + 14 * 24 * 60 * 60 * 1000) throw new Error('评价窗口已截止。')
   const center = await getReviewCenterRows()
-  const row = center.items.find(item => item.transactionId === payload.transactionId && item.direction === 'sent')
+  const current = center.items.find(item => item.transactionId === payload.transactionId)
+  if (!current || (!current.canCreate && !current.canEdit)) throw new Error('当前 API 订单不能评价。')
+  mockApiOrderReviewStore.set(payload.transactionId, {
+    rating: payload.rating,
+    tags: [...payload.tags],
+    note: payload.note,
+    createdAt: nowText(),
+  })
+  const updatedCenter = await getReviewCenterRows()
+  const row = updatedCenter.items.find(item => item.transactionId === payload.transactionId && item.direction === 'sent')
   if (!row) throw new Error('评价已保存，但评价中心记录暂不可用。')
   return row
 }
@@ -5766,12 +5993,12 @@ export async function getMyCarpoolApplicationsPage(filters: CarpoolApplicationFi
 export async function getMerchantCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplications(filters)
   await wait()
-  return clone(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }))
+  return clone(mockOwnerCarpoolApplicationMetadata(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' })))
 }
 
 export async function getMerchantCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplicationsPage(filters, page)
-  return paginateCursorItems(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }), page)
+  return paginateCursorItems(mockOwnerCarpoolApplicationMetadata(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' })), page)
 }
 
 export async function getCarpoolApplicationById(id: string): Promise<CarpoolApplicationWithMeta | null> {
@@ -5789,11 +6016,12 @@ export async function getCarpoolApplicationEvents(id: string) {
 export async function createCarpoolApplication(carpoolId: string, payload: { rulesAccepted: boolean }) {
   if (shouldUseRealBackend()) return backendCreateCarpoolApplication(carpoolId, payload)
   await wait()
+  const buyerContact = enabledMockWechatContact()
   if (!payload.rulesAccepted) throw new Error('请先确认已阅读车源规则和车主承诺说明')
   const carpool = carpoolStore.find(item => item.id === carpoolId)
   if (!carpool) throw new Error(`Carpool not found: ${carpoolId}`)
   const related = carpoolApplicationStore.filter(item => item.carpoolId === carpoolId && item.applicantUserId === currentBuyerId)
-  const hasActiveMembership = related.some(item => ['active', 'pending_completion'].includes(item.status))
+  const hasActiveMembership = related.some(item => isActiveCarpoolApplication(item.status))
   const hasOngoingApplication = related.some(item => isOngoingCarpoolApplication(item.status))
   const seatSummary = getCarpoolSeatSummary(carpool)
   const eligibility = evaluateCarpoolApplicationEligibility(carpool, seatSummary, hasOngoingApplication, currentBuyerId, hasActiveMembership)
@@ -5812,16 +6040,7 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
     status: 'pending_owner',
     seatsRequested: 1,
     snapshot: buildCarpoolSnapshot(carpool),
-    reservedUntil: null,
-    buyerContactedAt: null,
-    buyerConfirmedJoinedAt: null,
-    ownerConfirmedJoinedAt: null,
     startedAt: null,
-    expectedEndAt: null,
-    buyerConfirmedCompletedAt: null,
-    ownerConfirmedCompletedAt: null,
-    completedAt: null,
-    completionMode: null,
     cancellationReasonCode: null,
     cancellationReasonText: null,
     responsibility: null,
@@ -5830,6 +6049,17 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
     updatedAt: createdAt,
   }
   carpoolApplicationStore.unshift(application)
+  carpoolContactSnapshotStore.unshift({
+    id: `contact-snapshot-${id}`,
+    orderType: 'carpool_application',
+    orderId: id,
+    sellerContacts: [],
+    buyerContacts: [mockWechatContactSnapshotItem(buyerContact, 'buyer')],
+    contactWindowEndsAt: null,
+    canView: false,
+    unavailableReason: '车主确认上车并建立有效成员关系后才展示联系方式。',
+    createdAt,
+  })
   appendCarpoolApplicationEvent({
     applicationId: id,
     actorId: currentBuyerId,
@@ -5850,15 +6080,22 @@ export async function createCarpoolIntent(carpool: Carpool) {
 export async function acceptCarpoolApplication(id: string) {
   if (shouldUseRealBackend()) return backendAcceptCarpoolApplication(id)
   await wait()
+  const ownerContact = enabledMockWechatContact()
   return updateCarpoolApplication(id, application => {
     if (application.status !== 'pending_owner') throw new Error('只有待车主处理的申请可以接受')
     const carpool = carpoolStore.find(item => item.id === application.carpoolId)
     if (!carpool) throw new Error(`Carpool not found: ${application.carpoolId}`)
+    const contactSnapshot = carpoolContactSnapshotStore.find(item => item.orderType === 'carpool_application' && item.orderId === id)
+    if (!contactSnapshot) throw new Error('拼车联系方式快照不存在，请刷新后重试。')
     const seatSummary = getCarpoolSeatSummary(carpool)
-    if (seatSummary.availableSeats < application.seatsRequested) throw new Error('可申请名额不足，无法预留席位')
+    if (seatSummary.availableSeats < application.seatsRequested) throw new Error('可申请名额不足，无法确认上车')
     const fromStatus = application.status
-    application.status = 'accepted_reserved'
-    application.reservedUntil = minutesFromNow(30)
+			application.status = 'active'
+			application.startedAt = nowText()
+		carpool.currentConfirmedMembers += application.seatsRequested
+    contactSnapshot.sellerContacts = [mockWechatContactSnapshotItem(ownerContact, 'carpool_owner')]
+    contactSnapshot.canView = true
+    contactSnapshot.unavailableReason = null
     appendCarpoolApplicationEvent({
       applicationId: id,
       actorId: application.ownerUserId,
@@ -5866,10 +6103,26 @@ export async function acceptCarpoolApplication(id: string) {
       actorRole: 'owner',
       type: 'owner_accepted',
       fromStatus,
-      toStatus: 'accepted_reserved',
-      note: '车主接受申请，预留 1 席 30 分钟。',
+		toStatus: 'active',
+		note: '车主确认上车，成员关系立即生效。',
     })
   })
+}
+
+export async function confirmCarpoolApplicationConditions(id: string) {
+	if (shouldUseRealBackend()) return backendConfirmCarpoolApplicationConditions(id)
+	await wait()
+	return getCarpoolApplicationById(id)
+}
+
+export async function updateCarpoolRecruitment(id: string, action: 'stop' | 'resume') {
+	if (shouldUseRealBackend()) return backendUpdateCarpoolRecruitment(id, action)
+	await wait()
+	const carpool = carpoolStore.find(item => item.id === id)
+	if (!carpool) throw new Error('车源不存在')
+	carpool.status = action === 'stop' ? '暂停' : '可上车'
+	carpool.confirmedAt = nowText()
+	return clone(carpool)
 }
 
 export async function rejectCarpoolApplication(id: string, reason: string) {
@@ -5899,13 +6152,12 @@ export async function cancelCarpoolApplication(id: string, reason: string) {
   if (shouldUseRealBackend()) return backendCancelCarpoolApplication(id, reason)
   await wait()
   return updateCarpoolApplication(id, application => {
-    if (!isOngoingCarpoolApplication(application.status)) throw new Error('当前状态不能取消')
+    if (application.status !== 'pending_owner') throw new Error('只有待处理申请可以撤回')
     const fromStatus = application.status
     application.status = 'cancelled_by_buyer'
-    application.reservedUntil = null
     application.cancellationReasonCode = 'buyer_cancelled'
     application.cancellationReasonText = reason
-    application.responsibility = fromStatus === 'pending_owner' ? 'mutual' : 'buyer'
+    application.responsibility = 'mutual'
     appendCarpoolApplicationEvent({
       applicationId: id,
       actorId: application.applicantUserId,
@@ -5921,153 +6173,45 @@ export async function cancelCarpoolApplication(id: string, reason: string) {
 
 export async function leaveCarpoolMembership(id: string, reason: string) {
   if (shouldUseRealBackend()) return backendBuyerLeaveCarpool(id, reason)
-  return cancelCarpoolApplication(id, reason)
-}
-
-export async function markCarpoolApplicationContacted(id: string) {
-  if (shouldUseRealBackend()) return backendCarpoolApplicationById(id)
   await wait()
   return updateCarpoolApplication(id, application => {
-    if (!['accepted_reserved', 'waiting_contact'].includes(application.status)) throw new Error('当前状态不能标记已联系')
+    if (application.status !== 'active') throw new Error('只有有效成员可以退出')
     const fromStatus = application.status
-    application.status = 'contacted'
-    application.buyerContactedAt = nowText()
+    application.status = 'cancelled_by_buyer'
+    application.cancellationReasonCode = 'buyer_left'
+    application.cancellationReasonText = reason
+    application.responsibility = 'buyer'
+    const carpool = carpoolStore.find(item => item.id === application.carpoolId)
+    if (carpool) carpool.currentConfirmedMembers = Math.max(0, carpool.currentConfirmedMembers - application.seatsRequested)
     appendCarpoolApplicationEvent({
       applicationId: id,
       actorId: application.applicantUserId,
       actorLabel: application.applicantUsername,
       actorRole: 'buyer',
-      type: 'buyer_contacted',
+      type: 'cancelled',
       fromStatus,
-      toStatus: 'contacted',
-      note: '买家已记录与车主完成联系。',
-    })
-  })
-}
-
-export async function buyerConfirmCarpoolJoined(id: string) {
-  if (shouldUseRealBackend()) return backendBuyerConfirmCarpoolJoined(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (!['contacted', 'joined_pending_confirmation'].includes(application.status)) throw new Error('请先记录已联系车主')
-    const fromStatus = application.status
-    application.buyerConfirmedJoinedAt = nowText()
-    application.status = 'joined_pending_confirmation'
-    startCarpoolServiceIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.applicantUserId,
-      actorLabel: application.applicantUsername,
-      actorRole: 'buyer',
-      type: 'buyer_confirmed_joined',
-      fromStatus,
-      toStatus: application.status,
-      note: '买家确认已经上车。',
-    })
-  })
-}
-
-export async function ownerConfirmCarpoolJoined(id: string) {
-  if (shouldUseRealBackend()) return backendOwnerConfirmCarpoolJoined(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (!['contacted', 'joined_pending_confirmation'].includes(application.status)) throw new Error('当前状态不能确认上车')
-    const fromStatus = application.status
-    application.ownerConfirmedJoinedAt = nowText()
-    application.status = 'joined_pending_confirmation'
-    const started = startCarpoolServiceIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.ownerUserId,
-      actorLabel: application.ownerUsername,
-      actorRole: 'owner',
-      type: started ? 'service_started' : 'owner_confirmed_joined',
-      fromStatus,
-      toStatus: application.status,
-      note: started ? '双方确认后进入服务中。' : '车主确认用户已上车。',
-    })
-  })
-}
-
-export async function buyerConfirmCarpoolCompleted(id: string) {
-  if (shouldUseRealBackend()) return backendBuyerConfirmCarpoolCompleted(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (application.status !== 'pending_completion') throw new Error('只有待完成记录可以确认完成')
-    const fromStatus = application.status
-    application.buyerConfirmedCompletedAt = nowText()
-    const completed = completeCarpoolIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.applicantUserId,
-      actorLabel: application.applicantUsername,
-      actorRole: 'buyer',
-      type: completed ? 'completed' : 'buyer_confirmed_completed',
-      fromStatus,
-      toStatus: application.status,
-      note: completed ? '双方确认完成。' : '买家确认本次完成。',
-    })
-  })
-}
-
-export async function ownerConfirmCarpoolCompleted(id: string) {
-  if (shouldUseRealBackend()) return backendOwnerConfirmCarpoolCompleted(id)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (application.status !== 'pending_completion') throw new Error('只有待完成记录可以确认完成')
-    const fromStatus = application.status
-    application.ownerConfirmedCompletedAt = nowText()
-    const completed = completeCarpoolIfBothConfirmed(application)
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.ownerUserId,
-      actorLabel: application.ownerUsername,
-      actorRole: 'owner',
-      type: completed ? 'completed' : 'owner_confirmed_completed',
-      fromStatus,
-      toStatus: application.status,
-      note: completed ? '双方确认完成。' : '车主确认本次完成。',
-    })
-  })
-}
-
-export async function disputeCarpoolApplication(id: string, reason: string) {
-  if (shouldUseRealBackend()) return backendOwnerRemoveCarpool(id, reason)
-  await wait()
-  return updateCarpoolApplication(id, application => {
-    if (!isOngoingCarpoolApplication(application.status)) throw new Error('当前状态不能发起纠纷')
-    const fromStatus = application.status
-    application.status = 'disputed'
-    application.disputeReason = reason
-    application.responsibility = 'undetermined'
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: application.applicantUserId,
-      actorLabel: application.applicantUsername,
-      actorRole: 'buyer',
-      type: 'disputed',
-      fromStatus,
-      toStatus: 'disputed',
+      toStatus: 'cancelled_by_buyer',
       note: reason,
     })
   })
 }
 
-export async function withdrawCarpoolAcceptance(id: string, reason: string) {
-  if (shouldUseRealBackend()) return backendWithdrawCarpoolAcceptance(id, reason)
+export async function removeCarpoolMember(id: string, reason: string) {
+  if (shouldUseRealBackend()) return backendOwnerRemoveCarpool(id, reason)
   await wait()
   return updateCarpoolApplication(id, application => {
-    if (!['accepted_reserved', 'waiting_contact'].includes(application.status)) throw new Error('只有已预留申请可以撤回接受')
+    if (application.status !== 'active') throw new Error('只有有效成员可以移除')
     const fromStatus = application.status
     application.status = 'cancelled_by_owner'
-    application.reservedUntil = null
-    application.cancellationReasonCode = 'owner_withdrawn'
+    application.cancellationReasonCode = 'owner_removed'
     application.cancellationReasonText = reason
     application.responsibility = 'owner'
+    const carpool = carpoolStore.find(item => item.id === application.carpoolId)
+    if (carpool) carpool.currentConfirmedMembers = Math.max(0, carpool.currentConfirmedMembers - application.seatsRequested)
     appendCarpoolApplicationEvent({
       applicationId: id,
-      actorId: application.ownerUserId,
-      actorLabel: application.ownerUsername,
+      actorId: application.applicantUserId,
+      actorLabel: application.applicantUsername,
       actorRole: 'owner',
       type: 'cancelled',
       fromStatus,
@@ -6077,28 +6221,19 @@ export async function withdrawCarpoolAcceptance(id: string, reason: string) {
   })
 }
 
-export async function reviewCarpoolApplication(id: string, payload: ReviewCarpoolApplicationPayload) {
+export async function updateCarpoolMembershipOwnerNote(application: Pick<CarpoolApplicationWithMeta, 'id' | 'backendMembershipId' | 'backendVersion'>, note: string) {
+  const normalizedNote = note.trim()
+  if (Array.from(normalizedNote).length > 500) throw new Error('车主备注不能超过 500 个字符。')
+  if (shouldUseRealBackend()) {
+    if (!application.backendMembershipId || application.backendVersion === undefined) throw new Error('成员版本暂不可用，请刷新后重试。')
+    return backendUpdateCarpoolMembershipOwnerNote(application.backendMembershipId, normalizedNote, application.backendVersion)
+  }
   await wait()
-  return updateCarpoolApplication(id, application => {
-    if (application.status !== 'completed') throw new Error('只有已完成记录可以评价')
-    const completedAtMs = Date.parse(application.completedAt ?? application.updatedAt)
-    if (!Number.isFinite(completedAtMs)) throw new Error('交易完成时间无效')
-    if (Date.now() >= completedAtMs + 14 * 24 * 60 * 60 * 1000) throw new Error('评价窗口已截止')
-    const currentIsBuyer = application.applicantUserId === currentBuyerId
-    const currentIsOwner = application.ownerUserId === currentOwnerId
-    if (!currentIsBuyer && !currentIsOwner) throw new Error('只有交易参与方可以评价')
-    const review = { ...payload, createdAt: nowText() }
-    if (currentIsBuyer) application.buyerReview = review
-    else application.ownerReview = review
-    appendCarpoolApplicationEvent({
-      applicationId: id,
-      actorId: currentIsBuyer ? application.applicantUserId : application.ownerUserId,
-      actorLabel: currentIsBuyer ? application.applicantUsername : application.ownerUsername,
-      actorRole: currentIsBuyer ? 'buyer' : 'owner',
-      type: 'admin_updated',
-      note: `${currentIsBuyer ? '买家' : '车主'}已评价：${payload.rating} 星`,
-    })
-  })
+  const current = findCarpoolApplication(application.id)
+  if (!['active', 'cancelled_by_buyer', 'cancelled_by_owner'].includes(current.status)) throw new Error('只有已加入过的成员可以记录备注。')
+  carpoolOwnerNoteStore[current.id] = normalizedNote
+  persistCarpoolApplicationStores()
+  return mockOwnerCarpoolApplicationMetadata([current])[0]!
 }
 
 export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
@@ -6154,8 +6289,8 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
       requiresFirstLoginPasswordReset: payload.deliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
       note: '购买意向已提交，商户联系方式和收款确认资料已向买家展示，商户可查看买家选择的联系方式',
     },
-    contactChannels: service.contactChannels,
-    buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],
+    contactChannels: mockMerchantWechatContactChannels(service.contactChannels),
+    buyerContactChannels: [mockWechatContactChannel()],
     merchantResponseDeadline: service.online ? minutesFromNow(service.expectedResponseMinutes) : undefined,
     createdAt,
     updatedAt: createdAt,
@@ -6263,9 +6398,9 @@ function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
 }
 
 function mockBuyerContactChannels(intent: ApiPurchaseIntent): ApiContactChannel[] {
-  return intent.buyerContactChannels?.length
-    ? intent.buyerContactChannels
-    : [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }]
+  const contact = intent.buyerContactChannels?.find(channel => channel.type === 'wechat')
+  if (!contact) throw new Error('买家微信联系方式快照不存在，请重新创建订单。')
+  return [{ ...contact }]
 }
 
 export async function createApiOrderFromIntent(intentId: string, paymentMethod: ApiPaymentOption['paymentMethod']) {
@@ -6302,6 +6437,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     seller: getApiMerchantDisplayName(intent),
     status: 'pending_payment',
     disputeStatus: 'none',
+    hasDisputeHistory: false,
     serviceTitle: intent.snapshot.serviceTitle,
     amount: intent.purchaseAmountCny,
     amountDecimal: intent.purchaseAmountCnyDecimal || normalizeDecimal(String(intent.purchaseAmountCny), 2),
@@ -6309,6 +6445,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes: 10,
     paymentExpiresAt: minutesFromNow(10),
+    commercialOutcome: 'pending',
     buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intent.snapshot),
@@ -6319,7 +6456,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     requestedUsdAllowance: intent.purchasedCredit,
     requestedUsdAllowanceDecimal: intent.purchasedCreditDecimal || normalizeDecimalTrimmed(String(intent.purchasedCredit), 6),
     quotaUsagePolicySnapshot: clone(intent.quotaUsagePolicySnapshot),
-    merchantContactChannels: clone(intent.contactChannels),
+    merchantContactChannels: clone(mockMerchantWechatContactChannels(intent.contactChannels)),
     buyerContactChannels: clone(mockBuyerContactChannels(intent)),
     viewerRole: 'buyer',
     createdAt,
@@ -6388,8 +6525,8 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       requiresFirstLoginPasswordReset: selectedDeliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
       note: '限量额度包已直接生成订单。',
     },
-    contactChannels: clone(service.contactChannels),
-    buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],
+    contactChannels: clone(mockMerchantWechatContactChannels(service.contactChannels)),
+    buyerContactChannels: [mockWechatContactChannel()],
     createdAt,
     updatedAt: createdAt,
   }
@@ -6406,6 +6543,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     seller: getApiMerchantDisplayName(service),
     status: 'pending_payment',
     disputeStatus: 'none',
+    hasDisputeHistory: false,
     serviceTitle: service.title,
     amount: Number(offer.priceCny),
     amountDecimal: offer.priceCny,
@@ -6413,6 +6551,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes,
     paymentExpiresAt: minutesFromNow(paymentWindowMinutes),
+    commercialOutcome: 'pending',
     buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intentSnapshot),
@@ -6450,7 +6589,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       deliveryEtaMinutes: offer.deliveryEtaMinutes,
       deliveryMode: offer.deliveryMode,
     },
-    merchantContactChannels: clone(service.contactChannels),
+    merchantContactChannels: clone(mockMerchantWechatContactChannels(service.contactChannels)),
     buyerContactChannels: clone(mockBuyerContactChannels(intent)),
     viewerRole: 'buyer',
     createdAt,
@@ -6506,6 +6645,36 @@ export async function getMerchantApiOrders(filters: ApiOrderFilters = {}) {
 export async function getMerchantApiOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}) {
   if (shouldUseRealBackend()) return backendOwnerAPIOrdersPage(filters, page)
   return paginateCursorItems(filterApiOrders({ ...filters, sellerId: currentMerchantId }), page)
+}
+
+export async function getSellerCommerceStatus(): Promise<SellerCommerceStatus> {
+  if (shouldUseRealBackend()) return backendSellerCommerceStatus()
+  await wait()
+  const active = filterApiOrders({ dispute: 'active', sellerId: currentMerchantId })
+  const buyerIds = new Set(active.map(item => item.buyerId))
+  const serviceBuyers = new Map<string, Set<string>>()
+  for (const order of active) {
+    const buyers = serviceBuyers.get(order.apiServiceId) ?? new Set<string>()
+    buyers.add(order.buyerId)
+    serviceBuyers.set(order.apiServiceId, buyers)
+  }
+  const affectedServiceIds = [...serviceBuyers.entries()].filter(([, buyers]) => buyers.size >= 2).map(([serviceId]) => serviceId)
+  const level: SellerCommerceRestrictionLevel = buyerIds.size >= 3 ? 'account_limited' : affectedServiceIds.length ? 'service_limited' : 'normal'
+  return clone({
+    level,
+    activeDisputeCount: active.length,
+    activeBuyerCount: buyerIds.size,
+    blockingDisputeCount: level === 'normal' ? 0 : active.length,
+    affectedServiceIds,
+    reasonCodes: level === 'account_limited' ? ['account_multiple_buyers'] : level === 'service_limited' ? ['service_multiple_buyers'] : [],
+    disputes: active.filter(item => item.disputeCaseId).map(item => ({
+      disputeId: item.disputeCaseId!, orderId: item.id, orderNo: item.orderNo,
+      apiServiceId: item.apiServiceId, serviceTitle: item.serviceTitle,
+      status: item.disputeStatus ?? 'none', nextActor: item.disputeNextActor ?? 'none',
+      dueAt: item.disputeDueAt, restrictionLevel: level, reasonCodes: [],
+    })),
+    nextReleaseAt: null,
+  })
 }
 
 export async function getApiOrderById(id: string, perspective: 'buyer' | 'merchant' = 'buyer') {
@@ -6622,7 +6791,7 @@ export async function openApiOrderDispute(id: string, input: OpenApiOrderDispute
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
-    if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
+		if (perspective !== 'buyer') throw new Error('只有买家可以发起订单售后申请。')
 		applyMockApiOrderAfterSales(order)
 		if (!order.canOpenDispute) {
       throw new Error('当前订单不能再次申请平台介入。')
@@ -6636,7 +6805,12 @@ export async function openApiOrderDispute(id: string, input: OpenApiOrderDispute
 			if (Number.isFinite(validityTimestamp) && occurredAt > validityTimestamp) throw new Error('问题必须发生在所购服务有效期内。')
 		}
     if (!input.reason.trim()) throw new Error('请填写订单问题说明。')
-    order.disputeStatus = 'negotiating'
+		order.disputeStatus = 'pending_seller_response'
+		order.disputeNextActor = 'respondent'
+		order.disputeDueAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+		order.disputeNeedsAction = true
+		order.disputeResponseOverdue = false
+		order.disputeAvailableActions = ['withdraw']
   })
 }
 
@@ -6872,7 +7046,7 @@ export async function getCarpoolNotifications(): Promise<CarpoolNotification[]> 
   await wait()
   const rows = carpoolApplicationStore
     .filter(item => [currentBuyerId, currentOwnerId].includes(item.applicantUserId) || [currentBuyerId, currentOwnerId].includes(item.ownerUserId))
-    .filter(item => ['pending_owner', 'accepted_reserved', 'contacted', 'joined_pending_confirmation', 'pending_completion', 'disputed', 'rejected'].includes(item.status))
+    .filter(item => ['pending_owner', 'active', 'disputed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner'].includes(item.status))
     .slice(0, 8)
     .map(item => {
       const isOwner = item.ownerUserId === currentOwnerId
@@ -7053,12 +7227,12 @@ export type {
   CarpoolApplication,
   CarpoolApplicationEvent,
   CarpoolApplicationEventType,
-  CarpoolApplicationReview,
   CarpoolApplicationStatus,
   CarpoolCancellationResponsibility,
   CarpoolSeatSummary,
   ContactMethodType,
   ContactUsageScope,
+  CommunityIdentity,
   CreateContactReportRequest,
   CreateManualInterventionReportRequest,
   ModelPriceRow,

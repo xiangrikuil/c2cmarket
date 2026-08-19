@@ -9,12 +9,30 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import PageTitle from '@/components/market/PageTitle.vue'
 import { announcementCategoryLabels, announcementLevelLabels } from '@/lib/announcementUtils'
-import { useAnnouncementDetail, useMarkAnnouncementRead } from '@/queries/useAnnouncementQueries'
+import {
+  useAnnouncementDetail,
+  useMarkAnnouncementRead,
+  usePublicActiveAnnouncements,
+} from '@/queries/useAnnouncementQueries'
+import { useMyProfileQuery } from '@/queries/useAppShellQueries'
 
 const route = useRoute()
 const router = useRouter()
 const slug = computed(() => String(route.params.slug ?? ''))
-const { data: announcement, isLoading } = useAnnouncementDetail(slug)
+const profileQuery = useMyProfileQuery(import.meta.client)
+const authResolved = computed(() => import.meta.client && !profileQuery.isPending.value)
+const authenticated = computed(() => Boolean(profileQuery.data.value))
+const authenticatedDetailQuery = useAnnouncementDetail(slug, authenticated)
+const anonymousEnabled = computed(() => authResolved.value && !authenticated.value)
+const publicBarQuery = usePublicActiveAnnouncements('global_bar', anonymousEnabled)
+const publicModalQuery = usePublicActiveAnnouncements('modal', anonymousEnabled)
+const announcement = computed(() => {
+  if (authenticated.value) return authenticatedDetailQuery.data.value
+  return [...(publicBarQuery.data.value ?? []), ...(publicModalQuery.data.value ?? [])]
+    .find(item => item.slug === slug.value)
+})
+const isLoading = computed(() => profileQuery.isPending.value
+  || (authenticated.value ? authenticatedDetailQuery.isLoading.value : publicBarQuery.isLoading.value || publicModalQuery.isLoading.value))
 const markReadMutation = useMarkAnnouncementRead()
 
 const publishedAt = computed(() => announcement.value ? formatTime(announcement.value.publishAt) : '')
@@ -23,13 +41,18 @@ const wasUpdatedAfterPublish = computed(() => announcement.value
   ? new Date(announcement.value.contentUpdatedAt).getTime() > new Date(announcement.value.publishAt).getTime()
   : false)
 const ctaIsExternal = computed(() => Boolean(announcement.value?.ctaUrl?.startsWith('https://')))
+const announcementPinned = computed(() => Boolean(announcement.value && 'isPinned' in announcement.value && announcement.value.isPinned))
 
 watch(announcement, item => {
-  if (!item) return
+  if (!item || !authenticated.value || ('receipt' in item && item.receipt?.announcementVersion === item.version && item.receipt.readAt)) return
   markReadMutation.mutate(item.id, {
     onError: error => toast.error(error instanceof Error ? error.message : '公告已读状态更新失败'),
   })
 }, { immediate: true })
+
+function leaveDetail() {
+  router.push(authenticated.value ? '/my/notifications?tab=announcements' : '/')
+}
 
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -55,7 +78,7 @@ function formatTime(value: string) {
       <h2 class="text-xl font-semibold">公告不存在或当前不可见</h2>
       <p class="mt-2 text-sm text-muted-foreground">该公告可能仍是草稿、待发布、已下线，或链接输入有误。</p>
       <div class="mt-5 flex justify-center">
-        <Button variant="outline" @click="router.push('/my/notifications?tab=announcements')">
+        <Button variant="outline" @click="leaveDetail">
           <ArrowLeft class="h-4 w-4" />
           返回公告列表
         </Button>
@@ -68,8 +91,8 @@ function formatTime(value: string) {
           <header class="announcement-reference-article-header p-5 md:p-7">
             <div class="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{{ announcementCategoryLabels[announcement.category] }}</Badge>
-              <Badge :variant="announcement.level === 'important' ? 'default' : 'secondary'">{{ announcementLevelLabels[announcement.level] }}</Badge>
-              <Badge v-if="announcement.isPinned" variant="secondary">置顶</Badge>
+              <Badge :variant="announcement.level === 'critical' ? 'destructive' : announcement.level === 'important' ? 'default' : 'secondary'">{{ announcementLevelLabels[announcement.level] }}</Badge>
+              <Badge v-if="announcementPinned" variant="secondary">置顶</Badge>
             </div>
             <h1 class="mt-4 text-2xl font-semibold tracking-tight md:text-3xl">{{ announcement.title }}</h1>
             <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{{ announcement.summary }}</p>
@@ -100,7 +123,7 @@ function formatTime(value: string) {
       </Card>
 
       <div class="mx-auto flex max-w-4xl">
-        <Button variant="outline" @click="router.push('/my/notifications?tab=announcements')">
+        <Button variant="outline" @click="leaveDetail">
           <ArrowLeft class="h-4 w-4" />
           返回公告列表
         </Button>

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { routes } from '../../router'
 
 const appShellSource = readFileSync(new URL('../../components/layout/AppShell.vue', import.meta.url), 'utf8')
 const routerSource = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
@@ -17,29 +18,34 @@ const apiOrderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderD
 describe('个人与经营中心导航', () => {
   it('按个人活动与经营活动提供明确入口', () => {
     expect(appShellSource).toContain("title: '我的交易'")
-    expect(appShellSource).toContain("{ label: '我的上车', to: '/my/rides'")
-    expect(appShellSource).toContain("{ label: 'API 购买订单', to: '/my/api-orders'")
-    expect(appShellSource).toContain("{ label: '收藏', to: '/my/favorites'")
-    expect(appShellSource).toContain("{ label: '通知', to: '/my/notifications'")
+    expect(appShellSource).toContain("label: '我的上车', to: '/my/rides'")
+    expect(appShellSource).toContain("label: 'API 购买订单', to: '/my/api-orders'")
+    expect(appShellSource).toContain("label: '收藏', to: '/my/favorites'")
+    expect(appShellSource).toContain("label: '消息中心', to: '/my/notifications'")
 
     expect(appShellSource).toContain("title: '经营中心'")
-    expect(appShellSource).toContain("{ label: '我的车源', to: '/my/carpools'")
-    expect(appShellSource).toContain("{ label: '上车申请', to: '/merchant/carpool-applications'")
-    expect(appShellSource).toContain("{ label: '我的 API 服务', to: '/my/api-services'")
-    expect(appShellSource).toContain("{ label: 'API 销售订单', to: '/merchant/api-orders'")
+    expect(appShellSource).toContain("label: '拼车管理', to: '/my/carpools'")
+    expect(appShellSource).not.toContain("label: '我的车源', to: '/my/carpools'")
+    expect(appShellSource).not.toContain("label: '上车申请', to: '/merchant/carpool-applications'")
+    expect(appShellSource).toContain("label: '我的 API 服务', to: '/my/api-services'")
+    expect(appShellSource).toContain("label: 'API 销售订单', to: '/merchant/api-orders'")
     expect(appShellSource).toContain("title: '账户'")
-    expect(appShellSource).toContain("{ label: '个人中心', to: '/my'")
-    expect(appShellSource).toContain("{ label: '推广权益', to: '/my/promotion-benefits'")
-    expect(appShellSource).toContain('promotionRewardConfig.value?.programEnabled')
-    expect(appShellSource).toContain("label: canPublishApiService.value ? '联系与收款' : '联系方式'")
-    expect(appShellSource).toContain("{ label: '安全设置', to: '/my/account'")
+    expect(appShellSource).toContain("label: '个人中心', to: '/my'")
+    expect(appShellSource).toContain("label: '账户设置', to: '/my/profile'")
+    expect(appShellSource).toContain("label: '信誉与权益', to: '/my/reputation'")
+    expect(appShellSource).toContain("label: '支持中心', to: '/my/reports'")
+    expect(appShellSource).not.toContain("label: '推广权益'")
+    expect(appShellSource).not.toContain('promotionRewardConfig')
+    expect(appShellSource).not.toContain("{ label: '安全设置', to: '/my/account'")
     expect(appShellSource).not.toContain('/my/demands')
-    expect(appShellSource).toContain("{ label: '进入管理台', to: '/admin'")
+    expect(appShellSource).toContain("label: '进入管理台', to: '/admin'")
     expect(appShellSource).toContain('const groups: NavigationGroup[] = [browseGroup]')
     expect(appShellSource).toContain('if (publishGroup.items.length > 0) groups.push(publishGroup)')
     expect(appShellSource).toContain('if (canViewMerchantWorkspace.value) groups.push(merchantGroup)')
     expect(appShellSource).toContain('if (canViewAdminNav.value) groups.push(adminEntryGroup)')
-    expect(appShellSource).toContain("...(canManageApiProbe.value ? [{ label: '探针连接'")
+    expect(appShellSource).toContain("...(canManageApiProbe.value ? [{ key: 'api-probe-connections', label: '探针连接'")
+    expect(routerSource).toContain("path: '/my/carpools/:id/manage'")
+    expect(routerSource).toContain("redirect: { path: '/my/carpools', query: { view: 'applications' } }")
   })
 
   it('在导航、页面和详情返回入口明确区分 API 买卖角色', () => {
@@ -58,7 +64,7 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain('useNotifications(isAuthenticated)')
     expect(appShellSource).toContain('if (!isAuthenticated.value) return [browseGroup]')
     expect(appShellSource).toContain('const groups: NavigationGroup[] = [browseGroup]')
-    expect(appShellSource).toContain("{ label: '平台公告', to: announcementCenterTo")
+    expect(appShellSource).not.toContain("label: '平台公告'")
     expect(appShellSource).toContain('v-if="showLoginAction"')
     expect(appShellSource).toContain('v-else-if="isAuthenticated"')
     expect(appShellSource).toContain('登录后发布')
@@ -72,26 +78,66 @@ describe('个人与经营中心导航', () => {
   })
 
   it('将账户设置合并为共享页签并保留深链接', () => {
-    expect(myCenterSource).toContain('const sectionLinks = computed(() => [')
-    expect(myCenterSource).toContain("{ label: '账户概览', to: '/my'")
-    expect(myCenterSource).toContain("{ label: '个人资料', to: '/my/profile'")
-    expect(myCenterSource).toContain("label: canPublishApiService.value ? '联系方式与收款设置' : '联系方式'")
-    expect(myCenterSource).toContain("{ label: '账号与认证', to: '/my/account'")
-    expect(myCenterSource).toContain('class="my-center-settings-nav"')
-    expect(myCenterSource).toContain("isSectionActive(item.to) ? 'is-active' : ''")
-    expect(routerSource).toContain("path: '/my', name: 'my', component: MyCenterPage")
-    expect(routerSource).toContain("path: '/my/profile', name: 'my-profile', component: MyCenterPage")
-    expect(routerSource).toContain("path: '/my/contacts', name: 'my-contacts', component: MyCenterPage")
-    expect(routerSource).toContain("path: '/my/account', name: 'my-account', component: MyCenterPage")
+    const workspaceKey = (path: string) => routes.find(route => route.path === path)?.meta?.workspaceNavKey
+
+    expect(workspaceKey('/my')).toBe('personal-center')
+    for (const path of ['/my/profile', '/my/contacts', '/my/account', '/my/privacy']) {
+      expect(workspaceKey(path)).toBe('account-settings')
+    }
+    expect(workspaceKey('/my/favorites')).toBeUndefined()
+    expect(appShellSource).toContain("workspaceNavKey: 'account-settings' as const")
+    expect(appShellSource).not.toContain('accountSettingsPaths')
+    expect(myCenterSource).toContain('<AccountSettingsShell')
+    expect(myCenterSource).not.toContain('my-center-settings-nav')
+  })
+
+  it('将消息、信誉权益和支持详情映射到稳定工作区入口', () => {
+    const workspaceKey = (path: string) => routes.find(route => route.path === path)?.meta?.workspaceNavKey
+
+    expect(workspaceKey('/my/notifications')).toBe('message-center')
+    for (const path of ['/my/reputation', '/my/promotion-benefits']) {
+      expect(workspaceKey(path)).toBe('reputation-rights')
+    }
+    for (const path of ['/my/reports', '/my/reports/:kind/:id', '/my/feedback', '/my/feedback/:id']) {
+      expect(workspaceKey(path)).toBe('support-center')
+    }
+    expect(appShellSource).not.toContain('to="/my/feedback" class="flex items-center justify-between gap-3"')
+  })
+
+  it('在 API 市场深链保持市场入口和二级目录可见', () => {
+    expect(appShellSource).toContain("item.to === '/api-market' && matchesRoute(item)")
+    expect(appShellSource).not.toContain("item.to === '/api-market' && route.path === '/api-market'")
+  })
+
+  it('独立保存资料与隐私，并在草稿变脏时拒绝查询回填覆盖', () => {
+    expect(myCenterSource).toContain('const profileSettingsDirty = computed')
+    expect(myCenterSource).toContain('const privacySettingsDirty = computed')
+    expect(myCenterSource).toContain("if (activeSection.value === 'contacts') return hasContactDraftChanges.value")
+    expect(myCenterSource).toContain('useUnsavedChangesGuard(currentSettingsDirty')
+    expect(myCenterSource).toContain('privacy: profile.value.privacy')
+    expect(myCenterSource).toMatch(/function savePrivacy\(\)[\s\S]*?displayName: profile\.value\.displayName[\s\S]*?privacy: privacyForm/)
+    expect(myCenterSource).toContain('if (!profileSettingsDirty.value) syncProfileDraft(currentProfile)')
+    expect(myCenterSource).toContain('if (!privacySettingsDirty.value) syncPrivacyDraft(currentProfile)')
+    expect(myCenterSource).toMatch(/onSuccess: updatedProfile => \{[\s\S]*?syncProfileDraft\(updatedProfile\)/)
+    expect(myCenterSource).toMatch(/function savePrivacy\(\)[\s\S]*?onSuccess: updatedProfile => \{[\s\S]*?syncPrivacyDraft\(updatedProfile\)/)
   })
 
   it('只允许 linux.do 账号配置备用密码', () => {
     expect(myCenterSource).toContain('const canConfigureBackupPassword = computed(() => Boolean(profile.value?.linuxDoBinding.bound))')
+    expect(myCenterSource).toContain('const shouldOfferBackupPassword = computed(() => canConfigureBackupPassword.value && !profile.value?.passwordConfigured)')
     expect(myCenterSource).toContain('if (!canConfigureBackupPassword.value) {')
-    expect(myCenterSource).toContain("accountSetupActiveStep === 'password' && canConfigureBackupPassword")
+    expect(myCenterSource).toContain("if (shouldOfferBackupPassword.value) return 'password'")
     expect(myCenterSource).toContain('canConfigureBackupPassword && !profile.passwordConfigured')
     expect(myCenterSource).toContain('不适用（仅 linux.do 账号）')
-    expect(myCenterSource).toContain("if (!profile.value || activeSection.value !== 'account' || accountRecoveryComplete.value) return ''")
+    expect(myCenterSource).toContain("label: '绑定微信'")
+    expect(myCenterSource).toContain("accountSetupDialogMode.value === 'password'")
+    expect(myCenterSource).toContain('此项可跳过。')
+    expect(myCenterSource).toContain('function skipBackupPassword()')
+    expect(myCenterSource).toContain('暂不设置')
+    expect(myCenterSource).toMatch(/function confirmEmailVerification\(\)[\s\S]*?onSuccess: updatedProfile => \{[\s\S]*?updatedProfile\.linuxDoBinding\.bound && !updatedProfile\.passwordConfigured \? 'password' : 'complete'/)
+    expect(myCenterSource).toMatch(/function skipBackupPassword\(\) \{\s*accountSetupActiveStep\.value = 'complete'\s*\}/)
+    expect(myCenterSource).toContain('if (accountSetupComplete.value && !(wechatOnboardingActive.value && shouldOfferBackupPassword.value)) return')
+    expect(myCenterSource).toContain("if (!wechatBound.value) return 'wechat'")
     expect(myCenterSource).not.toContain('startOAuthLogin(route.fullPath)')
     expect(myCenterSource).not.toContain('改用 linux.do 登录')
   })

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -194,7 +195,7 @@ func TestDevPersonaSessionPreparesStrictFixedPersonas(t *testing.T) {
 		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode %s persona session: %v", test.persona, err)
 		}
-		if string(payload.Persona) != test.persona || payload.User.Username != "dev-"+test.persona || payload.User.IsAdmin != test.admin {
+		if string(payload.Persona) != test.persona || payload.User.Username != "dev-"+test.persona || payload.User.IsAdmin != test.admin || payload.Audience != auth.SessionAudienceNormal {
 			t.Fatalf("unexpected %s persona session: %+v", test.persona, payload)
 		}
 		if payload.CSRFToken == "" || responseSessionCookie(response) == nil {
@@ -450,11 +451,11 @@ func TestPublicResourceIDsAreUUIDs(t *testing.T) {
 	record := createAdminOfficialPriceRecord(t, server, adminSession, "uuid-record", "799.00", "0.12210000")
 	assertUUID(t, record.ID, "price record id")
 
-	contact := createContactMethod(t, server, buyerSession, "telegram", "UUID TG", "@uuid")
+	contact := createContactMethod(t, server, buyerSession, "wechat", "UUID TG", "@uuid")
 	assertUUID(t, contact.ID, "contact method id")
 
 	sellerSession := createSession(t, server, "seller", false)
-	sellerContact := createContactMethod(t, server, sellerSession, "telegram", "Seller UUID TG", "@seller_uuid")
+	sellerContact := createContactMethod(t, server, sellerSession, "wechat", "Seller UUID TG", "@seller_uuid")
 	request := newJSONRequest(http.MethodPost, "/api/v1/dev/contact-sessions", `{
 		"sellerUsername":"seller",
 		"buyerContactMethodId":"`+contact.ID+`",
@@ -1160,7 +1161,7 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	server := newTestServer(time.Now())
 	adminSession := createSession(t, server, "admin-api-model-inactive", true)
 	ownerSession := createLinuxDoSession(t, server, "api-model-inactive-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Inactive API Owner TG", "@inactive_api_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Inactive API Owner TG", "@inactive_api_owner")
 	model := createAdminAPIModel(t, server, adminSession, "inactive-service-model", "inactive-model-create")
 
 	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/api-models/"+model.ID, model.Version)
@@ -1447,8 +1448,8 @@ func TestContactSessionReadAndExpiry(t *testing.T) {
 	buyerSession := createSession(t, server, "buyer", false)
 	sellerSession := createSession(t, server, "seller", false)
 
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Buyer TG", "@buyer")
-	sellerContact := createContactMethod(t, server, sellerSession, "telegram", "Seller TG", "@seller")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Buyer TG", "@buyer")
+	sellerContact := createContactMethod(t, server, sellerSession, "wechat", "Seller TG", "@seller")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/dev/contact-sessions", `{
 		"sellerUsername":"seller",
@@ -1499,8 +1500,8 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "seller")
 	buyerSession := createSession(t, server, "buyer", false)
 	adminSession := createSession(t, server, "admin", true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Owner Carpool TG", "@owner_carpool")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Buyer Carpool TG", "@buyer_carpool")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Owner Carpool TG", "@owner_carpool")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Buyer Carpool TG", "@buyer_carpool")
 
 	withoutAck := newJSONRequest(http.MethodPost, "/api/v1/carpools", carpoolPayload(ownerContact.ID))
 	addAuth(withoutAck, ownerSession, "carpool-no-risk")
@@ -1525,7 +1526,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	if listing.Status != app.CarpoolListingStatusDraft || listing.Version != 1 {
 		t.Fatalf("unexpected created listing: %+v", listing)
 	}
-	if listing.ServiceMultiplier != "1.0000" || listing.DailyQuotaAmount == nil || *listing.DailyQuotaAmount != "50.00" || listing.WeeklyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
+	if listing.ServiceMultiplier != "1.0000" || listing.DailyQuotaAmount == nil || *listing.DailyQuotaAmount != "50.00" || listing.WeeklyQuotaAmount == nil || *listing.WeeklyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
 		t.Fatalf("expected structured multiplier and quota fields, got %+v", listing)
 	}
 	if listing.RegionCode != "other" || listing.RegionName != "印度区" {
@@ -1552,7 +1553,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	assertPublicCarpoolVisible(t, server, published.ID, true)
 
 	paused := reviewCarpool(t, server, adminSession, published.ID, "pause", published.Version, "carpool-pause")
-	if paused.Status != app.CarpoolListingStatusPaused || paused.Version != 3 {
+	if paused.Status != app.CarpoolListingStatusActive || paused.GovernanceStatus != "removed" || paused.Version != 3 {
 		t.Fatalf("unexpected paused listing: %+v", paused)
 	}
 	assertPublicCarpoolVisible(t, server, paused.ID, false)
@@ -1565,7 +1566,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 
 	restored := reviewCarpool(t, server, adminSession, paused.ID, "restore", paused.Version, "carpool-restore")
-	if restored.Status != app.CarpoolListingStatusActive || restored.Version != 4 {
+	if restored.Status != app.CarpoolListingStatusActive || restored.GovernanceStatus != "clear" || restored.Version != 4 {
 		t.Fatalf("unexpected restored listing: %+v", restored)
 	}
 	assertPublicCarpoolVisible(t, server, restored.ID, true)
@@ -1609,7 +1610,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 
 	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "carpool-accept")
 	replayed := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "carpool-accept")
-	if accepted.Status != app.CarpoolApplicationStatusAcceptedReserved || accepted.ContactSessionID == "" || accepted.ReservationExpiresAt == nil {
+	if accepted.Status != app.CarpoolApplicationStatusJoined || accepted.ContactSessionID == "" || accepted.JoinedAt == nil || accepted.ReservationExpiresAt != nil {
 		t.Fatalf("unexpected accepted application: %+v", accepted)
 	}
 	if accepted.ContactSessionID != replayed.ContactSessionID || accepted.Version != replayed.Version {
@@ -1629,27 +1630,13 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	if !strings.Contains(readContactResponse.Body.String(), "@owner_carpool") {
 		t.Fatalf("expected owner contact in contact window response")
 	}
-
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "carpool-buyer-confirm")
-	if buyerConfirmed.Status != app.CarpoolApplicationStatusAcceptedReserved || buyerConfirmed.BuyerConfirmedAt == nil || buyerConfirmed.OwnerConfirmedAt != nil {
-		t.Fatalf("unexpected buyer-confirmed application: %+v", buyerConfirmed)
-	}
-	ownerConfirmed := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "carpool-owner-confirm")
-	if ownerConfirmed.Status != app.CarpoolApplicationStatusJoined || ownerConfirmed.JoinedAt == nil || ownerConfirmed.ReservationExpiresAt != nil {
-		t.Fatalf("unexpected joined application: %+v", ownerConfirmed)
+	if !strings.Contains(readContactResponse.Body.String(), `"endsAt":null`) {
+		t.Fatalf("expected membership contact access without a countdown, got %s", readContactResponse.Body.String())
 	}
 
-	membership := firstCarpoolMembership(t, server, buyerSession, "me", ownerConfirmed.ID)
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", accepted.ID)
 	if membership.Status != app.CarpoolMembershipStatusActive {
 		t.Fatalf("unexpected active membership: %+v", membership)
-	}
-	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "carpool-buyer-complete")
-	if buyerCompleted.Status != app.CarpoolMembershipStatusActive || buyerCompleted.BuyerCompletedAt == nil || buyerCompleted.OwnerCompletedAt != nil {
-		t.Fatalf("unexpected buyer-completed membership: %+v", buyerCompleted)
-	}
-	ownerCompleted := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "carpool-owner-complete")
-	if ownerCompleted.Status != app.CarpoolMembershipStatusCompleted || ownerCompleted.CompletedAt == nil || ownerCompleted.EndedAt == nil {
-		t.Fatalf("unexpected completed membership: %+v", ownerCompleted)
 	}
 }
 
@@ -1659,7 +1646,7 @@ func TestMyCarpoolViewsAndOwnerDetail(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "owner-listing-view")
 	otherSession := createLinuxDoSession(t, server, "other-listing-view")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Owner Listing View", "@owner_listing_view")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Owner Listing View", "@owner_listing_view")
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "owner-listing-view-create")
 
 	needsEdit := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=needs_edit&limit=1", nil)
@@ -1707,162 +1694,33 @@ func TestMyCarpoolViewsAndOwnerDetail(t *testing.T) {
 	assertProblemCode(t, invalidViewResponse, "VALIDATION_FAILED")
 }
 
-func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
+func TestCarpoolMembershipDoesNotEnterReviewCenter(t *testing.T) {
 	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
 	ownerSession := createLinuxDoSession(t, server, "review-route-owner")
 	buyerSession := createSession(t, server, "review-route-buyer", false)
-	adminSession := createSession(t, server, "review-route-admin", true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Review Owner TG", "@review_route_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Review Buyer TG", "@review_route_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Review Owner TG", "@review_route_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Review Buyer TG", "@review_route_buyer")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "review-route-carpool-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "review-route-carpool-publish")
 	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "review-route-carpool-apply")
 	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "review-route-carpool-accept")
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "review-route-buyer-join")
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "review-route-owner-join")
-	membership := firstCarpoolMembership(t, server, buyerSession, "me", joined.ID)
-	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "review-route-buyer-complete")
-	completed := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "review-route-owner-complete")
-	if completed.Status != app.CarpoolMembershipStatusCompleted {
-		t.Fatalf("expected completed membership before review, got %+v", completed)
-	}
-
-	buyerCenter := listTransactionReviewsHTTP(t, server, buyerSession)
-	if len(buyerCenter.PresetTags) == 0 {
-		t.Fatal("review center must return server-owned preset tags")
-	}
-	pending := findReviewDTO(t, buyerCenter.Items, "pending", membership.ID)
-	if !pending.CanCreate || pending.Rating != nil || pending.Note != nil {
-		t.Fatalf("unexpected pending review row: %+v", pending)
-	}
-
-	buyerReview := submitTransactionReviewHTTP(
-		t,
-		server,
-		buyerSession,
-		http.MethodPost,
-		"carpool_membership",
-		membership.ID,
-		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
-		"review-route-buyer-create",
-		http.StatusCreated,
-	)
-	if buyerReview.Visibility != "sealed" || buyerReview.Rating == nil || *buyerReview.Rating != 5 || buyerReview.Note == nil {
-		t.Fatalf("unexpected buyer sealed review response: %+v", buyerReview)
-	}
-	replayedBuyerReview := submitTransactionReviewHTTP(
-		t,
-		server,
-		buyerSession,
-		http.MethodPost,
-		"carpool_membership",
-		membership.ID,
-		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
-		"review-route-buyer-create",
-		http.StatusCreated,
-	)
-	if replayedBuyerReview.ID != buyerReview.ID || replayedBuyerReview.Version != buyerReview.Version {
-		t.Fatalf("review create replay changed response: first=%+v replay=%+v", buyerReview, replayedBuyerReview)
-	}
-
-	ownerCenter := listTransactionReviewsHTTP(t, server, ownerSession)
-	ownerPending := findReviewDTO(t, ownerCenter.Items, "pending", membership.ID)
-	if !ownerPending.CanCreate || !containsReviewTagDTO(ownerPending.AllowedTags, "quick_payment") {
-		t.Fatalf("owner pending row did not include seller-to-buyer tags: %+v", ownerPending)
-	}
-	for _, item := range ownerCenter.Items {
-		if item.TransactionID == membership.ID && item.Direction == "received" {
-			t.Fatalf("sealed counterparty submission must not be observable through HTTP: %+v", item)
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", accepted.ID)
+	for _, item := range listTransactionReviewsHTTP(t, server, buyerSession).Items {
+		if item.TransactionID == membership.ID {
+			t.Fatalf("carpool membership must not appear in review center: %+v", item)
 		}
-	}
-
-	ownerReview := submitTransactionReviewHTTP(
-		t,
-		server,
-		ownerSession,
-		http.MethodPost,
-		"carpool_membership",
-		membership.ID,
-		`{"rating":4,"tags":["付款及时"],"note":"买家付款和确认都很及时。"}`,
-		"review-route-owner-create",
-		http.StatusCreated,
-	)
-	if ownerReview.Visibility != "published" || ownerReview.FrozenAt == nil {
-		t.Fatalf("second review did not publish and freeze pair: %+v", ownerReview)
-	}
-	buyerPublished := findReviewDTO(t, listTransactionReviewsHTTP(t, server, buyerSession).Items, "sent", membership.ID)
-	if buyerPublished.Visibility != "published" || buyerPublished.FrozenAt == nil || buyerPublished.Rating == nil || *buyerPublished.Rating != 5 {
-		t.Fatalf("buyer review did not become published: %+v", buyerPublished)
-	}
-
-	editRequest := newJSONRequest(
-		http.MethodPut,
-		"/api/v1/me/transactions/carpool_membership/"+membership.ID+"/review",
-		`{"rating":1,"tags":["响应较慢"],"note":"公开后不应允许修改。"}`,
-	)
-	addAuth(editRequest, buyerSession, "review-route-buyer-edit-frozen")
-	editResponse := httptest.NewRecorder()
-	server.ServeHTTP(editResponse, editRequest)
-	if editResponse.Code != http.StatusConflict {
-		t.Fatalf("expected frozen review conflict, got %d body %s", editResponse.Code, editResponse.Body.String())
-	}
-	assertProblemCode(t, editResponse, "INVALID_STATE_TRANSITION")
-
-	removeWithoutVersion := newJSONRequest(
-		http.MethodPost,
-		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
-		`{"reason":"管理员确认该评价需要移除。"}`,
-	)
-	addAuth(removeWithoutVersion, adminSession, "review-route-remove-missing-version")
-	removeWithoutVersionResponse := httptest.NewRecorder()
-	server.ServeHTTP(removeWithoutVersionResponse, removeWithoutVersion)
-	if removeWithoutVersionResponse.Code != http.StatusPreconditionRequired {
-		t.Fatalf("expected missing If-Match failure, got %d body %s", removeWithoutVersionResponse.Code, removeWithoutVersionResponse.Body.String())
-	}
-
-	removeRequest := newJSONRequest(
-		http.MethodPost,
-		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
-		`{"reason":"管理员确认该评价需要移除。"}`,
-	)
-	addAuth(removeRequest, adminSession, "review-route-remove")
-	removeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(buyerPublished.Version, 10)+`"`)
-	removeResponse := httptest.NewRecorder()
-	server.ServeHTTP(removeResponse, removeRequest)
-	if removeResponse.Code != http.StatusOK {
-		t.Fatalf("remove review status %d body %s", removeResponse.Code, removeResponse.Body.String())
-	}
-	if got := removeResponse.Header().Get("ETag"); got != `"`+strconv.FormatInt(buyerPublished.Version+1, 10)+`"` {
-		t.Fatalf("unexpected removed review ETag %q", got)
-	}
-	removedReceived := findReviewDTO(t, listTransactionReviewsHTTP(t, server, ownerSession).Items, "received", membership.ID)
-	if removedReceived.Visibility != "removed" || removedReceived.Rating != nil || removedReceived.Note != nil || len(removedReceived.Tags) != 0 {
-		t.Fatalf("removed review content remained visible: %+v", removedReceived)
 	}
 }
 
-func containsReviewTagDTO(items []reviewTagDTO, code string) bool {
-	for _, item := range items {
-		if item.Code == code {
-			return true
-		}
-	}
-	return false
-}
-
-func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {
+func TestCarpoolApplicationCancellationLifecycle(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "cancel-owner")
 	pendingBuyer := createSession(t, server, "cancel-buyer-pending", false)
 	reservedBuyer := createSession(t, server, "cancel-buyer-reserved", false)
-	ownerWithdrawBuyer := createSession(t, server, "cancel-buyer-owner-withdraw", false)
-	joinedBuyer := createSession(t, server, "cancel-buyer-joined", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Cancel Owner TG", "@cancel_owner")
-	pendingBuyerContact := createContactMethod(t, server, pendingBuyer, "telegram", "Cancel Buyer Pending TG", "@cancel_pending")
-	reservedBuyerContact := createContactMethod(t, server, reservedBuyer, "telegram", "Cancel Buyer Reserved TG", "@cancel_reserved")
-	ownerWithdrawBuyerContact := createContactMethod(t, server, ownerWithdrawBuyer, "telegram", "Cancel Buyer Owner Withdraw TG", "@cancel_owner_withdraw")
-	joinedBuyerContact := createContactMethod(t, server, joinedBuyer, "telegram", "Cancel Buyer Joined TG", "@cancel_joined")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Cancel Owner TG", "@cancel_owner")
+	pendingBuyerContact := createContactMethod(t, server, pendingBuyer, "wechat", "Cancel Buyer Pending TG", "@cancel_pending")
+	reservedBuyerContact := createContactMethod(t, server, reservedBuyer, "wechat", "Cancel Buyer Reserved TG", "@cancel_reserved")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "cancel-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "cancel-submit")
@@ -1875,39 +1733,21 @@ func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {
 
 	reservedApplication := createCarpoolApplication(t, server, reservedBuyer, published.ID, reservedBuyerContact.ID, "cancel-reserved-apply")
 	reservedAccepted := acceptCarpoolApplication(t, server, ownerSession, reservedApplication.ID, reservedApplication.Version, "cancel-reserved-accept")
-	cancelledReserved := cancelCarpoolApplication(t, server, reservedBuyer, reservedAccepted.ID, reservedAccepted.Version, "cancel-reserved")
-	if cancelledReserved.Status != app.CarpoolApplicationStatusCancelledByBuyer || cancelledReserved.ContactSessionID != reservedAccepted.ContactSessionID {
-		t.Fatalf("unexpected reserved cancellation: %+v", cancelledReserved)
+	cancelAccepted := newJSONRequest(http.MethodPost, "/api/v1/me/carpool-applications/"+reservedAccepted.ID+"/cancel", `{"reason":"已加入后应使用退出拼车。"}`)
+	addAuth(cancelAccepted, reservedBuyer, "cancel-joined-conflict")
+	cancelAccepted.Header.Set("If-Match", `"`+strconv.FormatInt(reservedAccepted.Version, 10)+`"`)
+	cancelAcceptedResponse := httptest.NewRecorder()
+	server.ServeHTTP(cancelAcceptedResponse, cancelAccepted)
+	if cancelAcceptedResponse.Code != http.StatusConflict {
+		t.Fatalf("expected joined cancel conflict, got %d body %s", cancelAcceptedResponse.Code, cancelAcceptedResponse.Body.String())
 	}
-	assertContactSessionConflict(t, server, reservedBuyer, reservedAccepted.ContactSessionID)
-
-	ownerWithdrawApplication := createCarpoolApplication(t, server, ownerWithdrawBuyer, published.ID, ownerWithdrawBuyerContact.ID, "cancel-owner-withdraw-apply")
-	ownerWithdrawAccepted := acceptCarpoolApplication(t, server, ownerSession, ownerWithdrawApplication.ID, ownerWithdrawApplication.Version, "cancel-owner-withdraw-accept")
-	withdrawn := withdrawCarpoolAcceptance(t, server, ownerSession, ownerWithdrawAccepted.ID, ownerWithdrawAccepted.Version, "cancel-owner-withdraw")
-	if withdrawn.Status != app.CarpoolApplicationStatusCancelledByOwner || withdrawn.ContactSessionID != ownerWithdrawAccepted.ContactSessionID {
-		t.Fatalf("unexpected owner withdrawal: %+v", withdrawn)
-	}
-	assertContactSessionConflict(t, server, ownerWithdrawBuyer, ownerWithdrawAccepted.ContactSessionID)
-
-	joinedApplication := createCarpoolApplication(t, server, joinedBuyer, published.ID, joinedBuyerContact.ID, "cancel-joined-apply")
-	joinedAccepted := acceptCarpoolApplication(t, server, ownerSession, joinedApplication.ID, joinedApplication.Version, "cancel-joined-accept")
-	buyerConfirmed := confirmCarpoolJoin(t, server, joinedBuyer, "me", joinedAccepted.ID, joinedAccepted.Version, "cancel-joined-buyer-confirm")
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", joinedAccepted.ID, buyerConfirmed.Version, "cancel-joined-owner-confirm")
-	cancelJoined := newJSONRequest(http.MethodPost, "/api/v1/me/carpool-applications/"+joined.ID+"/cancel", `{"reason":"已加入后应使用退出拼车。"}`)
-	addAuth(cancelJoined, joinedBuyer, "cancel-joined-conflict")
-	cancelJoined.Header.Set("If-Match", `"`+strconv.FormatInt(joined.Version, 10)+`"`)
-	cancelJoinedResponse := httptest.NewRecorder()
-	server.ServeHTTP(cancelJoinedResponse, cancelJoined)
-	if cancelJoinedResponse.Code != http.StatusConflict {
-		t.Fatalf("expected joined cancel conflict, got %d body %s", cancelJoinedResponse.Code, cancelJoinedResponse.Body.String())
-	}
-	assertProblemCode(t, cancelJoinedResponse, "INVALID_STATE_TRANSITION")
+	assertProblemCode(t, cancelAcceptedResponse, "INVALID_STATE_TRANSITION")
 }
 
 func TestCarpoolDirectPublishCreatesActiveListing(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "direct-publish-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Direct Publish TG", "@direct_publish_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Direct Publish TG", "@direct_publish_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", carpoolPayloadWithRiskAck(ownerContact.ID))
 	addAuth(request, ownerSession, "carpool-direct-publish")
@@ -1932,7 +1772,7 @@ func TestCarpoolDirectPublishCreatesActiveListing(t *testing.T) {
 func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "distribution-note-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Distribution Note TG", "@distribution_note_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Distribution Note TG", "@distribution_note_owner")
 
 	body := strings.Replace(carpoolPayloadWithRiskAck(ownerContact.ID), `"distributionMethod":"sub2api"`, `"distributionMethod":"other"`, 1)
 	body = strings.Replace(body, `"distributionMethodNote":"Sub2API 托管管理，具体方式站外确认。",`, `"distributionMethodNote":"",`, 1)
@@ -1946,10 +1786,86 @@ func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
 	assertProblemCode(t, response, "VALIDATION_FAILED")
 }
 
+func TestCarpoolAccountLoginAcceptsUnlimitedSpendAndOptionalNetworkDetails(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "account-login-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Account Login TG", "@account_login_owner")
+
+	body := carpoolPayloadWithRiskAck(ownerContact.ID)
+	body = strings.Replace(body, `"distributionMethod":"sub2api"`, `"distributionMethod":"account_login"`, 1)
+	body = strings.Replace(body, `"dailySpendLimitUsd":"50.00"`, `"dailySpendLimitUsd":null`, 1)
+	body = strings.Replace(body, `"weeklySpendLimitUsd":"200.00"`, `"weeklySpendLimitUsd":null`, 1)
+	body = strings.Replace(body, `"vpsRegion":"香港",`, "", 1)
+	body = strings.Replace(body, `"supportsMainlandChinaDirectConnection":true,`, "", 1)
+	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", body)
+	addAuth(request, ownerSession, "carpool-account-login-unlimited")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("account login publish status %d body %s", response.Code, response.Body.String())
+	}
+	var listing struct {
+		DistributionMethod                    string  `json:"distributionMethod"`
+		ProvidesAdminAccount                  bool    `json:"providesAdminAccount"`
+		DailySpendLimitUSD                    *string `json:"dailySpendLimitUsd"`
+		WeeklySpendLimitUSD                   *string `json:"weeklySpendLimitUsd"`
+		VPSRegion                             *string `json:"vpsRegion"`
+		SupportsMainlandChinaDirectConnection *bool   `json:"supportsMainlandChinaDirectConnection"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&listing); err != nil {
+		t.Fatalf("decode account login listing: %v", err)
+	}
+	if listing.DistributionMethod != "account_login" || listing.ProvidesAdminAccount {
+		t.Fatalf("expected account login with normalized admin flag, got %+v", listing)
+	}
+	if listing.DailySpendLimitUSD != nil || listing.WeeklySpendLimitUSD != nil || listing.VPSRegion != nil || listing.SupportsMainlandChinaDirectConnection != nil {
+		t.Fatalf("expected unlimited spend and undeclared network details, got %+v", listing)
+	}
+}
+
+func TestCarpoolSpendLimitsAllowIndependentUnlimitedValuesAndRejectInvalidAmounts(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "spend-limit-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Spend Limit TG", "@spend_limit_owner")
+
+	tests := []struct {
+		name           string
+		oldValue       string
+		newValue       string
+		wantStatus     int
+		wantErrorField string
+	}{
+		{name: "daily unlimited", oldValue: `"dailySpendLimitUsd":"50.00"`, newValue: `"dailySpendLimitUsd":null`, wantStatus: http.StatusCreated},
+		{name: "weekly unlimited", oldValue: `"weeklySpendLimitUsd":"200.00"`, newValue: `"weeklySpendLimitUsd":null`, wantStatus: http.StatusCreated},
+		{name: "zero daily", oldValue: `"dailySpendLimitUsd":"50.00"`, newValue: `"dailySpendLimitUsd":"0"`, wantStatus: http.StatusUnprocessableEntity, wantErrorField: "dailySpendLimitUsd"},
+		{name: "negative weekly", oldValue: `"weeklySpendLimitUsd":"200.00"`, newValue: `"weeklySpendLimitUsd":"-1"`, wantStatus: http.StatusUnprocessableEntity, wantErrorField: "weeklySpendLimitUsd"},
+		{name: "malformed daily", oldValue: `"dailySpendLimitUsd":"50.00"`, newValue: `"dailySpendLimitUsd":"not-a-number"`, wantStatus: http.StatusUnprocessableEntity, wantErrorField: "dailySpendLimitUsd"},
+	}
+
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := strings.Replace(carpoolPayloadWithRiskAck(ownerContact.ID), test.oldValue, test.newValue, 1)
+			request := newJSONRequest(http.MethodPost, "/api/v1/carpools", body)
+			addAuth(request, ownerSession, fmt.Sprintf("carpool-spend-limit-%d", index))
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status %d body %s", response.Code, response.Body.String())
+			}
+			if test.wantErrorField != "" {
+				if !strings.Contains(response.Body.String(), `"field":"`+test.wantErrorField+`"`) {
+					t.Fatalf("expected field %q in body %s", test.wantErrorField, response.Body.String())
+				}
+				assertProblemCode(t, response, "VALIDATION_FAILED")
+			}
+		})
+	}
+}
+
 func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createStudentSession(t, server, "direct-publish-student")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Direct Publish TG", "@direct_student_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Student Direct Publish TG", "@direct_student_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", carpoolPayloadWithRiskAck(ownerContact.ID))
 	addAuth(request, ownerSession, "carpool-direct-publish-student")
@@ -1976,7 +1892,7 @@ func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testin
 func TestCarpoolPublishRequiresLinuxDoBinding(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createStudentSession(t, server, "carpool-student-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Owner TG", "@student_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Student Owner TG", "@student_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools", carpoolPayloadWithRiskAck(ownerContact.ID))
 	addAuth(request, ownerSession, "carpool-student-create")
@@ -1993,28 +1909,40 @@ func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "member-owner")
 	buyerSession := createSession(t, server, "member-buyer", false)
 	secondBuyerSession := createSession(t, server, "member-buyer-two", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Member Owner TG", "@member_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Member Buyer TG", "@member_buyer")
-	secondBuyerContact := createContactMethod(t, server, secondBuyerSession, "telegram", "Member Buyer Two TG", "@member_buyer_two")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Member Owner TG", "@member_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Member Buyer TG", "@member_buyer")
+	secondBuyerContact := createContactMethod(t, server, secondBuyerSession, "wechat", "Member Buyer Two TG", "@member_buyer_two")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "member-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "member-submit")
 	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "member-apply")
 	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "member-accept")
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "member-buyer-confirm")
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "member-owner-confirm")
-	membership := firstCarpoolMembership(t, server, buyerSession, "me", joined.ID)
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", accepted.ID)
 	left := endCarpoolMembership(t, server, buyerSession, "me", "leave", membership.ID, membership.Version, "member-leave")
 	if left.Status != app.CarpoolMembershipStatusLeft || left.EndedAt == nil || left.EndedReason == "" || left.EndedByUserID != buyerSession.userID {
 		t.Fatalf("unexpected left membership: %+v", left)
 	}
 	assertContactSessionConflict(t, server, buyerSession, accepted.ContactSessionID)
+	ownerDetailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools/"+published.ID, nil)
+	addCookie(ownerDetailRequest, ownerSession.cookie)
+	ownerDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(ownerDetailResponse, ownerDetailRequest)
+	var stoppedListing createdCarpool
+	if ownerDetailResponse.Code != http.StatusOK || json.NewDecoder(ownerDetailResponse.Body).Decode(&stoppedListing) != nil {
+		t.Fatalf("load stopped carpool status %d body %s", ownerDetailResponse.Code, ownerDetailResponse.Body.String())
+	}
+	resumeRequest := newJSONRequest(http.MethodPost, "/api/v1/me/carpools/"+published.ID+"/resume-recruiting", `{}`)
+	addAuth(resumeRequest, ownerSession, "member-resume-recruiting")
+	resumeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(stoppedListing.Version, 10)+`"`)
+	resumeResponse := httptest.NewRecorder()
+	server.ServeHTTP(resumeResponse, resumeRequest)
+	if resumeResponse.Code != http.StatusOK {
+		t.Fatalf("resume recruiting status %d body %s", resumeResponse.Code, resumeResponse.Body.String())
+	}
 
 	secondApplication := createCarpoolApplication(t, server, secondBuyerSession, published.ID, secondBuyerContact.ID, "member-apply-two")
 	secondAccepted := acceptCarpoolApplication(t, server, ownerSession, secondApplication.ID, secondApplication.Version, "member-accept-two")
-	secondBuyerConfirmed := confirmCarpoolJoin(t, server, secondBuyerSession, "me", secondAccepted.ID, secondAccepted.Version, "member-buyer-confirm-two")
-	secondJoined := confirmCarpoolJoin(t, server, ownerSession, "owner", secondAccepted.ID, secondBuyerConfirmed.Version, "member-owner-confirm-two")
-	secondMembership := firstCarpoolMembership(t, server, ownerSession, "owner", secondJoined.ID)
+	secondMembership := firstCarpoolMembership(t, server, ownerSession, "owner", secondAccepted.ID)
 	removed := endCarpoolMembership(t, server, ownerSession, "owner", "remove", secondMembership.ID, secondMembership.Version, "member-remove")
 	if removed.Status != app.CarpoolMembershipStatusRemoved || removed.EndedAt == nil || removed.EndedReason == "" || removed.EndedByUserID != ownerSession.userID {
 		t.Fatalf("unexpected removed membership: %+v", removed)
@@ -2022,10 +1950,77 @@ func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
 	assertContactSessionConflict(t, server, secondBuyerSession, secondAccepted.ContactSessionID)
 }
 
+func TestCarpoolMembershipOwnerNoteIsPrivateAndRemovalReasonOptional(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "owner-note-owner")
+	buyerSession := createSession(t, server, "owner-note-buyer", false)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Owner Note TG", "@owner_note")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Owner Note Buyer TG", "@owner_note_buyer")
+
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "owner-note-create")
+	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "owner-note-submit")
+	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "owner-note-apply")
+	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "owner-note-accept")
+	ownerMembership := firstCarpoolMembership(t, server, ownerSession, "owner", accepted.ID)
+
+	noteRequest := newJSONRequest(http.MethodPatch, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/note", `{"note":"车主私有备注"}`)
+	addAuth(noteRequest, ownerSession, "owner-note-write")
+	noteRequest.Header.Set("If-Match", `"`+strconv.FormatInt(ownerMembership.Version, 10)+`"`)
+	noteResponse := httptest.NewRecorder()
+	server.ServeHTTP(noteResponse, noteRequest)
+	if noteResponse.Code != http.StatusOK || !strings.Contains(noteResponse.Body.String(), `"ownerNote":"车主私有备注"`) {
+		t.Fatalf("owner note update should return the private note, got %d body %s", noteResponse.Code, noteResponse.Body.String())
+	}
+	var notedMembership createdCarpoolMembership
+	if err := json.NewDecoder(noteResponse.Body).Decode(&notedMembership); err != nil {
+		t.Fatalf("decode noted membership: %v", err)
+	}
+	if notedMembership.Version != ownerMembership.Version+1 {
+		t.Fatalf("expected owner note version increment, got %d from %d", notedMembership.Version, ownerMembership.Version)
+	}
+
+	buyerMembershipsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpool-memberships", nil)
+	addCookie(buyerMembershipsRequest, buyerSession.cookie)
+	buyerMembershipsResponse := httptest.NewRecorder()
+	server.ServeHTTP(buyerMembershipsResponse, buyerMembershipsRequest)
+	if buyerMembershipsResponse.Code != http.StatusOK || strings.Contains(buyerMembershipsResponse.Body.String(), "ownerNote") {
+		t.Fatalf("buyer membership response must omit owner note, got %d body %s", buyerMembershipsResponse.Code, buyerMembershipsResponse.Body.String())
+	}
+
+	clearRequest := newJSONRequest(http.MethodPatch, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/note", `{"note":""}`)
+	addAuth(clearRequest, ownerSession, "owner-note-clear")
+	clearRequest.Header.Set("If-Match", `"`+strconv.FormatInt(notedMembership.Version, 10)+`"`)
+	clearResponse := httptest.NewRecorder()
+	server.ServeHTTP(clearResponse, clearRequest)
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("clear owner note status %d body %s", clearResponse.Code, clearResponse.Body.String())
+	}
+	var clearedMembership createdCarpoolMembership
+	if err := json.NewDecoder(clearResponse.Body).Decode(&clearedMembership); err != nil {
+		t.Fatalf("decode cleared membership: %v", err)
+	}
+
+	removeRequest := newJSONRequest(http.MethodPost, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/remove", `{}`)
+	addAuth(removeRequest, ownerSession, "owner-note-remove")
+	removeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(clearedMembership.Version, 10)+`"`)
+	removeResponse := httptest.NewRecorder()
+	server.ServeHTTP(removeResponse, removeRequest)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("owner remove without reason status %d body %s", removeResponse.Code, removeResponse.Body.String())
+	}
+	var removedMembership createdCarpoolMembership
+	if err := json.NewDecoder(removeResponse.Body).Decode(&removedMembership); err != nil {
+		t.Fatalf("decode removed membership: %v", err)
+	}
+	if removedMembership.Status != app.CarpoolMembershipStatusRemoved || removedMembership.EndedReason != "" {
+		t.Fatalf("expected optional removal reason to remain empty, got %+v", removedMembership)
+	}
+}
+
 func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Owner TG", "@api_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Owner TG", "@api_owner")
 
 	customMultiplier := createAPIServiceWithPayload(t, server, ownerSession, apiServicePayload(ownerContact.ID, "1.2000"), "api-service-custom-multiplier")
 	if len(customMultiplier.Models) != 1 || customMultiplier.Models[0].MerchantMultiplier != "1.2000" {
@@ -2058,7 +2053,7 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	}
 
 	studentSession := createStudentSession(t, server, "api-student-owner")
-	studentContact := createContactMethod(t, server, studentSession, "telegram", "API Student Owner TG", "@api_student_owner")
+	studentContact := createContactMethod(t, server, studentSession, "wechat", "API Student Owner TG", "@api_student_owner")
 	studentCreate := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", apiServicePayload(studentContact.ID, "1.0000"))
 	addAuth(studentCreate, studentSession, "api-service-student-create")
 	studentResponse := httptest.NewRecorder()
@@ -2149,7 +2144,7 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 func TestOwnerAPIServicesSalesViewAndOwnerOnlySummary(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-sales-view-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Sales View TG", "@api_sales_view")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Sales View TG", "@api_sales_view")
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-sales-view-create")
 
 	defaultRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services", nil)
@@ -2253,8 +2248,8 @@ func TestAPIPurchaseIntentCreateContactAndLifecycleFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "api-intent-owner")
 	buyerSession := createSession(t, server, "api-intent-buyer", false)
 	adminSession := createSession(t, server, "api-intent-admin", true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Intent Owner TG", "@api_intent_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Intent Buyer TG", "@api_intent_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Intent Owner TG", "@api_intent_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "API Intent Buyer TG", "@api_intent_buyer")
 
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-intent-service-create")
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-intent-service-submit")
@@ -2313,8 +2308,8 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "api-order-owner")
 	buyerSession := createStudentSession(t, server, "api-order-buyer")
 	adminSession := createSession(t, server, "api-order-admin", true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Order Owner TG", "@api_order_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Order Buyer TG", "@api_order_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Order Owner TG", "@api_order_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "API Order Buyer TG", "@api_order_buyer")
 
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-order-service-create")
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-order-service-submit")
@@ -2417,21 +2412,30 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	disputeOrder := createAPIOrder(t, server, buyerSession, disputeIntent.ID, "wechat", "api-order-dispute-create")
 	disputePaid := apiOrderAction(t, server, buyerSession, "me", disputeOrder.ID, "submit-payment", disputeOrder.Version, "api-order-dispute-submit-payment", `{"paymentSummary":"已付款但站外确认存在争议。"}`)
 	disputed := apiOrderAction(t, server, buyerSession, "me", disputePaid.ID, "dispute", disputePaid.Version, "api-order-open-dispute", `{"issueCode":"not_delivered","requestedResolution":"full_refund","requestedAmountCny":"","reason":"付款后商户未按站外确认说明继续处理。"}`)
-	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "negotiating" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
+	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "pending_seller_response" || disputed.DisputeCaseID == "" || disputed.DisputeNextActor != "respondent" || disputed.DisputeDueAt == nil || !disputed.DisputeNeedsAction || disputed.Version != 3 ||
+		len(disputed.DisputeAvailableActions) != 1 || disputed.DisputeAvailableActions[0] != "withdraw" {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
 	}
 	buyerDisputeDetail := getMyDispute(t, server, buyerSession, disputed.DisputeCaseID)
 	ownerDisputeDetail := getMyDispute(t, server, ownerSession, disputed.DisputeCaseID)
-	if buyerDisputeDetail.IssueCode != "not_delivered" ||
+	if buyerDisputeDetail.ViewerUserID != buyerSession.userID ||
+		buyerDisputeDetail.IssueCode != "not_delivered" ||
 		buyerDisputeDetail.RequestedResolution != "full_refund" ||
 		buyerDisputeDetail.RequestedAmountCNY != "" ||
-		len(buyerDisputeDetail.Messages) != 1 ||
-		buyerDisputeDetail.Messages[0].SenderUserID != buyerSession.userID ||
-		buyerDisputeDetail.Messages[0].Body != "付款后商户未按站外确认说明继续处理。" {
+		buyerDisputeDetail.Status != "pending_seller_response" ||
+		buyerDisputeDetail.NextActor != "respondent" ||
+		buyerDisputeDetail.DueAt == nil ||
+		buyerDisputeDetail.ApplicantStatement != "付款后商户未按站外确认说明继续处理。" ||
+		len(buyerDisputeDetail.AvailableActions) != 1 ||
+		buyerDisputeDetail.AvailableActions[0] != "withdraw" ||
+		len(buyerDisputeDetail.Messages) != 0 {
 		t.Fatalf("unexpected buyer dispute detail: %+v", buyerDisputeDetail)
 	}
-	if ownerDisputeDetail.IssueCode != buyerDisputeDetail.IssueCode ||
+	if ownerDisputeDetail.ViewerUserID != ownerSession.userID ||
+		ownerDisputeDetail.IssueCode != buyerDisputeDetail.IssueCode ||
 		ownerDisputeDetail.RequestedResolution != buyerDisputeDetail.RequestedResolution ||
+		len(ownerDisputeDetail.AvailableActions) != 1 ||
+		ownerDisputeDetail.AvailableActions[0] != "seller_decision" ||
 		len(ownerDisputeDetail.Messages) != len(buyerDisputeDetail.Messages) {
 		t.Fatalf("participants must read the same dispute facts: buyer=%+v owner=%+v", buyerDisputeDetail, ownerDisputeDetail)
 	}
@@ -2469,30 +2473,35 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	assertProblemCode(t, outsiderDetailResponse, domain.CodeObjectNotFound)
 
-	withOwnerMessage := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "messages", "api-order-dispute-owner-message", `{"body":"已核对订单，当前交付仍需补充处理。"}`)
-	if len(withOwnerMessage.Messages) != 2 || withOwnerMessage.Messages[1].SenderUserID != ownerSession.userID {
-		t.Fatalf("expected immutable owner message in dispute history, got %+v", withOwnerMessage.Messages)
+	rejectedDispute := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "seller-decision", "api-order-dispute-owner-reject", `{"decision":"rejected","reason":"现有交付安排符合订单约定，不同意退款申请。"}`)
+	if rejectedDispute.Status != "pending_applicant_decision" || rejectedDispute.SellerDecision != "rejected" || rejectedDispute.SellerDecisionReason != "现有交付安排符合订单约定，不同意退款申请。" || rejectedDispute.SellerDecidedAt == nil || rejectedDispute.NextActor != "applicant" || rejectedDispute.ApplicantDecisionDueAt == nil || rejectedDispute.DueAt == nil {
+		t.Fatalf("seller rejection must wait for the applicant decision: %+v", rejectedDispute)
 	}
-	pendingProposal := disputeParticipantAction(t, server, buyerSession, disputed.DisputeCaseID, "settlement-proposals", "api-order-dispute-buyer-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"请商户继续完成本订单交付。"}`)
-	if len(pendingProposal.SettlementProposals) != 1 || pendingProposal.SettlementProposals[0].Status != "pending" {
-		t.Fatalf("expected pending buyer proposal, got %+v", pendingProposal.SettlementProposals)
+	duplicateResponseRequest := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputed.DisputeCaseID+"/seller-decision", `{"decision":"accepted","reason":"不能修改已经提交的卖家决定。"}`)
+	addAuth(duplicateResponseRequest, ownerSession, "api-order-dispute-owner-decision-again")
+	duplicateSellerDecision := httptest.NewRecorder()
+	server.ServeHTTP(duplicateSellerDecision, duplicateResponseRequest)
+	if duplicateSellerDecision.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate seller decision to fail, got %d body %s", duplicateSellerDecision.Code, duplicateSellerDecision.Body.String())
 	}
-	pendingProposalID := pendingProposal.SettlementProposals[0].ID
-	escalatedDispute := disputeParticipantAction(t, server, ownerSession, disputed.DisputeCaseID, "escalate", "api-order-dispute-owner-escalate", `{"reason":"双方对交付时点仍无法达成一致。"}`)
-	if escalatedDispute.Status != "open" || len(escalatedDispute.SettlementProposals) != 1 || escalatedDispute.SettlementProposals[0].Status != "superseded" {
-		t.Fatalf("platform escalation must preserve and supersede pending proposal history: %+v", escalatedDispute)
+	assertProblemCode(t, duplicateSellerDecision, domain.CodeInvalidStateTransition)
+
+	for _, removedPath := range []string{"response", "self-resolve", "messages", "settlement-proposals", "escalate"} {
+		request := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputed.DisputeCaseID+"/"+removedPath, `{}`)
+		addAuth(request, ownerSession, "api-order-dispute-removed-"+removedPath)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("expected removed route %s to return 404, got %d body %s", removedPath, response.Code, response.Body.String())
+		}
 	}
-	confirmAfterEscalation := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+disputed.DisputeCaseID+"/settlement-proposals/"+pendingProposalID+"/confirm", `{}`)
-	addAuth(confirmAfterEscalation, ownerSession, "api-order-dispute-confirm-after-escalation")
-	confirmAfterEscalationResponse := httptest.NewRecorder()
-	server.ServeHTTP(confirmAfterEscalationResponse, confirmAfterEscalation)
-	if confirmAfterEscalationResponse.Code != http.StatusConflict {
-		t.Fatalf("expected proposal confirmation after escalation to fail, got %d body %s", confirmAfterEscalationResponse.Code, confirmAfterEscalationResponse.Body.String())
+	escalatedDispute := disputeParticipantAction(t, server, buyerSession, disputed.DisputeCaseID, "platform-intervention", "api-order-dispute-buyer-intervention", `{"reason":"无法接受卖家的拒绝理由，请平台审核订单与交付事实。"}`)
+	if escalatedDispute.Status != "open" || escalatedDispute.NextActor != "admin" || escalatedDispute.DueAt != nil || escalatedDispute.EscalatedByUserID != buyerSession.userID || escalatedDispute.EscalatedAt == nil || escalatedDispute.PlatformInterventionReason != "无法接受卖家的拒绝理由，请平台审核订单与交付事实。" {
+		t.Fatalf("buyer intervention must move the case to administrator review: %+v", escalatedDispute)
 	}
-	assertProblemCode(t, confirmAfterEscalationResponse, domain.CodeInvalidStateTransition)
-	escalatedOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
-	if escalatedOrder.DisputeStatus != "open" || escalatedOrder.Status != disputed.Status || escalatedOrder.Version != disputed.Version+1 {
-		t.Fatalf("platform escalation must only advance the dispute projection: before=%+v after=%+v", disputed, escalatedOrder)
+	respondedOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
+	if respondedOrder.DisputeStatus != "open" || respondedOrder.DisputeNextActor != "admin" || respondedOrder.DisputeDueAt != nil || respondedOrder.DisputeNeedsAction || respondedOrder.Status != disputed.Status || respondedOrder.Version != disputed.Version+2 {
+		t.Fatalf("platform intervention must preserve the order lifecycle: before=%+v after=%+v", disputed, respondedOrder)
 	}
 
 	openAppealRequest := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
@@ -2516,10 +2525,10 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	addAuth(forbiddenAppeal, buyerSession, "api-order-dispute-non-subject-appeal")
 	forbiddenAppealResponse := httptest.NewRecorder()
 	server.ServeHTTP(forbiddenAppealResponse, forbiddenAppeal)
-	if forbiddenAppealResponse.Code != http.StatusForbidden {
-		t.Fatalf("expected non-subject appeal forbidden, got %d body %s", forbiddenAppealResponse.Code, forbiddenAppealResponse.Body.String())
+	if forbiddenAppealResponse.Code != http.StatusConflict {
+		t.Fatalf("expected open dispute appeal conflict, got %d body %s", forbiddenAppealResponse.Code, forbiddenAppealResponse.Body.String())
 	}
-	assertProblemCode(t, forbiddenAppealResponse, domain.CodePermissionDenied)
+	assertProblemCode(t, forbiddenAppealResponse, domain.CodeInvalidStateTransition)
 
 	outsiderAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
 		"disputeId":"`+disputed.DisputeCaseID+`",
@@ -2544,7 +2553,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	assertProblemCode(t, blockedIntentResponse, domain.CodeActiveAPIOrderDispute)
 
 	merchantOwnerSession := createLinuxDoSession(t, server, "api-order-merchant-dispute-owner")
-	merchantOwnerContact := createContactMethod(t, server, merchantOwnerSession, "telegram", "Merchant Dispute Owner TG", "@merchant_dispute_owner")
+	merchantOwnerContact := createContactMethod(t, server, merchantOwnerSession, "wechat", "Merchant Dispute Owner TG", "@merchant_dispute_owner")
 	merchantService := createAPIService(t, server, merchantOwnerSession, merchantOwnerContact.ID, "api-order-merchant-dispute-service-create")
 	merchantSubmitted := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantService.ID, "submit-review", merchantService.Version, "api-order-merchant-dispute-service-submit")
 	merchantPublished := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantSubmitted.ID, "publish", merchantSubmitted.Version, "api-order-merchant-dispute-service-publish")
@@ -2553,34 +2562,27 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
 	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
 	merchantDisputeBody := `{"issueCode":"payment_dispute","requestedResolution":"other","requestedAmountCny":"","reason":"收款记录与买家提交的信息不一致，需要双方协商核对。"}`
-	merchantDisputed := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
-	if merchantDisputed.DisputeStatus != "negotiating" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
-		t.Fatalf("unexpected merchant-opened API order dispute: %+v", merchantDisputed)
+	merchantDisputeRequest := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+merchantDisputePaid.ID+"/dispute", merchantDisputeBody)
+	addAuth(merchantDisputeRequest, merchantOwnerSession, "api-order-merchant-open-dispute")
+	merchantDisputeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(merchantDisputePaid.Version, 10)+`"`)
+	merchantDisputeResponse := httptest.NewRecorder()
+	server.ServeHTTP(merchantDisputeResponse, merchantDisputeRequest)
+	if merchantDisputeResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected seller-originated order dispute to be hidden, got %d body %s", merchantDisputeResponse.Code, merchantDisputeResponse.Body.String())
 	}
-	merchantDisputeReplay := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
-	if merchantDisputeReplay.DisputeCaseID != merchantDisputed.DisputeCaseID || merchantDisputeReplay.Version != merchantDisputed.Version {
-		t.Fatalf("expected idempotent merchant dispute replay, got %+v and %+v", merchantDisputed, merchantDisputeReplay)
+	unchangedMerchantOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID)
+	if unchangedMerchantOrder.Version != merchantDisputePaid.Version || unchangedMerchantOrder.DisputeStatus != "none" || unchangedMerchantOrder.DisputeCaseID != "" {
+		t.Fatalf("removed seller dispute route must not mutate the order: before=%+v after=%+v", merchantDisputePaid, unchangedMerchantOrder)
 	}
-	merchantProposal := disputeParticipantAction(t, server, merchantOwnerSession, merchantDisputed.DisputeCaseID, "settlement-proposals", "api-order-merchant-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"商户将在约定时间内继续完成交付。"}`)
-	if len(merchantProposal.SettlementProposals) != 1 || merchantProposal.SettlementProposals[0].ProposedByUserID != merchantOwnerSession.userID {
-		t.Fatalf("expected seller proposal, got %+v", merchantProposal.SettlementProposals)
+
+	buyerOpened := apiOrderAction(t, server, buyerSession, "me", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-buyer-open-withdrawable-dispute", merchantDisputeBody)
+	withdrawn := disputeParticipantAction(t, server, buyerSession, buyerOpened.DisputeCaseID, "withdraw", "api-order-buyer-withdraw-dispute", `{"reason":"申请有误，不再继续本次售后。"}`)
+	if withdrawn.Status != "withdrawn" || withdrawn.NextActor != "none" {
+		t.Fatalf("only the applicant withdrawal must close the dispute, got %+v", withdrawn)
 	}
-	merchantProposalID := merchantProposal.SettlementProposals[0].ID
-	selfConfirm := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+merchantDisputed.DisputeCaseID+"/settlement-proposals/"+merchantProposalID+"/confirm", `{}`)
-	addAuth(selfConfirm, merchantOwnerSession, "api-order-merchant-self-confirm")
-	selfConfirmResponse := httptest.NewRecorder()
-	server.ServeHTTP(selfConfirmResponse, selfConfirm)
-	if selfConfirmResponse.Code != http.StatusConflict {
-		t.Fatalf("expected proposal creator self-confirmation to fail, got %d body %s", selfConfirmResponse.Code, selfConfirmResponse.Body.String())
-	}
-	assertProblemCode(t, selfConfirmResponse, domain.CodeInvalidStateTransition)
-	merchantAgreement := disputeParticipantAction(t, server, buyerSession, merchantDisputed.DisputeCaseID, "settlement-proposals/"+merchantProposalID+"/confirm", "api-order-buyer-confirm-merchant-proposal", `{}`)
-	if merchantAgreement.Status != "closed" || len(merchantAgreement.SettlementProposals) != 1 || merchantAgreement.SettlementProposals[0].Status != "accepted" {
-		t.Fatalf("counterparty confirmation must close the agreed dispute, got %+v", merchantAgreement)
-	}
-	merchantAgreedOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", merchantDisputed.ID)
-	if merchantAgreedOrder.DisputeStatus != "closed" || merchantAgreedOrder.Status != merchantDisputed.Status || merchantAgreedOrder.Version != merchantDisputed.Version+1 {
-		t.Fatalf("agreement must only close the dispute projection: before=%+v after=%+v", merchantDisputed, merchantAgreedOrder)
+	withdrawnOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", buyerOpened.ID)
+	if withdrawnOrder.DisputeStatus != "none" || withdrawnOrder.Status != buyerOpened.Status || withdrawnOrder.Version != buyerOpened.Version+1 {
+		t.Fatalf("withdrawal must only close the dispute projection: before=%+v after=%+v", buyerOpened, withdrawnOrder)
 	}
 	adminDisputes := listAdminDisputes(t, server, adminSession)
 	foundDispute := false
@@ -2627,10 +2629,10 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	resolvedBuyerOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
 	resolvedOwnerOrder := getAPIOrder(t, server, ownerSession, "owner", disputed.ID)
-	if resolvedBuyerOrder.DisputeStatus != "closed" || resolvedOwnerOrder.DisputeStatus != "closed" {
-		t.Fatalf("resolved dispute must project closed to both participants: buyer=%+v owner=%+v", resolvedBuyerOrder, resolvedOwnerOrder)
+	if resolvedBuyerOrder.DisputeStatus != "none" || resolvedOwnerOrder.DisputeStatus != "none" {
+		t.Fatalf("resolved dispute must clear the active projection for both participants: buyer=%+v owner=%+v", resolvedBuyerOrder, resolvedOwnerOrder)
 	}
-	if resolvedBuyerOrder.Status != disputed.Status || resolvedOwnerOrder.Status != disputed.Status || resolvedBuyerOrder.Version != escalatedOrder.Version+1 || resolvedOwnerOrder.Version != escalatedOrder.Version+1 {
+	if resolvedBuyerOrder.Status != disputed.Status || resolvedOwnerOrder.Status != disputed.Status || resolvedBuyerOrder.Version != respondedOrder.Version+1 || resolvedOwnerOrder.Version != respondedOrder.Version+1 {
 		t.Fatalf("dispute projection must preserve order lifecycle and increment once: before=%+v buyer=%+v owner=%+v", disputed, resolvedBuyerOrder, resolvedOwnerOrder)
 	}
 	resolvedBuyerDisputes, _ := listMyDisputes(t, server, buyerSession)
@@ -2862,7 +2864,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 func TestCarpoolEligibilityReturnsCapabilityReasonForStudent(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "eligibility-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Eligibility Owner TG", "@eligibility_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Eligibility Owner TG", "@eligibility_owner")
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "eligibility-listing-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "eligibility-listing-publish")
 	studentSession := createStudentSession(t, server, "eligibility-student")
@@ -2877,11 +2879,12 @@ func TestDisputeParticipantMutationsAuthenticateBeforeJSONDecoding(t *testing.T)
 	server := newTestServer(time.Now())
 	session := createSession(t, server, "dispute-auth-order", false)
 	paths := []string{
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/messages",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals/00000000-0000-4000-8000-000000000002/confirm",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/settlement-proposals/00000000-0000-4000-8000-000000000002/reject",
-		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/escalate",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/seller-decision",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/platform-intervention",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/withdraw",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/remedy/claim",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/remedy/confirm",
+		"/api/v1/me/disputes/00000000-0000-4000-8000-000000000001/remedy/contest",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -2909,8 +2912,8 @@ func TestConcurrentAPIOrderCreateForSameIntentReturnsStableConflict(t *testing.T
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-order-race-owner")
 	buyerSession := createSession(t, server, "api-order-race-buyer", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Race Owner TG", "@api_order_race_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Race Buyer TG", "@api_order_race_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Race Owner TG", "@api_order_race_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "API Race Buyer TG", "@api_order_race_buyer")
 
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-order-race-service-create")
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-order-race-service-submit")
@@ -2983,9 +2986,9 @@ func TestCarpoolAcceptRejectsWhenNoSeatAvailable(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "seat-owner")
 	firstBuyer := createSession(t, server, "seat-buyer-one", false)
 	secondBuyer := createSession(t, server, "seat-buyer-two", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Seat Owner TG", "@seat_owner")
-	firstBuyerContact := createContactMethod(t, server, firstBuyer, "telegram", "Seat Buyer One TG", "@seat_buyer_one")
-	secondBuyerContact := createContactMethod(t, server, secondBuyer, "telegram", "Seat Buyer Two TG", "@seat_buyer_two")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Seat Owner TG", "@seat_owner")
+	firstBuyerContact := createContactMethod(t, server, firstBuyer, "wechat", "Seat Buyer One TG", "@seat_buyer_one")
+	secondBuyerContact := createContactMethod(t, server, secondBuyer, "wechat", "Seat Buyer Two TG", "@seat_buyer_two")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "seat-carpool-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "seat-carpool-submit-review")
@@ -3005,29 +3008,31 @@ func TestCarpoolAcceptRejectsWhenNoSeatAvailable(t *testing.T) {
 	assertProblemCode(t, response, "SEAT_UNAVAILABLE")
 }
 
-func TestExpiredCarpoolReservationReleasesSeatAndBuyerApplicationSlot(t *testing.T) {
+func TestFullCarpoolDoesNotReopenWithoutOwnerAction(t *testing.T) {
 	current := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 	server := NewServer(app.NewServiceWithClock(func() time.Time { return current }))
 	ownerSession := createLinuxDoSession(t, server, "expiry-owner")
 	firstBuyer := createSession(t, server, "expiry-buyer-one", false)
 	secondBuyer := createSession(t, server, "expiry-buyer-two", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Expiry Owner TG", "@expiry_owner")
-	firstBuyerContact := createContactMethod(t, server, firstBuyer, "telegram", "Expiry Buyer One TG", "@expiry_buyer_one")
-	secondBuyerContact := createContactMethod(t, server, secondBuyer, "telegram", "Expiry Buyer Two TG", "@expiry_buyer_two")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Expiry Owner TG", "@expiry_owner")
+	firstBuyerContact := createContactMethod(t, server, firstBuyer, "wechat", "Expiry Buyer One TG", "@expiry_buyer_one")
+	secondBuyerContact := createContactMethod(t, server, secondBuyer, "wechat", "Expiry Buyer Two TG", "@expiry_buyer_two")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "expiry-carpool-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "expiry-carpool-submit-review")
 	firstApplication := createCarpoolApplication(t, server, firstBuyer, published.ID, firstBuyerContact.ID, "expiry-apply-one")
-	_ = acceptCarpoolApplication(t, server, ownerSession, firstApplication.ID, firstApplication.Version, "expiry-accept-one")
-
-	current = current.Add(31 * time.Minute)
-	secondApplication := createCarpoolApplication(t, server, secondBuyer, published.ID, secondBuyerContact.ID, "expiry-apply-two")
-	if secondApplication.Status != app.CarpoolApplicationStatusPendingOwner {
-		t.Fatalf("expected second buyer to apply after reservation expiry, got %+v", secondApplication)
+	accepted := acceptCarpoolApplication(t, server, ownerSession, firstApplication.ID, firstApplication.Version, "expiry-accept-one")
+	membership := firstCarpoolMembership(t, server, firstBuyer, "me", accepted.ID)
+	left := endCarpoolMembership(t, server, firstBuyer, "me", "leave", membership.ID, membership.Version, "full-carpool-first-leave")
+	if left.Status != app.CarpoolMembershipStatusLeft {
+		t.Fatalf("expected first buyer to leave, got %+v", left)
 	}
-	reapplied := createCarpoolApplication(t, server, firstBuyer, published.ID, firstBuyerContact.ID, "expiry-reapply-one")
-	if reapplied.Status != app.CarpoolApplicationStatusPendingOwner {
-		t.Fatalf("expected original buyer to reapply after reservation expiry, got %+v", reapplied)
+	blockedRequest := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+published.ID+"/applications", carpoolApplicationPayload(secondBuyerContact.ID))
+	addAuth(blockedRequest, secondBuyer, "full-carpool-second-apply")
+	blockedResponse := httptest.NewRecorder()
+	server.ServeHTTP(blockedResponse, blockedRequest)
+	if blockedResponse.Code != http.StatusNotFound {
+		t.Fatalf("member exit must not resume recruiting, got %d body %s", blockedResponse.Code, blockedResponse.Body.String())
 	}
 }
 
@@ -3191,6 +3196,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 
 	first := createContactMethod(t, server, session, "telegram", "Profile TG", "@profile_owner")
 	second := createContactMethod(t, server, session, "email", "Profile Email", "profile@example.com")
+	transactionContact := createContactMethod(t, server, session, "wechat", "Profile WeChat", "profile-owner-wechat")
 
 	listContacts := httptest.NewRequest(http.MethodGet, "/api/v1/me/contact-methods", nil)
 	addCookie(listContacts, session.cookie)
@@ -3199,8 +3205,8 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if listContactsResponse.Code != http.StatusOK {
 		t.Fatalf("list contacts status %d body %s", listContactsResponse.Code, listContactsResponse.Body.String())
 	}
-	if !strings.Contains(listContactsResponse.Body.String(), first.ID) || !strings.Contains(listContactsResponse.Body.String(), second.ID) {
-		t.Fatalf("expected both contacts in list, got %s", listContactsResponse.Body.String())
+	if !strings.Contains(listContactsResponse.Body.String(), first.ID) || !strings.Contains(listContactsResponse.Body.String(), second.ID) || !strings.Contains(listContactsResponse.Body.String(), transactionContact.ID) {
+		t.Fatalf("expected all contacts in list, got %s", listContactsResponse.Body.String())
 	}
 
 	updateContact := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+second.ID, `{
@@ -3221,7 +3227,20 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		t.Fatalf("expected updated contact default, got %s", updateContactResponse.Body.String())
 	}
 
-	verifyContact := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/verify", `{}`)
+	startContactVerification := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/email-verification/start", `{}`)
+	addAuth(startContactVerification, session, "")
+	startContactVerificationResponse := httptest.NewRecorder()
+	server.ServeHTTP(startContactVerificationResponse, startContactVerification)
+	if startContactVerificationResponse.Code != http.StatusOK {
+		t.Fatalf("start contact verification status %d body %s", startContactVerificationResponse.Code, startContactVerificationResponse.Body.String())
+	}
+	var contactChallenge struct {
+		DevCode string `json:"devCode"`
+	}
+	if err := json.NewDecoder(startContactVerificationResponse.Body).Decode(&contactChallenge); err != nil || contactChallenge.DevCode == "" {
+		t.Fatalf("decode contact verification challenge: challenge=%+v error=%v", contactChallenge, err)
+	}
+	verifyContact := newJSONRequest(http.MethodPost, "/api/v1/contact-methods/"+second.ID+"/email-verification/confirm", `{"code":"`+contactChallenge.DevCode+`"}`)
 	addAuth(verifyContact, session, "verify-profile-contact")
 	verifyContactResponse := httptest.NewRecorder()
 	server.ServeHTTP(verifyContactResponse, verifyContact)
@@ -3309,7 +3328,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		}
 	}
 
-	apiService := createAPIServiceWithPayload(t, server, session, strings.Replace(apiServicePayload(second.ID, "1.0000"), `"merchantIdentityMode":"public_profile"`, `"merchantProfileId":"`+merchant.ID+`","merchantIdentityMode":"store_alias"`, 1), "profile-store-api-service")
+	apiService := createAPIServiceWithPayload(t, server, session, strings.Replace(apiServicePayload(transactionContact.ID, "1.0000"), `"merchantIdentityMode":"public_profile"`, `"merchantProfileId":"`+merchant.ID+`","merchantIdentityMode":"store_alias"`, 1), "profile-store-api-service")
 	submitted := ownerAPIServiceAction(t, server, session, apiService.ID, "submit-review", apiService.Version, "profile-store-api-submit")
 	online := ownerAPIServiceAction(t, server, session, apiService.ID, "publish", submitted.Version, "profile-store-api-publish")
 	orderable := updateAPIServiceOrderSettings(t, server, session, online.ID, online.Version, true, "profile-store-api-settings")
@@ -3324,11 +3343,11 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if !strings.Contains(publicServiceBody, `"merchantDisplayName":"Profile Store"`) || !strings.Contains(publicServiceBody, `"merchantProfileSlug":"profile-store"`) || !strings.Contains(publicServiceBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public API service to expose store alias, got %s", publicServiceBody)
 	}
-	if strings.Contains(publicServiceBody, session.userID) || strings.Contains(publicServiceBody, second.ID) || strings.Contains(publicServiceBody, "updated-profile@example.com") {
+	if strings.Contains(publicServiceBody, session.userID) || strings.Contains(publicServiceBody, second.ID) || strings.Contains(publicServiceBody, transactionContact.ID) || strings.Contains(publicServiceBody, "updated-profile@example.com") {
 		t.Fatalf("public API service leaked owner/contact data: %s", publicServiceBody)
 	}
 
-	publicIdentityService := createAPIServiceWithPayload(t, server, session, apiServicePayload(second.ID, "1.0000"), "profile-public-api-service")
+	publicIdentityService := createAPIServiceWithPayload(t, server, session, apiServicePayload(transactionContact.ID, "1.0000"), "profile-public-api-service")
 	publicIdentitySubmitted := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "submit-review", publicIdentityService.Version, "profile-public-api-submit")
 	publicIdentityOnline := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "publish", publicIdentitySubmitted.Version, "profile-public-api-publish")
 	publicIdentityOrderable := updateAPIServiceOrderSettings(t, server, session, publicIdentityOnline.ID, publicIdentityOnline.Version, true, "profile-public-api-settings")
@@ -3371,9 +3390,9 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	student := createStudentSession(t, server, "contact-scope-student")
 
 	sellerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"wechat",
-		"label":"学生微信",
-		"value":"student-wechat",
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"seller-scope@example.edu",
 		"usageScopes":["api_merchant"],
 		"isDefault":false,
 		"enabled":true
@@ -3387,14 +3406,14 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	assertProblemCode(t, sellerScopeResponse, domain.CodeCapabilityRequired)
 
 	buyerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"wechat",
-		"label":"学生微信",
-		"value":"student-wechat",
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"buyer-scope@example.edu",
 		"usageScopes":["dispute","buyer","dispute"],
 		"isDefault":false,
 		"enabled":true
 	}`)
-	// 复用被拒绝请求的 key，证明 capability 拒绝发生在幂等 Begin 之前。
+	// Reuse the rejected request key to prove capability denial precedes idempotency acquisition.
 	addAuth(buyerScope, student, "student-contact-scope")
 	buyerScopeResponse := httptest.NewRecorder()
 	server.ServeHTTP(buyerScopeResponse, buyerScope)
@@ -3408,14 +3427,14 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	if err := json.NewDecoder(buyerScopeResponse.Body).Decode(&created); err != nil {
 		t.Fatalf("decode student contact: %v", err)
 	}
-	if created.ID == "" || len(created.UsageScopes) != 2 || created.UsageScopes[0] != "buyer" || created.UsageScopes[1] != "dispute" {
+	if created.ID == "" || !slices.Equal(created.UsageScopes, []string{"buyer", "dispute"}) {
 		t.Fatalf("unexpected canonical student contact scopes: %+v", created)
 	}
 
 	updateSellerScope := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
-		"type":"wechat",
-		"label":"学生微信",
-		"value":"student-wechat",
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"buyer-scope@example.edu",
 		"usageScopes":["carpool_owner","buyer"],
 		"isDefault":false,
 		"enabled":true
@@ -3429,9 +3448,9 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	assertProblemCode(t, updateSellerScopeResponse, domain.CodeCapabilityRequired)
 
 	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"wechat",
-		"label":"未知范围",
-		"value":"unknown-scope",
+		"type":"email",
+		"label":"未知范围邮箱",
+		"value":"unknown-scope@example.edu",
 		"usageScopes":["unknown_scope"],
 		"isDefault":false,
 		"enabled":true
@@ -3443,6 +3462,76 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 		t.Fatalf("unknown contact scope status %d body %s", unknownScopeResponse.Code, unknownScopeResponse.Body.String())
 	}
 	assertProblemCode(t, unknownScopeResponse, domain.CodeValidationFailed)
+}
+
+func TestStudentWechatScopesAreAutomaticAndDoNotGrantSellerCapability(t *testing.T) {
+	server := newTestServer(time.Now())
+	student := createStudentSession(t, server, "contact-scope-student")
+
+	createWechat := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["api_merchant"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(createWechat, student, "student-contact-scope")
+	createWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(createWechatResponse, createWechat)
+	if createWechatResponse.Code != http.StatusCreated {
+		t.Fatalf("student WeChat creation status %d body %s", createWechatResponse.Code, createWechatResponse.Body.String())
+	}
+	var created struct {
+		ID          string   `json:"id"`
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(createWechatResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode student contact: %v", err)
+	}
+	wantScopes := []string{"carpool_owner", "api_merchant", "buyer", "dispute"}
+	if created.ID == "" || !slices.Equal(created.UsageScopes, wantScopes) {
+		t.Fatalf("unexpected automatic student WeChat scopes: %+v", created)
+	}
+
+	updateWechat := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["unknown_scope"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(updateWechat, student, "student-contact-update")
+	updateWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateWechatResponse, updateWechat)
+	if updateWechatResponse.Code != http.StatusOK {
+		t.Fatalf("student WeChat update status %d body %s", updateWechatResponse.Code, updateWechatResponse.Body.String())
+	}
+	var updated struct {
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(updateWechatResponse.Body).Decode(&updated); err != nil || !slices.Equal(updated.UsageScopes, wantScopes) {
+		t.Fatalf("updated WeChat scopes were not normalized: payload=%+v error=%v", updated, err)
+	}
+
+	deleteWechat := httptest.NewRequest(http.MethodDelete, "/api/v1/contact-methods/"+created.ID, nil)
+	addAuth(deleteWechat, student, "student-required-wechat-delete")
+	deleteWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(deleteWechatResponse, deleteWechat)
+	if deleteWechatResponse.Code != http.StatusConflict {
+		t.Fatalf("required WeChat delete status %d body %s", deleteWechatResponse.Code, deleteWechatResponse.Body.String())
+	}
+	assertProblemCode(t, deleteWechatResponse, domain.CodeInvalidStateTransition)
+
+	merchantWrite := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", `{}`)
+	addAuth(merchantWrite, student, "student-api-service-create")
+	merchantWriteResponse := httptest.NewRecorder()
+	server.ServeHTTP(merchantWriteResponse, merchantWrite)
+	if merchantWriteResponse.Code != http.StatusForbidden {
+		t.Fatalf("automatic WeChat scopes granted seller capability: status %d body %s", merchantWriteResponse.Code, merchantWriteResponse.Body.String())
+	}
+	assertProblemCode(t, merchantWriteResponse, domain.CodeCapabilityRequired)
 }
 
 func TestAccountIdentityProfilePasswordEmailAndAvatarFlow(t *testing.T) {
@@ -3611,14 +3700,15 @@ type createdMerchantProfile struct {
 type createdCarpool struct {
 	ID                                    string                    `json:"id"`
 	Status                                string                    `json:"status"`
+	GovernanceStatus                      string                    `json:"governanceStatus"`
 	DistributionMethod                    string                    `json:"distributionMethod"`
 	DistributionMethodNote                string                    `json:"distributionMethodNote"`
 	ProvidesAdminAccount                  bool                      `json:"providesAdminAccount"`
 	RegionCode                            string                    `json:"regionCode"`
 	RegionName                            string                    `json:"regionName"`
 	ServiceMultiplier                     string                    `json:"serviceMultiplier"`
-	DailyQuotaAmount                      *string                   `json:"dailyQuotaAmount"`
-	WeeklyQuotaAmount                     string                    `json:"weeklyQuotaAmount"`
+	DailyQuotaAmount                      *string                   `json:"dailySpendLimitUsd"`
+	WeeklyQuotaAmount                     *string                   `json:"weeklySpendLimitUsd"`
 	FollowsOfficialQuotaReset             *bool                     `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                   `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                     `json:"supportsMainlandChinaDirectConnection"`
@@ -3657,6 +3747,7 @@ type createdCarpoolMembership struct {
 	EndedAt              *string `json:"endedAt"`
 	EndedReason          string  `json:"endedReason"`
 	EndedByUserID        string  `json:"endedByUserId"`
+	OwnerNote            string  `json:"ownerNote"`
 	Version              int64   `json:"version"`
 }
 
@@ -3737,6 +3828,12 @@ type createdAPIOrder struct {
 	Status                        string                             `json:"status"`
 	DisputeStatus                 string                             `json:"disputeStatus"`
 	DisputeCaseID                 string                             `json:"disputeCaseId"`
+	DisputeNextActor              string                             `json:"disputeNextActor"`
+	DisputeDueAt                  *string                            `json:"disputeDueAt"`
+	DisputeNeedsAction            bool                               `json:"disputeNeedsAction"`
+	DisputeResponseOverdue        bool                               `json:"disputeResponseOverdue"`
+	DisputeAvailableActions       []string                           `json:"disputeAvailableActions"`
+	ActiveRemedySource            string                             `json:"activeRemedySource"`
 	ServiceTitleSnapshot          string                             `json:"serviceTitleSnapshot"`
 	RequestedUSDAllowanceSnapshot string                             `json:"requestedUsdAllowanceSnapshot"`
 	CNYPerUSDAllowanceSnapshot    string                             `json:"cnyPerUsdAllowanceSnapshot"`
@@ -3773,31 +3870,52 @@ type createdAPIOrderDeliveryCredential struct {
 }
 
 type createdDispute struct {
-	ID                   string                      `json:"id"`
-	ReportID             string                      `json:"reportId"`
-	TargetType           string                      `json:"targetType"`
-	TargetID             string                      `json:"targetId"`
-	TargetLabel          string                      `json:"targetLabel"`
-	PrimaryUserID        string                      `json:"primaryUserId"`
-	PrimaryUsername      string                      `json:"primaryUsername"`
-	PrimaryDisplayName   string                      `json:"primaryDisplayName"`
-	CounterpartyUserID   string                      `json:"counterpartyUserId"`
-	CounterpartyUsername string                      `json:"counterpartyUsername"`
-	CounterpartyName     string                      `json:"counterpartyName"`
-	SubjectUserID        string                      `json:"subjectUserId"`
-	SubjectUsername      string                      `json:"subjectUsername"`
-	SubjectName          string                      `json:"subjectName"`
-	Status               string                      `json:"status"`
-	IssueCode            string                      `json:"issueCode"`
-	RequestedResolution  string                      `json:"requestedResolution"`
-	RequestedAmountCNY   string                      `json:"requestedAmountCny"`
-	PublicSummary        string                      `json:"publicSummary"`
-	PublicResult         string                      `json:"publicResult"`
-	OpenedByAdminID      string                      `json:"openedByAdminId"`
-	Version              int64                       `json:"version"`
-	CanAppeal            bool                        `json:"canAppeal"`
-	Messages             []createdDisputeMessage     `json:"messages"`
-	SettlementProposals  []createdSettlementProposal `json:"settlementProposals"`
+	ID                         string                      `json:"id"`
+	ReportID                   string                      `json:"reportId"`
+	TargetType                 string                      `json:"targetType"`
+	TargetID                   string                      `json:"targetId"`
+	TargetLabel                string                      `json:"targetLabel"`
+	PrimaryUserID              string                      `json:"primaryUserId"`
+	PrimaryUsername            string                      `json:"primaryUsername"`
+	PrimaryDisplayName         string                      `json:"primaryDisplayName"`
+	CounterpartyUserID         string                      `json:"counterpartyUserId"`
+	CounterpartyUsername       string                      `json:"counterpartyUsername"`
+	CounterpartyName           string                      `json:"counterpartyName"`
+	SubjectUserID              string                      `json:"subjectUserId"`
+	SubjectUsername            string                      `json:"subjectUsername"`
+	SubjectName                string                      `json:"subjectName"`
+	Status                     string                      `json:"status"`
+	NextActor                  string                      `json:"nextActor"`
+	DueAt                      *string                     `json:"dueAt"`
+	ApplicantStatement         string                      `json:"applicantStatement"`
+	RespondentResponse         string                      `json:"respondentResponse"`
+	RespondedByUserID          string                      `json:"respondedByUserId"`
+	RespondedAt                *string                     `json:"respondedAt"`
+	SellerDecision             string                      `json:"sellerDecision"`
+	SellerDecisionReason       string                      `json:"sellerDecisionReason"`
+	SellerDecidedAt            *string                     `json:"sellerDecidedAt"`
+	SellerResponseLate         bool                        `json:"sellerResponseLate"`
+	ResponseOverdue            bool                        `json:"responseOverdue"`
+	ApplicantDecisionDueAt     *string                     `json:"applicantDecisionDueAt"`
+	AvailableActions           []string                    `json:"availableActions"`
+	IssueCode                  string                      `json:"issueCode"`
+	RequestedResolution        string                      `json:"requestedResolution"`
+	RequestedAmountCNY         string                      `json:"requestedAmountCny"`
+	PublicSummary              string                      `json:"publicSummary"`
+	PublicResult               string                      `json:"publicResult"`
+	OpenedByAdminID            string                      `json:"openedByAdminId"`
+	Version                    int64                       `json:"version"`
+	CanAppeal                  bool                        `json:"canAppeal"`
+	ViewerUserID               string                      `json:"viewerUserId"`
+	NegotiationChannels        []string                    `json:"negotiationChannels"`
+	NegotiationEndedConfirmed  bool                        `json:"negotiationEndedConfirmed"`
+	NegotiationSummary         string                      `json:"negotiationSummary"`
+	RequestedPlatformAction    string                      `json:"requestedPlatformAction"`
+	PlatformInterventionReason string                      `json:"platformInterventionReason"`
+	EscalatedByUserID          string                      `json:"escalatedByUserId"`
+	EscalatedAt                *string                     `json:"escalatedAt"`
+	Messages                   []createdDisputeMessage     `json:"messages"`
+	SettlementProposals        []createdSettlementProposal `json:"settlementProposals"`
 }
 
 type createdDisputeMessage struct {
@@ -3813,6 +3931,7 @@ type createdSettlementProposal struct {
 	AmountCNY        string `json:"amountCny"`
 	Terms            string `json:"terms"`
 	Status           string `json:"status"`
+	SupersededReason string `json:"supersededReason"`
 }
 
 type createdAppeal struct {
@@ -4274,23 +4393,6 @@ func cancelCarpoolApplication(t *testing.T, server http.Handler, session testSes
 	return payload
 }
 
-func withdrawCarpoolAcceptance(t *testing.T, server http.Handler, session testSession, applicationID string, version int64, key string) createdCarpoolApplication {
-	t.Helper()
-	request := newJSONRequest(http.MethodPost, "/api/v1/owner/carpool-applications/"+applicationID+"/withdraw-acceptance", `{"reason":"车主撤回本次预留。"}`)
-	addAuth(request, session, key)
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("withdraw carpool acceptance status %d body %s", response.Code, response.Body.String())
-	}
-	var payload createdCarpoolApplication
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode withdrawn application: %v", err)
-	}
-	return payload
-}
-
 func assertContactSessionConflict(t *testing.T, server http.Handler, session testSession, contactSessionID string) {
 	t.Helper()
 	if strings.TrimSpace(contactSessionID) == "" {
@@ -4304,27 +4406,6 @@ func assertContactSessionConflict(t *testing.T, server http.Handler, session tes
 		t.Fatalf("expected contact session conflict, got %d body %s", response.Code, response.Body.String())
 	}
 	assertProblemCode(t, response, "CONTACT_WINDOW_EXPIRED")
-}
-
-func confirmCarpoolJoin(t *testing.T, server http.Handler, session testSession, perspective, applicationID string, version int64, key string) createdCarpoolApplication {
-	t.Helper()
-	path := "/api/v1/me/carpool-applications/" + applicationID + "/confirm-join"
-	if perspective == "owner" {
-		path = "/api/v1/owner/carpool-applications/" + applicationID + "/confirm-join"
-	}
-	request := newJSONRequest(http.MethodPost, path, `{}`)
-	addAuth(request, session, key)
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("confirm carpool join status %d body %s", response.Code, response.Body.String())
-	}
-	var payload createdCarpoolApplication
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode confirmed application: %v", err)
-	}
-	return payload
 }
 
 func firstCarpoolMembership(t *testing.T, server http.Handler, session testSession, perspective, applicationID string) createdCarpoolMembership {
@@ -4353,27 +4434,6 @@ func firstCarpoolMembership(t *testing.T, server http.Handler, session testSessi
 	}
 	t.Fatalf("expected membership for application %s, got %+v", applicationID, payload.Items)
 	return createdCarpoolMembership{}
-}
-
-func confirmCarpoolMembershipComplete(t *testing.T, server http.Handler, session testSession, perspective, membershipID string, version int64, key string) createdCarpoolMembership {
-	t.Helper()
-	path := "/api/v1/me/carpool-memberships/" + membershipID + "/confirm-complete"
-	if perspective == "owner" {
-		path = "/api/v1/owner/carpool-memberships/" + membershipID + "/confirm-complete"
-	}
-	request := newJSONRequest(http.MethodPost, path, `{}`)
-	addAuth(request, session, key)
-	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("confirm carpool membership complete status %d body %s", response.Code, response.Body.String())
-	}
-	var payload createdCarpoolMembership
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode completed membership: %v", err)
-	}
-	return payload
 }
 
 func endCarpoolMembership(t *testing.T, server http.Handler, session testSession, perspective, action, membershipID string, version int64, key string) createdCarpoolMembership {
@@ -4911,8 +4971,8 @@ func carpoolPayload(ownerContactID string) string {
 		"regionName":"印度区",
 		"priceMonthlyCny":"68.00",
 		"serviceMultiplier":"1.0000",
-		"dailyQuotaAmount":"50.00",
-		"weeklyQuotaAmount":"200.00",
+		"dailySpendLimitUsd":"50.00",
+		"weeklySpendLimitUsd":"200.00",
 		"followsOfficialQuotaReset":true,
 		"vpsRegion":"香港",
 		"supportsMainlandChinaDirectConnection":true,
@@ -4921,7 +4981,7 @@ func carpoolPayload(ownerContactID string) string {
 		"paymentMethodCode":"u_card",
 		"customPaymentMethod":"",
 		"buyerSeatCapacity":1,
-		"activeBuyerMembers":0
+		"offlineOccupiedSeats":0
 	}`
 }
 

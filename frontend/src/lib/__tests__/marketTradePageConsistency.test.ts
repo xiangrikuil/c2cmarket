@@ -125,7 +125,7 @@ describe('公开市场与交易页面一致性', () => {
     expect(rides).toContain('<LocalTime')
     expect(rideDetail).toContain('ride-order-stepper')
     expect(rideDetail).toContain('ride-order-action-card')
-    expect(rideDetail).toContain('申请快照')
+    expect(rideDetail).toContain('申请条件快照')
     expect(orders).toContain('<ShortId')
     expect(orders).toContain('<LocalTime')
     expect(orderDetail).toContain('<Stepper')

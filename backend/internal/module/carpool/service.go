@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -97,8 +98,8 @@ func (s *Service) CreateListing(ctx context.Context, user auth.User, input Creat
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -145,10 +146,10 @@ func (s *Service) CreateListingWithIdempotency(ctx context.Context, user auth.Us
 		return Listing{}, idempotency.Completion{}, false, appErr
 	}
 	s.mu.Lock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Listing{}, idempotency.Completion{}, false, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+		return Listing{}, idempotency.Completion{}, false, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -184,14 +185,14 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 		AccessArrangement:                     strings.TrimSpace(input.AccessArrangement),
 		DistributionMethod:                    strings.TrimSpace(input.DistributionMethod),
 		DistributionMethodNote:                strings.TrimSpace(input.DistributionMethodNote),
-		ProvidesAdminAccount:                  input.ProvidesAdminAccount,
+		ProvidesAdminAccount:                  normalizedProvidesAdminAccount(input.DistributionMethod, input.ProvidesAdminAccount),
 		RegionCode:                            strings.TrimSpace(input.RegionCode),
 		RegionName:                            strings.TrimSpace(input.RegionName),
 		SourceURL:                             strings.TrimSpace(input.SourceURL),
 		PriceMonthlyCNY:                       strings.TrimSpace(input.PriceMonthlyCNY),
 		ServiceMultiplier:                     strings.TrimSpace(input.ServiceMultiplier),
 		DailyQuotaAmount:                      optionalString(input.DailyQuotaAmount),
-		WeeklyQuotaAmount:                     strings.TrimSpace(input.WeeklyQuotaAmount),
+		WeeklyQuotaAmount:                     optionalString(input.WeeklyQuotaAmount),
 		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
 		VPSRegion:                             optionalString(input.VPSRegion),
 		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
@@ -203,8 +204,10 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 		QuotaUnit:                             strings.TrimSpace(plan.QuotaUnit),
 		QuotaPeriod:                           strings.TrimSpace(plan.QuotaPeriod),
 		BuyerSeatCapacity:                     input.BuyerSeatCapacity,
-		ActiveBuyerMembers:                    input.ActiveBuyerMembers,
+		OfflineOccupiedSeats:                  input.OfflineOccupiedSeats,
 		Status:                                status,
+		GovernanceStatus:                      "clear",
+		ConditionsVersion:                     1,
 		PolicyVersion:                         plan.PolicyVersion,
 		RiskNoticeCode:                        plan.RiskNoticeCode,
 		RiskAckRequired:                       plan.RiskAckRequired,
@@ -213,8 +216,7 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 		UpdatedAt:                             now,
 		Version:                               1,
 	}
-	listing.ReservedSeats = 0
-	listing.AvailableSeats = listing.BuyerSeatCapacity - listing.ActiveBuyerMembers
+	listing.AvailableSeats = listing.BuyerSeatCapacity - listing.OfflineOccupiedSeats
 	return listing
 }
 
@@ -244,8 +246,8 @@ func (s *Service) PublishListing(ctx context.Context, user auth.User, input Publ
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -298,10 +300,10 @@ func (s *Service) PublishListingWithIdempotency(ctx context.Context, user auth.U
 		return Listing{}, idempotency.Completion{}, false, appErr
 	}
 	s.mu.Lock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Listing{}, idempotency.Completion{}, false, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+		return Listing{}, idempotency.Completion{}, false, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -332,13 +334,20 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	if input.ExpectedVersion > 0 && listing.Version != input.ExpectedVersion {
 		return Listing{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if listing.Status != ListingStatusDraft && listing.Status != ListingStatusChangesRequested {
+	if listing.Status != ListingStatusDraft && listing.Status != ListingStatusActive && listing.Status != ListingStatusStopped {
 		return Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源状态不能修改。")
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(input.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if listing.Status != ListingStatusDraft && plan.ID != listing.ProductPlanID {
+		return Listing{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Product plan immutable", "已发布车源不能更换产品或套餐，请新建车源。", "productPlanId", "immutable", "已发布车源不能更换产品或套餐。")
+	}
+	if input.BuyerSeatCapacity < listing.ActiveBuyerMembers+input.OfflineOccupiedSeats {
+		return Listing{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSeatUnavailable, "Seat unavailable", "买家总名额不能小于线下已占名额与平台有效成员数之和。", "buyerSeatCapacity", "below_occupied", "总名额不能小于已占名额。")
+	}
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 
+	previousConditions := NewListingConditionsSnapshot(listing)
 	listing.ProductPlanID = plan.ID
 	listing.OwnerContactMethodID = strings.TrimSpace(input.OwnerContactMethodID)
 	if listing.CycleTerm == nil {
@@ -364,14 +373,14 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	listing.AccessArrangement = strings.TrimSpace(input.AccessArrangement)
 	listing.DistributionMethod = strings.TrimSpace(input.DistributionMethod)
 	listing.DistributionMethodNote = strings.TrimSpace(input.DistributionMethodNote)
-	listing.ProvidesAdminAccount = input.ProvidesAdminAccount
+	listing.ProvidesAdminAccount = normalizedProvidesAdminAccount(input.DistributionMethod, input.ProvidesAdminAccount)
 	listing.RegionCode = strings.TrimSpace(input.RegionCode)
 	listing.RegionName = strings.TrimSpace(input.RegionName)
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
 	listing.DailyQuotaAmount = optionalString(input.DailyQuotaAmount)
-	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
+	listing.WeeklyQuotaAmount = optionalString(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = optionalString(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -383,10 +392,13 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	listing.QuotaUnit = strings.TrimSpace(plan.QuotaUnit)
 	listing.QuotaPeriod = strings.TrimSpace(plan.QuotaPeriod)
 	listing.BuyerSeatCapacity = input.BuyerSeatCapacity
-	listing.ActiveBuyerMembers = input.ActiveBuyerMembers
+	listing.OfflineOccupiedSeats = input.OfflineOccupiedSeats
 	listing.PolicyVersion = plan.PolicyVersion
 	listing.RiskNoticeCode = plan.RiskNoticeCode
 	listing.RiskAckRequired = plan.RiskAckRequired
+	if !reflect.DeepEqual(previousConditions, NewListingConditionsSnapshot(listing)) {
+		listing.ConditionsVersion++
+	}
 	listing.UpdatedAt = now
 	listing.Version++
 	s.listings[listing.ID] = listing
@@ -429,7 +441,7 @@ func (s *Service) prepareUpdateListing(ctx context.Context, user auth.User, inpu
 		PaymentMethodCode:                     input.PaymentMethodCode,
 		CustomPaymentMethod:                   input.CustomPaymentMethod,
 		BuyerSeatCapacity:                     input.BuyerSeatCapacity,
-		ActiveBuyerMembers:                    input.ActiveBuyerMembers,
+		OfflineOccupiedSeats:                  input.OfflineOccupiedSeats,
 		RiskAcknowledgement:                   input.RiskAcknowledgement,
 	}, plan); err != nil {
 		return UpdateListingInput{}, catalog.ProductPlan{}, nil, time.Time{}, err
@@ -438,6 +450,42 @@ func (s *Service) prepareUpdateListing(ctx context.Context, user auth.User, inpu
 	now := s.now()
 	ack := normalizedRiskAck(input.RiskAcknowledgement, now)
 	return input, plan, ack, now, nil
+}
+
+func (s *Service) UpdateRecruitment(ctx context.Context, user auth.User, input RecruitmentInput, targetStatus string) (Listing, *domain.AppError) {
+	if targetStatus != ListingStatusActive && targetStatus != ListingStatusStopped {
+		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid recruitment status", "招募状态不正确。")
+	}
+	input.OwnerUserID = user.ID
+	if s.repo != nil {
+		return s.repo.UpdateCarpoolRecruitment(ctx, input, targetStatus, s.now())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	listing, ok := s.listings[input.ListingID]
+	if !ok || listing.OwnerUserID != user.ID {
+		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
+	}
+	if input.ExpectedVersion > 0 && listing.Version != input.ExpectedVersion {
+		return Listing{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	if listing.GovernanceStatus != "clear" || (listing.Status != ListingStatusActive && listing.Status != ListingStatusStopped) {
+		return Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源不能修改招募状态。")
+	}
+	listing = s.withSeatSummaryLocked(listing)
+	if targetStatus == ListingStatusActive && listing.AvailableSeats <= 0 {
+		return Listing{}, domain.NewError(http.StatusConflict, domain.CodeSeatUnavailable, "Seat unavailable", "当前没有可用名额，不能继续招募。")
+	}
+	listing.Status = targetStatus
+	listing.RecruitmentStopReason = ""
+	if targetStatus == ListingStatusStopped {
+		listing.RecruitmentStopReason = "owner"
+	}
+	listing.UpdatedAt = s.now()
+	listing.Version++
+	s.listings[listing.ID] = listing
+	s.appendListingAuditEventLocked(listing, user.ID, "user", "carpool_listing.recruitment_updated", input.RequestID)
+	return listing, nil
 }
 
 func (s *Service) UpdateListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input UpdateListingInput, buildCompletion ListingCompletionBuilder) (Listing, idempotency.Completion, bool, *domain.AppError) {
@@ -514,8 +562,8 @@ func (s *Service) SubmitListingForReview(ctx context.Context, user auth.User, in
 	if err := validatePlanPublishAllowed(plan); err != nil {
 		return Listing{}, err
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "恢复或发布拼车前必须先配置微信联系方式。")
 	}
 	now := s.now()
 	listing.Status = ListingStatusActive
@@ -578,11 +626,10 @@ func (s *Service) PublicListings(ctx context.Context, filter ListingFilter, page
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	var listings []Listing
 	for _, id := range s.listingOrder {
 		listing := s.withSeatSummaryLocked(s.listings[id])
-		if listing.Status == ListingStatusActive {
+		if isPublicListing(listing) {
 			listings = append(listings, listing)
 		}
 	}
@@ -595,9 +642,8 @@ func (s *Service) PublicListing(ctx context.Context, listingID string) (Listing,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listing, ok := s.listings[listingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	return s.withSeatSummaryLocked(listing), nil
@@ -612,7 +658,6 @@ func (s *Service) MyListings(ctx context.Context, user auth.User, view string, p
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	var listings []Listing
 	for _, id := range s.listingOrder {
 		listing := s.withSeatSummaryLocked(s.listings[id])
@@ -635,7 +680,6 @@ func (s *Service) MyListing(ctx context.Context, user auth.User, listingID strin
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listing, ok := s.listings[listingID]
 	if !ok || listing.OwnerUserID != user.ID {
 		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -655,14 +699,13 @@ func isOwnerListingView(view string) bool {
 func matchesOwnerListingView(listing Listing, view string) bool {
 	switch strings.TrimSpace(view) {
 	case OwnerListingViewRecruiting:
-		return listing.Status == ListingStatusActive && listing.ActiveBuyerMembers == 0
+		return listing.Status == ListingStatusActive
 	case OwnerListingViewServing:
-		return listing.Status == ListingStatusActive && listing.ActiveBuyerMembers > 0
+		return listing.Status == ListingStatusStopped && listing.GovernanceStatus == "clear"
 	case OwnerListingViewHistory:
-		return listing.Status == ListingStatusRejected || listing.Status == ListingStatusRemoved
+		return listing.GovernanceStatus == "removed"
 	case OwnerListingViewNeedsEdit:
-		return listing.Status == ListingStatusDraft || listing.Status == ListingStatusChangesRequested ||
-			listing.Status == ListingStatusPendingReview || listing.Status == ListingStatusPaused
+		return listing.Status == ListingStatusDraft
 	default:
 		return true
 	}
@@ -677,7 +720,6 @@ func (s *Service) AdminListings(ctx context.Context, user auth.User, filter List
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listings := make([]Listing, 0, len(s.listingOrder))
 	for _, id := range s.listingOrder {
 		listings = append(listings, s.withSeatSummaryLocked(s.listings[id]))
@@ -694,7 +736,6 @@ func (s *Service) AdminListing(ctx context.Context, user auth.User, listingID st
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listing, ok := s.listings[listingID]
 	if !ok {
 		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -716,7 +757,6 @@ func (s *Service) UpdateListingReviewStatus(ctx context.Context, user auth.User,
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listing, ok := s.listings[input.ListingID]
 	if !ok {
 		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -724,7 +764,12 @@ func (s *Service) UpdateListingReviewStatus(ctx context.Context, user auth.User,
 	if input.ExpectedVersion > 0 && listing.Version != input.ExpectedVersion {
 		return Listing{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if !canUpdateListingStatus(listing.Status, input.Status, input.Action) {
+	governanceAction := input.Action == "pause" || input.Action == "restore"
+	if governanceAction {
+		if !canUpdateListingGovernance(listing, input.Action) {
+			return Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源治理状态不能执行该操作。")
+		}
+	} else if !canUpdateListingStatus(listing.Status, input.Status, input.Action) {
 		return Listing{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源状态不能执行该审核动作。")
 	}
 	if input.Action == "approve" {
@@ -737,7 +782,15 @@ func (s *Service) UpdateListingReviewStatus(ctx context.Context, user auth.User,
 		}
 	}
 	now := s.now()
-	listing.Status = input.Status
+	if governanceAction {
+		if input.Action == "pause" {
+			listing.GovernanceStatus = "removed"
+		} else {
+			listing.GovernanceStatus = "clear"
+		}
+	} else {
+		listing.Status = input.Status
+	}
 	listing.ReviewedByAdminID = user.ID
 	listing.ReviewedAt = &now
 	listing.ReviewReason = strings.TrimSpace(input.Reason)
@@ -825,9 +878,8 @@ func (s *Service) CreateApplication(ctx context.Context, user auth.User, input C
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listing, ok := s.listings[input.ListingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	listing = s.withSeatSummaryLocked(listing)
@@ -842,8 +894,8 @@ func (s *Service) CreateApplication(ctx context.Context, user auth.User, input C
 	if err := validateCreateApplicationInput(input, listing, plan); err != nil {
 		return Application{}, err
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
-		return Application{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
+		return Application{}, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
 	now := s.now()
 	application := newApplication(input, listing, now)
@@ -912,9 +964,8 @@ func (s *Service) CreateApplicationWithIdempotency(ctx context.Context, user aut
 	}
 	now := s.now()
 	s.mu.Lock()
-	s.expireReservationsLocked(now)
 	listing, ok := s.listings[input.ListingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
 		return Application{}, idempotency.Completion{}, false, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
@@ -931,10 +982,10 @@ func (s *Service) CreateApplicationWithIdempotency(ctx context.Context, user aut
 		s.idempotency.Cancel(ctx, entry)
 		return Application{}, idempotency.Completion{}, false, appErr
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Application{}, idempotency.Completion{}, false, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+		return Application{}, idempotency.Completion{}, false, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
 	application := newApplication(input, listing, now)
 	completion, appErr := buildCompletion(application)
@@ -961,9 +1012,8 @@ func (s *Service) publicListingForApplication(ctx context.Context, listingID str
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listing, ok := s.listings[listingID]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	return s.withSeatSummaryLocked(listing), nil
@@ -983,9 +1033,8 @@ func (s *Service) ApplicationEligibility(ctx context.Context, user auth.User, li
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	listing, ok := s.listings[strings.TrimSpace(listingID)]
-	if !ok || listing.Status != ListingStatusActive {
+	if !ok || !isPublicListing(listing) {
 		return ApplicationEligibility{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	listing = s.withSeatSummaryLocked(listing)
@@ -1064,7 +1113,6 @@ func (s *Service) MyApplications(ctx context.Context, user auth.User) ([]Applica
 	defer s.mu.Unlock()
 	var applications []Application
 	for _, id := range s.appOrder {
-		s.expireReservationsLocked(s.now())
 		application := s.applications[id]
 		if application.BuyerUserID == user.ID {
 			applications = append(applications, application)
@@ -1079,11 +1127,48 @@ func (s *Service) MyApplication(ctx context.Context, user auth.User, application
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	application, ok := s.applications[applicationID]
 	if !ok || application.BuyerUserID != user.ID {
 		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
 	}
+	return application, nil
+}
+
+func (s *Service) ConfirmApplicationConditions(ctx context.Context, user auth.User, input ConfirmApplicationConditionsInput) (Application, *domain.AppError) {
+	input.BuyerUserID = user.ID
+	if strings.TrimSpace(input.ApplicationID) == "" {
+		return Application{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Application required", "必须提供上车申请。", "id", "required", "必须提供上车申请。")
+	}
+	if s.repo != nil {
+		return s.repo.ConfirmCarpoolApplicationConditions(ctx, input, s.now())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	application, ok := s.applications[input.ApplicationID]
+	if !ok || application.BuyerUserID != user.ID {
+		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
+	}
+	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
+		return Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	if application.Status != ApplicationStatusPendingOwner {
+		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前申请不能更新条件确认。")
+	}
+	listing, ok := s.listings[application.CarpoolListingID]
+	if !ok || listing.GovernanceStatus != "clear" || (listing.Status != ListingStatusActive && listing.Status != ListingStatusStopped) {
+		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Listing unavailable", "当前车源不可确认。")
+	}
+	now := s.now()
+	application.ConditionsVersionSnapshot = listing.ConditionsVersion
+	application.ConditionsSnapshot = NewListingConditionsSnapshot(listing)
+	application.AcceptedConditionsVersion = listing.ConditionsVersion
+	application.ConditionsAcceptedAt = now
+	application.ListingTitleSnapshot = listing.Title
+	application.PriceMonthlyCNY = listing.PriceMonthlyCNY
+	application.UpdatedAt = now
+	application.Version++
+	s.applications[application.ID] = application
+	s.appendApplicationAuditEventLocked(application, user.ID, "user", "carpool_application.conditions_confirmed", input.RequestID)
 	return application, nil
 }
 
@@ -1123,7 +1208,6 @@ func (s *Service) OwnerApplications(ctx context.Context, user auth.User) ([]Appl
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	var applications []Application
 	for _, id := range s.appOrder {
 		application := s.applications[id]
@@ -1140,7 +1224,6 @@ func (s *Service) OwnerApplication(ctx context.Context, user auth.User, applicat
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.expireReservationsLocked(s.now())
 	application, ok := s.applications[applicationID]
 	if !ok || application.OwnerUserID != user.ID {
 		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
@@ -1348,100 +1431,6 @@ func (s *Service) CancelApplicationWithIdempotency(ctx context.Context, userID, 
 	return completion, nil
 }
 
-func (s *Service) WithdrawAcceptanceWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input WithdrawAcceptanceInput, buildCompletion ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError) {
-	key = strings.TrimSpace(key)
-	if err := idempotency.ValidateKey(key); err != nil {
-		return idempotency.Completion{}, err
-	}
-	if buildCompletion == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-	}
-	input.OwnerUserID = userID
-	if err := validateWithdrawAcceptanceInput(input); err != nil {
-		return idempotency.Completion{}, err
-	}
-
-	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
-	if appErr != nil {
-		return idempotency.Completion{}, appErr
-	}
-	if entry.State == "completed" {
-		return idempotency.CompletionFromEntry(entry), nil
-	}
-
-	if s.repo != nil {
-		_, completion, appErr := s.repo.WithdrawCarpoolAcceptanceWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
-		if appErr != nil {
-			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
-		}
-		return completion, nil
-	}
-
-	application, appErr := s.withdrawAcceptanceInMemory(input)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	completion, appErr := buildCompletion(application)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	return completion, nil
-}
-
-func (s *Service) ConfirmApplicationJoinWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ConfirmApplicationJoinInput, buildCompletion ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError) {
-	key = strings.TrimSpace(key)
-	if err := idempotency.ValidateKey(key); err != nil {
-		return idempotency.Completion{}, err
-	}
-	if buildCompletion == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-	}
-	input.ActorUserID = userID
-	if err := validateConfirmApplicationJoinInput(input); err != nil {
-		return idempotency.Completion{}, err
-	}
-
-	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
-	if appErr != nil {
-		return idempotency.Completion{}, appErr
-	}
-	if entry.State == "completed" {
-		return idempotency.CompletionFromEntry(entry), nil
-	}
-
-	if s.repo != nil {
-		_, completion, appErr := s.repo.ConfirmCarpoolApplicationJoinWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
-		if appErr != nil {
-			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
-		}
-		return completion, nil
-	}
-
-	application, appErr := s.confirmApplicationJoinInMemory(input)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	completion, appErr := buildCompletion(application)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	return completion, nil
-}
-
 func (s *Service) MyMemberships(ctx context.Context, user auth.User) ([]Membership, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.ListCarpoolMembershipsByBuyer(ctx, user.ID)
@@ -1487,15 +1476,6 @@ func (s *Service) MembershipsForActor(ctx context.Context, actor auth.BusinessAc
 	return s.repo.ListCarpoolMembershipsForActor(ctx, actor, participantRole)
 }
 
-func withCarpoolBusinessActor(input ConfirmMembershipCompleteInput, actor auth.BusinessActor) ConfirmMembershipCompleteInput {
-	input.ActorUserID = actor.UserID
-	input.ActorAudience = actor.Audience
-	input.GovernanceActionID = actor.GovernanceActionID
-	input.GovernanceVersion = actor.GovernanceVersion
-	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
-	return input
-}
-
 func withEndCarpoolBusinessActor(input EndMembershipInput, actor auth.BusinessActor) EndMembershipInput {
 	input.ActorUserID = actor.UserID
 	input.ActorAudience = actor.Audience
@@ -1505,65 +1485,8 @@ func withEndCarpoolBusinessActor(input EndMembershipInput, actor auth.BusinessAc
 	return input
 }
 
-func (s *Service) ConfirmMembershipCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ConfirmMembershipCompleteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
-	return s.ConfirmMembershipCompleteWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, withCarpoolBusinessActor(input, actor), buildCompletion)
-}
-
 func (s *Service) EndMembershipForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input EndMembershipInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	return s.EndMembershipWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, withEndCarpoolBusinessActor(input, actor), buildCompletion)
-}
-
-func (s *Service) ConfirmMembershipCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ConfirmMembershipCompleteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
-	key = strings.TrimSpace(key)
-	if err := idempotency.ValidateKey(key); err != nil {
-		return idempotency.Completion{}, err
-	}
-	if buildCompletion == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-	}
-	input.ActorUserID = userID
-	if err := validateConfirmMembershipCompleteInput(input); err != nil {
-		return idempotency.Completion{}, err
-	}
-
-	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
-	if appErr != nil {
-		return idempotency.Completion{}, appErr
-	}
-	if entry.State == "completed" {
-		if input.ActorAudience == auth.SessionAudienceRestrictedBusiness && s.repo != nil {
-			actor := auth.BusinessActor{UserID: userID, Audience: input.ActorAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
-			if _, appErr := s.repo.GetCarpoolMembershipForActor(ctx, actor, input.MembershipID, input.ActorRole); appErr != nil {
-				return idempotency.Completion{}, appErr
-			}
-		}
-		return idempotency.CompletionFromEntry(entry), nil
-	}
-
-	if s.repo != nil {
-		_, completion, appErr := s.repo.ConfirmCarpoolMembershipCompleteWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
-		if appErr != nil {
-			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
-		}
-		return completion, nil
-	}
-
-	membership, appErr := s.confirmMembershipCompleteInMemory(input)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	completion, appErr := buildCompletion(membership)
-	if appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
-		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
-	}
-	return completion, nil
 }
 
 func (s *Service) EndMembershipWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input EndMembershipInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -1619,6 +1542,63 @@ func (s *Service) EndMembershipWithIdempotency(ctx context.Context, userID, rout
 	return completion, nil
 }
 
+func (s *Service) UpdateMembershipOwnerNoteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input UpdateMembershipOwnerNoteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.OwnerUserID = actor.UserID
+	input.OwnerAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return s.UpdateMembershipOwnerNoteWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) UpdateMembershipOwnerNoteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input UpdateMembershipOwnerNoteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	key = strings.TrimSpace(key)
+	if err := idempotency.ValidateKey(key); err != nil {
+		return idempotency.Completion{}, err
+	}
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = userID
+	input.Note = strings.TrimSpace(input.Note)
+	if err := validateMembershipOwnerNoteInput(input); err != nil {
+		return idempotency.Completion{}, err
+	}
+
+	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateCarpoolMembershipOwnerNoteWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+
+	membership, appErr := s.updateMembershipOwnerNoteInMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(membership)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
 func (s *Service) productPlan(ctx context.Context, planID string) (catalog.ProductPlan, *domain.AppError) {
 	if s.catalog == nil {
 		return catalog.ProductPlan{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "产品目录服务不可用。")
@@ -1627,18 +1607,15 @@ func (s *Service) productPlan(ctx context.Context, planID string) (catalog.Produ
 }
 
 func (s *Service) withSeatSummaryLocked(listing Listing) Listing {
-	reserved := 0
-	for _, application := range s.applications {
-		if application.CarpoolListingID == listing.ID && isUnexpiredReservation(application, s.now()) {
-			reserved += application.SeatCount
-		}
-	}
-	listing.ReservedSeats = reserved
-	listing.AvailableSeats = listing.BuyerSeatCapacity - listing.ActiveBuyerMembers - reserved
+	listing.AvailableSeats = listing.BuyerSeatCapacity - listing.OfflineOccupiedSeats - listing.ActiveBuyerMembers
 	if listing.AvailableSeats < 0 {
 		listing.AvailableSeats = 0
 	}
 	return listing
+}
+
+func isPublicListing(listing Listing) bool {
+	return listing.Status == ListingStatusActive && listing.GovernanceStatus == "clear"
 }
 
 func (s *Service) appendListingAuditEventLocked(listing Listing, actorUserID, actorKind, eventType, requestID string) {
@@ -1648,7 +1625,8 @@ func (s *Service) appendListingAuditEventLocked(listing Listing, actorUserID, ac
 	}
 	s.listingAuditEvents = append(s.listingAuditEvents, ListingAuditEvent{
 		ListingID: listing.ID, EventType: eventType, ActorUserID: actorUserID, ActorKind: actorKind,
-		AggregateVersion: listing.Version, RequestID: requestID, Status: listing.Status, CreatedAt: s.now(),
+		AggregateVersion: listing.Version, RequestID: requestID, Status: listing.Status,
+		GovernanceStatus: listing.GovernanceStatus, CreatedAt: s.now(),
 	})
 }
 
@@ -1694,19 +1672,6 @@ func listingReviewEventType(action string) string {
 	}
 }
 
-func (s *Service) expireReservationsLocked(now time.Time) {
-	for id, application := range s.applications {
-		if application.Status == ApplicationStatusAcceptedReserved && application.ReservationExpiresAt != nil && !now.Before(*application.ReservationExpiresAt) {
-			application.Status = ApplicationStatusExpired
-			application.UpdatedAt = now
-			application.Version++
-			s.applications[id] = application
-			s.contact.RevokeSession(application.ContactSessionID, now)
-			s.appendApplicationAuditEventLocked(application, "", "system", "carpool_application.expired", "system:carpool-reservation-expiry")
-		}
-	}
-}
-
 func (s *Service) acceptApplicationInMemory(input AcceptApplicationInput) (Application, *domain.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1722,23 +1687,25 @@ func (s *Service) acceptApplicationInMemory(input AcceptApplicationInput) (Appli
 		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前申请状态不能接受。")
 	}
 	listing, ok := s.listings[application.CarpoolListingID]
-	if !ok || listing.OwnerUserID != input.OwnerUserID || listing.Status != ListingStatusActive {
+	if !ok || listing.OwnerUserID != input.OwnerUserID {
 		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源不可接受申请。")
 	}
 	listing = s.withSeatSummaryLocked(listing)
 	if listing.AvailableSeats < application.SeatCount {
-		return Application{}, domain.NewError(http.StatusConflict, domain.CodeSeatUnavailable, "Seat unavailable", "当前车源没有可预留名额。")
+		return Application{}, domain.NewError(http.StatusConflict, domain.CodeSeatUnavailable, "Seat unavailable", "当前车源没有可用名额。")
 	}
-	buyerMethod, buyerVersion, ok := s.contact.VersionForOwnerAndScope(application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer)
+	if listing.Status != ListingStatusActive || listing.GovernanceStatus != "clear" {
+		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源不可接受申请。")
+	}
+	buyerMethod, buyerVersion, ok := s.contact.WechatVersionForOwnerAndScope(application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer)
 	if !ok || !buyerMethod.Enabled {
-		return Application{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+		return Application{}, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
-	ownerMethod, ownerVersion, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner)
+	ownerMethod, ownerVersion, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner)
 	if !ok || !ownerMethod.Enabled {
-		return Application{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+		return Application{}, contact.WechatRequiredError("ownerContactMethodId", "车主必须先配置微信联系方式。")
 	}
 	now := s.now()
-	reservationExpiresAt := now.Add(JoinConfirmationDuration)
 	session := contact.ContactSession{
 		ID:              uuid.NewString(),
 		BuyerUserID:     application.BuyerUserID,
@@ -1746,18 +1713,50 @@ func (s *Service) acceptApplicationInMemory(input AcceptApplicationInput) (Appli
 		BuyerVersionID:  buyerVersion.ID,
 		SellerVersionID: ownerVersion.ID,
 		OpensAt:         now,
-		EndsAt:          reservationExpiresAt,
 	}
 	s.contact.AddSession(session)
-	application.Status = ApplicationStatusAcceptedReserved
+	application.Status = ApplicationStatusJoined
 	application.ContactSessionID = session.ID
-	application.ReservationExpiresAt = &reservationExpiresAt
-	application.JoinConfirmationDeadline = &reservationExpiresAt
+	application.JoinedAt = &now
 	application.DecisionReason = ""
 	application.DecidedAt = &now
 	application.UpdatedAt = now
 	application.Version++
 	s.applications[application.ID] = application
+	membership := Membership{
+		ID:                        uuid.NewString(),
+		CarpoolListingID:          application.CarpoolListingID,
+		CarpoolApplicationID:      application.ID,
+		BuyerUserID:               application.BuyerUserID,
+		OwnerUserID:               application.OwnerUserID,
+		ProductPlanID:             application.ProductPlanID,
+		Status:                    MembershipStatusActive,
+		SeatCount:                 application.SeatCount,
+		PriceMonthlyCNY:           application.PriceMonthlyCNY,
+		PolicyVersionSnapshot:     application.PolicyVersionSnapshot,
+		RiskNoticeCode:            application.RiskNoticeCode,
+		ConditionsVersionSnapshot: application.ConditionsVersionSnapshot,
+		ConditionsSnapshot:        application.ConditionsSnapshot,
+		JoinedAt:                  now,
+		CreatedAt:                 now,
+		UpdatedAt:                 now,
+		Version:                   1,
+	}
+	if listing.CycleTerm != nil {
+		membership.CycleTermID = listing.CycleTerm.ID
+	}
+	s.memberships[membership.ID] = membership
+	s.memberByApp[application.ID] = membership.ID
+	s.memberOrder = append(s.memberOrder, membership.ID)
+	listing.ActiveBuyerMembers += application.SeatCount
+	if listing.BuyerSeatCapacity-listing.OfflineOccupiedSeats-listing.ActiveBuyerMembers <= 0 {
+		listing.Status = ListingStatusStopped
+		listing.RecruitmentStopReason = "full"
+	}
+	listing.UpdatedAt = now
+	listing.Version++
+	s.listings[listing.ID] = listing
+	s.appendApplicationAuditEventLocked(application, input.OwnerUserID, "user", "carpool_application.joined", input.RequestID)
 	return application, nil
 }
 
@@ -1773,169 +1772,16 @@ func (s *Service) cancelApplicationInMemory(input CancelApplicationInput) (Appli
 	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
 		return Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if application.Status != ApplicationStatusPendingOwner && application.Status != ApplicationStatusAcceptedReserved {
+	if application.Status != ApplicationStatusPendingOwner {
 		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前申请状态不能取消；已加入后请退出拼车。")
 	}
-	shouldRevokeContact := application.Status == ApplicationStatusAcceptedReserved
 	application.Status = ApplicationStatusCancelledByBuyer
 	application.DecisionReason = strings.TrimSpace(input.Reason)
 	application.DecidedAt = &now
 	application.UpdatedAt = now
 	application.Version++
 	s.applications[application.ID] = application
-	if shouldRevokeContact {
-		s.contact.RevokeSession(application.ContactSessionID, now)
-	}
 	return application, nil
-}
-
-func (s *Service) withdrawAcceptanceInMemory(input WithdrawAcceptanceInput) (Application, *domain.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := s.now()
-	application, ok := s.applications[input.ApplicationID]
-	if !ok || application.OwnerUserID != input.OwnerUserID {
-		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
-	}
-	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
-		return Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
-	}
-	if application.Status != ApplicationStatusAcceptedReserved {
-		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前申请状态不能撤回接受。")
-	}
-	application.Status = ApplicationStatusCancelledByOwner
-	application.DecisionReason = strings.TrimSpace(input.Reason)
-	application.DecidedAt = &now
-	application.UpdatedAt = now
-	application.Version++
-	s.applications[application.ID] = application
-	s.contact.RevokeSession(application.ContactSessionID, now)
-	return application, nil
-}
-
-func (s *Service) confirmApplicationJoinInMemory(input ConfirmApplicationJoinInput) (Application, *domain.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := s.now()
-	application, ok := s.applications[input.ApplicationID]
-	if !ok {
-		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
-	}
-	if !canActorConfirmJoin(application, input.ActorUserID, input.ActorRole) {
-		return Application{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool application not found", "上车申请不存在。")
-	}
-	if input.ExpectedVersion > 0 && application.Version != input.ExpectedVersion {
-		return Application{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
-	}
-	if application.Status != ApplicationStatusAcceptedReserved {
-		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前申请状态不能确认加入。")
-	}
-	if application.JoinConfirmationDeadline == nil || !now.Before(*application.JoinConfirmationDeadline) {
-		application.Status = ApplicationStatusExpired
-		application.UpdatedAt = now
-		application.Version++
-		s.applications[application.ID] = application
-		s.contact.RevokeSession(application.ContactSessionID, now)
-		return Application{}, domain.NewError(http.StatusConflict, domain.CodeJoinConfirmationExpired, "Join confirmation expired", "确认加入期限已过。")
-	}
-	switch input.ActorRole {
-	case JoinActorBuyer:
-		if application.BuyerConfirmedAt != nil {
-			return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "买家已确认加入。")
-		}
-		application.BuyerConfirmedAt = &now
-	case JoinActorOwner:
-		if application.OwnerConfirmedAt != nil {
-			return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "车主已确认加入。")
-		}
-		application.OwnerConfirmedAt = &now
-	}
-	if application.BuyerConfirmedAt != nil && application.OwnerConfirmedAt != nil {
-		joinedAt := now
-		application.Status = ApplicationStatusJoined
-		application.JoinedAt = &joinedAt
-		application.ReservationExpiresAt = nil
-		listing := s.listings[application.CarpoolListingID]
-		listing.ActiveBuyerMembers += application.SeatCount
-		listing.UpdatedAt = now
-		listing.Version++
-		s.listings[listing.ID] = listing
-		membership := Membership{
-			ID:                    uuid.NewString(),
-			CarpoolListingID:      application.CarpoolListingID,
-			CarpoolApplicationID:  application.ID,
-			BuyerUserID:           application.BuyerUserID,
-			OwnerUserID:           application.OwnerUserID,
-			ProductPlanID:         application.ProductPlanID,
-			Status:                MembershipStatusActive,
-			SeatCount:             application.SeatCount,
-			PriceMonthlyCNY:       application.PriceMonthlyCNY,
-			PolicyVersionSnapshot: application.PolicyVersionSnapshot,
-			RiskNoticeCode:        application.RiskNoticeCode,
-			JoinedAt:              joinedAt,
-			CreatedAt:             now,
-			UpdatedAt:             now,
-			Version:               1,
-		}
-		s.memberships[membership.ID] = membership
-		s.memberByApp[application.ID] = membership.ID
-		s.memberOrder = append(s.memberOrder, membership.ID)
-	}
-	application.UpdatedAt = now
-	application.Version++
-	s.applications[application.ID] = application
-	return application, nil
-}
-
-func (s *Service) confirmMembershipCompleteInMemory(input ConfirmMembershipCompleteInput) (Membership, *domain.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := s.now()
-	membership, ok := s.memberships[input.MembershipID]
-	if !ok || !canActorConfirmMembership(membership, input.ActorUserID, input.ActorRole) {
-		return Membership{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool membership not found", "成员关系不存在。")
-	}
-	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
-		return Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
-	}
-	if membership.Status != MembershipStatusActive {
-		return Membership{}, domain.NewError(http.StatusConflict, domain.CodeMembershipNotActive, "Membership not active", "当前成员关系不是可操作状态。")
-	}
-	switch input.ActorRole {
-	case JoinActorBuyer:
-		if membership.BuyerCompletedAt != nil {
-			return Membership{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "买家已确认完成。")
-		}
-		membership.BuyerCompletedAt = &now
-	case JoinActorOwner:
-		if membership.OwnerCompletedAt != nil {
-			return Membership{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "车主已确认完成。")
-		}
-		membership.OwnerCompletedAt = &now
-	}
-	if membership.BuyerCompletedAt != nil && membership.OwnerCompletedAt != nil {
-		membership.Status = MembershipStatusCompleted
-		membership.CompletedAt = &now
-		membership.EndedAt = &now
-		membership.EndedReason = "双方确认周期完成。"
-		membership.EndedByUserID = input.ActorUserID
-		if listing, ok := s.listings[membership.CarpoolListingID]; ok {
-			listing.ActiveBuyerMembers -= membership.SeatCount
-			if listing.ActiveBuyerMembers < 0 {
-				listing.ActiveBuyerMembers = 0
-			}
-			listing.UpdatedAt = now
-			listing.Version++
-			s.listings[listing.ID] = listing
-		}
-	}
-	membership.UpdatedAt = now
-	membership.Version++
-	s.memberships[membership.ID] = membership
-	return membership, nil
 }
 
 func (s *Service) endMembershipInMemory(input EndMembershipInput) (Membership, *domain.AppError) {
@@ -1975,12 +1821,30 @@ func (s *Service) endMembershipInMemory(input EndMembershipInput) (Membership, *
 	return membership, nil
 }
 
+func (s *Service) updateMembershipOwnerNoteInMemory(input UpdateMembershipOwnerNoteInput) (Membership, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	membership, ok := s.memberships[input.MembershipID]
+	if !ok || membership.OwnerUserID != input.OwnerUserID {
+		return Membership{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool membership not found", "成员关系不存在。")
+	}
+	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
+		return Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	membership.OwnerNote = input.Note
+	membership.UpdatedAt = s.now()
+	membership.Version++
+	s.memberships[membership.ID] = membership
+	return membership, nil
+}
+
 func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPlan) *domain.AppError {
 	if strings.TrimSpace(input.ProductPlanID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeProductPlanResolutionRequired, "Product plan required", "必须选择产品套餐。", "productPlanId", "required", "必须选择产品套餐。")
 	}
 	if strings.TrimSpace(input.OwnerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布车源必须选择车主联系方式。", "ownerContactMethodId", "required", "必须选择车主联系方式。")
+		return contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	if err := validatePlanPublishAllowed(plan); err != nil {
 		return err
@@ -2007,8 +1871,8 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if method == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method required", "必须选择分发方式。", "distributionMethod", "required", "必须选择分发方式。")
 	}
-	if method != ListingDistributionMethodSub2API && method != ListingDistributionMethodOther {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method invalid", "分发方式不正确。", "distributionMethod", "invalid", "分发方式只能选择 Sub2API 或其他。")
+	if method != ListingDistributionMethodSub2API && method != ListingDistributionMethodAccountLogin && method != ListingDistributionMethodOther {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method invalid", "分发方式不正确。", "distributionMethod", "invalid", "分发方式只能选择 Sub2API、账号登录或其他。")
 	}
 	if strings.TrimSpace(input.DistributionMethodNote) == "" && method == ListingDistributionMethodOther {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution note required", "选择其他分发方式时必须填写说明。", "distributionMethodNote", "required", "请填写其他分发方式说明。")
@@ -2042,23 +1906,23 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if multiplier, ok := parseNonNegativeDecimal(input.ServiceMultiplier); !ok || multiplier.Cmp(big.NewRat(1, 1)) != 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service multiplier invalid", "拼车倍率固定为 1。", "serviceMultiplier", "fixed_value", "拼车倍率必须为 1。")
 	}
-	if quota, ok := parseNonNegativeDecimal(input.DailyQuotaAmount); !ok || quota.Sign() <= 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Daily quota invalid", "每天额度格式不正确。", "dailyQuotaAmount", "invalid", "每天额度必须是大于 0 的数字。")
+	if strings.TrimSpace(input.DailyQuotaAmount) != "" {
+		if quota, ok := parseNonNegativeDecimal(input.DailyQuotaAmount); !ok || quota.Sign() <= 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Daily spend limit invalid", "每日最大花费额度格式不正确。", "dailySpendLimitUsd", "invalid", "每日最大花费额度必须是大于 0 的数字。")
+		}
 	}
-	if quota, ok := parseNonNegativeDecimal(input.WeeklyQuotaAmount); !ok || quota.Sign() <= 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Weekly quota invalid", "每周额度格式不正确。", "weeklyQuotaAmount", "invalid", "每周额度必须是大于 0 的数字。")
+	if strings.TrimSpace(input.WeeklyQuotaAmount) != "" {
+		if quota, ok := parseNonNegativeDecimal(input.WeeklyQuotaAmount); !ok || quota.Sign() <= 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Weekly spend limit invalid", "每周最大花费额度格式不正确。", "weeklySpendLimitUsd", "invalid", "每周最大花费额度必须是大于 0 的数字。")
+		}
 	}
 	if input.FollowsOfficialQuotaReset == nil {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Official quota reset selection required", "必须选择额度是否跟随官方重置。", "followsOfficialQuotaReset", "required", "请选择额度是否跟随官方重置。")
 	}
-	if strings.TrimSpace(input.VPSRegion) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "VPS region required", "必须填写 VPS 区域。", "vpsRegion", "required", "请填写 VPS 区域。")
-	}
-	if err := validateListingText("vpsRegion", input.VPSRegion, 64); err != nil {
-		return err
-	}
-	if input.SupportsMainlandChinaDirectConnection == nil {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Mainland direct connection selection required", "必须选择是否支持国内直连。", "supportsMainlandChinaDirectConnection", "required", "请选择是否支持国内直连。")
+	if strings.TrimSpace(input.VPSRegion) != "" {
+		if err := validateListingText("vpsRegion", input.VPSRegion, 64); err != nil {
+			return err
+		}
 	}
 	if err := validateListingChoice("openingChannelCode", input.OpeningChannelCode, input.CustomOpeningChannel, validOpeningChannelCodes()); err != nil {
 		return err
@@ -2069,8 +1933,8 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if input.BuyerSeatCapacity <= 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Seat count invalid", "买家名额必须大于 0。", "buyerSeatCapacity", "invalid", "买家名额必须大于 0。")
 	}
-	if input.ActiveBuyerMembers < 0 || input.ActiveBuyerMembers >= input.BuyerSeatCapacity {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSeatUnavailable, "Seat unavailable", "已占用名额必须小于买家总名额。", "activeBuyerMembers", "invalid", "已占用名额必须小于买家总名额。")
+	if input.OfflineOccupiedSeats < 0 || input.OfflineOccupiedSeats >= input.BuyerSeatCapacity {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSeatUnavailable, "Seat unavailable", "线下已占名额必须小于买家总名额。", "offlineOccupiedSeats", "invalid", "线下已占名额必须小于买家总名额。")
 	}
 	if err := validateRiskAcknowledgement(input.RiskAcknowledgement, plan); err != nil {
 		return err
@@ -2131,7 +1995,7 @@ func validateCreateApplicationInput(input CreateApplicationInput, listing Listin
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Cannot apply to own carpool", "不能申请自己的车源。")
 	}
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "申请上车必须选择联系方式。", "buyerContactMethodId", "required", "必须选择联系方式。")
+		return contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
 	if listing.AvailableSeats <= 0 {
 		return domain.NewError(http.StatusConflict, domain.CodeSeatUnavailable, "Seat unavailable", "当前车源没有可申请名额。")
@@ -2176,43 +2040,9 @@ func validateCancelApplicationInput(input CancelApplicationInput) *domain.AppErr
 	return nil
 }
 
-func validateWithdrawAcceptanceInput(input WithdrawAcceptanceInput) *domain.AppError {
-	if strings.TrimSpace(input.ApplicationID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Application required", "必须提供申请。", "applicationId", "required", "必须提供申请。")
-	}
-	return nil
-}
-
-func validateConfirmApplicationJoinInput(input ConfirmApplicationJoinInput) *domain.AppError {
-	if strings.TrimSpace(input.ApplicationID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Application required", "必须提供申请。", "applicationId", "required", "必须提供申请。")
-	}
-	switch input.ActorRole {
-	case JoinActorBuyer, JoinActorOwner:
-		return nil
-	default:
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Actor role invalid", "确认角色不正确。", "actorRole", "invalid", "确认角色不正确。")
-	}
-}
-
-func validateConfirmMembershipCompleteInput(input ConfirmMembershipCompleteInput) *domain.AppError {
-	if strings.TrimSpace(input.MembershipID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership required", "必须提供成员关系。", "membershipId", "required", "必须提供成员关系。")
-	}
-	switch input.ActorRole {
-	case JoinActorBuyer, JoinActorOwner:
-		return nil
-	default:
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Actor role invalid", "确认角色不正确。", "actorRole", "invalid", "确认角色不正确。")
-	}
-}
-
 func validateEndMembershipInput(input EndMembershipInput) *domain.AppError {
 	if strings.TrimSpace(input.MembershipID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership required", "必须提供成员关系。", "membershipId", "required", "必须提供成员关系。")
-	}
-	if strings.TrimSpace(input.Reason) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "必须填写结束原因。", "reason", "required", "必须填写结束原因。")
 	}
 	if input.ActorRole == JoinActorBuyer && input.TargetStatus == MembershipStatusLeft {
 		return nil
@@ -2221,6 +2051,16 @@ func validateEndMembershipInput(input EndMembershipInput) *domain.AppError {
 		return nil
 	}
 	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership action invalid", "成员关系操作不正确。", "targetStatus", "invalid", "成员关系操作不正确。")
+}
+
+func validateMembershipOwnerNoteInput(input UpdateMembershipOwnerNoteInput) *domain.AppError {
+	if strings.TrimSpace(input.MembershipID) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership required", "必须提供成员关系。", "membershipId", "required", "必须提供成员关系。")
+	}
+	if utf8.RuneCountInString(input.Note) > 500 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Owner note too long", "车主备注不能超过 500 个字符。", "note", "too_long", "车主备注不能超过 500 个字符。")
+	}
+	return nil
 }
 
 func validateRiskAcknowledgement(ack *RiskAcknowledgement, plan catalog.ProductPlan) *domain.AppError {
@@ -2250,23 +2090,68 @@ func normalizedRiskAck(ack *RiskAcknowledgement, now time.Time) *RiskAcknowledge
 
 func newApplication(input CreateApplicationInput, listing Listing, now time.Time) Application {
 	return Application{
-		ID:                    uuid.NewString(),
-		CarpoolListingID:      listing.ID,
-		BuyerUserID:           input.BuyerUserID,
-		OwnerUserID:           listing.OwnerUserID,
-		ProductPlanID:         listing.ProductPlanID,
-		BuyerContactMethodID:  input.BuyerContactMethodID,
-		Status:                ApplicationStatusPendingOwner,
-		SeatCount:             1,
-		ListingTitleSnapshot:  listing.Title,
-		PriceMonthlyCNY:       listing.PriceMonthlyCNY,
-		PolicyVersionSnapshot: listing.PolicyVersion,
-		RiskNoticeCode:        listing.RiskNoticeCode,
-		RequestID:             strings.TrimSpace(input.RequestID),
-		CreatedAt:             now,
-		UpdatedAt:             now,
-		Version:               1,
+		ID:                        uuid.NewString(),
+		CarpoolListingID:          listing.ID,
+		BuyerUserID:               input.BuyerUserID,
+		OwnerUserID:               listing.OwnerUserID,
+		ProductPlanID:             listing.ProductPlanID,
+		BuyerContactMethodID:      input.BuyerContactMethodID,
+		Status:                    ApplicationStatusPendingOwner,
+		SeatCount:                 1,
+		ListingTitleSnapshot:      listing.Title,
+		PriceMonthlyCNY:           listing.PriceMonthlyCNY,
+		PolicyVersionSnapshot:     listing.PolicyVersion,
+		RiskNoticeCode:            listing.RiskNoticeCode,
+		ConditionsVersionSnapshot: listing.ConditionsVersion,
+		ConditionsSnapshot:        NewListingConditionsSnapshot(listing),
+		AcceptedConditionsVersion: listing.ConditionsVersion,
+		ConditionsAcceptedAt:      now,
+		RequestID:                 strings.TrimSpace(input.RequestID),
+		CreatedAt:                 now,
+		UpdatedAt:                 now,
+		Version:                   1,
 	}
+}
+
+func NewListingConditionsSnapshot(listing Listing) ListingConditionsSnapshot {
+	snapshot := ListingConditionsSnapshot{
+		Title:                                 listing.Title,
+		PriceMonthlyCNY:                       listing.PriceMonthlyCNY,
+		DailySpendLimitUSD:                    listing.DailyQuotaAmount,
+		WeeklySpendLimitUSD:                   listing.WeeklyQuotaAmount,
+		BuyerSeatCapacity:                     listing.BuyerSeatCapacity,
+		OfflineOccupiedSeats:                  listing.OfflineOccupiedSeats,
+		RegionCode:                            listing.RegionCode,
+		RegionName:                            listing.RegionName,
+		VPSRegion:                             listing.VPSRegion,
+		SupportsMainlandChinaDirectConnection: listing.SupportsMainlandChinaDirectConnection,
+		DistributionMethod:                    listing.DistributionMethod,
+		DistributionMethodNote:                listing.DistributionMethodNote,
+		ProvidesAdminAccount:                  listing.ProvidesAdminAccount,
+		AccessArrangement:                     listing.AccessArrangement,
+		PolicyVersion:                         listing.PolicyVersion,
+		RiskNoticeCode:                        listing.RiskNoticeCode,
+	}
+	if listing.CycleTerm != nil {
+		term := *listing.CycleTerm
+		snapshot.CycleTerm = &term
+	}
+	if listing.FollowsOfficialQuotaReset != nil {
+		snapshot.FollowsOfficialQuotaReset = *listing.FollowsOfficialQuotaReset
+	}
+	if listing.OpeningChannelCode != nil {
+		snapshot.OpeningChannelCode = *listing.OpeningChannelCode
+	}
+	if listing.CustomOpeningChannel != nil {
+		snapshot.CustomOpeningChannel = *listing.CustomOpeningChannel
+	}
+	if listing.PaymentMethodCode != nil {
+		snapshot.PaymentMethodCode = *listing.PaymentMethodCode
+	}
+	if listing.CustomPaymentMethod != nil {
+		snapshot.CustomPaymentMethod = *listing.CustomPaymentMethod
+	}
+	return snapshot
 }
 
 func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
@@ -2277,10 +2162,6 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 		return nextStatus == ListingStatusRejected && currentStatus == ListingStatusPendingReview
 	case "request_changes":
 		return nextStatus == ListingStatusChangesRequested && (currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive)
-	case "pause":
-		return nextStatus == ListingStatusPaused && currentStatus == ListingStatusActive
-	case "restore":
-		return nextStatus == ListingStatusActive && currentStatus == ListingStatusPaused
 	}
 	switch nextStatus {
 	case ListingStatusActive:
@@ -2289,43 +2170,25 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 		return currentStatus == ListingStatusPendingReview
 	case ListingStatusChangesRequested:
 		return currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive
-	case ListingStatusPaused:
-		return currentStatus == ListingStatusActive
+	default:
+		return false
+	}
+}
+
+func canUpdateListingGovernance(listing Listing, action string) bool {
+	published := listing.Status == ListingStatusActive || listing.Status == ListingStatusStopped
+	switch action {
+	case "pause":
+		return published && listing.GovernanceStatus == "clear"
+	case "restore":
+		return published && listing.GovernanceStatus == "removed"
 	default:
 		return false
 	}
 }
 
 func isOngoingApplicationStatus(status string) bool {
-	return status == ApplicationStatusPendingOwner || status == ApplicationStatusAcceptedReserved
-}
-
-func isUnexpiredReservation(application Application, now time.Time) bool {
-	return application.Status == ApplicationStatusAcceptedReserved &&
-		application.ReservationExpiresAt != nil &&
-		now.Before(*application.ReservationExpiresAt)
-}
-
-func canActorConfirmJoin(application Application, userID, actorRole string) bool {
-	switch actorRole {
-	case JoinActorBuyer:
-		return application.BuyerUserID == userID
-	case JoinActorOwner:
-		return application.OwnerUserID == userID
-	default:
-		return false
-	}
-}
-
-func canActorConfirmMembership(membership Membership, userID, actorRole string) bool {
-	switch actorRole {
-	case JoinActorBuyer:
-		return membership.BuyerUserID == userID
-	case JoinActorOwner:
-		return membership.OwnerUserID == userID
-	default:
-		return false
-	}
+	return status == ApplicationStatusPendingOwner
 }
 
 func canActorEndMembership(membership Membership, userID, actorRole, targetStatus string) bool {
@@ -2384,6 +2247,13 @@ func optionalString(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func normalizedProvidesAdminAccount(distributionMethod string, value bool) bool {
+	if strings.TrimSpace(distributionMethod) == ListingDistributionMethodAccountLogin {
+		return false
+	}
+	return value
 }
 
 func validOpeningChannelCodes() map[string]struct{} {

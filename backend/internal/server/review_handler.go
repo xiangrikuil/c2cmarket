@@ -35,6 +35,8 @@ type reviewCenterRowDTO struct {
 	Note                 *string        `json:"note"`
 	CompletedAt          string         `json:"completedAt"`
 	ReviewDeadlineAt     string         `json:"reviewDeadlineAt"`
+	CommercialOutcome    string         `json:"commercialOutcome"`
+	ReviewPaused         bool           `json:"reviewPaused"`
 	SubmittedAt          *string        `json:"submittedAt"`
 	VisibleAt            *string        `json:"visibleAt"`
 	FrozenAt             *string        `json:"frozenAt"`
@@ -66,17 +68,18 @@ type removeReviewRequest struct {
 }
 
 type publicReviewDTO struct {
-	ID              string   `json:"id"`
-	Username        string   `json:"username"`
-	Date            string   `json:"date"`
-	ServiceType     string   `json:"serviceType"`
-	TransactionType string   `json:"transactionType"`
-	ReviewerRole    string   `json:"reviewerRole"`
-	RevieweeRole    string   `json:"revieweeRole"`
-	Rating          int      `json:"rating"`
-	Tags            []string `json:"tags"`
-	Note            string   `json:"note"`
-	Verified        bool     `json:"verified"`
+	ID                string   `json:"id"`
+	Username          string   `json:"username"`
+	Date              string   `json:"date"`
+	ServiceType       string   `json:"serviceType"`
+	TransactionType   string   `json:"transactionType"`
+	ReviewerRole      string   `json:"reviewerRole"`
+	RevieweeRole      string   `json:"revieweeRole"`
+	Rating            int      `json:"rating"`
+	Tags              []string `json:"tags"`
+	Note              string   `json:"note"`
+	Verified          bool     `json:"verified"`
+	CommercialOutcome string   `json:"commercialOutcome"`
 }
 
 func (s *Server) handleMyReviewCenter(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +279,8 @@ func toReviewCenterRowDTO(row review.ReviewCenterRow) reviewCenterRowDTO {
 		Tags:                 []string{},
 		CompletedAt:          formatReviewTime(row.CompletedAt),
 		ReviewDeadlineAt:     formatReviewTime(row.ReviewDeadlineAt),
+		CommercialOutcome:    row.CommercialOutcome,
+		ReviewPaused:         row.ReviewPaused,
 		SubmittedAt:          formatOptionalReviewTime(row.SubmittedAt),
 		VisibleAt:            formatOptionalReviewTime(row.VisibleAt),
 		FrozenAt:             formatOptionalReviewTime(row.FrozenAt),
@@ -297,17 +302,18 @@ func toPublicReviewDTOs(items []review.PublicReview) []publicReviewDTO {
 	result := make([]publicReviewDTO, 0, len(items))
 	for _, item := range items {
 		result = append(result, publicReviewDTO{
-			ID:              item.ID,
-			Username:        item.ReviewerUsername,
-			Date:            item.Date.UTC().Format("2006-01-02"),
-			ServiceType:     item.ServiceType,
-			TransactionType: item.TransactionType,
-			ReviewerRole:    item.ReviewerRole,
-			RevieweeRole:    item.RevieweeRole,
-			Rating:          item.Rating,
-			Tags:            review.DisplayTagLabels(item.Tags),
-			Note:            item.Note,
-			Verified:        item.Verified,
+			ID:                item.ID,
+			Username:          item.ReviewerUsername,
+			Date:              item.Date.UTC().Format("2006-01-02"),
+			ServiceType:       item.ServiceType,
+			TransactionType:   item.TransactionType,
+			ReviewerRole:      item.ReviewerRole,
+			RevieweeRole:      item.RevieweeRole,
+			Rating:            item.Rating,
+			Tags:              review.DisplayTagLabels(item.Tags),
+			Note:              item.Note,
+			Verified:          item.Verified,
+			CommercialOutcome: item.CommercialOutcome,
 		})
 	}
 	return result

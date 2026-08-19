@@ -47,6 +47,8 @@ function backendReviewRow(overrides: Record<string, unknown> = {}) {
     note: null,
     completedAt: '2026-07-23T08:00:00Z',
     reviewDeadlineAt: '2026-08-06T08:00:00Z',
+    commercialOutcome: 'normal_fulfillment',
+    reviewPaused: false,
     submittedAt: '2026-07-24T08:00:00Z',
     visibleAt: null,
     frozenAt: null,
@@ -95,11 +97,11 @@ test('real review center preserves structured scenario tags without a counterpar
   assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/me/reviews?limit=100')
 })
 
-test('real review create uses the generic carpool transaction POST route', async () => {
+test('real review create uses the API order POST route', async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(sessionResponse())
     .mockResolvedValueOnce(jsonResponse(backendReviewRow({
-      transactionType: 'carpool_membership',
+      transactionType: 'api_order',
       transactionId: '44444444-4444-4444-8444-444444444444',
       direction: 'sent',
       reviewerRole: 'buyer',
@@ -113,7 +115,7 @@ test('real review create uses the generic carpool transaction POST route', async
 
   const { backendSubmitReview } = await loadReviewBackend()
   await backendSubmitReview({
-    transactionType: 'carpool_membership',
+    transactionType: 'api_order',
     transactionId: '44444444-4444-4444-8444-444444444444',
     operation: 'create',
     rating: 5,
@@ -123,10 +125,10 @@ test('real review create uses the generic carpool transaction POST route', async
 
   const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
   const headers = new Headers(init.headers)
-  assert.equal(url, '/api/v1/me/transactions/carpool_membership/44444444-4444-4444-8444-444444444444/review')
+  assert.equal(url, '/api/v1/me/transactions/api_order/44444444-4444-4444-8444-444444444444/review')
   assert.equal(init.method, 'POST')
   assert.equal(headers.get('X-CSRF-Token'), 'csrf-review')
-  assert.match(headers.get('Idempotency-Key') ?? '', /^review-create-carpool_membership-/)
+  assert.match(headers.get('Idempotency-Key') ?? '', /^review-create-api_order-/)
   assert.deepEqual(JSON.parse(String(init.body)), {
     rating: 5,
     tags: ['规则清晰'],

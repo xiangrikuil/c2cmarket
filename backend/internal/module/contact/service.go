@@ -3,14 +3,18 @@ package contact
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 
@@ -20,6 +24,30 @@ import (
 type ActionChecker interface {
 	CheckActionAllowed(ctx context.Context, userID, role, action string) *domain.AppError
 }
+
+type EmailSender interface {
+	SendVerificationCode(ctx context.Context, toEmail, code string, expiresAt time.Time) *domain.AppError
+	ExposeDevCode() bool
+}
+
+type developmentEmailSender struct{}
+
+func (developmentEmailSender) SendVerificationCode(context.Context, string, string, time.Time) *domain.AppError {
+	return nil
+}
+
+func (developmentEmailSender) ExposeDevCode() bool { return true }
+
+type ServiceOptions struct {
+	EmailVerificationPepper string
+	EmailSender             EmailSender
+}
+
+const (
+	ContactEmailVerificationLifetime    = 15 * time.Minute
+	ContactEmailVerificationMaxAttempts = 5
+	localEmailVerificationPepper        = "c2cmarket-local-email-verification-pepper-v1"
+)
 
 type Service struct {
 	mu                sync.Mutex
@@ -33,11 +61,25 @@ type Service struct {
 	accessLogs        map[string]ContactAccessLog
 	methodsByUserKey  map[string]string
 	methodAuditEvents []ContactMethodAuditEvent
+	emailChallenges   map[string]ContactEmailVerificationCode
+	emailSender       EmailSender
+	emailPepper       []byte
 }
 
 func NewService(repo Repository, now func() time.Time) *Service {
+	return NewServiceWithOptions(repo, now, ServiceOptions{})
+}
+
+func NewServiceWithOptions(repo Repository, now func() time.Time, options ServiceOptions) *Service {
 	if now == nil {
 		now = time.Now
+	}
+	pepper := strings.TrimSpace(options.EmailVerificationPepper)
+	if pepper == "" {
+		pepper = localEmailVerificationPepper
+	}
+	if options.EmailSender == nil {
+		options.EmailSender = developmentEmailSender{}
 	}
 	var idempotencyRepo idempotency.Repository
 	if candidate, ok := repo.(idempotency.Repository); ok {
@@ -52,6 +94,9 @@ func NewService(repo Repository, now func() time.Time) *Service {
 		sessions:         make(map[string]ContactSession),
 		accessLogs:       make(map[string]ContactAccessLog),
 		methodsByUserKey: make(map[string]string),
+		emailChallenges:  make(map[string]ContactEmailVerificationCode),
+		emailSender:      options.EmailSender,
+		emailPepper:      []byte(pepper),
 	}
 }
 
@@ -63,14 +108,11 @@ func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, route
 		return ContactMethod{}, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
 	input.UserID = userID
+	input.Type, input.Value = normalizeMethodTypeAndValue(input.Type, input.Value)
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
 	}
-	usageScopes := DefaultUsageScopes()
-	var appErr *domain.AppError
-	if input.UsageScopes != nil {
-		usageScopes, appErr = normalizeUsageScopes(input.UsageScopes)
-	}
+	usageScopes, appErr := normalizedUsageScopesForMethod(input.Type, input.UsageScopes)
 	if appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
 	}
@@ -94,6 +136,11 @@ func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, route
 	}
 
 	s.mu.Lock()
+	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(method.UserID, "") {
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, DuplicateEnabledWechatError()
+	}
 	if method.IsDefault {
 		for id, item := range s.methods {
 			if item.UserID == method.UserID && item.IsDefault {
@@ -128,14 +175,11 @@ func (s *Service) SetActionChecker(checker ActionChecker) {
 }
 
 func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (ContactMethod, *domain.AppError) {
+	input.Type, input.Value = normalizeMethodTypeAndValue(input.Type, input.Value)
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
 	}
-	usageScopes := DefaultUsageScopes()
-	var appErr *domain.AppError
-	if input.UsageScopes != nil {
-		usageScopes, appErr = normalizeUsageScopes(input.UsageScopes)
-	}
+	usageScopes, appErr := normalizedUsageScopesForMethod(input.Type, input.UsageScopes)
 	if appErr != nil {
 		return ContactMethod{}, appErr
 	}
@@ -152,6 +196,9 @@ func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (C
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(method.UserID, "") {
+		return ContactMethod{}, DuplicateEnabledWechatError()
+	}
 
 	if method.IsDefault {
 		for id, item := range s.methods {
@@ -254,10 +301,13 @@ func (s *Service) EnsureLinuxDoMethod(ctx context.Context, userID, username stri
 }
 
 func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInput) (ContactMethod, *domain.AppError) {
+	input.Type, input.Value = normalizeMethodTypeAndValue(input.Type, input.Value)
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
 	}
-	if input.UsageScopes != nil {
+	if input.Type == MethodTypeWechat {
+		input.UsageScopes = AllUsageScopes()
+	} else if input.UsageScopes != nil {
 		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
 		if appErr != nil {
 			return ContactMethod{}, appErr
@@ -277,6 +327,12 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	if !ok || current.UserID != input.UserID {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 	}
+	if appErr := validateRequiredWechatUpdate(current, input); appErr != nil {
+		return ContactMethod{}, appErr
+	}
+	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(input.UserID, input.MethodID) {
+		return ContactMethod{}, DuplicateEnabledWechatError()
+	}
 	if input.IsDefault {
 		for id, item := range s.methods {
 			if item.UserID == input.UserID && item.ID != input.MethodID && item.IsDefault {
@@ -295,10 +351,19 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 		method.UsageScopes = append([]string(nil), current.UsageScopes...)
 	}
 	method.Version = current.Version + 1
-	version.ContactMethodID = method.ID
-	method.CurrentVersionID = version.ID
+	valueChanged := current.Type != method.Type || current.DisplayValue != method.DisplayValue
+	if valueChanged {
+		version.ContactMethodID = method.ID
+		method.CurrentVersionID = version.ID
+		method.VerifiedAt = nil
+		s.versions[version.ID] = version
+	} else {
+		method.CurrentVersionID = current.CurrentVersionID
+		method.VerifiedAt = current.VerifiedAt
+		method.MaskedValue = current.MaskedValue
+		method.DisplayValue = current.DisplayValue
+	}
 	s.methods[method.ID] = cloneContactMethod(method)
-	s.versions[version.ID] = version
 	eventType := "contact_method.updated"
 	if current.Enabled && !method.Enabled {
 		eventType = "contact_method.disabled"
@@ -309,10 +374,13 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 
 func (s *Service) UpdateMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input UpdateContactMethodInput, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
 	input.UserID = userID
+	input.Type, input.Value = normalizeMethodTypeAndValue(input.Type, input.Value)
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
 	}
-	if input.UsageScopes != nil {
+	if input.Type == MethodTypeWechat {
+		input.UsageScopes = AllUsageScopes()
+	} else if input.UsageScopes != nil {
 		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
 		if appErr != nil {
 			return ContactMethod{}, idempotency.Completion{}, false, appErr
@@ -357,8 +425,8 @@ func (s *Service) DeleteMethodWithRequestID(ctx context.Context, userID, methodI
 	if !ok || method.UserID != userID {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 	}
-	if method.Type == "linuxdo" {
-		return ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
+	if method.Type == "linuxdo" || method.Type == "wechat" {
+		return ContactMethod{}, protectedContactDeleteError(method.Type)
 	}
 	method.Enabled = false
 	method.UpdatedAt = now
@@ -441,49 +509,146 @@ func (s *Service) SetDefaultMethodWithIdempotency(ctx context.Context, userID, r
 	return s.completeMemoryMethodMutation(ctx, entry, method, buildCompletion)
 }
 
-func (s *Service) VerifyMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
-	return s.VerifyMethodWithRequestID(ctx, userID, methodID, "unknown")
-}
-
-func (s *Service) VerifyMethodWithRequestID(ctx context.Context, userID, methodID, requestID string) (ContactMethod, *domain.AppError) {
+func (s *Service) StartEmailVerification(ctx context.Context, userID, methodID string) (ContactEmailVerificationChallenge, *domain.AppError) {
+	method, appErr := s.emailMethod(ctx, userID, methodID)
+	if appErr != nil {
+		return ContactEmailVerificationChallenge{}, appErr
+	}
 	now := s.now()
+	code := newContactEmailVerificationCode()
+	expiresAt := now.Add(ContactEmailVerificationLifetime)
+	email := normalizeContactEmail(method.DisplayValue)
+	challenge := ContactEmailVerificationCode{
+		UserID:                 userID,
+		ContactMethodID:        method.ID,
+		ContactMethodVersionID: method.CurrentVersionID,
+		Email:                  email,
+		CodeHash:               contactEmailCodeHash(s.emailPepper, userID, method.ID, method.CurrentVersionID, email, code),
+		ExpiresAt:              expiresAt,
+		CreatedAt:              now,
+	}
 	if s.repo != nil {
-		return s.repo.VerifyContactMethod(ctx, userID, methodID, requestID, now)
+		if appErr := s.repo.CreateContactEmailVerificationCode(ctx, challenge); appErr != nil {
+			return ContactEmailVerificationChallenge{}, appErr
+		}
+	} else {
+		s.mu.Lock()
+		current, ok := s.methods[method.ID]
+		if !ok || current.UserID != userID || !current.Enabled || current.Type != "email" || current.CurrentVersionID != method.CurrentVersionID {
+			s.mu.Unlock()
+			return ContactEmailVerificationChallenge{}, contactEmailVerificationInvalidStateError()
+		}
+		s.emailChallenges[method.ID] = challenge
+		s.mu.Unlock()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	method, ok := s.methods[methodID]
-	if !ok || method.UserID != userID || !method.Enabled {
-		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+	if appErr := s.emailSender.SendVerificationCode(ctx, email, code, expiresAt); appErr != nil {
+		return ContactEmailVerificationChallenge{}, appErr
 	}
-	method.VerifiedAt = &now
-	method.UpdatedAt = now
-	method.Version++
-	s.methods[method.ID] = cloneContactMethod(method)
-	s.appendMethodAuditEventLocked(method, "contact_method.verified", requestID, []string{"verifiedAt"})
-	return cloneContactMethod(method), nil
+	result := ContactEmailVerificationChallenge{
+		ContactMethodID:        method.ID,
+		ContactMethodVersionID: method.CurrentVersionID,
+		Email:                  email,
+		ExpiresAt:              expiresAt,
+	}
+	if s.emailSender.ExposeDevCode() {
+		result.DevCode = code
+	}
+	return result, nil
 }
 
-func (s *Service) VerifyMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash, methodID, requestID string, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+func (s *Service) ConfirmEmailVerificationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash, methodID, code, requestID string, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	code = strings.TrimSpace(code)
+	if !contactEmailCodePattern.MatchString(code) {
+		return ContactMethod{}, idempotency.Completion{}, false, invalidContactEmailVerificationCodeError()
+	}
+	method, appErr := s.emailMethod(ctx, userID, methodID)
+	if appErr != nil {
+		return ContactMethod{}, idempotency.Completion{}, false, appErr
+	}
 	entry, completion, replay, appErr := s.beginMethodIdempotency(ctx, userID, routeKey, key, requestHash, buildCompletion)
 	if appErr != nil || replay {
 		return ContactMethod{}, completion, false, appErr
 	}
+	now := s.now()
+	input := ConfirmContactEmailInput{
+		UserID:                 userID,
+		ContactMethodID:        method.ID,
+		ContactMethodVersionID: method.CurrentVersionID,
+		Email:                  normalizeContactEmail(method.DisplayValue),
+		CodeHash:               contactEmailCodeHash(s.emailPepper, userID, method.ID, method.CurrentVersionID, method.DisplayValue, code),
+		RequestID:              requestID,
+		Now:                    now,
+	}
 	if s.repo != nil {
-		method, completion, appErr := s.repo.VerifyContactMethodWithIdempotency(ctx, *entry, userID, methodID, requestID, s.now(), buildCompletion)
+		method, completion, appErr = s.repo.ConfirmContactEmailVerificationWithIdempotency(ctx, *entry, input, buildCompletion)
 		if appErr != nil {
 			s.idempotency.Cancel(ctx, entry)
 			return ContactMethod{}, idempotency.Completion{}, false, appErr
 		}
 		return method, completion, true, nil
 	}
-	method, appErr := s.VerifyMethodWithRequestID(ctx, userID, methodID, requestID)
-	if appErr != nil {
+
+	s.mu.Lock()
+	current, ok := s.methods[method.ID]
+	challenge, challengeOK := s.emailChallenges[method.ID]
+	if !ok || current.UserID != userID || !current.Enabled || current.Type != "email" ||
+		!challengeOK || challenge.Consumed || challenge.ContactMethodVersionID != current.CurrentVersionID ||
+		challenge.Email != normalizeContactEmail(current.DisplayValue) {
+		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return ContactMethod{}, idempotency.Completion{}, false, appErr
+		return ContactMethod{}, idempotency.Completion{}, false, invalidContactEmailVerificationCodeError()
 	}
-	return s.completeMemoryMethodMutation(ctx, entry, method, buildCompletion)
+	if !now.Before(challenge.ExpiresAt) || challenge.AttemptCount >= ContactEmailVerificationMaxAttempts {
+		challenge.Consumed = true
+		s.emailChallenges[method.ID] = challenge
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, invalidContactEmailVerificationCodeError()
+	}
+	if !hmac.Equal([]byte(challenge.CodeHash), []byte(input.CodeHash)) {
+		challenge.AttemptCount++
+		if challenge.AttemptCount >= ContactEmailVerificationMaxAttempts {
+			challenge.Consumed = true
+		}
+		s.emailChallenges[method.ID] = challenge
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return ContactMethod{}, idempotency.Completion{}, false, invalidContactEmailVerificationCodeError()
+	}
+	current.VerifiedAt = &now
+	current.UpdatedAt = now
+	current.Version++
+	challenge.Consumed = true
+	s.methods[current.ID] = cloneContactMethod(current)
+	s.emailChallenges[current.ID] = challenge
+	s.appendMethodAuditEventLocked(current, "contact_method.verified", requestID, []string{"verifiedAt"})
+	s.mu.Unlock()
+	return s.completeMemoryMethodMutation(ctx, entry, current, buildCompletion)
+}
+
+func (s *Service) emailMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
+	methods, appErr := s.ListMethods(ctx, userID)
+	if appErr != nil {
+		return ContactMethod{}, appErr
+	}
+	for _, method := range methods {
+		if method.ID != methodID {
+			continue
+		}
+		if !method.Enabled {
+			break
+		}
+		if method.Type != "email" {
+			return ContactMethod{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Email contact required", "当前联系方式不是邮箱。", "contactMethodId", "not_email", "请选择邮箱联系方式。")
+		}
+		email := normalizeContactEmail(method.DisplayValue)
+		if appErr := validateContactEmail(email); appErr != nil {
+			return ContactMethod{}, appErr
+		}
+		method.DisplayValue = email
+		return method, nil
+	}
+	return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 }
 
 func (s *Service) beginMethodIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, buildCompletion MethodCompletionBuilder) (*idempotency.Entry, idempotency.Completion, bool, *domain.AppError) {
@@ -570,7 +735,7 @@ func (s *Service) ReadSession(ctx context.Context, sessionID, viewerUserID, requ
 	if !ok {
 		return ContactSessionView{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact session not found", "联系窗口不存在。")
 	}
-	if session.Revoked || !s.now().Before(session.EndsAt) {
+	if session.Revoked || (!session.EndsAt.IsZero() && !s.now().Before(session.EndsAt)) {
 		return ContactSessionView{}, domain.NewError(http.StatusConflict, domain.CodeContactWindowExpired, "Contact window expired", "联系窗口已过期。")
 	}
 	if viewerUserID != session.BuyerUserID && viewerUserID != session.SellerUserID {
@@ -600,9 +765,14 @@ func (s *Service) ReadSession(ctx context.Context, sessionID, viewerUserID, requ
 	session.ContactAccessLogIDs = append(session.ContactAccessLogIDs, logEntry.ID)
 	s.sessions[session.ID] = session
 
+	var endsAt *time.Time
+	if !session.EndsAt.IsZero() {
+		value := session.EndsAt
+		endsAt = &value
+	}
 	return ContactSessionView{
 		SessionID: session.ID,
-		EndsAt:    session.EndsAt,
+		EndsAt:    endsAt,
 		Items: []ContactItemView{
 			{
 				Side:        "buyer",
@@ -682,6 +852,17 @@ func (s *Service) VersionForOwnerAndScope(methodID, ownerID, requiredScope strin
 	return s.VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope)
 }
 
+// WechatVersionForOwnerAndScope only returns the actor's enabled WeChat version for a transaction scope.
+func (s *Service) WechatVersionForOwnerAndScope(methodID, ownerID, requiredScope string) (ContactMethod, ContactMethodVersion, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	method, version, ok := s.VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope)
+	if !ok || method.Type != MethodTypeWechat {
+		return ContactMethod{}, ContactMethodVersion{}, false
+	}
+	return method, version, true
+}
+
 func (s *Service) VersionForOwnerLocked(methodID, ownerID string) (ContactMethod, ContactMethodVersion, bool) {
 	method, ok := s.methods[methodID]
 	if !ok || method.UserID != ownerID || method.CurrentVersionID == "" {
@@ -722,7 +903,7 @@ func (s *Service) RevokeSession(sessionID string, now time.Time) {
 		return
 	}
 	session.Revoked = true
-	if now.Before(session.EndsAt) {
+	if session.EndsAt.IsZero() || now.Before(session.EndsAt) {
 		session.EndsAt = now
 	}
 	s.sessions[session.ID] = session
@@ -797,7 +978,56 @@ func validateMethodInput(methodType, value string) *domain.AppError {
 	if !allowedMethodType(methodType) {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact type invalid", "联系方式类型不支持。", "type", "unsupported", "联系方式类型不支持。")
 	}
+	if methodType == "email" {
+		return validateContactEmail(normalizeContactEmail(value))
+	}
 	return nil
+}
+
+func normalizeMethodTypeAndValue(methodType, value string) (string, string) {
+	methodType = strings.TrimSpace(methodType)
+	value = strings.TrimSpace(value)
+	if methodType == "email" {
+		value = normalizeContactEmail(value)
+	}
+	return methodType, value
+}
+
+func normalizeContactEmail(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func validateContactEmail(value string) *domain.AppError {
+	if len(value) > 254 || !contactEmailPattern.MatchString(value) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Email invalid", "邮箱格式不正确。", "value", "invalid", "邮箱格式不正确。")
+	}
+	return nil
+}
+
+func newContactEmailVerificationCode() string {
+	var buffer [4]byte
+	if _, err := rand.Read(buffer[:]); err != nil {
+		panic(err)
+	}
+	number := int(buffer[0])<<24 | int(buffer[1])<<16 | int(buffer[2])<<8 | int(buffer[3])
+	if number < 0 {
+		number = -number
+	}
+	code := strconv.Itoa(number % 1000000)
+	return strings.Repeat("0", 6-len(code)) + code
+}
+
+func contactEmailCodeHash(pepper []byte, userID, methodID, versionID, email, code string) string {
+	subject := strings.Join([]string{strings.TrimSpace(userID), strings.TrimSpace(methodID), strings.TrimSpace(versionID)}, ":")
+	return auth.VerificationCodeHash(pepper, "contact_email", subject, normalizeContactEmail(email), strings.TrimSpace(code))
+}
+
+func invalidContactEmailVerificationCodeError() *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeVerificationCodeInvalid, "Verification code invalid", "验证码无效或已过期。", "code", "invalid", "验证码无效或已过期。")
+}
+
+func contactEmailVerificationInvalidStateError() *domain.AppError {
+	return domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact email changed", "邮箱联系方式已变化，请重新获取验证码。")
 }
 
 func Fingerprint(value string) string {
@@ -823,6 +1053,11 @@ func allowedMethodType(value string) bool {
 	}
 }
 
+var (
+	contactEmailPattern     = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+	contactEmailCodePattern = regexp.MustCompile(`^[0-9]{6}$`)
+)
+
 // DefaultUsageScopes 返回新建联系方式省略使用范围时的最小默认集合。
 func DefaultUsageScopes() []string {
 	return []string{UsageScopeBuyer, UsageScopeDispute}
@@ -842,7 +1077,7 @@ func HasUsageScope(scopes []string, requiredScope string) bool {
 	return false
 }
 
-// AllUsageScopes 返回身份绑定管理的 linux.do 联系方式使用范围全集。
+// AllUsageScopes 返回账号级交易联系方式使用范围全集。
 func AllUsageScopes() []string {
 	return []string{
 		UsageScopeCarpoolOwner,
@@ -850,6 +1085,52 @@ func AllUsageScopes() []string {
 		UsageScopeBuyer,
 		UsageScopeDispute,
 	}
+}
+
+func normalizedUsageScopesForMethod(methodType string, input []string) ([]string, *domain.AppError) {
+	if methodType == MethodTypeWechat {
+		return AllUsageScopes(), nil
+	}
+	if input == nil {
+		return DefaultUsageScopes(), nil
+	}
+	return normalizeUsageScopes(input)
+}
+
+func (s *Service) hasOtherEnabledWechatLocked(userID, excludedMethodID string) bool {
+	for _, method := range s.methods {
+		if method.UserID == userID && method.ID != excludedMethodID && method.Enabled && method.Type == MethodTypeWechat {
+			return true
+		}
+	}
+	return false
+}
+
+func DuplicateEnabledWechatError() *domain.AppError {
+	return domain.NewFieldError(
+		http.StatusConflict,
+		domain.CodeInvalidStateTransition,
+		"WeChat contact already configured",
+		"每个账号只能配置一个启用的微信联系方式，请直接更新现有微信。",
+		"type",
+		"duplicate",
+		"微信联系方式已配置。",
+	)
+}
+
+func WechatRequiredError(field, detail string) *domain.AppError {
+	if strings.TrimSpace(detail) == "" {
+		detail = "请先在个人中心配置微信联系方式。"
+	}
+	return domain.NewFieldError(
+		http.StatusUnprocessableEntity,
+		domain.CodeContactMethodRequired,
+		"WeChat contact required",
+		detail,
+		field,
+		"wechat_required",
+		"必须使用当前账号已启用的微信联系方式。",
+	)
 }
 
 func normalizeUsageScopes(input []string) ([]string, *domain.AppError) {
@@ -891,6 +1172,23 @@ func normalizeUsageScopes(input []string) ([]string, *domain.AppError) {
 		}
 	}
 	return result, nil
+}
+
+func validateRequiredWechatUpdate(current ContactMethod, input UpdateContactMethodInput) *domain.AppError {
+	if current.Type != "wechat" {
+		return nil
+	}
+	if strings.TrimSpace(input.Type) != "wechat" || !input.Enabled {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能停用或改为其他联系方式。")
+	}
+	return nil
+}
+
+func protectedContactDeleteError(methodType string) *domain.AppError {
+	if methodType == "wechat" {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能解除绑定。")
+	}
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
 }
 
 func equalUsageScopes(left, right []string) bool {

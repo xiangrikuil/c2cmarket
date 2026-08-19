@@ -120,7 +120,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <template>
   <div class="min-h-screen bg-background lg:grid" :style="{ gridTemplateColumns: sidebarCollapsed ? '64px minmax(0,1fr)' : '208px minmax(0,1fr)' }">
-    <aside class="sticky top-0 hidden h-screen border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex lg:flex-col">
+    <aside class="sticky top-[var(--global-announcement-height,0rem)] hidden h-[calc(100vh-var(--global-announcement-height,0rem))] border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex lg:flex-col">
       <RouterLink to="/admin" class="flex h-14 items-center border-b border-sidebar-border" :class="sidebarCollapsed ? 'justify-center' : 'gap-2 px-4'">
         <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-7 w-7" />
         <span v-if="!sidebarCollapsed" class="font-semibold">管理台</span>
@@ -151,7 +151,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </aside>
 
     <div class="min-w-0">
-      <header class="sticky top-0 z-30 border-b border-border bg-card/90 backdrop-blur">
+      <header class="sticky top-[var(--global-announcement-height,0rem)] z-30 border-b border-border bg-card/90 backdrop-blur">
         <div class="flex h-14 items-center gap-3 px-4 sm:px-5 lg:px-6">
           <Button variant="ghost" size="icon" class="lg:hidden" aria-label="打开管理导航" @click="menuOpen = true"><Menu class="h-4 w-4" /></Button>
           <h1 class="hidden min-w-[150px] text-lg font-semibold md:block">{{ currentTitle }}</h1>

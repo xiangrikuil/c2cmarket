@@ -63,7 +63,11 @@ test('reserves package stock and restores it exactly once for an unpaid cancella
   const initialStock = before?.packages?.find(item => item.id === 'a2-package-3d')?.stockAvailable
   assert.equal(initialStock, 8)
 
-  const { order } = await createPackageOrder(api)
+  const { intent, order } = await createPackageOrder(api)
+  assert.deepEqual(intent.contactChannels.map(item => item.type), ['wechat'])
+  assert.deepEqual(intent.buyerContactChannels?.map(item => item.type), ['wechat'])
+  assert.deepEqual(order.merchantContactChannels.map(item => item.type), ['wechat'])
+  assert.deepEqual(order.buyerContactChannels.map(item => item.type), ['wechat'])
   const reserved = await api.getApiServiceById('a2')
   assert.equal(reserved?.packages?.find(item => item.id === 'a2-package-3d')?.stockAvailable, 7)
   assert.equal(order.packageStockReserved, true)

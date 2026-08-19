@@ -3,6 +3,7 @@ import { backendRequest, requireBackendSession } from '@/lib/backendClient'
 export type NavigationBadgeRoleSummary = {
   carpoolActions: number
   apiOrderActions: number
+  apiOrderDisputes: number
 }
 
 export type NavigationBadgeAdminSummary = {
@@ -19,6 +20,7 @@ export type NavigationBadgeSummary = {
   notificationUnread: number
   importantAnnouncementUnread: number
   feedbackUnread: number
+  supportActionCount: number
   buyer: NavigationBadgeRoleSummary
   merchant: NavigationBadgeRoleSummary
   admin: NavigationBadgeAdminSummary | null

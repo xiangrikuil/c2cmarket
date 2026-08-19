@@ -2,6 +2,7 @@ import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   createAnnouncement,
+  acknowledgeAnnouncement,
   dismissAnnouncement,
   duplicateAnnouncement,
   getActiveAnnouncements,
@@ -14,6 +15,7 @@ import {
   getAnnouncementUnreadCount,
   getAnnouncements,
   getImportantAnnouncementUnreadCount,
+  getPublicActiveAnnouncements,
   markAnnouncementRead,
   markAnnouncementSeen,
   offlineAnnouncement,
@@ -31,6 +33,7 @@ function valueOf<T>(value: Ref<T> | T): T {
 export const announcementQueryKeys = {
   all: ['announcements'] as const,
   active: (channel?: AnnouncementChannel) => ['announcements', 'active', channel ?? 'all'] as const,
+  publicActive: (channel: 'global_bar' | 'modal') => ['announcements', 'public-active', channel] as const,
   home: ['announcements', 'home'] as const,
   detail: (slug: string) => ['announcements', 'detail', slug] as const,
   unreadCount: ['announcements', 'unread-count'] as const,
@@ -48,10 +51,20 @@ export function useAnnouncements() {
   })
 }
 
-export function useActiveAnnouncements(channel?: Ref<AnnouncementChannel | undefined> | AnnouncementChannel) {
+export function useActiveAnnouncements(channel?: Ref<AnnouncementChannel | undefined> | AnnouncementChannel, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => announcementQueryKeys.active(channel ? valueOf(channel) : undefined)),
     queryFn: () => getActiveAnnouncements(channel ? valueOf(channel) : undefined),
+    enabled: computed(() => valueOf(enabled)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function usePublicActiveAnnouncements(channel: 'global_bar' | 'modal', enabled: Ref<boolean> | boolean = true) {
+  return useQuery({
+    queryKey: announcementQueryKeys.publicActive(channel),
+    queryFn: () => getPublicActiveAnnouncements(channel),
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }
@@ -65,11 +78,11 @@ export function useActiveHomeAnnouncement(enabled: Ref<boolean> | boolean = true
   })
 }
 
-export function useAnnouncementDetail(slug: Ref<string> | string) {
+export function useAnnouncementDetail(slug: Ref<string> | string, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => announcementQueryKeys.detail(valueOf(slug))),
     queryFn: () => getAnnouncementBySlug(valueOf(slug)),
-    enabled: computed(() => Boolean(valueOf(slug))),
+    enabled: computed(() => Boolean(valueOf(slug)) && valueOf(enabled)),
   })
 }
 
@@ -147,6 +160,16 @@ export function useDismissAnnouncement() {
     mutationFn: (announcementId: string) => dismissAnnouncement(announcementId),
     onSuccess() {
       queryClient.invalidateQueries({ queryKey: announcementQueryKeys.home })
+      invalidateUserAnnouncementQueries(queryClient)
+    },
+  })
+}
+
+export function useAcknowledgeAnnouncement() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (announcementId: string) => acknowledgeAnnouncement(announcementId),
+    onSuccess() {
       invalidateUserAnnouncementQueries(queryClient)
     },
   })

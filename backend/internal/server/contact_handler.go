@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -51,9 +52,11 @@ func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
-		writeProblem(w, r, appErr)
-		return
+	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
+		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
 	}
 
 	value := req.Value
@@ -109,9 +112,11 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
-		writeProblem(w, r, appErr)
-		return
+	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
+		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
 	}
 	value := req.Value
 	if value == "" {
@@ -173,15 +178,57 @@ func (s *Server) handleSetDefaultContactMethod(w http.ResponseWriter, r *http.Re
 	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
-func (s *Server) handleVerifyContactMethod(w http.ResponseWriter, r *http.Request) {
+type confirmContactEmailVerificationRequest struct {
+	Code string `json:"code"`
+}
+
+type contactEmailVerificationChallengeResponse struct {
+	ContactMethodID        string `json:"contactMethodId"`
+	ContactMethodVersionID string `json:"contactMethodVersionId"`
+	Email                  string `json:"email"`
+	ExpiresAt              string `json:"expiresAt"`
+	DevCode                string `json:"devCode,omitempty"`
+}
+
+func (s *Server) handleStartContactEmailVerification(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
 	methodID := chi.URLParam(r, "id")
-	routeKey := "POST /api/v1/contact-methods/{id}/verify:" + methodID
-	completion, appErr := s.app.VerifyContactMethodWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, nil), methodID, requestIDFrom(r), contactMethodCompletionBuilder(http.StatusOK))
+	challenge, appErr := s.app.StartContactEmailVerification(r.Context(), user.ID, methodID)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, contactEmailVerificationChallengeResponse{
+		ContactMethodID:        challenge.ContactMethodID,
+		ContactMethodVersionID: challenge.ContactMethodVersionID,
+		Email:                  challenge.Email,
+		ExpiresAt:              challenge.ExpiresAt.UTC().Format(time.RFC3339),
+		DevCode:                challenge.DevCode,
+	})
+}
+
+func (s *Server) handleConfirmContactEmailVerification(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[confirmContactEmailVerificationRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	methodID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/contact-methods/{id}/email-verification/confirm:" + methodID
+	completion, appErr := s.app.ConfirmContactEmailVerificationWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		methodID, req.Code, requestIDFrom(r), contactMethodCompletionBuilder(http.StatusOK),
+	)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -258,7 +305,7 @@ func (s *Server) handleCreateDevContactSession(w http.ResponseWriter, r *http.Re
 
 type contactSessionContactsResponse struct {
 	SessionID string           `json:"sessionId"`
-	EndsAt    string           `json:"endsAt"`
+	EndsAt    *string          `json:"endsAt"`
 	Items     []contactItemDTO `json:"items"`
 }
 
@@ -289,7 +336,7 @@ func (s *Server) handleReadContactSession(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, contactSessionContactsResponse{
 		SessionID: view.SessionID,
-		EndsAt:    view.EndsAt.UTC().Format(time.RFC3339),
+		EndsAt:    formatOptionalTime(view.EndsAt),
 		Items:     items,
 	})
 }

@@ -5,13 +5,16 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
 )
 
 func TestContactUsageScopeAndAuditEventsStayAlignedInMemory(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	service := NewService(nil, func() time.Time { return now })
 	method, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "buyer", Type: "wechat", Label: "微信", Value: "sensitive-wechat-id",
+		UserID: "buyer", Type: "email", Label: "交易邮箱", Value: "buyer@example.com",
 		UsageScopes: []string{UsageScopeBuyer}, Enabled: true, RequestID: "create-request",
 	})
 	if appErr != nil {
@@ -26,7 +29,7 @@ func TestContactUsageScopeAndAuditEventsStayAlignedInMemory(t *testing.T) {
 
 	now = now.Add(time.Minute)
 	method, appErr = service.UpdateMethod(context.Background(), UpdateContactMethodInput{
-		UserID: "buyer", MethodID: method.ID, Type: "wechat", Label: "备用微信", Value: "next-sensitive-id",
+		UserID: "buyer", MethodID: method.ID, Type: "email", Label: "备用交易邮箱", Value: "next@example.com",
 		UsageScopes: []string{UsageScopeBuyer, UsageScopeDispute}, Enabled: true, RequestID: "update-request",
 	})
 	if appErr != nil {
@@ -37,8 +40,19 @@ func TestContactUsageScopeAndAuditEventsStayAlignedInMemory(t *testing.T) {
 		t.Fatalf("set default contact method: %v", appErr)
 	}
 	now = now.Add(time.Minute)
-	if method, appErr = service.VerifyMethodWithRequestID(context.Background(), "buyer", method.ID, "verify-request"); appErr != nil {
-		t.Fatalf("verify contact method: %v", appErr)
+	challenge, appErr := service.StartEmailVerification(context.Background(), "buyer", method.ID)
+	if appErr != nil {
+		t.Fatalf("start contact email verification: %v", appErr)
+	}
+	method, _, changed, appErr := service.ConfirmEmailVerificationWithIdempotency(
+		context.Background(), "buyer", "contact-email-confirm", "contact-email-confirm-key", "contact-email-confirm-hash",
+		method.ID, challenge.DevCode, "verify-request",
+		func(method ContactMethod) (idempotency.Completion, *domain.AppError) {
+			return idempotency.Completion{Status: 200, ContentType: "application/json", Body: []byte(`{}`), ResourceType: "contact_method", ResourceID: method.ID}, nil
+		},
+	)
+	if appErr != nil || !changed {
+		t.Fatalf("verify contact method: changed=%t error=%v", changed, appErr)
 	}
 	now = now.Add(time.Minute)
 	if _, appErr = service.DeleteMethodWithRequestID(context.Background(), "buyer", method.ID, "disable-request"); appErr != nil {

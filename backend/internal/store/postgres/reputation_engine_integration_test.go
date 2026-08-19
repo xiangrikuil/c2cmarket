@@ -302,7 +302,7 @@ func TestReputationEnginePostgresAggregatesCompletedOrderReviewAndBatchConsisten
 	}
 }
 
-func TestReputationEnginePostgresAttributesRoleControlledTimeouts(t *testing.T) {
+func TestReputationEnginePostgresAttributesAPIOrderTimeouts(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("C2C_TEST_DATABASE_URL is not configured")
@@ -323,7 +323,6 @@ func TestReputationEnginePostgresAttributesRoleControlledTimeouts(t *testing.T) 
 	serviceID := uuid.NewString()
 	seedQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now.Add(-2*time.Hour))
 	seedTimeoutAPIOrderForReputationTest(t, ctx, pool, serviceID, sellerID, sellerContactID, buyerID, buyerContactID, now)
-	seedExpiredCarpoolConfirmationsForReputationTest(t, ctx, pool, sellerID, sellerContactID, buyerID, buyerContactID, now)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO user_reputation_states (
@@ -363,8 +362,6 @@ func TestReputationEnginePostgresAttributesRoleControlledTimeouts(t *testing.T) 
 	}
 	assertTimeoutFacts("buyer API", facts[buyerID].Buyer.API, 1, 1)
 	assertTimeoutFacts("seller API", facts[sellerID].Seller.API, 0, 0)
-	assertTimeoutFacts("buyer carpool", facts[buyerID].Buyer.Carpool, 2, 2)
-	assertTimeoutFacts("seller carpool", facts[sellerID].Seller.Carpool, 2, 2)
 
 	var ruleVersion string
 	var completedCount, responsibleCount, unknownCount int
@@ -467,93 +464,6 @@ func seedTimeoutAPIOrderForReputationTest(
 		VALUES ($1, 'api_order.payment_timeout_cancelled', 'pending_payment', 'cancelled', 'reputation-timeout', $2)
 	`, orderID, cancelledAt); err != nil {
 		t.Fatalf("seed timeout API order event: %v", err)
-	}
-}
-
-func seedExpiredCarpoolConfirmationsForReputationTest(
-	t *testing.T,
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	sellerID string,
-	sellerContactID string,
-	buyerID string,
-	buyerContactID string,
-	now time.Time,
-) {
-	t.Helper()
-	var productPlanID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM product_plans ORDER BY created_at, id LIMIT 1`).Scan(&productPlanID); err != nil {
-		t.Fatalf("read timeout test product plan: %v", err)
-	}
-	listingID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO carpool_listings (
-		  id, owner_user_id, product_plan_id, title, summary, access_arrangement,
-		  price_monthly_cny, buyer_seat_capacity, active_buyer_members, status,
-		  policy_version, owner_contact_method_id, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, '确认超时信誉测试拼车', '确认超时责任测试', '双方站外确认',
-		        20, 2, 0, 'active', 1, $4, $5, $5)
-	`, listingID, sellerID, productPlanID, sellerContactID, now.Add(-2*time.Hour)); err != nil {
-		t.Fatalf("seed timeout test carpool listing: %v", err)
-	}
-
-	for index, confirmations := range []struct {
-		buyer bool
-		owner bool
-	}{
-		{buyer: false, owner: true},
-		{buyer: true, owner: false},
-		{buyer: false, owner: false},
-	} {
-		applicationID := uuid.NewString()
-		deadline := now.Add(time.Duration(-40-index) * time.Minute)
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO carpool_applications (
-			  id, carpool_listing_id, buyer_user_id, owner_user_id, product_plan_id,
-			  buyer_contact_method_id, status, listing_title_snapshot,
-			  price_monthly_cny_snapshot, policy_version_snapshot,
-			  reservation_expires_at, join_confirmation_deadline,
-			  created_at, updated_at
-			)
-			VALUES (
-			  $1, $2, $3, $4, $5,
-			  $6, 'accepted_reserved', '确认超时信誉测试拼车',
-			  20, 1,
-			  $7, $7,
-			  $8, $8
-			)
-		`, applicationID, listingID, buyerID, sellerID, productPlanID, buyerContactID, deadline, now.Add(-time.Hour)); err != nil {
-			t.Fatalf("seed timeout carpool application %d: %v", index, err)
-		}
-		for _, confirmation := range []struct {
-			enabled bool
-			role    string
-			userID  string
-		}{
-			{enabled: confirmations.buyer, role: "buyer", userID: buyerID},
-			{enabled: confirmations.owner, role: "owner", userID: sellerID},
-		} {
-			if !confirmation.enabled {
-				continue
-			}
-			if _, err := pool.Exec(ctx, `
-				INSERT INTO carpool_join_confirmations (
-				  carpool_application_id, actor_user_id, actor_role,
-				  confirmed_at, request_id, created_at
-				)
-				VALUES ($1, $2, $3, $4, $5, $4)
-			`, applicationID, confirmation.userID, confirmation.role, deadline.Add(-time.Minute), "timeout-confirmation-"+applicationID+"-"+confirmation.role); err != nil {
-				t.Fatalf("seed %s confirmation for application %d: %v", confirmation.role, index, err)
-			}
-		}
-		if _, err := pool.Exec(ctx, `
-			UPDATE carpool_applications
-			SET status = 'expired', updated_at = $2, version = version + 1
-			WHERE id = $1
-		`, applicationID, deadline); err != nil {
-			t.Fatalf("expire carpool application %d: %v", index, err)
-		}
 	}
 }
 

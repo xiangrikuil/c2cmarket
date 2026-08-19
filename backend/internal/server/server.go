@@ -22,8 +22,10 @@ import (
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
+	"c2c-market/backend/internal/module/communityidentity"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/devpersona"
+	"c2c-market/backend/internal/module/evidence"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/growth"
@@ -71,6 +73,7 @@ type ServerOptions struct {
 	MetricsBearerToken string
 	TurnstileVerifier  turnstile.Verifier
 	SentryEnabled      bool
+	Evidence           *evidence.Service
 }
 
 type OAuthOptions struct {
@@ -130,6 +133,13 @@ type AdminUserService interface {
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
+type CommunityIdentityService interface {
+	PublicCommunityIdentities(ctx context.Context, userID string) ([]communityidentity.PublicIdentity, *domain.AppError)
+	AdminCommunityIdentities(ctx context.Context, user auth.User, targetUserID string) ([]communityidentity.Identity, *domain.AppError)
+	GrantCommunityIdentityWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input communityidentity.GrantAdminInput, buildCompletion func(communityidentity.Identity) (idempotency.Completion, *domain.AppError)) (idempotency.Completion, *domain.AppError)
+	RevokeCommunityIdentityWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input communityidentity.RevokeInput, buildCompletion func(communityidentity.Identity) (idempotency.Completion, *domain.AppError)) (idempotency.Completion, *domain.AppError)
+}
+
 type OperationAuditService interface {
 	AdminOperationAuditLogs(ctx context.Context, user auth.User, filter operationaudit.Filter) (domain.Page[operationaudit.Entry], *domain.AppError)
 }
@@ -169,8 +179,8 @@ type CarpoolContinuityService interface {
 	CarpoolApplicationsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Application, *domain.AppError)
 	CarpoolApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (carpool.Application, *domain.AppError)
 	CarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Membership, *domain.AppError)
-	ConfirmCarpoolMembershipCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	EndCarpoolMembershipForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateCarpoolMembershipOwnerNoteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.UpdateMembershipOwnerNoteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
 type DisputeContinuityService interface {
@@ -342,6 +352,7 @@ type Service interface {
 	UpdateAPIServiceProbeConnection(ctx context.Context, user auth.User, input apimarket.UpdateProbeConnectionInput) (apimarket.Service, *domain.AppError)
 	UpdateAPIServiceProbeConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.UpdateProbeConnectionInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
+	PublicAPIPackageFilterOptions(ctx context.Context, billingMode string) (apimarket.PublicPackageFilterOptions, *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
 	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	OwnerAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
@@ -377,6 +388,7 @@ type Service interface {
 	OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OpenOwnerAPIOrderDisputeWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
+	SellerCommerceStatus(ctx context.Context, user auth.User) (apiorder.SellerCommerceStatus, *domain.AppError)
 	AdminAPIOrders(ctx context.Context, user auth.User, filter apiorder.AdminOrderFilter, page domain.PageRequest) (domain.Page[apiorder.Order], *domain.AppError)
 	AdminAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	ResolveAPIOrderCatalogRiskHoldWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.CatalogRiskHoldActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -396,8 +408,8 @@ type Service interface {
 	DeleteContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SetDefaultContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError)
 	SetDefaultContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	VerifyContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError)
-	VerifyContactMethodWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	StartContactEmailVerification(ctx context.Context, userID, methodID string) (contact.ContactEmailVerificationChallenge, *domain.AppError)
+	ConfirmContactEmailVerificationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash, methodID, code, requestID string, buildCompletion contact.MethodCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateContactSession(ctx context.Context, input contact.CreateContactSessionInput) (contact.ContactSession, *domain.AppError)
 	ReadContactSession(ctx context.Context, sessionID, viewerUserID, requestID string) (contact.ContactSessionView, *domain.AppError)
 
@@ -412,12 +424,14 @@ type Service interface {
 
 	UserAnnouncements(ctx context.Context, user auth.User) ([]announcement.Announcement, *domain.AppError)
 	ActiveAnnouncements(ctx context.Context, user auth.User, channel string) ([]announcement.Announcement, *domain.AppError)
+	PublicActiveAnnouncements(ctx context.Context, channel string) ([]announcement.Announcement, *domain.AppError)
 	HomeAnnouncement(ctx context.Context, user auth.User) (*announcement.Announcement, *domain.AppError)
 	UserAnnouncementBySlug(ctx context.Context, user auth.User, slug string) (announcement.Announcement, *domain.AppError)
 	AnnouncementUnreadCount(ctx context.Context, user auth.User, importantOnly bool) (int, *domain.AppError)
 	MarkAnnouncementSeen(ctx context.Context, user auth.User, id string) (announcement.Receipt, *domain.AppError)
 	MarkAnnouncementRead(ctx context.Context, user auth.User, id string) (announcement.Receipt, *domain.AppError)
 	DismissAnnouncement(ctx context.Context, user auth.User, id string) (announcement.Receipt, *domain.AppError)
+	AcknowledgeAnnouncement(ctx context.Context, user auth.User, id string) (announcement.Receipt, *domain.AppError)
 	AdminAnnouncements(ctx context.Context, user auth.User) ([]announcement.Announcement, *domain.AppError)
 	AdminAnnouncement(ctx context.Context, user auth.User, id string) (announcement.Announcement, *domain.AppError)
 	CreateAnnouncement(ctx context.Context, user auth.User, input announcement.FormInput) (announcement.Announcement, *domain.AppError)
@@ -441,6 +455,7 @@ type CarpoolService interface {
 	PublishCarpoolListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.PublishListingInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateCarpoolListing(ctx context.Context, user auth.User, input carpool.UpdateListingInput) (carpool.Listing, *domain.AppError)
 	UpdateCarpoolListingWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.UpdateListingInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateRecruitment(ctx context.Context, user auth.User, input carpool.RecruitmentInput, targetStatus string) (carpool.Listing, *domain.AppError)
 	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input carpool.SubmitListingReviewInput) (carpool.Listing, *domain.AppError)
 	SubmitCarpoolListingForReviewWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.SubmitListingReviewInput, buildCompletion carpool.ListingCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
@@ -456,17 +471,15 @@ type CarpoolService interface {
 	CreateCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.CreateApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
 	MyCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
+	ConfirmCarpoolApplicationConditions(ctx context.Context, user auth.User, input carpool.ConfirmApplicationConditionsInput) (carpool.Application, *domain.AppError)
 	OwnerCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
 	OwnerCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
 	AcceptCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.AcceptApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	RejectCarpoolApplication(ctx context.Context, user auth.User, input carpool.RejectApplicationInput) (carpool.Application, *domain.AppError)
 	RejectCarpoolApplicationWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.RejectApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CancelCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.CancelApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.WithdrawAcceptanceInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.ConfirmApplicationJoinInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
 	OwnerCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
-	ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	EndCarpoolMembershipWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
@@ -523,6 +536,7 @@ type ApplicationService interface {
 	APIQuotaService
 	APIPaymentSettingsService
 	AdminUserService
+	CommunityIdentityService
 	OperationAuditService
 	APIPromotionService
 	GrowthService
@@ -544,6 +558,7 @@ type Server struct {
 	adminAPIHealth     AdminAPIHealthService
 	apiModelTester     APIModelTesterService
 	adminUsers         AdminUserService
+	communityIdentity  CommunityIdentityService
 	operationAudit     OperationAuditService
 	apiPromotions      APIPromotionService
 	growth             GrowthService
@@ -554,6 +569,7 @@ type Server struct {
 	apiOrderContinuity APIOrderContinuityService
 	carpoolContinuity  CarpoolContinuityService
 	disputeContinuity  DisputeContinuityService
+	evidence           *evidence.Service
 	devPersonas        DevPersonaSessionService
 	mux                chi.Router
 	enableDevAuth      bool
@@ -610,6 +626,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		adminAPIHealth:     option.AdminAPIHealth,
 		apiModelTester:     apiModelTester,
 		adminUsers:         service,
+		communityIdentity:  service,
 		operationAudit:     service,
 		apiPromotions:      service,
 		growth:             service,
@@ -620,6 +637,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		apiOrderContinuity: service,
 		carpoolContinuity:  service,
 		disputeContinuity:  service,
+		evidence:           option.Evidence,
 		devPersonas:        service,
 		mux:                chi.NewRouter(),
 		enableDevAuth:      option.EnableDevAuth,

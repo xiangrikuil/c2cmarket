@@ -457,13 +457,13 @@ func disposeAccountGovernanceSalesResourceInTx(ctx context.Context, tx pgx.Tx, j
 			return err
 		}
 	case "carpool_listing":
-		if err := tx.QueryRow(ctx, `SELECT status FROM carpool_listings WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, resourceID, job.TargetUserID).Scan(&beforeStatus); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT governance_status FROM carpool_listings WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, resourceID, job.TargetUserID).Scan(&beforeStatus); err != nil {
 			return err
 		}
 	}
 	afterStatus := map[string]string{
 		"api_service": "owner_paused", "api_quota_batch": "paused", "api_quota_offer": "paused",
-		"api_service_promotion": "stopped", "carpool_listing": "paused",
+		"api_service_promotion": "stopped", "carpool_listing": "removed",
 	}[resourceType]
 	dispositionID, err := createAccountGovernanceDispositionInTx(ctx, tx, job, accountGovernanceDispositionInput{
 		ResourceType: resourceType, ResourceID: resourceID, Result: "sales_stopped", TriggerRole: "seller",
@@ -482,7 +482,7 @@ func disposeAccountGovernanceSalesResourceInTx(ctx context.Context, tx pgx.Tx, j
 	case "api_service_promotion":
 		_, err = tx.Exec(ctx, `UPDATE api_service_promotions SET stopped_at = $3, stopped_by_governance_action_id = $4, stopped_reason = $5, governance_disposition_id = $2, updated_at = $3, version = version + 1 WHERE id = $1 AND stopped_at IS NULL AND ends_at > $3`, resourceID, dispositionID, now, job.GovernanceActionID, accountGovernanceCancelReason)
 	case "carpool_listing":
-		_, err = tx.Exec(ctx, `UPDATE carpool_listings SET status = 'paused', governance_disposition_id = $2, updated_at = $3, version = version + 1 WHERE id = $1 AND status = 'active'`, resourceID, dispositionID, now)
+		_, err = tx.Exec(ctx, `UPDATE carpool_listings SET governance_status = 'removed', governance_disposition_id = $2, updated_at = $3, version = version + 1 WHERE id = $1 AND governance_status = 'clear'`, resourceID, dispositionID, now)
 	}
 	return err
 }
@@ -611,10 +611,9 @@ func disposeAccountGovernanceAPIIntentInTx(ctx context.Context, tx pgx.Tx, job a
 }
 
 func disposeAccountGovernanceCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, job accountGovernanceJob, applicationID string, now time.Time) error {
-	var buyerID, ownerID, status, contactSessionID string
-	var seatCount int
+	var buyerID, ownerID, status string
 	var version int64
-	if err := tx.QueryRow(ctx, `SELECT buyer_user_id::text, owner_user_id::text, status, COALESCE(contact_session_id::text, ''), seat_count, version FROM carpool_applications WHERE id = $1 FOR UPDATE`, applicationID).Scan(&buyerID, &ownerID, &status, &contactSessionID, &seatCount, &version); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT buyer_user_id::text, owner_user_id::text, status, version FROM carpool_applications WHERE id = $1 FOR UPDATE`, applicationID).Scan(&buyerID, &ownerID, &status, &version); err != nil {
 		return err
 	}
 	triggerRole := accountGovernanceTriggerRole(job.TargetUserID, buyerID)
@@ -633,7 +632,7 @@ func disposeAccountGovernanceCarpoolApplicationInTx(ctx context.Context, tx pgx.
 		_, err := createAccountGovernanceDispositionInTx(ctx, tx, job, accountGovernanceDispositionInput{ResourceType: "carpool_application", ResourceID: applicationID, Result: "preserved", TriggerRole: triggerRole, BeforeStatus: status, AfterStatus: status}, now)
 		return err
 	}
-	if status != "pending_owner" && status != "accepted_reserved" {
+	if status != "pending_owner" {
 		_, err := createAccountGovernanceDispositionInTx(ctx, tx, job, accountGovernanceDispositionInput{ResourceType: "carpool_application", ResourceID: applicationID, Result: "already_terminal", TriggerRole: triggerRole, BeforeStatus: status, AfterStatus: status}, now)
 		return err
 	}
@@ -642,15 +641,9 @@ func disposeAccountGovernanceCarpoolApplicationInTx(ctx context.Context, tx pgx.
 		afterStatus = "cancelled_by_buyer"
 	}
 	claimDeadline := job.EffectiveAt.Add(7 * 24 * time.Hour)
-	releasedType := ""
-	var releasedQuantity any
-	if status == "accepted_reserved" {
-		releasedType = "carpool_seat"
-		releasedQuantity = seatCount
-	}
 	dispositionID, err := createAccountGovernanceDispositionInTx(ctx, tx, job, accountGovernanceDispositionInput{
 		ResourceType: "carpool_application", ResourceID: applicationID, Result: "cancelled", TriggerRole: triggerRole,
-		BeforeStatus: status, AfterStatus: afterStatus, ReleasedResourceType: releasedType, ReleasedQuantity: releasedQuantity,
+		BeforeStatus: status, AfterStatus: afterStatus,
 		PaymentClaimDeadline: &claimDeadline,
 	}, now)
 	if err != nil {
@@ -665,11 +658,6 @@ func disposeAccountGovernanceCarpoolApplicationInTx(ctx context.Context, tx pgx.
 		WHERE id = $1
 	`, applicationID, afterStatus, accountGovernanceCancelReason, now, dispositionID, version); err != nil {
 		return err
-	}
-	if status == "accepted_reserved" {
-		if appErr := updateCarpoolContactSessionStatus(ctx, tx, contactSessionID, "revoked", now); appErr != nil {
-			return errors.New(appErr.Detail)
-		}
 	}
 	return insertAccountGovernanceRelationshipEventAndNotificationsInTx(ctx, tx, dispositionID, "carpool_application", applicationID, version, buyerID, ownerID,
 		"carpool_application.governance_cancelled", "/my/rides/"+applicationID, "/merchant/carpool-applications/"+applicationID, now)

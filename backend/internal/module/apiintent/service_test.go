@@ -209,7 +209,7 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 		RequestedCNYAmount:   "9.90",
 		SelectedAccessMode:   "fixed_package_offsite",
 		SelectedPackageID:    "package-1",
-	}, service, contact.ContactMethod{Type: "telegram", Label: "买家 TG"}, contact.ContactMethodVersion{ID: "buyer-version-1"}, contact.ContactMethod{Type: "telegram", Label: "卖家 TG"}, contact.ContactMethodVersion{ID: "owner-version-1"}, now)
+	}, service, contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "买家微信"}, contact.ContactMethodVersion{ID: "buyer-version-1"}, contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "卖家微信"}, contact.ContactMethodVersion{ID: "owner-version-1"}, now)
 	if appErr != nil {
 		t.Fatalf("new limited-package intent: %v", appErr)
 	}
@@ -243,6 +243,43 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 	}
 }
 
+func TestIntentFactoryRejectsNonWechatAndMultipleContactSnapshots(t *testing.T) {
+	now := time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)
+	input := CreateIntentInput{
+		APIServiceID:         "service-1",
+		BuyerUserID:          "buyer-1",
+		BuyerContactMethodID: "buyer-contact-1",
+		RequestedCNYAmount:   "10.00",
+		SelectedAccessMode:   "manual_offsite_arrangement",
+	}
+	service := apimarket.Service{ID: "service-1", OwnerUserID: "owner-1", MinimumIntentCNY: "1.00"}
+	buyerVersion := contact.ContactMethodVersion{ID: "buyer-version-1"}
+	ownerWechat := OwnerContactSnapshot{
+		ContactMethodID:        "owner-contact-1",
+		ContactMethodVersionID: "owner-version-1",
+		Type:                   contact.MethodTypeWechat,
+		Label:                  "卖家微信",
+	}
+
+	_, appErr := NewIntentWithOwnerContacts(input, service, contact.ContactMethod{Type: "telegram"}, buyerVersion, []OwnerContactSnapshot{ownerWechat}, now)
+	if appErr == nil || appErr.Code != domain.CodeContactMethodRequired || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "wechat_required" {
+		t.Fatalf("expected buyer WeChat requirement, got %#v", appErr)
+	}
+
+	validBuyer := contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "买家微信"}
+	wrongOwner := ownerWechat
+	wrongOwner.Type = "telegram"
+	_, appErr = NewIntentWithOwnerContacts(input, service, validBuyer, buyerVersion, []OwnerContactSnapshot{wrongOwner}, now)
+	if appErr == nil || appErr.Code != domain.CodeMerchantContactUnavailable {
+		t.Fatalf("expected merchant WeChat unavailable error, got %#v", appErr)
+	}
+
+	_, appErr = NewIntentWithOwnerContacts(input, service, validBuyer, buyerVersion, []OwnerContactSnapshot{ownerWechat, ownerWechat}, now)
+	if appErr == nil || appErr.Code != domain.CodeMerchantContactUnavailable {
+		t.Fatalf("expected exactly one merchant WeChat snapshot, got %#v", appErr)
+	}
+}
+
 func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
 	service := limitedPackageIntentService(now, nil)
@@ -266,7 +303,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 		BuyerContactMethodID: "buyer-contact-1",
 		RequestedCNYAmount:   "10.00",
 		SelectedAccessMode:   "fixed_package_offsite",
-	}, service, contact.ContactMethod{Type: "telegram", Label: "买家 TG"}, contact.ContactMethodVersion{ID: "buyer-version-1"}, contact.ContactMethod{Type: "telegram", Label: "卖家 TG"}, contact.ContactMethodVersion{ID: "owner-version-1"}, now)
+	}, service, contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "买家微信"}, contact.ContactMethodVersion{ID: "buyer-version-1"}, contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "卖家微信"}, contact.ContactMethodVersion{ID: "owner-version-1"}, now)
 	if appErr != nil {
 		t.Fatalf("new intent: %v", appErr)
 	}
@@ -342,6 +379,28 @@ func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	}, service)
 	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "selectedPackageId" {
 		t.Fatalf("expected sold-out package rejection, got %+v", appErr)
+	}
+}
+
+func TestCreateIntentRejectsSoldOutServiceVisibleByPublicDetail(t *testing.T) {
+	now := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)
+	duration := 7
+	service := limitedPackageIntentService(now, []apimarket.ServicePackage{{
+		ID: "sold-out", Name: "售罄套餐", PriceCNY: "9.90", PanelAllowance: "5", DurationDays: &duration,
+		StockTotal: 1, StockAvailable: 0, Enabled: true,
+		Models: []apimarket.ServicePackageModel{{ServiceModelID: "service-model-1", ModelCatalogID: "model-1"}},
+	}})
+	events := []string{}
+	manager := NewManager(nil, &createOrderingServiceResolver{events: &events, service: service}, nil, nil, func() time.Time { return now })
+
+	_, _, created, appErr := manager.CreateWithIdempotency(context.Background(), "buyer-1", "api-intent-create", "sold-out-key", "sold-out-hash", CreateIntentInput{
+		APIServiceID: service.ID,
+	}, testAPIIntentCompletion)
+	if appErr == nil || appErr.Status != http.StatusNotFound || appErr.Code != domain.CodeObjectNotFound {
+		t.Fatalf("expected strict sold-out purchase rejection, got %+v", appErr)
+	}
+	if created || len(manager.intents) != 0 {
+		t.Fatalf("sold-out purchase attempt must not create an intent: created=%v intents=%+v", created, manager.intents)
 	}
 }
 

@@ -16,7 +16,9 @@ import {
   Store,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiProbeConnectionDialog from '@/components/api-probe/ApiProbeConnectionDialog.vue'
 import AccountPaymentSummarySection from '@/components/api-service-publish/AccountPaymentSummarySection.vue'
+import SellerCommerceStatusPanel from '@/components/api-order/SellerCommerceStatusPanel.vue'
 import ApiPaymentSettingsDialog from '@/components/contact-payment/ApiPaymentSettingsDialog.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
@@ -79,14 +81,15 @@ import {
   useApiPaymentAccountSettingsQuery,
   useApiQuotaSaleSlots,
   useCreateApiQuotaRushOfferMutation,
-	useMerchantApiOrders,
   useModelCatalog,
   useMyApiServices,
 	useMyContactMethodsQuery,
   useMyProfileQuery,
+  useSellerCommerceStatus,
 } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
+import type { OwnerAPIProbeConnection } from '@/types/apiHealth'
 
 type ServiceMode = 'existing' | 'create'
 
@@ -97,6 +100,7 @@ const step = ref(1)
 const completedSteps = ref<number[]>([])
 const previewOpen = ref(false)
 const paymentSettingsDialogOpen = ref(false)
+const probeConnectionDialogOpen = ref(false)
 const paymentPromptedForCreate = ref(false)
 const formDirty = ref(false)
 useUnsavedChangesGuard(formDirty, '限量额度包配置尚未发布，确认离开当前页面？')
@@ -114,7 +118,7 @@ const publishSteps = [
 
 const myServicesQuery = useMyApiServices('all')
 const contactMethodsQuery = useMyContactMethodsQuery()
-const activeDisputesQuery = useMerchantApiOrders({ dispute: 'active' })
+const commerceStatusQuery = useSellerCommerceStatus()
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
@@ -217,13 +221,19 @@ const serviceDeclaredMaxConcurrency = computed(() => selectedService.value?.decl
 const servicePromptAuditEnabled = computed(() => selectedService.value?.promptAuditEnabled ?? baseForm.promptAuditEnabled)
 
 const baseErrors = reactive<Record<string, string>>({})
+
+function selectProbeConnection(connection: OwnerAPIProbeConnection) {
+  baseForm.probeConnectionId = connection.id
+  delete baseErrors.probeConnection
+  formDirty.value = true
+}
 const catalog = computed(() => modelCatalog.value ?? [])
 const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, item])))
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === baseForm.providerCategory))
 const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
 const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
-  contact.enabled && contact.usageScopes.includes('api_merchant')
+  contact.enabled && contact.type === 'wechat' && contact.usageScopes.includes('api_merchant')
 )))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === baseForm.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
@@ -245,12 +255,7 @@ watch(() => myProfile.value, profile => {
 }, { immediate: true })
 
 watch(availableOwnerContacts, contacts => {
-  const availableIds = new Set(contacts.map(contact => contact.id))
-  baseForm.ownerContactMethodIds = baseForm.ownerContactMethodIds.filter(id => availableIds.has(id))
-  if (baseForm.ownerContactMethodIds.length || !contacts.length) return
-  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
-  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
-  baseForm.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
+  baseForm.ownerContactMethodIds = contacts[0] ? [contacts[0].id] : []
 }, { immediate: true })
 
 watch(accountSettingsValue, settings => {
@@ -347,15 +352,25 @@ const slotStepSummary = computed(() => selectedSlot.value
 const selectedSlotLabel = computed(() => selectedSlot.value
   ? `${formatSlotDate(selectedSlot.value.startsAt)} ${formatSlotTime(selectedSlot.value.startsAt)}`
   : '')
-const activeDisputeCount = computed(() => activeDisputesQuery.data.value?.length ?? 0)
+const activeDisputeCount = computed(() => commerceStatusQuery.data.value?.activeDisputeCount ?? 0)
+const selectedServiceLimited = computed(() => Boolean(
+  selectedServiceId.value
+  && commerceStatusQuery.data.value?.level === 'service_limited'
+  && commerceStatusQuery.data.value.affectedServiceIds.includes(selectedServiceId.value),
+))
 const disputePublishBlocked = computed(() => (
-	activeDisputesQuery.isLoading.value || activeDisputesQuery.isError.value || activeDisputeCount.value > 0
+	commerceStatusQuery.isLoading.value
+	|| commerceStatusQuery.isError.value
+	|| commerceStatusQuery.data.value?.level === 'account_limited'
+	|| selectedServiceLimited.value
 ))
 const disputeRuleText = computed(() => {
-	if (activeDisputesQuery.isLoading.value) return '正在检查当前账号是否存在未解决的 API 订单纠纷，检查完成前不能提交发布。'
-	if (activeDisputesQuery.isError.value) return '暂时无法确认纠纷状态，为避免违规接单，当前不能提交发布。请重试。'
-	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 个未解决的 API 订单纠纷。处理完成前不能发布或恢复 API 服务与额度，也不会接收新订单。`
-	return '发布规则：账号存在未解决的 API 订单纠纷时，不能发布或恢复 API 服务与额度，也不会接收新订单。'
+	if (commerceStatusQuery.isLoading.value) return '正在检查当前账号的经营状态，检查完成前不能发布。'
+	if (commerceStatusQuery.isError.value) return '暂时无法确认经营状态，请重试；已填写内容不会丢失。'
+	if (commerceStatusQuery.data.value?.level === 'account_limited') return '当前账号已暂停全部新接单，已成立订单仍可继续履约。'
+	if (selectedServiceLimited.value) return '当前选中的服务已暂停新接单，请处理关联纠纷或选择其他服务。'
+	if (activeDisputeCount.value > 0) return `有 ${activeDisputeCount.value} 笔活动纠纷，但不影响当前服务发布。`
+	return '单笔普通纠纷只冻结对应订单；服务级限制不会影响其他服务。'
 })
 const primaryActionLabel = computed(() => {
   if (createBaseServiceMutation.isPending.value) return '创建中...'
@@ -449,7 +464,7 @@ function validateBaseService() {
     return false
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
-	if (!baseForm.ownerContactMethodIds.length) baseErrors.ownerContactMethods = '请至少选择一种订单联系方式。'
+  if (baseForm.ownerContactMethodIds.length !== 1) baseErrors.ownerContactMethods = '请先在个人中心配置微信联系方式。'
   if (!baseForm.probeConnectionId) baseErrors.probeConnection = '请选择已验证且启用的探针连接。'
   else if (!probeConnectionReady.value) baseErrors.probeConnection = '所选探针连接当前不可用，请重新选择。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
@@ -650,14 +665,13 @@ function preview() {
       </div>
     </header>
 
-    <Alert :variant="activeDisputeCount > 0 || activeDisputesQuery.isError.value ? 'destructive' : 'default'">
-      <CalendarClock />
-      <AlertTitle>发布前纠纷规则</AlertTitle>
-      <AlertDescription>
-        {{ disputeRuleText }}
-        <Button v-if="activeDisputesQuery.isError.value" type="button" size="sm" variant="outline" class="mt-3" @click="activeDisputesQuery.refetch()">重新检查</Button>
-      </AlertDescription>
-    </Alert>
+    <SellerCommerceStatusPanel
+      :status="commerceStatusQuery.data.value"
+      :target-service-id="selectedServiceId"
+      :loading="commerceStatusQuery.isLoading.value"
+      :error="commerceStatusQuery.isError.value"
+      @retry="commerceStatusQuery.refetch()"
+    />
 
     <PublishWorkflowStepper :steps="publishSteps" :current-step="step" :completed-steps="completedSteps" @select="selectStep" />
 
@@ -727,6 +741,7 @@ function preview() {
                   :loading="probeConnectionsQuery.isLoading.value"
                   :error="probeConnectionError"
                   :field-error="baseErrors.probeConnection"
+                  @create="probeConnectionDialogOpen = true"
                   @refresh="probeConnectionsQuery.refetch()"
                 />
                 <AccountPaymentSummarySection
@@ -838,6 +853,13 @@ function preview() {
       v-model:open="paymentSettingsDialogOpen"
       :settings="accountSettingsValue"
       @saved="handlePaymentSettingsSaved"
+    />
+    <ApiProbeConnectionDialog
+      v-model:open="probeConnectionDialogOpen"
+      :connections="probeConnections"
+      require-enabled
+      @saved="selectProbeConnection"
+      @reuse="selectProbeConnection"
     />
   </div>
 </template>

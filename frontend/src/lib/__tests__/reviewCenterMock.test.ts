@@ -3,8 +3,8 @@ import { afterEach, test, vi } from 'vitest'
 
 type ApiModule = typeof import('../api')
 
-function createStorage() {
-  const store = new Map<string, string>()
+function createStorage(entries: Record<string, string> = {}) {
+  const store = new Map(Object.entries(entries))
   return {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => store.set(key, value),
@@ -13,10 +13,46 @@ function createStorage() {
   }
 }
 
-async function loadMockAPI(): Promise<ApiModule> {
+function completedApiOrder(completedAt: string) {
+  return {
+    id: 'api-order-reviewable',
+    orderNo: 'API-20260723-REVIEWTEST',
+    purchaseKind: 'api_service',
+    apiPurchaseIntentId: 'api-intent-reviewable',
+    apiServiceId: 'api-service-reviewable',
+    buyerId: 'buyer-demo-user',
+    buyer: 'demo_user',
+    sellerId: 'merchant-orbit',
+    seller: 'orbit',
+    status: 'completed',
+    disputeStatus: 'none',
+    hasDisputeHistory: false,
+    serviceTitle: 'API 额度订单',
+    amount: 100,
+    currency: 'CNY',
+    selectedPaymentMethod: 'wechat',
+    paymentWindowMinutes: 10,
+    paymentExpiresAt: '2026-07-23T07:10:00.000Z',
+    commercialOutcome: 'normal_fulfillment',
+    completionSource: 'buyer_confirmed',
+    completedAt,
+    version: 1,
+    intentSnapshot: {},
+    selectedDeliveryMode: 'api_key_endpoint',
+    requestedUsdAllowance: 10,
+    merchantContactChannels: [],
+    buyerContactChannels: [],
+    createdAt: '2026-07-23T07:00:00.000Z',
+    updatedAt: completedAt,
+  }
+}
+
+async function loadMockAPI(completedAt = '2026-07-23T08:00:00.000Z'): Promise<ApiModule> {
   vi.resetModules()
   vi.stubGlobal('window', {
-    sessionStorage: createStorage(),
+    sessionStorage: createStorage({
+      'c2cmarket.apiOrders.v1': JSON.stringify([completedApiOrder(completedAt)]),
+    }),
     localStorage: createStorage(),
     setTimeout: globalThis.setTimeout,
   })
@@ -37,71 +73,64 @@ afterEach(() => {
   vi.resetModules()
 })
 
-test('mock 评价中心覆盖双盲、双方公开和截止状态', async () => {
+test('mock 评价中心只投影已完成的 API 订单', async () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-07-24T04:00:00.000Z'))
   const api = await loadMockAPI()
 
   const center = await settle(api.getReviewCenterRows())
-  const pending = center.items.find(item => item.transactionId === 'ride-app-7' && item.direction === 'pending')
-  const receivedSealed = center.items.find(item => item.transactionId === 'ride-app-7' && item.direction === 'received')
-  const sentSealed = center.items.find(item => item.transactionId === 'ride-app-8' && item.direction === 'sent')
-  const sentPublished = center.items.find(item => item.transactionId === 'ride-app-5' && item.direction === 'sent')
-  const receivedPublished = center.items.find(item => item.transactionId === 'ride-app-5' && item.direction === 'received')
-  const expired = center.items.find(item => item.transactionId === 'ride-app-9' && item.direction === 'pending')
-
-  assert.equal(pending?.status, 'reviewable')
-  assert.equal(receivedSealed, undefined)
-  assert.equal(pending?.allowedTags.some(tag => tag.code === 'true_desc'), true)
-  assert.equal(sentSealed?.visibility, 'sealed')
-  assert.equal(sentSealed?.canEdit, true)
-  assert.equal(sentSealed?.rating, 4)
-  assert.equal(sentPublished?.visibility, 'published')
-  assert.equal(sentPublished?.canEdit, false)
-  assert.equal(receivedPublished?.visibility, 'published')
-  assert.equal(receivedPublished?.rating, 4)
-  assert.equal(expired?.status, 'expired')
-  assert.equal(expired?.canCreate, false)
+  assert.equal(center.items.length, 1)
+  assert.equal(center.items[0]?.transactionType, 'api_order')
+  assert.equal(center.items[0]?.status, 'reviewable')
+  assert.equal(center.items[0]?.canCreate, true)
+  assert.equal(center.items[0]?.allowedTags.some(tag => tag.code === 'true_desc'), true)
 })
 
-test('mock 第二方提交后双方评价立即公开冻结', async () => {
+test('mock API 订单评价提交后进入双盲状态并允许窗口内编辑', async () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-07-24T04:00:00.000Z'))
   const api = await loadMockAPI()
 
-  const submittedPromise = api.submitReview({
-    transactionType: 'carpool_membership',
-    transactionId: 'ride-app-7',
+  const submitted = await settle(api.submitReview({
+    transactionType: 'api_order',
+    transactionId: 'api-order-reviewable',
     operation: 'create',
     rating: 5,
     tags: ['沟通顺畅'],
-    note: '沟通清楚，确认过程顺畅。',
-  })
-  const submitted = await settle(submittedPromise)
-  assert.equal(submitted.visibility, 'published')
-  assert.equal(submitted.canEdit, false)
+    note: '交付说明清楚。',
+  }))
 
-  const center = await settle(api.getReviewCenterRows())
-  const received = center.items.find(item => item.transactionId === 'ride-app-7' && item.direction === 'received')
-  assert.equal(received?.visibility, 'published')
-  assert.equal(received?.rating, 5)
-  assert.equal(received?.note, '付款和确认都很及时，沟通顺畅。')
+  assert.equal(submitted.visibility, 'sealed')
+  assert.equal(submitted.canEdit, true)
+  assert.equal(submitted.rating, 5)
 })
 
-test('mock 拒绝超过十四天窗口的评价', async () => {
+test('mock 拒绝拼车评价和超过十四天窗口的 API 订单评价', async () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-07-24T04:00:00.000Z'))
-  const api = await loadMockAPI()
+  const api = await loadMockAPI('2026-07-01T08:00:00.000Z')
 
-  const submission = api.submitReview({
-    transactionType: 'carpool_membership',
-    transactionId: 'ride-app-9',
+  const carpoolSubmission = api.submitReview({
+    transactionType: 'carpool_membership' as 'api_order',
+    transactionId: 'ride-app-5',
+    operation: 'create',
+    rating: 5,
+    tags: ['沟通顺畅'],
+    note: '拼车不应进入评价体系。',
+  })
+  const carpoolRejection = assert.rejects(carpoolSubmission, /拼车不支持评价/)
+  await vi.runAllTimersAsync()
+  await carpoolRejection
+
+  const expiredSubmission = api.submitReview({
+    transactionType: 'api_order',
+    transactionId: 'api-order-reviewable',
     operation: 'create',
     rating: 5,
     tags: ['沟通顺畅'],
     note: '这条评价已经超过允许窗口。',
   })
-  const rejection = assert.rejects(submission, /评价窗口已截止/)
+  const expiredRejection = assert.rejects(expiredSubmission, /评价窗口已截止/)
   await vi.runAllTimersAsync()
-  await rejection
+  await expiredRejection
 })

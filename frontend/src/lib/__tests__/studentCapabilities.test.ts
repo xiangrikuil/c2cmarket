@@ -113,7 +113,7 @@ test('menus, actions, and seller queries use capability facts without resource-c
   assert.match(appShellSource, /canManageApiProbe[\s\S]*CAPABILITY\.apiProbeManage/)
   assert.match(appShellSource, /canViewMerchantWorkspace[\s\S]*CAPABILITY\.carpoolPublish[\s\S]*CAPABILITY\.apiServicePublish[\s\S]*CAPABILITY\.apiProbeManage/)
   assert.match(appShellSource, /canViewAdminNav[\s\S]*CAPABILITY\.adminAccess/)
-  assert.match(appShellSource, /canManageApiProbe\.value \? \[\{ label: '探针连接'/)
+  assert.match(appShellSource, /canManageApiProbe\.value \? \[\{ key: 'api-probe-connections', label: '探针连接'/)
   assert.doesNotMatch(appShellSource, /hasMerchantWorkspace|ownedCarpools|ownedApiServices/)
 
   assert.match(myCenterSource, /useMyCarpools\(canPublishCarpool\)/)

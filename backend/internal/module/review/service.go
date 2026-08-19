@@ -75,7 +75,10 @@ func (s *Service) ListMine(ctx context.Context, userID string) ([]ReviewCenterRo
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.publishExpiredLocked(now)
+	for _, transaction := range transactions {
+		s.refreshMutableTransactionReviewsLocked(transaction)
+	}
+	s.publishExpiredForTransactionsLocked(now, transactions)
 	rows := make([]ReviewCenterRow, 0, len(transactions)*2)
 	for _, transaction := range transactions {
 		rows = append(rows, s.rowsForTransactionLocked(transaction, userID, now)...)
@@ -125,6 +128,10 @@ func (s *Service) SubmitWithIdempotency(ctx context.Context, userID, routeKey, k
 		return idempotency.Completion{}, reviewTransactionNotFound()
 	}
 	now := s.now()
+	if transaction.ReviewPaused {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, reviewPaused()
+	}
 	if !now.Before(transaction.ReviewDeadlineAt) {
 		s.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, reviewWindowClosed()
@@ -259,7 +266,8 @@ func (s *Service) saveMemory(transaction Transaction, input SubmitReviewInput, n
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.publishExpiredLocked(now)
+	s.refreshMutableTransactionReviewsLocked(transaction)
+	s.publishExpiredForTransactionLocked(now, transaction)
 	key := reviewKey(input.TransactionType, input.TransactionID, input.ReviewerUserID)
 	item, exists := s.reviews[key]
 	switch input.Operation {
@@ -281,16 +289,17 @@ func (s *Service) saveMemory(transaction Transaction, input SubmitReviewInput, n
 
 	if !exists {
 		item = Review{
-			ID:               uuid.NewString(),
-			TransactionType:  transaction.Type,
-			ReviewerUserID:   input.ReviewerUserID,
-			RevieweeUserID:   revieweeUserID,
-			ReviewerRole:     reviewerRole,
-			RevieweeRole:     revieweeRole,
-			Status:           StatusSealed,
-			ReviewDeadlineAt: transaction.ReviewDeadlineAt,
-			CreatedAt:        now,
-			Version:          1,
+			ID:                uuid.NewString(),
+			TransactionType:   transaction.Type,
+			ReviewerUserID:    input.ReviewerUserID,
+			RevieweeUserID:    revieweeUserID,
+			ReviewerRole:      reviewerRole,
+			RevieweeRole:      revieweeRole,
+			Status:            StatusSealed,
+			ReviewDeadlineAt:  transaction.ReviewDeadlineAt,
+			CommercialOutcome: transaction.CommercialOutcome,
+			CreatedAt:         now,
+			Version:           1,
 		}
 		if transaction.Type == TransactionCarpoolMembership {
 			item.CarpoolMembershipID = transaction.ID
@@ -348,9 +357,41 @@ func (s *Service) removeMemory(input RemoveReviewInput, now time.Time) (Mutation
 	return MutationResult{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Review not found", "评价不存在。")
 }
 
-func (s *Service) publishExpiredLocked(now time.Time) {
+func (s *Service) publishExpiredForTransactionsLocked(now time.Time, transactions []Transaction) {
+	for _, transaction := range transactions {
+		s.publishExpiredForTransactionLocked(now, transaction)
+	}
+}
+
+func (s *Service) refreshMutableTransactionReviewsLocked(transaction Transaction) {
+	if transaction.Type != TransactionAPIOrder || transaction.ReviewPaused || !IsReviewableAPIOrderOutcome(transaction.CommercialOutcome) {
+		return
+	}
 	for key, item := range s.reviews {
-		if item.Status != StatusSealed || now.Before(item.ReviewDeadlineAt) {
+		if item.APIOrderID != transaction.ID || item.Status != StatusSealed || item.FrozenAt != nil {
+			continue
+		}
+		if item.CommercialOutcome == transaction.CommercialOutcome && item.ReviewDeadlineAt.Equal(transaction.ReviewDeadlineAt) {
+			continue
+		}
+		item.CommercialOutcome = transaction.CommercialOutcome
+		item.ReviewDeadlineAt = transaction.ReviewDeadlineAt
+		item.UpdatedAt = transaction.CompletedAt
+		item.Version++
+		s.reviews[key] = item
+	}
+}
+
+func (s *Service) publishExpiredForTransactionLocked(now time.Time, transaction Transaction) {
+	if transaction.ReviewPaused {
+		return
+	}
+	for key, item := range s.reviews {
+		transactionID := item.CarpoolMembershipID
+		if item.TransactionType == TransactionAPIOrder {
+			transactionID = item.APIOrderID
+		}
+		if item.TransactionType != transaction.Type || transactionID != transaction.ID || item.Status != StatusSealed || now.Before(item.ReviewDeadlineAt) {
 			continue
 		}
 		visibleAt := item.ReviewDeadlineAt
@@ -377,8 +418,10 @@ func (s *Service) rowsForTransactionLocked(transaction Transaction, userID strin
 	rows := make([]ReviewCenterRow, 0, 2)
 	if !currentExists {
 		status := CenterStatusReviewable
-		canCreate := now.Before(transaction.ReviewDeadlineAt)
-		if !canCreate {
+		canCreate := !transaction.ReviewPaused && now.Before(transaction.ReviewDeadlineAt)
+		if transaction.ReviewPaused {
+			status = CenterStatusPaused
+		} else if !canCreate {
 			status = CenterStatusExpired
 		}
 		rows = append(rows, ReviewCenterRow{
@@ -393,17 +436,19 @@ func (s *Service) rowsForTransactionLocked(transaction Transaction, userID strin
 			RevieweeRole:          revieweeRole,
 			Status:                status,
 			Visibility:            VisibilityNone,
-			CounterpartySubmitted: counterpartyExists,
+			CounterpartySubmitted: false,
 			CanCreate:             canCreate,
 			CompletedAt:           transaction.CompletedAt,
 			ReviewDeadlineAt:      transaction.ReviewDeadlineAt,
+			CommercialOutcome:     transaction.CommercialOutcome,
+			ReviewPaused:          transaction.ReviewPaused,
 			CreatedAt:             transaction.CompletedAt,
 			UpdatedAt:             transaction.CompletedAt,
 		})
 	} else {
 		rows = append(rows, reviewRow(transaction, current, DirectionSent, current.Status != StatusRemoved, counterpartyUserID, now))
 	}
-	if counterpartyExists {
+	if counterpartyExists && counterparty.Status != StatusSealed {
 		rows = append(rows, reviewRow(transaction, counterparty, DirectionReceived, counterparty.Status == StatusPublished, counterparty.ReviewerUserID, now))
 	}
 	return rows
@@ -423,11 +468,13 @@ func reviewRow(transaction Transaction, item Review, direction string, contentVi
 		RevieweeRole:          item.RevieweeRole,
 		Status:                item.Status,
 		Visibility:            visibilityForStatus(item.Status),
-		CounterpartySubmitted: true,
-		CanEdit:               direction == DirectionSent && item.Status == StatusSealed && now.Before(item.ReviewDeadlineAt),
+		CounterpartySubmitted: item.Status != StatusSealed,
+		CanEdit:               direction == DirectionSent && item.Status == StatusSealed && !transaction.ReviewPaused && now.Before(item.ReviewDeadlineAt),
 		ContentVisible:        contentVisible,
 		CompletedAt:           transaction.CompletedAt,
 		ReviewDeadlineAt:      item.ReviewDeadlineAt,
+		CommercialOutcome:     item.CommercialOutcome,
+		ReviewPaused:          transaction.ReviewPaused,
 		SubmittedAt:           &submittedAt,
 		VisibleAt:             item.VisibleAt,
 		FrozenAt:              item.FrozenAt,
@@ -473,8 +520,8 @@ func ValidateSubmitInput(input SubmitReviewInput) *domain.AppError {
 	if strings.TrimSpace(input.ReviewerUserID) == "" {
 		return sessionRequired()
 	}
-	if input.TransactionType != TransactionCarpoolMembership && input.TransactionType != TransactionAPIOrder {
-		return validationError("type", "交易类型必须是 carpool_membership 或 api_order。")
+	if input.TransactionType != TransactionAPIOrder {
+		return validationError("type", "交易类型必须是 api_order。")
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(input.TransactionID)); err != nil {
 		return validationError("id", "交易 ID 格式不正确。")
@@ -615,6 +662,10 @@ func reviewTransactionNotFound() *domain.AppError {
 
 func reviewWindowClosed() *domain.AppError {
 	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Review window closed", "评价窗口已截止。")
+}
+
+func reviewPaused() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Review paused", "活跃纠纷期间暂停创建、修改和公开评价。")
 }
 
 func reviewFrozen() *domain.AppError {

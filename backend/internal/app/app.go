@@ -16,6 +16,7 @@ import (
 	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apimodeltest"
 	core "c2c-market/backend/internal/module/core"
+	"c2c-market/backend/internal/module/evidence"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/observability"
@@ -24,6 +25,9 @@ import (
 	"c2c-market/backend/internal/realtime"
 	"c2c-market/backend/internal/server"
 	"c2c-market/backend/internal/store/postgres"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type App struct {
@@ -37,6 +41,8 @@ type App struct {
 	APIHealth        *apihealth.Service
 	APIModelTester   *apimodeltest.Service
 	APIHealthRunner  *apihealthrunner.Runner
+	Evidence         *evidence.Service
+	EvidenceCleanup  *evidence.CleanupRunner
 	RateLimiter      *middleware.RateLimiter
 	Metrics          *observability.Metrics
 	Handler          http.Handler
@@ -82,6 +88,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	} else {
 		log.Printf("未配置 DATABASE_URL，当前仅启用内存运行切片")
 	}
+	evidenceService, err := buildEvidenceService(ctx, cfg.Evidence, store)
+	if err != nil {
+		if store != nil {
+			store.Close()
+		}
+		return nil, err
+	}
 
 	emailSender, err := buildEmailSender(cfg)
 	if err != nil {
@@ -90,10 +103,17 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 		return nil, err
 	}
-	serviceOptions := core.ServiceOptions{EmailVerificationPepper: cfg.EmailVerificationPepper}
+	serviceOptions := core.ServiceOptions{
+		EmailVerificationPepper:           cfg.EmailVerificationPepper,
+		CommunityIdentityFoundingCutoffAt: cfg.CommunityIdentityFoundingCutoffAt,
+	}
 	service := core.NewServiceWithRepositoriesEmailSenderAndOptions(core.Repositories{}, emailSender, serviceOptions)
 	if store != nil {
 		service = core.NewServiceWithRepositoriesEmailSenderAndOptions(core.RepositoriesFromPersistence(store), emailSender, serviceOptions)
+		if _, appErr := service.BackfillCommunityIdentities(ctx); appErr != nil {
+			store.Close()
+			return nil, fmt.Errorf("community identity backfill failed: %w", appErr)
+		}
 	}
 	service.ConfigureModelAuditOutbound(modelAuditPolicy)
 	service.ConfigureAPIOrderDeliveryVerifier(cfg.APIHealth.Timeout)
@@ -124,6 +144,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	var maintenanceRunner *maintenance.Runner
 	var apiHealthService *apihealth.Service
 	var apiHealthRunner *apihealthrunner.Runner
+	var evidenceCleanup *evidence.CleanupRunner
 	if cfg.DatabaseURL != "" {
 		realtimeListener, err = realtime.NewPostgresListener(cfg.DatabaseURL, realtimeHub, log.Default())
 		if err != nil {
@@ -162,6 +183,10 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			return nil, fmt.Errorf("初始化数据维护任务失败: %w", err)
 		}
 		maintenanceRunner.Start()
+		if evidenceService != nil {
+			evidenceCleanup = evidence.NewCleanupRunner(evidenceService, cfg.Maintenance.Interval, cfg.Maintenance.BatchSize)
+			evidenceCleanup.Start()
+		}
 		apiHealthProber := apihealth.NewOpenAIRealModelProber(cfg.APIHealth.Timeout)
 		apiHealthService = apihealth.NewService(store, apiHealthProber, time.Now)
 		apiHealthRunner = apihealthrunner.New(
@@ -211,6 +236,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		MetricsBearerToken: cfg.MetricsBearerToken,
 		TurnstileVerifier:  turnstileVerifier,
 		SentryEnabled:      cfg.Sentry.Enabled,
+		Evidence:           evidenceService,
 		OAuth: server.OAuthOptions{
 			ProviderMode: cfg.OAuthProviderMode,
 			ClientID:     cfg.OAuthClientID,
@@ -234,10 +260,35 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		APIHealth:        apiHealthService,
 		APIModelTester:   apiModelTesterService,
 		APIHealthRunner:  apiHealthRunner,
+		Evidence:         evidenceService,
+		EvidenceCleanup:  evidenceCleanup,
 		RateLimiter:      rateLimiter,
 		Metrics:          runtimeMetrics,
 		Handler:          handler,
 	}, nil
+}
+
+func buildEvidenceService(ctx context.Context, cfg config.EvidenceConfig, repo evidence.Repository) (*evidence.Service, error) {
+	if repo == nil || (!cfg.Enabled && !cfg.StorageConfigured()) {
+		return nil, nil
+	}
+	awsConfig, err := awsconfig.LoadDefaultConfig(
+		ctx,
+		awsconfig.WithRegion(cfg.Region),
+		awsconfig.WithBaseEndpoint(cfg.Endpoint),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("initialize evidence object storage configuration: %w", err)
+	}
+	client := s3.NewFromConfig(awsConfig, func(options *s3.Options) {
+		options.UsePathStyle = cfg.UsePathStyle
+	})
+	objectStore, err := evidence.NewS3ObjectStore(client, cfg.Bucket)
+	if err != nil {
+		return nil, fmt.Errorf("initialize evidence object storage: %w", err)
+	}
+	return evidence.NewServiceWithUploadCapability(repo, objectStore, time.Now, cfg.Enabled), nil
 }
 
 func buildEmailSender(cfg config.Config) (profile.EmailSender, error) {
@@ -275,6 +326,9 @@ func (a *App) BeginShutdown() {
 		}
 		if a.Maintenance != nil {
 			a.Maintenance.Close()
+		}
+		if a.EvidenceCleanup != nil {
+			a.EvidenceCleanup.Close()
 		}
 		if a.RateLimiter != nil {
 			a.RateLimiter.Close()

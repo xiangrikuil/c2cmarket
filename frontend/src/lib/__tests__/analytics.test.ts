@@ -94,6 +94,20 @@ test('source route normalization removes known dynamic identifiers', () => {
     entity_type: 'api_purchase_intent',
     reason_code: 'other',
   })
+
+  assert.equal(
+    normalizeAnalyticsPath('/my/api-orders/12049d7e-7088-4c99-80c6-e6cc0e8eeed1/delivery?credential=secret'),
+    '/my/api-orders/:id/delivery',
+  )
+})
+
+test('canonical API market modes remain stable low-cardinality analytics paths', () => {
+  assert.equal(normalizeAnalyticsPath('/api-market/limited'), '/api-market/limited')
+  assert.equal(normalizeAnalyticsPath('/api-market/packages?model=model-1'), '/api-market/packages')
+  assert.equal(normalizeAnalyticsPath('/api-market/free'), '/api-market/free')
+  assert.equal(normalizeAnalyticsPath('/api-market/service-1'), '/api-market/:id')
+  assert.equal(normalizeAnalyticsPath('/api-market/new'), '/api-market/new')
+  assert.equal(normalizeAnalyticsPath('/api-market/quota/new'), '/api-market/quota/new')
 })
 
 test('auth and normalized page events keep only low-cardinality route fields', () => {

@@ -53,10 +53,14 @@ const (
 	OrderabilityCredentialShortage  = "credential_unavailable"
 	OrderabilityConfirmationMissing = "fulfillment_confirmation_required"
 
-	PublicOfferSortUpdatedDesc   = "updated_desc"
-	PublicOfferSortUnitPriceAsc  = "unit_price_asc"
-	PublicOfferSortAllowanceDesc = "allowance_desc"
-	PublicOfferSortDeliveryAsc   = "delivery_asc"
+	PublicOfferSortUpdatedDesc    = "updated_desc"
+	PublicOfferSortRecommended    = "recommended"
+	PublicOfferSortReputationDesc = "reputation_desc"
+	PublicOfferSortCompletedDesc  = "completed_desc"
+	PublicOfferSortResponseFast   = "response_fast"
+	PublicOfferSortUnitPriceAsc   = "unit_price_asc"
+	PublicOfferSortAllowanceDesc  = "allowance_desc"
+	PublicOfferSortDeliveryAsc    = "delivery_asc"
 )
 
 type Batch struct {
@@ -176,6 +180,8 @@ type OfferCard struct {
 	IsOrderable               bool
 	OrderabilityCode          string
 	OrderabilityReason        string
+	// PublicSortValue 仅用于公开列表的 keyset 游标，不属于公共响应字段。
+	PublicSortValue string `json:"-"`
 }
 
 type CreateBatchInput struct {

@@ -121,7 +121,7 @@ describe('个人、经营与管理工作区一致性', () => {
 
   it('联系与收款按真实能力分组，并使用统一表单组件', () => {
     expect(myCenter).toContain('contact-payment-main-grid')
-    expect(myCenter).toContain("label: canPublishApiService.value ? '联系方式与收款设置' : '联系方式'")
+    expect(myCenter).toContain(":contact-label=\"canPublishApiService ? '联系与收款' : '联系方式'\"")
     expect(myCenter).toContain('<ContactMethodCard')
     expect(myCenter).toContain('<ApiPaymentSettingsEditor')
     expect(myCenter).toContain('v-if="canPublishApiService"')
@@ -129,7 +129,7 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(myCenter).toContain('<ConfigurationProgressCard')
     expect(myCenter).toContain('<BuyerPreviewDrawer')
     expect(myCenter).toContain(':show-payment="canPublishApiService"')
-    expect(myCenter).toContain('联系方式与收款设置')
+    expect(myCenter).toContain('联系与收款')
     expect(myCenter).toContain('当前真实支持微信和验证邮箱')
     expect(paymentSettingsEditor).toContain('API 收款设置')
     expect(contactMethodCard).toContain('<Card')
@@ -138,8 +138,13 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(paymentMethodCard).not.toContain('<Checkbox')
     expect(configurationProgressCard).toContain('配置完成度')
     expect(buyerPreviewDrawer).toContain('不会出现在公开主页')
-    expect(myCenter).toContain("wechatBound ? '已填写' : '未填写'")
+    expect(myCenter).toContain("wechatBound ? '已配置' : '未配置'")
     expect(myCenter).toContain("emailBound ? '已验证' : '未验证'")
+    const wechatCard = myCenter.slice(myCenter.indexOf('title="微信"'), myCenter.indexOf('title="邮箱"'))
+    expect(wechatCard).toContain('微信为必填联系方式')
+    expect(wechatCard).not.toContain('ContactUsageScopeSelector')
+    expect(wechatCard).not.toContain('解除微信绑定')
+    expect(myCenter).toContain('注册完成，请绑定微信')
     expect(myCenter).not.toContain('支持撤销')
   })
 
@@ -156,9 +161,9 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(apiServiceOwnerMetrics).toContain('核心经营指标')
   })
 
-  it('经营队列默认突出待处理、临近超时和下一动作', () => {
+  it('经营队列默认突出待处理、有效成员和下一动作', () => {
     expect(merchantCarpools).toContain("const activeStatus = ref('待处理')")
-    expect(merchantCarpools).toContain("label: '临近超时'")
+    expect(merchantCarpools).toContain("label: '有效成员'")
     expect(merchantCarpools).toContain('getCarpoolApplicationNextAction')
     expect(merchantOrders).toContain("sort: 'default_merchant'")
     expect(merchantOrders).toContain('待确认收款')

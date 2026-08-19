@@ -13,6 +13,8 @@ type Notification struct {
 	TargetURL       string
 	SourceEventType string
 	SourceEventID   string
+	ActionRequired  bool
+	ActionDueAt     *time.Time
 	ReadAt          *time.Time
 	CreatedAt       time.Time
 }

@@ -161,9 +161,9 @@ describe('举报与申诉中心真实后端适配器', () => {
       .mockResolvedValueOnce(jsonResponse({ id: 'dispute-1', status: 'open', remedies: [{ status: 'contested' }] }))
     const { backend } = await loadBackend(fetchMock)
 
-    await backend.backendClaimDisputeRemedy('dispute-1', '已按裁决继续履行。')
+    await backend.backendClaimDisputeRemedy('dispute-1', { note: '已按裁决继续履行。' })
     await backend.backendConfirmDisputeRemedy('dispute-1', '')
-    await backend.backendContestDisputeRemedy('dispute-1', '仍未收到履行结果。')
+    await backend.backendContestDisputeRemedy('dispute-1', { reason: '仍未收到履行结果。' })
 
     const mutations = fetchMock.mock.calls.slice(1) as Array<[string, RequestInit]>
     assert.deepEqual(mutations.map(([url]) => url), [
@@ -179,11 +179,12 @@ describe('举报与申诉中心真实后端适配器', () => {
     assert.equal(mutations.some(([url]) => url.includes('/close')), false)
   })
 
-  it('管理员裁决显式发送整改要求或 null，并以版本保护逾期确认', async () => {
+  it('管理员裁决显式发送整改要求或 null，并以版本保护迟到确认和豁免', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(adminSessionResponse())
       .mockResolvedValueOnce(jsonResponse({ dispute: { id: 'dispute-1', status: 'resolved', version: 4 } }))
-      .mockResolvedValueOnce(jsonResponse({ dispute: { id: 'dispute-1', status: 'closed', version: 5 } }))
+      .mockResolvedValueOnce(jsonResponse({ dispute: { id: 'dispute-1', status: 'resolved', version: 5 } }))
+      .mockResolvedValueOnce(jsonResponse({ dispute: { id: 'dispute-1', status: 'resolved', version: 6 } }))
     const { backend } = await loadBackend(fetchMock)
 
     await backend.backendResolveAdminDispute({
@@ -200,15 +201,19 @@ describe('举报与申诉中心真实后端适配器', () => {
         dueAt: '2026-08-10T12:00:00Z',
       },
     })
-    await backend.backendMarkAdminDisputeRemedyOverdue({ disputeId: 'dispute-1', expectedVersion: 4, reason: '责任方已超过裁决期限。' })
+    await backend.backendConfirmAdminDisputeRemedyLateness({ disputeId: 'dispute-1', expectedVersion: 4, reason: '责任方已超过裁决期限。' })
+    await backend.backendExcuseAdminDisputeRemedyLateness({ disputeId: 'dispute-1', expectedVersion: 5, reason: '责任方已提供客观延期依据。' })
 
     const resolveCall = fetchMock.mock.calls[1] as [string, RequestInit]
     assert.equal(resolveCall[0], '/api/v1/admin/disputes/dispute-1/resolve')
     assert.equal(new Headers(resolveCall[1].headers).get('If-Match'), '"3"')
     assert.equal(JSON.parse(String(resolveCall[1].body)).remedy.responsibleUserId, 'seller-1')
-    const overdueCall = fetchMock.mock.calls[2] as [string, RequestInit]
-    assert.equal(overdueCall[0], '/api/v1/admin/disputes/dispute-1/remedy/mark-overdue')
-    assert.equal(new Headers(overdueCall[1].headers).get('If-Match'), '"4"')
+    const confirmCall = fetchMock.mock.calls[2] as [string, RequestInit]
+    assert.equal(confirmCall[0], '/api/v1/admin/disputes/dispute-1/remedy/confirm-lateness')
+    assert.equal(new Headers(confirmCall[1].headers).get('If-Match'), '"4"')
+    const excuseCall = fetchMock.mock.calls[3] as [string, RequestInit]
+    assert.equal(excuseCall[0], '/api/v1/admin/disputes/dispute-1/remedy/excuse-lateness')
+    assert.equal(new Headers(excuseCall[1].headers).get('If-Match'), '"5"')
   })
 
   it('管理员要求举报人补充时显式发送所选用户 ID', async () => {

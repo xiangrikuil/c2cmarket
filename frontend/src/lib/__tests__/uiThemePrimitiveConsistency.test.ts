@@ -33,6 +33,7 @@ describe('深蓝紫主题与基础控件一致性', () => {
     expect(aquaTheme).not.toMatch(/(^|\n):root\b/)
     expect(aquaTheme).not.toMatch(/(^|\n)\.dark\s*,/)
     expect(aquaTheme).toContain('html[data-theme="aqua-console"]')
+    expect(appThemes).not.toContain("value: 'aqua-console'")
   })
 
   it('主按钮保持纯色且没有旧电蓝外发光', () => {

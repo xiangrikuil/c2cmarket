@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import ReviewDialog from '@/components/review/ReviewDialog.vue'
 import { useCursorPagination } from '@/composables/useCursorPagination'
 import type { ReviewCenterRow } from '@/lib/api'
+import { apiOrderCommercialOutcomeLabels } from '@/lib/apiOrderDispute'
 import { useReviewCenterPage, useReviewCenterRows } from '@/queries/useMarketQueries'
 
 const route = useRoute()
@@ -82,6 +83,7 @@ function setReviewOpen(open: boolean) {
 
 function statusLabel(row: ReviewCenterRow) {
   if (row.status === 'reviewable') return '可评价'
+  if (row.status === 'paused') return '纠纷处理中'
   if (row.status === 'expired') return '已截止'
   if (row.status === 'sealed') return '待公开'
   if (row.status === 'published') return '已公开'
@@ -108,7 +110,7 @@ function actionLabel(row: ReviewCenterRow) {
 
 <template>
   <div class="space-y-5">
-    <PageTitle title="评价中心" description="管理已完成拼车与 API 订单的双向评价。" />
+    <PageTitle title="评价中心" description="管理已完成 API 订单的双向评价。" />
     <StatusTabs v-model="activeStatus" :items="['待评价', '我发出的', '我收到的', '全部']" />
 
     <Alert>
@@ -134,6 +136,9 @@ function actionLabel(row: ReviewCenterRow) {
           <div class="font-medium">{{ item.target }}</div>
           <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge variant="outline">{{ transactionLabel(item.transactionType) }}</Badge>
+            <Badge v-if="item.transactionType === 'api_order' && item.commercialOutcome" variant="secondary">
+              {{ apiOrderCommercialOutcomeLabels[item.commercialOutcome === 'legacy_fulfillment' ? 'normal_fulfillment' : item.commercialOutcome] }}
+            </Badge>
             <span>关联交易</span>
             <ShortId :value="item.transactionId" :prefix="item.transactionType === 'api_order' ? 'API' : 'RIDE'" />
           </div>

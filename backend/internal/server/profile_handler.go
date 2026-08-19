@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/communityidentity"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/reputation"
 
@@ -40,6 +41,7 @@ type myProfileResponse struct {
 	Capabilities         []string                `json:"capabilities"`
 	LinuxDoBinding       linuxDoBindingDTO       `json:"linuxDoBinding"`
 	Badges               []string                `json:"badges"`
+	CommunityIdentities  []communityIdentityDTO  `json:"communityIdentities"`
 	Restrictions         []string                `json:"restrictions"`
 	UsernameChangePolicy usernameChangePolicyDTO `json:"usernameChangePolicy"`
 	Privacy              privacySettingsDTO      `json:"privacy"`
@@ -129,21 +131,38 @@ type publicProfileCompletionDTO struct {
 }
 
 type publicUserProfileDTO struct {
-	ID              string             `json:"id"`
-	Username        string             `json:"username"`
-	DisplayName     string             `json:"displayName"`
-	Bio             *string            `json:"bio"`
-	AvatarURL       *string            `json:"avatarUrl"`
-	AvatarText      string             `json:"avatarText"`
-	LinuxDoBound    bool               `json:"linuxDoBound"`
-	LinuxDoUsername *string            `json:"linuxDoUsername"`
-	TrustLevel      *int               `json:"trustLevel"`
-	Badges          []string           `json:"badges"`
-	AccountStatus   string             `json:"accountStatus"`
-	CreatedAt       *string            `json:"createdAt"`
-	LastActiveAt    *string            `json:"lastActiveAt"`
-	Stats           publicStatsDTO     `json:"stats"`
-	Privacy         privacySettingsDTO `json:"privacy"`
+	ID                  string                       `json:"id"`
+	Username            string                       `json:"username"`
+	DisplayName         string                       `json:"displayName"`
+	Bio                 *string                      `json:"bio"`
+	AvatarURL           *string                      `json:"avatarUrl"`
+	AvatarText          string                       `json:"avatarText"`
+	LinuxDoBound        bool                         `json:"linuxDoBound"`
+	LinuxDoUsername     *string                      `json:"linuxDoUsername"`
+	TrustLevel          *int                         `json:"trustLevel"`
+	Badges              []string                     `json:"badges"`
+	CommunityIdentities []publicCommunityIdentityDTO `json:"communityIdentities"`
+	AccountStatus       string                       `json:"accountStatus"`
+	CreatedAt           *string                      `json:"createdAt"`
+	LastActiveAt        *string                      `json:"lastActiveAt"`
+	Stats               publicStatsDTO               `json:"stats"`
+	Privacy             privacySettingsDTO           `json:"privacy"`
+}
+
+type communityIdentityDTO struct {
+	Code        string  `json:"code"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Source      string  `json:"source"`
+	GrantedAt   string  `json:"grantedAt"`
+	RevokedAt   *string `json:"revokedAt,omitempty"`
+}
+
+type publicCommunityIdentityDTO struct {
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	GrantedAt   string `json:"grantedAt"`
 }
 
 type publicStatsDTO struct {
@@ -422,8 +441,9 @@ func toMyProfileResponse(value profile.UserProfile) myProfileResponse {
 			TrustLevel:       value.LinuxDoTrustLevel,
 			LastSyncedAt:     formatOptionalTime(value.LinuxDoLastSyncedAt),
 		},
-		Badges:       badgesFor(value),
-		Restrictions: stringList(value.Restrictions),
+		Badges:              badgesFor(value),
+		CommunityIdentities: toCommunityIdentityDTOs(value.CommunityIdentities),
+		Restrictions:        stringList(value.Restrictions),
 		UsernameChangePolicy: usernameChangePolicyDTO{
 			CanChange:       value.UsernameCanChange,
 			NextAvailableAt: formatOptionalTime(value.UsernameNextChangeAt),
@@ -438,19 +458,20 @@ func toMyProfileResponse(value profile.UserProfile) myProfileResponse {
 
 func toPublicUserProfileDTO(value profile.PublicUserProfile) publicUserProfileDTO {
 	return publicUserProfileDTO{
-		ID:              value.ID,
-		Username:        value.Username,
-		DisplayName:     value.DisplayName,
-		Bio:             stringPtrOrNil(value.Bio),
-		AvatarURL:       stringPtrOrNil(value.AvatarURL),
-		AvatarText:      value.AvatarText,
-		LinuxDoBound:    value.LinuxDoBound,
-		LinuxDoUsername: stringPtrOrNil(value.LinuxDoUsername),
-		TrustLevel:      value.TrustLevel,
-		Badges:          value.Badges,
-		AccountStatus:   normalizeAccountStatus(value.AccountStatus),
-		CreatedAt:       formatOptionalTime(value.CreatedAt),
-		LastActiveAt:    formatOptionalTime(value.LastActiveAt),
+		ID:                  value.ID,
+		Username:            value.Username,
+		DisplayName:         value.DisplayName,
+		Bio:                 stringPtrOrNil(value.Bio),
+		AvatarURL:           stringPtrOrNil(value.AvatarURL),
+		AvatarText:          value.AvatarText,
+		LinuxDoBound:        value.LinuxDoBound,
+		LinuxDoUsername:     stringPtrOrNil(value.LinuxDoUsername),
+		TrustLevel:          value.TrustLevel,
+		Badges:              value.Badges,
+		CommunityIdentities: toPublicCommunityIdentityDTOs(value.CommunityIdentities),
+		AccountStatus:       normalizeAccountStatus(value.AccountStatus),
+		CreatedAt:           formatOptionalTime(value.CreatedAt),
+		LastActiveAt:        formatOptionalTime(value.LastActiveAt),
 		Stats: publicStatsDTO{
 			CompletedCarpools:                      value.Stats.CompletedCarpools,
 			CompletedAPIOrders:                     value.Stats.CompletedAPIOrders,
@@ -465,6 +486,43 @@ func toPublicUserProfileDTO(value profile.PublicUserProfile) publicUserProfileDT
 		},
 		Privacy: toPrivacyDTO(value.Privacy),
 	}
+}
+
+func toCommunityIdentityDTOs(items []communityidentity.Identity) []communityIdentityDTO {
+	result := make([]communityIdentityDTO, 0, len(items))
+	for _, item := range items {
+		definition, _ := communityidentity.Definition(item.Type)
+		result = append(result, communityIdentityDTO{
+			Code:        string(item.Type),
+			Name:        definition.Name,
+			Description: definition.Description,
+			Source:      string(item.Source),
+			GrantedAt:   item.GrantedAt.UTC().Format(timeLayoutRFC3339),
+			RevokedAt:   formatOptionalTime(item.RevokedAt),
+		})
+	}
+	return result
+}
+
+func toPublicCommunityIdentityDTOs(items []communityidentity.PublicIdentity) []publicCommunityIdentityDTO {
+	result := make([]publicCommunityIdentityDTO, 0, len(items))
+	for _, item := range items {
+		result = append(result, publicCommunityIdentityDTO{
+			Code:        string(item.Code),
+			Name:        item.Name,
+			Description: item.Description,
+			GrantedAt:   item.GrantedAt.UTC().Format(timeLayoutRFC3339),
+		})
+	}
+	return result
+}
+
+func toCompactPublicCommunityIdentityDTOs(items []communityidentity.PublicIdentity) []publicCommunityIdentityDTO {
+	selected := communityidentity.Compact(items)
+	if selected == nil {
+		return []publicCommunityIdentityDTO{}
+	}
+	return toPublicCommunityIdentityDTOs([]communityidentity.PublicIdentity{*selected})
 }
 
 func toMerchantProfileResponse(value profile.MerchantProfile, includeOwner bool) merchantProfileResponse {

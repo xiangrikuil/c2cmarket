@@ -3,6 +3,7 @@ import type {
   AdminApiOrderDetail,
   ApiBillingMode,
   ApiDeliveryMode,
+  ApiMerchantIdentityMode,
   ApiOrder,
   ApiOrderCompletionSource,
 	ApiOrderDisputeStatus,
@@ -25,6 +26,7 @@ import type {
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
   ApiService,
+  CommunityIdentity,
   ApiServiceCommercialSnapshot,
   ApiServiceSalesChannel,
   ApiServiceSalesView,
@@ -44,6 +46,7 @@ import type {
   OwnerApiService,
   PublicApiQuotaOffer,
   SaveContactMethodRequest,
+  SellerCommerceStatus,
   SubmitApiOrderDeliveryCredentialPayload,
   Sub2ApiMarketFilters,
   UserContactMethod,
@@ -56,6 +59,7 @@ import type {
   ApiServiceSalesChannel as BackendApiServiceSalesChannel,
   ApiServiceSalesSummary as BackendApiServiceSalesSummary,
   CreateApiServicePromotionRequest,
+  PublicApiPackageFilterOptions,
   PublicApiService,
   PublicApiQuotaOffer as GeneratedPublicApiQuotaOffer,
   PublicApiServicePromotionList,
@@ -67,7 +71,7 @@ import { backendCreateContact, backendMyContactMethods, backendMyMerchantProfile
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { apiOrderCommercialOutcomeLabels, apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
@@ -147,6 +151,7 @@ type BackendAPIService = {
     expiresAt?: string
   }
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   healthSummary?: ApiServiceHealthSummary
   quotaUsagePolicy: unknown
   distributionSystem: string
@@ -272,6 +277,15 @@ export type BackendAPIOrder = {
   status: string
 	disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
+  latestDisputeCaseId?: string
+  hasDisputeHistory: boolean
+  disputeNextActor?: ApiOrder['disputeNextActor']
+  disputeDueAt?: string | null
+  disputeNeedsAction?: boolean
+  disputeResponseOverdue?: boolean
+  disputeAvailableActions?: ApiOrderDisputeAction[]
+  activeRemedyAction?: ApiOrderDisputeResolution
+  activeRemedySource?: ApiOrderDisputeRemedySource
   catalogRiskHold?: ApiOrderCatalogRiskHold
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -312,16 +326,23 @@ export type BackendAPIOrder = {
   paymentSubmittedAt?: string | null
   merchantConfirmDueAt?: string | null
   merchantConfirmOverdue: boolean
+  merchantConfirmOverdueAt?: string | null
   paymentIssueReason?: string
   paymentIssueNote?: string
   paymentIssueReportedAt?: string | null
   paidConfirmedAt?: string | null
   deliveryDueAt?: string | null
   deliveryOverdue: boolean
+  deliveryOverdueAt?: string | null
+  deliveryDueRemindedAt?: string | null
   deliveryNote?: string
   deliverySubmittedAt?: string | null
   deliveryReviewExpiresAt?: string | null
   deliveryCredential?: BackendAPIOrderDeliveryCredential | null
+  commercialOutcome: ApiOrderCommercialOutcome
+  commercialOutcomeUpdatedAt?: string | null
+  quotaValidityIssueAt?: string | null
+  quotaValidityIssueReason?: 'delivery_insufficient'
   completionSource?: string
   completedAt?: string | null
   cancelledAt?: string | null
@@ -404,12 +425,18 @@ const commercialSnapshotKeys = [
 type BackendAPIModel = {
   id: string
   providerCategory: string
+  providerCode: string
   provider: string
+  providerActive: boolean
   modelKey: string
   capabilities: string[]
   inputPricePerMillion?: string
   cachedInputPricePerMillion?: string
   outputPricePerMillion?: string
+  sortOrder: number
+  active: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 function numberFromDecimal(value: string | undefined, fallback = 0) {
@@ -629,6 +656,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     sourceUrl: service.sourceUrl ?? '',
     sourceAuthorVerification: service.sourceAuthorVerification,
     sellerReputation,
+    communityIdentities: service.communityIdentities ?? [],
     healthSummary: service.healthSummary,
     quotaUsagePolicy: parseApiQuotaUsagePolicy(service.quotaUsagePolicy),
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
@@ -638,7 +666,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     merchantDisplayName: displayName,
     merchantAvatarUrl: service.merchantAvatarUrl?.trim() || undefined,
     trustLevel: null,
-    merchantType: '商户',
+    merchantType: isStoreAlias ? '商户' : '个人卖家',
     models: service.models.filter(item => item.enabled).map(item => item.modelKeySnapshot),
     modelMultipliers: service.models.filter(item => item.enabled).map(item => ({ model: item.modelKeySnapshot, multiplier: `${numberFromDecimal(item.merchantMultiplier, 1).toFixed(2)}x` })),
     rate: `${numberFromDecimal(service.models[0]?.merchantMultiplier, 1).toFixed(2)}x`,
@@ -671,6 +699,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     state,
     online,
     publiclyOrderable,
+    orderableReasons: service.orderableReasons ?? [],
     lastOnlineConfirmedAt: service.updatedAt,
     onlineExpiresAt: service.quotaExpiresAt ?? service.updatedAt,
     declaredTtftBand,
@@ -682,7 +711,11 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     dailyOrderLimit: 10,
     todayOrderCount: 0,
     unresolvedDisputes: service.unresolvedDisputes ?? sellerReputation?.unresolvedDisputes ?? null,
-    warning: state === 'reviewing' ? '等待管理员审核' : online && !publiclyOrderable ? '待配置接单设置' : undefined,
+    warning: state === 'reviewing'
+      ? '等待管理员审核'
+      : service.orderableReasons?.includes('package_sold_out')
+        ? '短期流量包已售罄'
+        : online && !publiclyOrderable ? '待配置接单设置' : undefined,
     warranty: service.merchantSupportNote || '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: service.merchantRefundCommitment
       ? '订单有效期内符合商户退款承诺条件时，由商户退还全部实付金额；平台记录但不垫付、不代赔'
@@ -1033,7 +1066,9 @@ export async function backendAPIServicesPage(filters: ApiServiceFilters = {}, pa
     const billingMode = filters.billingMode === 'metered_credit' ? 'metered_usd_quota' : filters.billingMode
     params.set('billingMode', billingMode)
   }
-  if (filters.packageModelCatalogId?.trim()) params.set('packageModelCatalogId', filters.packageModelCatalogId.trim())
+  for (const modelCatalogId of filters.packageModelCatalogIds ?? []) {
+    if (modelCatalogId.trim()) params.append('packageModelCatalogIds', modelCatalogId.trim())
+  }
   if (filters.packageDurationDays) params.set('packageDurationDays', String(filters.packageDurationDays))
   if (filters.search?.trim()) params.set('search', filters.search.trim())
   if (filters.modelCatalogId?.trim()) params.set('modelCatalogId', filters.modelCatalogId.trim())
@@ -1042,7 +1077,7 @@ export async function backendAPIServicesPage(filters: ApiServiceFilters = {}, pa
   if (filters.minimumPurchaseCnyMax !== undefined) params.set('minimumIntentCnyMax', String(filters.minimumPurchaseCnyMax))
   if (filters.packagePriceCnyMax !== undefined) params.set('packagePriceCnyMax', String(filters.packagePriceCnyMax))
   if (filters.packageMultiplierMax !== undefined) params.set('packageMultiplierMax', String(filters.packageMultiplierMax))
-  if (filters.sort && filters.sort !== 'recommended' && filters.sort !== 'updated_desc') params.set('sort', filters.sort)
+  if (filters.sort && filters.sort !== 'updated_desc') params.set('sort', filters.sort)
   if (page.limit) params.set('limit', String(page.limit))
   if (page.cursor) params.set('cursor', page.cursor)
   const query = params.toString()
@@ -1147,10 +1182,12 @@ export async function backendOwnerAPIServiceById(id: string) {
   return mapBackendAPIService(service)
 }
 
-function providerFromBackend(value: string): ModelCatalogItem['provider'] {
+export function providerFromBackend(value: string): ModelCatalogItem['provider'] {
   const normalized = value.trim().toLowerCase()
   if (normalized === 'openai' || normalized === 'gpt') return 'openai'
+  if (normalized === 'xai' || normalized === 'grok') return 'xai'
   if (normalized === 'anthropic' || normalized === 'claude') return 'anthropic'
+  if (normalized === 'google' || normalized === 'gemini') return 'google'
   return 'other'
 }
 
@@ -1169,19 +1206,30 @@ function capabilitiesFromBackend(values: string[]): ModelCatalogItem['capabiliti
 function mapBackendModel(model: BackendAPIModel): ModelCatalogItem {
   return {
     id: model.id,
-    provider: providerFromBackend(model.providerCategory || model.provider),
+    provider: providerFromBackend(model.providerCode || model.providerCategory || model.provider),
+    providerCode: model.providerCode,
+    providerCategory: model.providerCategory,
+    providerName: model.provider,
+    providerActive: model.providerActive,
     name: model.modelKey,
     capabilities: capabilitiesFromBackend(model.capabilities),
     officialInputPricePerMillion: model.inputPricePerMillion ? numberFromDecimal(model.inputPricePerMillion) : null,
     officialCachedInputPricePerMillion: model.cachedInputPricePerMillion ? numberFromDecimal(model.cachedInputPricePerMillion) : null,
     officialOutputPricePerMillion: model.outputPricePerMillion ? numberFromDecimal(model.outputPricePerMillion) : null,
-    active: true,
+    active: model.active,
+    sortOrder: model.sortOrder,
+    createdAt: model.createdAt,
+    updatedAt: model.updatedAt,
   }
 }
 
 export async function backendModelCatalog() {
   const response = await backendRequest<ListResponse<BackendAPIModel>>('/api/v1/api-models')
   return response.items.map(mapBackendModel)
+}
+
+export async function backendAPIPackageFilterOptions(): Promise<PublicApiPackageFilterOptions> {
+  return backendRequest<PublicApiPackageFilterOptions>('/api/v1/api-services/filter-options?billingMode=fixed_package')
 }
 
 function contactToChannel(contact?: ContactDisclosure | null) {
@@ -1348,7 +1396,7 @@ export function mapBackendAdminAPIIntent(item: BackendAPIPurchaseIntent): AdminR
     targetType: 'api-intent',
     backendKind: 'api-purchase-intent',
     backendVersion: item.version,
-    detailItems: [
+			detailItems: [
       { label: '后端状态', value: item.status },
       { label: '服务', value: item.serviceTitleSnapshot },
       { label: '意向金额', value: `¥${numberFromDecimal(item.requestedCnyAmount)}` },
@@ -1431,7 +1479,10 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 			{ label: '购买额度', value: order.requestedUsdAllowanceSnapshot ? `${order.requestedUsdAllowanceSnapshot} 美元额度` : '不适用' },
 			{ label: '定价快照', value: order.cnyPerUsdAllowanceSnapshot ? `¥${order.cnyPerUsdAllowanceSnapshot} / $1` : '按套餐快照' },
 			{ label: '交付凭证', value: order.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
-			{ label: '核验截止', value: order.deliveryReviewExpiresAt ?? '不适用' },
+				{ label: '核验截止', value: order.deliveryReviewExpiresAt ?? '不适用' },
+				{ label: '商业结果', value: apiOrderCommercialOutcomeLabels[order.commercialOutcome] },
+				{ label: '历史纠纷', value: order.hasDisputeHistory ? '有历史案件' : '无' },
+				{ label: '额度有效期', value: order.quotaValidityIssueAt ? '首次交付时剩余不足 60 分钟' : '未记录异常' },
 			{ label: '完成方式', value: order.completionSource === 'auto_completed' ? '系统自动完成' : order.completionSource === 'buyer_confirmed' ? '买家主动确认' : '尚未完成' },
 			{ label: '最近更新', value: order.updatedAt },
 		],
@@ -1460,7 +1511,16 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     sellerUserId: order.sellerUserId,
     status: apiOrderStatus(order.status),
 		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
-    disputeCaseId: order.disputeCaseId,
+	    disputeCaseId: order.disputeCaseId,
+	    latestDisputeCaseId: order.latestDisputeCaseId,
+	    hasDisputeHistory: order.hasDisputeHistory,
+	    disputeNextActor: order.disputeNextActor,
+	    disputeDueAt: order.disputeDueAt ?? undefined,
+	    disputeNeedsAction: order.disputeNeedsAction,
+	    disputeResponseOverdue: order.disputeResponseOverdue,
+	    disputeAvailableActions: order.disputeAvailableActions ?? [],
+	    activeRemedyAction: order.activeRemedyAction,
+	    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitleSnapshot: order.serviceTitleSnapshot,
     billingModeSnapshot: order.billingModeSnapshot,
@@ -1474,16 +1534,23 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     paymentExpiresAt: order.paymentExpiresAt,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
     merchantConfirmDueAt: order.merchantConfirmDueAt ?? undefined,
-    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdueAt: order.merchantConfirmOverdueAt ?? undefined,
     paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
     deliveryDueAt: order.deliveryDueAt ?? undefined,
-    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdueAt: order.deliveryOverdueAt ?? undefined,
+	    deliveryDueRemindedAt: order.deliveryDueRemindedAt ?? undefined,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
-    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+	    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+	    commercialOutcome: order.commercialOutcome,
+	    commercialOutcomeUpdatedAt: order.commercialOutcomeUpdatedAt ?? undefined,
+	    quotaValidityIssueAt: order.quotaValidityIssueAt ?? undefined,
+	    quotaValidityIssueReason: order.quotaValidityIssueReason,
     completionSource: apiOrderCompletionSource(order.completionSource),
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
@@ -1548,32 +1615,20 @@ export async function backendCreateContactMethod(payload: SaveContactMethodReque
 	return backendCreateContact(payload)
 }
 
-export async function backendBoundLinuxDoContactMethod(): Promise<UserContactMethod> {
-	const methods = await backendMyContactMethods()
-	const contact = methods.find(method => method.enabled && method.type === 'linuxdo')
-	if (!contact) {
-		throw new Error('当前账号的 linux.do 绑定联系方式尚未同步，请重新登录后再试。')
-	}
-	return contact
-}
-
 export function selectBuyerContactMethod(methods: UserContactMethod[]): UserContactMethod {
-  const eligible = methods.filter(method => (
-    method.enabled
-    && method.usageScopes.includes('buyer')
-    && (method.type !== 'email' || method.verified)
-  ))
-  const contact = eligible.find(method => method.isDefault)
-    ?? eligible.find(method => method.type === 'linuxdo')
-    ?? eligible[0]
+  const contact = methods.find(method => method.enabled && method.type === 'wechat')
   if (!contact) {
-    throw new Error('请先在个人中心配置可用于买家交易的联系方式（如微信或已验证邮箱）。')
+    throw new Error('请先在个人中心配置微信联系方式。')
   }
   return contact
 }
 
+export async function backendEnabledWechatContactMethod(): Promise<UserContactMethod> {
+	return selectBuyerContactMethod(await backendMyContactMethods())
+}
+
 export async function backendBuyerContactMethod(): Promise<UserContactMethod> {
-  return selectBuyerContactMethod(await backendMyContactMethods())
+  return backendEnabledWechatContactMethod()
 }
 
 export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
@@ -1794,8 +1849,17 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     buyerReputation: mapBackendReputationSummary(order.buyerReputation),
     sellerReputation: mapBackendReputationSummary(order.sellerReputation),
     status: apiOrderStatus(order.status),
-    disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
-    disputeCaseId: order.disputeCaseId,
+	    disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
+	    disputeCaseId: order.disputeCaseId,
+	    latestDisputeCaseId: order.latestDisputeCaseId,
+	    hasDisputeHistory: order.hasDisputeHistory,
+	    disputeNextActor: order.disputeNextActor,
+	    disputeDueAt: order.disputeDueAt ?? undefined,
+	    disputeNeedsAction: order.disputeNeedsAction,
+	    disputeResponseOverdue: order.disputeResponseOverdue,
+	    disputeAvailableActions: order.disputeAvailableActions ?? [],
+	    activeRemedyAction: order.activeRemedyAction,
+	    activeRemedySource: order.activeRemedySource,
     catalogRiskHold: order.catalogRiskHold,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
@@ -1808,17 +1872,24 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     paymentSummary: order.paymentSummary,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
     merchantConfirmDueAt: order.merchantConfirmDueAt ?? undefined,
-    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdue: order.merchantConfirmOverdue,
+	    merchantConfirmOverdueAt: order.merchantConfirmOverdueAt ?? undefined,
     paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
     paymentIssueNote: order.paymentIssueNote,
     paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
     deliveryDueAt: order.deliveryDueAt ?? undefined,
-    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdue: order.deliveryOverdue,
+	    deliveryOverdueAt: order.deliveryOverdueAt ?? undefined,
+	    deliveryDueRemindedAt: order.deliveryDueRemindedAt ?? undefined,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
-    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
-    deliveryCredential: mapDeliveryCredential(order.deliveryCredential),
+	    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+	    deliveryCredential: mapDeliveryCredential(order.deliveryCredential),
+	    commercialOutcome: order.commercialOutcome,
+	    commercialOutcomeUpdatedAt: order.commercialOutcomeUpdatedAt ?? undefined,
+	    quotaValidityIssueAt: order.quotaValidityIssueAt ?? undefined,
+	    quotaValidityIssueReason: order.quotaValidityIssueReason,
     completionSource: apiOrderCompletionSource(order.completionSource),
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
@@ -1899,6 +1970,10 @@ export async function backendOwnerAPIOrders(filters: ApiOrderFilters = {}) {
 	return collectCursorPages(page => backendOwnerAPIOrdersPage(filters, page))
 }
 
+export async function backendSellerCommerceStatus(): Promise<SellerCommerceStatus> {
+	return backendRequest<SellerCommerceStatus>('/api/v1/owner/api-orders/commerce-status')
+}
+
 export async function backendMyAPIOrder(id: string) {
   return mapBackendAPIOrder(await backendRequest<BackendAPIOrder>(`/api/v1/me/api-orders/${id}`), 'buyer')
 }
@@ -1950,14 +2025,14 @@ export async function backendConfirmAPIOrderComplete(id: string, version: number
   return mapBackendAPIOrder(response, 'buyer')
 }
 
-export function apiOrderDisputePath(id: string, perspective: 'buyer' | 'merchant') {
-  const scope = perspective === 'merchant' ? 'owner' : 'me'
-  return `/api/v1/${scope}/api-orders/${encodeURIComponent(id)}/dispute`
+export function apiOrderDisputePath(id: string) {
+  return `/api/v1/me/api-orders/${encodeURIComponent(id)}/dispute`
 }
 
 export async function backendOpenAPIOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
-  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id, perspective), input, {
-    idempotencyPrefix: `api-order-${perspective}-dispute`,
+  if (perspective !== 'buyer') throw new Error('只有买家可以发起订单售后申请。')
+  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id), input, {
+    idempotencyPrefix: 'api-order-buyer-dispute',
     ifMatch: version,
   })
   return mapBackendAPIOrder(response, perspective)
@@ -1997,17 +2072,16 @@ export async function backendSubmitAPIOrderDeliveryCredential(id: string, payloa
 
 export async function backendSubmitAPIService(payload: Record<string, unknown>) {
   await ensureBackendSession('merchant', false)
-  const merchantProfile = await ensureMerchantProfile(payload)
-	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
-		? payload.ownerContactMethodIds.map(String).filter(Boolean)
-		: []
-	if (!ownerContactMethodIds.length) throw new Error('请先在个人中心添加并选择至少一种 API 订单联系方式。')
+  const merchantIdentityMode = apiServiceMerchantIdentityMode(payload.merchantIdentityMode)
+  const merchantProfile = merchantIdentityMode === 'store_alias' ? await ensureMerchantProfile(payload) : null
+	const ownerContact = await backendEnabledWechatContactMethod()
+	const ownerContactMethodIds = [ownerContact.id]
   let response = await backendMutation<BackendAPIService>('/api/v1/owner/api-services', toBackendServiceRequest({
     ...payload,
 		ownerContactMethodId: ownerContactMethodIds[0],
 		ownerContactMethodIds,
-    merchantProfileId: merchantProfile.id,
-    merchantIdentityMode: 'store_alias',
+    merchantProfileId: merchantProfile?.id ?? '',
+    merchantIdentityMode,
   }), {
     idempotencyPrefix: 'api-service',
   })
@@ -2082,7 +2156,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
   return {
     probeConnectionId: String(payload.probeConnectionId ?? ''),
     merchantProfileId: String(payload.merchantProfileId ?? ''),
-    merchantIdentityMode: String(payload.merchantIdentityMode ?? 'public_profile'),
+    merchantIdentityMode: apiServiceMerchantIdentityMode(payload.merchantIdentityMode),
 		ownerContactMethodId: ownerContactMethodIds[0] ?? String(payload.ownerContactMethodId ?? ''),
 		ownerContactMethodIds,
     title: String(payload.generatedTitle ?? 'API 服务'),
@@ -2128,6 +2202,10 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
       modelCatalogIds: item.modelCatalogIds ?? [],
     })),
   }
+}
+
+function apiServiceMerchantIdentityMode(value: unknown): ApiMerchantIdentityMode {
+  return value === 'store_alias' ? 'store_alias' : 'public_profile'
 }
 
 function toBackendOrderSettingsRequest(payload: Record<string, unknown>) {

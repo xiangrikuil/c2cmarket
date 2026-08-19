@@ -1,10 +1,6 @@
-import type { Announcement, AnnouncementReceipt, AnnouncementReceiptMap } from '@/types/announcement'
+import type { AnnouncementReceipt, AnnouncementReceiptMap } from '@/types/announcement'
 
 export const announcementReceiptStorageKey = 'marketplace.announcement.receipts'
-
-function nowIso() {
-  return new Date().toISOString()
-}
 
 function canUseLocalStorage() {
   return typeof window !== 'undefined' && Boolean(window.localStorage)
@@ -25,12 +21,13 @@ export function readAnnouncementReceipts(): AnnouncementReceiptMap {
 }
 
 export function writeAnnouncementReceipts(receipts: AnnouncementReceiptMap) {
-  if (!canUseLocalStorage()) return
+  if (!canUseLocalStorage()) return false
 
   try {
     window.localStorage.setItem(announcementReceiptStorageKey, JSON.stringify(receipts))
+    return true
   } catch {
-    return
+    return false
   }
 }
 
@@ -39,8 +36,8 @@ export function getAnnouncementReceipt(announcementId: string) {
 }
 
 export function upsertAnnouncementReceipt(
-  announcement: Announcement,
-  patch: Partial<Pick<AnnouncementReceipt, 'firstSeenAt' | 'readAt' | 'dismissedAt'>>,
+  announcement: { id: string, version: number },
+  patch: Partial<Pick<AnnouncementReceipt, 'firstSeenAt' | 'readAt' | 'dismissedAt' | 'acknowledgedAt'>>,
 ) {
   const receipts = readAnnouncementReceipts()
   const existing = receipts[announcement.id]
@@ -52,13 +49,13 @@ export function upsertAnnouncementReceipt(
       }
   const next: AnnouncementReceipt = {
     ...base,
-    firstSeenAt: patch.firstSeenAt ?? base.firstSeenAt ?? nowIso(),
+    firstSeenAt: patch.firstSeenAt ?? base.firstSeenAt,
     readAt: patch.readAt ?? base.readAt,
     dismissedAt: patch.dismissedAt ?? base.dismissedAt,
+    acknowledgedAt: patch.acknowledgedAt ?? base.acknowledgedAt,
   }
   const nextReceipts = { ...receipts, [announcement.id]: next }
-  writeAnnouncementReceipts(nextReceipts)
-  return next
+  return writeAnnouncementReceipts(nextReceipts) ? next : null
 }
 
 function isAnnouncementReceipt(value: unknown): value is AnnouncementReceipt {
@@ -69,4 +66,5 @@ function isAnnouncementReceipt(value: unknown): value is AnnouncementReceipt {
     && (record.firstSeenAt === undefined || typeof record.firstSeenAt === 'string')
     && (record.readAt === undefined || typeof record.readAt === 'string')
     && (record.dismissedAt === undefined || typeof record.dismissedAt === 'string')
+    && (record.acknowledgedAt === undefined || typeof record.acknowledgedAt === 'string')
 }

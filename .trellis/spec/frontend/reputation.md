@@ -2,6 +2,7 @@
 
 Date: 2026-07-24
 Executor: Codex
+Updated: 2026-08-15
 
 ## Scenario: Unknown Reputation Values In Real Backend Mode
 
@@ -111,6 +112,8 @@ type ReviewCenterRow = {
   allowedTags: Array<{ code: string; label: string; polarity: 'positive' | 'negative' | 'neutral' }>
   canCreate: boolean
   canEdit: boolean
+  commercialOutcome: 'normal_fulfillment' | 'full_refund' | 'partial_refund' | 'continued_fulfillment' | ''
+  reviewPaused: boolean
   rating: number | null
   tags: string[]
   note: string | null
@@ -133,6 +136,8 @@ type SubmitReviewPayload = {
 - Before publication, the UI must not tell users whether the counterparty submitted. The API omits received sealed rows and the frontend must not derive a signal from other row differences.
 - A sent sealed row may show the author's own content and edit action only when `canEdit=true`. Create uses generic `POST`; edit uses generic `PUT`.
 - Published rows show content and cannot expose an edit action. Removed rows do not render hidden content or removal internals.
+- API-order rows render the backend `commercialOutcome` and `reviewPaused` facts. `full_refund` and `partial_refund` remain reviewable outcomes; the frontend must not infer eligibility from order status or rename them to `full_refund_confirmed` / `partial_refund_confirmed`.
+- While `reviewPaused=true`, pending and sent-sealed rows show a neutral paused state and expose neither create nor edit actions. The UI does not run a local deadline or imply that a sealed counterparty review exists. Published/frozen rows remain read-only.
 - New reviews start with `rating=null`. Five visible stars use radio semantics, mouse/keyboard input, and show a number in read-only mode. Submit requires a rating and either one tag or a non-empty note.
 - A shared `ReviewDialog` owns create/edit/read-only states and keeps form state after a failed mutation. Detail pages drive it with `?review=open`; the review center includes transaction type, transaction ID, and direction so refresh/back and duplicate transaction rows resolve exactly.
 - On mobile, the Dialog stays within the dynamic viewport and scrolls internally. Closing deletes only review-owned query keys and preserves unrelated query parameters.
@@ -146,6 +151,8 @@ type SubmitReviewPayload = {
 | --- | --- |
 | `direction=pending`, `canCreate=true` | Create-review action |
 | `direction=sent`, `visibility=sealed`, `canEdit=true` | Own content plus edit action |
+| `reviewPaused=true` | Paused state; no create/edit action and no counterparty-submission signal |
+| `commercialOutcome=full_refund|partial_refund` after closure | Render the returned outcome and backend deadline; do not hide the review action solely because order status is not completed |
 | Counterparty submitted before publication | No received row, field, or differentiated message |
 | `visibility=published` | Read-only rating, tags, note, and publication time |
 | `status=expired` with no review | No submit action |
@@ -159,12 +166,13 @@ type SubmitReviewPayload = {
 
 - Good: an API seller opens `?review=open`, chooses four stars and the `付款及时` label, and submits `quick_payment` without leaving the detail page.
 - Good: a buyer sees the same conditional publication rule before submission regardless of whether the seller already submitted.
+- Good: after a confirmed refund, the page renders the server-provided commercial result and new deadline; during an active dispute it shows paused without exposing sealed metadata.
 - Base: the author edits a sealed review, then loses the edit action immediately after both reviews publish.
 - Bad: default to five stars, use a score dropdown, show `counterpartySubmitted`, select a review row only by transaction ID when multiple directions exist, or show mock success after a real backend error.
 
 ### 6. Tests Required
 
-- Adapter tests must assert structured `allowedTags` survive mapping and `counterpartySubmitted` is absent.
+- Adapter tests must assert structured `allowedTags`, exact commercial-outcome enum values, and `reviewPaused` survive mapping while `counterpartySubmitted` remains absent.
 - Mutation tests must assert create uses `POST`, edit uses `PUT`, and both send CSRF plus idempotency through `backendClient`.
 - Component tests must cover unselected stars, click/arrow/Home/End behavior, ARIA, tag-or-note validation, failed-mutation state retention, sent sealed edit, published, expired, and removed states.
 - Route tests must cover `?review=open`, exact direction selection, refresh/back behavior, and preserving unrelated query parameters.
@@ -186,6 +194,7 @@ const tags = globalPresetTags
 const dialogOpen = computed(() => route.query.review === 'open')
 const tags = row.allowedTags
 const rating = ref<number | null>(row.canEdit ? row.rating : null)
+const canMutate = computed(() => !row.reviewPaused && (row.canCreate || row.canEdit))
 ```
 
 ## Scenario: Source-Author Verification Presentation

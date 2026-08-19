@@ -80,7 +80,7 @@ async function request(path, options = {}, auth) {
   return decode(response)
 }
 
-async function createContact(auth, value, label) {
+async function createContact(auth, value, label, usageScopes) {
   return request('/api/v1/contact-methods', {
     method: 'POST',
     idempotencyPrefix: `smoke-contact-${label}`,
@@ -88,6 +88,7 @@ async function createContact(auth, value, label) {
       type: 'telegram',
       label,
       value,
+      usageScopes,
     },
   }, auth)
 }
@@ -105,8 +106,8 @@ async function main() {
 
   const ownerContactValue = `@carpool_owner_${runSuffix.replaceAll('-', '_')}`
   const buyerContactValue = `@carpool_buyer_${runSuffix.replaceAll('-', '_')}`
-  const ownerContact = await createContact(owner, ownerContactValue, 'Smoke carpool owner')
-  const buyerContact = await createContact(buyer, buyerContactValue, 'Smoke carpool buyer')
+  const ownerContact = await createContact(owner, ownerContactValue, 'Smoke carpool owner', ['carpool_owner'])
+  const buyerContact = await createContact(buyer, buyerContactValue, 'Smoke carpool buyer', ['buyer'])
 
   const listing = await request('/api/v1/carpools', {
     method: 'POST',
@@ -131,8 +132,8 @@ async function main() {
       regionName: 'Smoke 测试区',
       priceMonthlyCny: '68.00',
       serviceMultiplier: '1.0000',
-      dailyQuotaAmount: '10.00',
-      weeklyQuotaAmount: '50.00',
+      dailySpendLimitUsd: '10.00',
+      weeklySpendLimitUsd: '50.00',
       followsOfficialQuotaReset: true,
       vpsRegion: '香港',
       supportsMainlandChinaDirectConnection: true,
@@ -141,7 +142,7 @@ async function main() {
       paymentMethodCode: 'u_card',
       customPaymentMethod: '',
       buyerSeatCapacity: 1,
-      activeBuyerMembers: 0,
+      offlineOccupiedSeats: 0,
       riskAcknowledgement: plan.riskAckRequired ? {
         riskNoticeCode: plan.riskNoticeCode,
         policyVersion: plan.policyVersion,
@@ -180,7 +181,7 @@ async function main() {
     ifMatch: application.version,
     body: {},
   }, owner)
-  assert(accepted.status === 'accepted_reserved', 'application should be accepted_reserved')
+  assert(accepted.status === 'joined', 'owner acceptance should join the application immediately')
   assert(accepted.contactSessionId, 'accepted application should expose contact session id')
 
   const buyerContacts = await request(`/api/v1/contact-sessions/${accepted.contactSessionId}/contacts`, {}, buyer)
@@ -189,41 +190,30 @@ async function main() {
   const ownerContacts = await request(`/api/v1/contact-sessions/${accepted.contactSessionId}/contacts`, {}, owner)
   assert(ownerContacts.items.some(item => item.value === buyerContactValue), 'owner should see buyer contact')
 
-  const buyerJoined = await request(`/api/v1/me/carpool-applications/${application.id}/confirm-join`, {
-    method: 'POST',
-    idempotencyPrefix: 'smoke-carpool-buyer-join',
-    ifMatch: accepted.version,
-    body: {},
-  }, buyer)
-  assert(buyerJoined.status === 'accepted_reserved', 'first join confirmation should keep reservation')
-
-  const ownerJoined = await request(`/api/v1/owner/carpool-applications/${application.id}/confirm-join`, {
-    method: 'POST',
-    idempotencyPrefix: 'smoke-carpool-owner-join',
-    ifMatch: buyerJoined.version,
-    body: {},
-  }, owner)
-  assert(ownerJoined.status === 'joined', 'second join confirmation should create joined application')
-
   const memberships = await request('/api/v1/me/carpool-memberships', {}, buyer)
   const membership = memberships.items.find(item => item.carpoolApplicationId === application.id)
   assert(membership?.status === 'active', 'buyer membership should be active')
 
-  const buyerCompleted = await request(`/api/v1/me/carpool-memberships/${membership.id}/confirm-complete`, {
-    method: 'POST',
-    idempotencyPrefix: 'smoke-carpool-buyer-complete',
-    ifMatch: membership.version,
-    body: {},
-  }, buyer)
-  assert(buyerCompleted.status === 'active', 'first completion confirmation should keep membership active')
+  const fullListing = await request(`/api/v1/me/carpools/${listing.id}`, {}, owner)
+  assert(fullListing.status === 'stopped', 'full listing should stop recruiting automatically')
 
-  const ownerCompleted = await request(`/api/v1/owner/carpool-memberships/${membership.id}/confirm-complete`, {
+  const leftMembership = await request(`/api/v1/me/carpool-memberships/${membership.id}/leave`, {
     method: 'POST',
-    idempotencyPrefix: 'smoke-carpool-owner-complete',
-    ifMatch: buyerCompleted.version,
+    idempotencyPrefix: 'smoke-carpool-buyer-leave',
+    ifMatch: membership.version,
+    body: { reason: 'Smoke 验证买家主动退出' },
+  }, buyer)
+  assert(leftMembership.status === 'left', 'buyer should be able to leave an active membership')
+
+  const stoppedAfterLeave = await request(`/api/v1/me/carpools/${listing.id}`, {}, owner)
+  assert(stoppedAfterLeave.status === 'stopped', 'member exit must not resume recruiting automatically')
+
+  const resumedListing = await request(`/api/v1/me/carpools/${listing.id}/resume-recruiting`, {
+    method: 'POST',
+    ifMatch: stoppedAfterLeave.version,
     body: {},
   }, owner)
-  assert(ownerCompleted.status === 'completed', 'second completion confirmation should complete membership')
+  assert(resumedListing.status === 'active', 'owner should explicitly resume recruiting after a seat is released')
 
   console.log(JSON.stringify({
     ok: true,
@@ -231,7 +221,8 @@ async function main() {
     applicationId: application.id,
     contactSessionId: accepted.contactSessionId,
     membershipId: membership.id,
-    completedMembershipStatus: ownerCompleted.status,
+    endedMembershipStatus: leftMembership.status,
+    resumedListingStatus: resumedListing.status,
   }, null, 2))
 }
 

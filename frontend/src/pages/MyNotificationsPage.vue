@@ -14,6 +14,7 @@ import LocalTime from '@/components/market/LocalTime.vue'
 import { useMarkAllNotificationsReadMutation, useMarkNotificationReadMutation, useNotifications } from '@/queries/useMarketQueries'
 import { useAnnouncementUnreadCount, useAnnouncements } from '@/queries/useAnnouncementQueries'
 import { toast } from 'vue-sonner'
+import { businessNotificationCategory } from '@/lib/notificationUi'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,24 +34,19 @@ const activeTab = computed<NotificationTab>(() => {
   if (route.query.tab === 'announcements') return 'announcements'
   return 'todo'
 })
-const notificationCategory = (item: typeof notifications.value[number]): NotificationTab => {
-  if (['审核结果', '管理操作', '边界提醒'].includes(item.type)) return 'system'
-  if (item.unread) return 'todo'
-  return 'transactions'
-}
-const todoCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'todo').length)
-const transactionCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'transactions').length)
-const systemCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'system').length)
-const visibleNotifications = computed(() => notifications.value.filter(item => notificationCategory(item) === activeTab.value))
+const todoCount = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === 'todo').length)
+const transactionCount = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === 'transactions').length)
+const systemCount = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === 'system').length)
+const visibleNotifications = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === activeTab.value))
 const stats = computed(() => [
-  { label: '待办未读', value: todoCount.value },
+  { label: '交易待办', value: todoCount.value },
   { label: '交易通知', value: transactionCount.value },
   { label: '系统通知', value: systemCount.value },
   { label: '平台公告', value: announcementUnreadCount.value ?? 0 },
 ])
 
 watch(() => route.query.tab, tab => {
-  if (tab && !['todo', 'transactions', 'system', 'business', 'announcements'].includes(String(tab))) router.replace({ query: { ...route.query, tab: 'todo' } })
+  if (tab && !['todo', 'transactions', 'system', 'announcements'].includes(String(tab))) router.replace({ query: { ...route.query, tab: 'todo' } })
 }, { immediate: true })
 
 function iconFor(type: string, title: string) {
@@ -88,7 +84,7 @@ function setTab(tab: NotificationTab) {
   <div class="notification-reference-page space-y-5">
     <div class="notification-reference-heading rounded-xl border px-5 py-4">
       <PageTitle
-        :title="activeTab === 'announcements' ? '平台公告' : '通知中心'"
+        title="消息中心"
         :description="activeTab === 'announcements' ? '查看平台规则、功能更新与治理公告。' : '查看后端记录的站内业务通知。'"
       />
     </div>
@@ -96,8 +92,8 @@ function setTab(tab: NotificationTab) {
     <CompactStats :items="stats" />
 
     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <Tabs :model-value="activeTab" @update:model-value="value => setTab(value as NotificationTab)">
-        <TabsList>
+      <Tabs class="max-w-full overflow-x-auto" :model-value="activeTab" @update:model-value="value => setTab(value as NotificationTab)">
+        <TabsList class="w-max">
           <TabsTrigger value="todo">待办 {{ todoCount }}</TabsTrigger>
           <TabsTrigger value="transactions">交易 {{ transactionCount }}</TabsTrigger>
           <TabsTrigger value="system">系统 {{ systemCount }}</TabsTrigger>

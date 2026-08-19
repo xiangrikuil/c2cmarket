@@ -144,6 +144,18 @@ when the current partial day is also present. There is no DNS TXT or HTTP owners
 - The owner UI shows exact model IDs, such as `gpt-5.6-luna`. It shows the conservative 1.00x daily
   base-cost upper bound for 288 scheduled requests when the model catalog has a current price;
   missing pricing is explicitly unknown.
+- API service and limited-quota publish workflows create a missing probe connection through the
+  shared `ApiProbeConnectionDialog` without routing away from the publish page. The dialog owns the
+  same preflight/save form used by the connection-management page; publish pages own only the open
+  state and selection result.
+- A successful inline create refreshes the owner connection query through the existing mutation,
+  closes the dialog, assigns only the returned connection ID to the current publish form, clears
+  that field's error, and preserves the current step and every other draft field. Inline creation
+  requires the connection to be enabled. An existing same-target connection can be reused inline
+  only when it is enabled and verified.
+- A failed preflight or save keeps the dialog and its inputs open. The publish workflow must not
+  encode its draft in a route query, navigate to `/my/api-probe-connections`, or use storage as a
+  handoff mechanism.
 
 #### 3.2 Scheduled real-model runner
 
@@ -255,6 +267,9 @@ when the current partial day is also present. There is no DNS TXT or HTTP owners
 | Responses is explicitly unsupported, Chat works | Fix `openai_chat_completions_v1`; disclose Chat fallback |
 | Responses gets auth, rate, network, or upstream failure | Do not hide it by falling back to Chat |
 | Save omits, reuses, expires, or mutates a preflight token binding | `422 VALIDATION_FAILED` on `preflightToken` |
+| Inline publish create succeeds with an enabled verified connection | Close dialog, refresh connections, select the returned ID, preserve the publish step and draft |
+| Inline publish create fails | Keep dialog and inputs open; publish page and draft remain unchanged |
+| Same-target connection is disabled or unverified during inline create | Show it as unavailable for reuse; require a ready connection or a separately verified create |
 | Target is malformed, private, mixed-DNS, or redirecting | Stable target/network error; never dial the rejected address |
 | Referenced connection delete | `409 INVALID_STATE_TRANSITION` with service references |
 | Stale connection mutation or preflight version | `412 VERSION_CONFLICT`; missing `If-Match` is `428` |
@@ -283,8 +298,15 @@ when the current partial day is also present. There is no DNS TXT or HTTP owners
   remain visible, `ready=false`, and slow successful calls are not colored yellow.
 - Base: a verified connection is disabled. Existing orders remain intact, runner claims stop, and
   bound services cannot receive new orders until re-enabled and freshly verified.
+- Good: a seller reaches the probe step while publishing a service, creates and verifies a
+  connection in the inline dialog, and continues on the same step with that connection selected
+  and all model, pricing, payment, and quota fields unchanged.
+- Base: inline save fails. The seller corrects the dialog input and retries without rebuilding the
+  publish draft.
 - Bad: save repeats the paid protocol verification after a successful preflight, runs both protocols
   every five minutes, or creates one probe row per bound service.
+- Bad: the publish page links to `?create=1`, duplicates the probe form, or reuses a disabled or
+  unverified same-target connection.
 - Bad: dynamically color the slowest sellers yellow, mix TTFT from different model/protocol/environment
   versions, infer domain/IP equality from DNS, or persist buyer tester keys/results.
 
@@ -305,8 +327,10 @@ when the current partial day is also present. There is no DNS TXT or HTTP owners
 - Handlers/contracts: CSRF, idempotency, `If-Match`, private/no-store preflight, no credential
   projection, admin authorization, OpenAPI route/status/type parity, and generated frontend types.
 - Frontend: preflight then save without duplicate verification, model selection, default Luna,
-  price unknown state, Chat disclosure, 24-hour strip and tooltip, runner warnings, calibration
-  preview/publish, responsive desktop/mobile layout, and no mock fallback in real mode.
+  price unknown state, Chat disclosure, inline create from both publish workflows without route
+  navigation, returned-ID selection without draft reset, failed-save dialog retention, unavailable
+  duplicate-reuse blocking, 24-hour strip and tooltip, runner warnings, calibration preview/publish,
+  responsive desktop/mobile layout, and no mock fallback in real mode.
 - Full gates: `go test ./...`, `go vet ./...`, PostgreSQL migration/integration, full Vitest,
   frontend typecheck and production build, OpenAPI checks, migration-doc guard, browser QA, and
   `git diff --check`.

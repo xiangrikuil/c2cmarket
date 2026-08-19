@@ -19,10 +19,13 @@ func (s *Store) NavigationBadgeSummary(ctx context.Context, userID string, isAdm
 		&result.NotificationUnread,
 		&result.ImportantAnnouncementUnread,
 		&result.FeedbackUnread,
+		&result.SupportActionCount,
 		&result.Buyer.CarpoolActions,
 		&result.Buyer.APIOrderActions,
+		&result.Buyer.APIOrderDisputes,
 		&result.Merchant.CarpoolActions,
 		&result.Merchant.APIOrderActions,
+		&result.Merchant.APIOrderDisputes,
 		&admin.OfficialPrices,
 		&admin.Carpools,
 		&admin.APIServices,
@@ -40,6 +43,28 @@ func (s *Store) NavigationBadgeSummary(ctx context.Context, userID string, isAdm
 }
 
 const navigationBadgeSummarySQL = `
+WITH support_counts AS (
+  SELECT
+    (SELECT count(*)::int
+     FROM feedback_tickets
+     WHERE submitter_user_id = $1
+       AND latest_admin_update_at IS NOT NULL
+       AND (submitter_read_at IS NULL OR submitter_read_at < latest_admin_update_at)) AS feedback_unread,
+    (SELECT count(*)::int
+     FROM feedback_tickets
+     WHERE submitter_user_id = $1
+       AND (
+         status = 'needs_user_info'
+         OR (
+           latest_admin_update_at IS NOT NULL
+           AND (submitter_read_at IS NULL OR submitter_read_at < latest_admin_update_at)
+         )
+       )) AS feedback_actions,
+    (SELECT count(*)::int
+     FROM moderation_info_requests
+     WHERE requested_from_user_id = $1
+       AND status = 'open') AS moderation_actions
+)
 SELECT
   (SELECT count(*)::int
    FROM notifications
@@ -48,49 +73,29 @@ SELECT
    FROM announcements a
    LEFT JOIN announcement_receipts r
      ON r.announcement_id = a.id AND r.user_id = $1
-   WHERE a.level = 'important'
+   WHERE a.level IN ('important', 'critical')
      AND array_position(a.channels, 'message_center') IS NOT NULL
      AND a.status NOT IN ('draft', 'offline', 'archived')
      AND a.publish_at <= $2
+     AND (a.expire_at IS NULL OR a.expire_at > $2)
+     AND (
+       a.audience_json->>'type' = 'all'
+       OR EXISTS (
+         SELECT 1
+         FROM announcement_recipients recipient
+         WHERE recipient.announcement_id = a.id
+           AND recipient.user_id = $1
+           AND recipient.announcement_version = a.version
+       )
+     )
      AND (
        r.announcement_id IS NULL
        OR r.announcement_version <> a.version
        OR r.read_at IS NULL
      )) AS important_announcement_unread,
-  (SELECT count(*)::int
-   FROM feedback_tickets
-   WHERE submitter_user_id = $1
-     AND latest_admin_update_at IS NOT NULL
-     AND (submitter_read_at IS NULL OR submitter_read_at < latest_admin_update_at)) AS feedback_unread,
-  ((SELECT count(*)::int
-    FROM carpool_applications application
-    WHERE application.buyer_user_id = $1
-      AND application.status = 'accepted_reserved'
-      AND application.reservation_expires_at > $2
-      AND application.join_confirmation_deadline > $2
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'buyer'
-      ))
-   +
-   (SELECT count(*)::int
-    FROM carpool_memberships membership
-    WHERE membership.buyer_user_id = $1
-      AND membership.status = 'active'
-      AND EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'owner'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'buyer'
-      )))::int AS buyer_carpool_actions,
+  support_counts.feedback_unread,
+  (support_counts.feedback_actions + support_counts.moderation_actions)::int AS support_action_count,
+  0::int AS buyer_carpool_actions,
   (SELECT count(*)::int
    FROM api_orders
    WHERE buyer_user_id = $1
@@ -98,56 +103,44 @@ SELECT
        (status = 'pending_payment' AND payment_expires_at > $2)
        OR status = 'payment_issue'
        OR status = 'delivery_submitted'
+       OR dispute_status IN (
+         'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+         'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+       )
      )) AS buyer_api_order_actions,
-  ((SELECT count(*)::int
-    FROM carpool_applications application
-    WHERE application.owner_user_id = $1
-      AND application.status = 'pending_owner')
-   +
-   (SELECT count(*)::int
-    FROM carpool_applications application
-    WHERE application.owner_user_id = $1
-      AND application.status = 'accepted_reserved'
-      AND application.reservation_expires_at > $2
-      AND application.join_confirmation_deadline > $2
-      AND EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'buyer'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_join_confirmations confirmation
-        WHERE confirmation.carpool_application_id = application.id
-          AND confirmation.actor_role = 'owner'
-      ))
-   +
-   (SELECT count(*)::int
-    FROM carpool_memberships membership
-    WHERE membership.owner_user_id = $1
-      AND membership.status = 'active'
-      AND EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'buyer'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM carpool_completion_confirmations confirmation
-        WHERE confirmation.carpool_membership_id = membership.id
-          AND confirmation.actor_role = 'owner'
-      )))::int AS merchant_carpool_actions,
+  (SELECT count(*)::int
+   FROM api_orders
+   WHERE buyer_user_id = $1
+     AND dispute_status IN (
+       'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+       'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+     )) AS buyer_api_order_disputes,
+  (SELECT count(*)::int
+   FROM carpool_applications application
+   WHERE application.owner_user_id = $1
+     AND application.status = 'pending_owner') AS merchant_carpool_actions,
   (SELECT count(*)::int
    FROM api_orders
    WHERE seller_user_id = $1
-     AND status IN ('payment_submitted', 'paid_confirmed')) AS merchant_api_order_actions,
+     AND (
+       status IN ('payment_submitted', 'paid_confirmed')
+       OR dispute_status IN (
+         'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+         'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+       )
+     )) AS merchant_api_order_actions,
+  (SELECT count(*)::int
+   FROM api_orders
+   WHERE seller_user_id = $1
+     AND dispute_status IN (
+       'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+       'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+     )) AS merchant_api_order_disputes,
   CASE WHEN $3 THEN
     (SELECT count(*)::int FROM official_price_leads WHERE status = 'pending')
   ELSE 0 END AS admin_official_prices,
   CASE WHEN $3 THEN
-    (SELECT count(*)::int FROM carpool_listings WHERE status IN ('pending_review', 'paused'))
+    (SELECT count(*)::int FROM carpool_listings WHERE governance_status = 'removed')
   ELSE 0 END AS admin_carpools,
   CASE WHEN $3 THEN
     (SELECT count(*)::int
@@ -163,4 +156,5 @@ SELECT
      + (SELECT count(*)::int FROM dispute_cases WHERE status = 'open')
      + (SELECT count(*)::int FROM appeals WHERE status = 'submitted'))::int
   ELSE 0 END AS admin_reports
+FROM support_counts
 `

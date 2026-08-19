@@ -60,6 +60,8 @@ test('browser analytics consumes OAuth outcomes once without leaking route data'
   assert.match(plugin, /trackAnalytics\('normalized_page_view', \{ path: route\.path \}\)/)
   assert.match(plugin, /rawOutcome === 'registered' \? 'registration_success' : 'login_success'/)
   assert.match(plugin, /delete query\.authOutcome/)
+  assert.match(plugin, /rawOutcome === 'registered'/)
+  assert.match(plugin, /wechatOnboardingRoute\(router\.resolve\(cleanRoute\)\.fullPath\)/)
   assert.match(plugin, /lastTrackedPath = route\.path/)
   assert.match(login, /trackAnalytics\('login_page_view'/)
   assert.match(loginPanel, /trackAnalytics\('oauth_login_start'/)

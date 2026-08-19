@@ -100,6 +100,23 @@ create one owner for:
 
 Rendering code may format fields, but it must not redefine the payload contract.
 
+### Mistake 5: Identity Projection Overwrites Mutable Account State
+
+**Bad**: A development identity helper reapplies seed email, verification, or
+password values every time a profile query runs. A successful mutation appears
+complete until query invalidation or route navigation refetches the profile and
+silently restores the seed.
+
+**Good**: Separate stable identity facts (subject, username, provider binding,
+capabilities) from mutable account facts (verified email, configured password,
+contacts). Mutations update the mutable owner, and later projections merge those
+facts without replacing them with defaults.
+
+**Regression rule**: Any mock or development mutation that changes completion
+state needs a write-then-read test through the same public query used after
+cache invalidation. Source assertions and immediate mutation responses do not
+prove that the state survives a refetch.
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -120,6 +137,8 @@ After implementation:
       casting payload fields locally
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
+- [ ] For mutable completion state, performed a successful mutation followed by
+      the normal read/refetch path and verified the completed value survives
 
 ---
 

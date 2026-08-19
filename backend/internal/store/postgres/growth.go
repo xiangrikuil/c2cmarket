@@ -106,16 +106,7 @@ func loadGrowthSummary(ctx context.Context, q queryer, overview *growth.Overview
 	if err != nil {
 		return internalStoreError()
 	}
-	err = q.QueryRow(ctx, `
-		SELECT
-		  count(*) FILTER (
-		    WHERE status = 'completed' AND ended_at >= $1 AND ended_at < $2
-		  )::int
-		FROM carpool_memberships
-	`, windowStart.UTC(), windowEnd.UTC()).Scan(&overview.Summary.CompletedCarpoolTransactions)
-	if err != nil {
-		return internalStoreError()
-	}
+	overview.Summary.CompletedCarpoolTransactions = 0
 	err = q.QueryRow(ctx, `
 		SELECT
 		  count(*) FILTER (

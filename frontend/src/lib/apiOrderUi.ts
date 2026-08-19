@@ -1,5 +1,20 @@
 export type ApiOrderCancelResponsibility = 'merchant' | 'buyer'
 
+export type ApiOrderCredentialProblemReason = 'unreachable' | 'invalid_credential' | 'quota_mismatch' | 'permission_mismatch' | 'description_mismatch' | 'other'
+
+export const API_ORDER_CREDENTIAL_PROBLEM_OPTIONS: Array<{
+  value: ApiOrderCredentialProblemReason
+  label: string
+  description: string
+}> = [
+  { value: 'unreachable', label: '无法连接', description: '接入地址无法访问或服务没有响应。' },
+  { value: 'invalid_credential', label: '凭证无效', description: 'API Key、账号或初始密码无法使用。' },
+  { value: 'quota_mismatch', label: '额度不符', description: '可用额度与订单快照不一致。' },
+  { value: 'permission_mismatch', label: '权限不符', description: '模型、并发或接口权限与约定不一致。' },
+  { value: 'description_mismatch', label: '与描述不符', description: '交付内容与服务或套餐说明不一致。' },
+  { value: 'other', label: '其他问题', description: '以上原因无法准确描述当前问题。' },
+]
+
 export type ApiOrderCancelOption = {
   value: string
   label: string

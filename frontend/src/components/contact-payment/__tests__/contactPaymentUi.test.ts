@@ -10,6 +10,7 @@ const myCenter = optionalSource('../../../pages/MyCenterPage.vue')
 const publishPage = optionalSource('../../../pages/ApiServicePublishPage.vue')
 const quotaRushPublishPage = optionalSource('../../../pages/ApiQuotaRushPublishPage.vue')
 const contactMethodCard = optionalSource('../ContactMethodCard.vue')
+const contactUsageScopeSelector = optionalSource('../ContactUsageScopeSelector.vue')
 const paymentMethodCard = optionalSource('../PaymentMethodCard.vue')
 const paymentSettingsEditor = optionalSource('../ApiPaymentSettingsEditor.vue')
 const paymentSettingsDialog = optionalSource('../ApiPaymentSettingsDialog.vue')
@@ -59,6 +60,28 @@ describe('联系方式与收款设置 UI', () => {
     expect(myCenter).not.toContain('type="radio"')
   })
 
+  it('微信自动覆盖全部交易用途，邮箱仍可显式选择用途', () => {
+    expect(contactUsageScopeSelector).toContain("import { Checkbox } from '@/components/ui/checkbox'")
+    expect(contactUsageScopeSelector).toContain("emit('update:modelValue'")
+    expect(contactUsageScopeSelector).toContain('请至少选择一个适用场景')
+    expect(myCenter.match(/<ContactUsageScopeSelector/g)).toHaveLength(1)
+    expect(myCenter).toContain('availableContactUsageScopeOptions')
+    expect(myCenter).toContain('wechatContactSnapshot')
+    expect(myCenter).toContain('emailUsageScopesDirty')
+    expect(myCenter).toContain('usageScopes: ALL_CONTACT_USAGE_SCOPES')
+    expect(myCenter).toContain('usageScopes: contactEmailForm.usageScopes')
+    expect(publishPage).toContain("contact.enabled && contact.type === 'wechat' && contact.usageScopes.includes('api_merchant')")
+  })
+
+  it('账号恢复邮箱与交易联系邮箱使用独立草稿和挑战状态', () => {
+    expect(myCenter).toContain('const accountEmailForm = reactive')
+    expect(myCenter).toContain('const contactEmailForm = reactive')
+    expect(myCenter).toContain('accountEmailForm.email = currentProfile.email ||')
+    expect(myCenter).toContain("contactEmailForm.email = contact?.displayValue ?? ''")
+    expect(myCenter).toContain('contactEmailVerificationChallengeEmail')
+    expect(myCenter).not.toContain('email?.displayValue || profile.value.email')
+  })
+
   it('显示未保存状态并在离开页面前保护草稿', () => {
     expect(contactMethodCard).toContain('有未保存更改')
     expect(paymentMethodCard).toContain('有未保存更改')
@@ -66,9 +89,10 @@ describe('联系方式与收款设置 UI', () => {
     expect(paymentSettingsEditor).toContain('savedSnapshot')
     expect(paymentSettingsEditor).toContain('cloneApiPaymentAccountSettings')
     expect(myCenter).toContain('useUnsavedChangesGuard')
-    expect(myCenter).toContain('contactSettingsDirty')
+    expect(myCenter).toContain('currentSettingsDirty')
     expect(myCenter).toContain('apiPaymentEditorDirty')
-    expect(myCenter).toContain('联系方式与收款设置尚未保存')
+    expect(myCenter).toContain('|| Boolean(contactEmailVerificationChallengeEmail.value)')
+    expect(myCenter).toContain('当前账户设置尚未保存')
   })
 
   it('删除收款码经过确认且确认后只修改草稿', () => {

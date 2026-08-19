@@ -8,6 +8,7 @@ import (
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
+	"c2c-market/backend/internal/module/communityidentity"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
@@ -156,15 +157,11 @@ type RejectCarpoolApplicationInput = carpool.RejectApplicationInput
 
 type CancelCarpoolApplicationInput = carpool.CancelApplicationInput
 
-type WithdrawCarpoolAcceptanceInput = carpool.WithdrawAcceptanceInput
-
-type ConfirmCarpoolApplicationJoinInput = carpool.ConfirmApplicationJoinInput
-
 type CarpoolApplicationCompletionBuilder = carpool.ApplicationCompletionBuilder
 
-type ConfirmCarpoolMembershipCompleteInput = carpool.ConfirmMembershipCompleteInput
-
 type EndCarpoolMembershipInput = carpool.EndMembershipInput
+
+type UpdateCarpoolMembershipOwnerNoteInput = carpool.UpdateMembershipOwnerNoteInput
 
 type CarpoolMembershipCompletionBuilder = carpool.MembershipCompletionBuilder
 
@@ -193,6 +190,10 @@ type EmailVerificationStartInput = profile.EmailVerificationStartInput
 type EmailVerificationConfirmInput = profile.EmailVerificationConfirmInput
 
 type EmailVerificationChallenge = profile.EmailVerificationChallenge
+
+type CommunityIdentity = communityidentity.Identity
+
+type PublicCommunityIdentity = communityidentity.PublicIdentity
 
 type PublicUserProfile = profile.PublicUserProfile
 

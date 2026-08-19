@@ -195,42 +195,38 @@ func filterCarpoolApplications(r *http.Request, items []carpool.Application, mem
 
 func carpoolApplicationActionRequired(status, sortMode string) bool {
 	if sortMode == "default_owner" {
-		return status == "pending_owner" || status == "joined_pending_confirmation" || status == "pending_completion" || status == "disputed"
+		return status == carpool.ApplicationStatusPendingOwner || status == "disputed"
 	}
-	return status == "accepted_reserved" || status == "waiting_contact" || status == "contacted" || status == "pending_completion" || status == "disputed"
+	return status == "disputed"
 }
 
 func carpoolApplicationDisplayStatus(application carpool.Application, membership carpool.Membership) string {
 	if membership.ID != "" {
 		switch membership.Status {
-		case carpool.MembershipStatusCompleted:
-			return "completed"
 		case carpool.MembershipStatusLeft:
-			return "cancelled_by_buyer"
+			return carpool.MembershipStatusLeft
 		case carpool.MembershipStatusRemoved:
-			return "cancelled_by_owner"
+			return carpool.MembershipStatusRemoved
 		case carpool.MembershipStatusActive:
-			if membership.BuyerCompletedAt != nil || membership.OwnerCompletedAt != nil {
-				return "pending_completion"
-			}
-			return "active"
+			return carpool.MembershipStatusActive
 		}
-	}
-	if application.Status == carpool.ApplicationStatusAcceptedReserved {
-		if application.BuyerConfirmedAt != nil || application.OwnerConfirmedAt != nil {
-			return "joined_pending_confirmation"
-		}
-		return "accepted_reserved"
 	}
 	return application.Status
 }
 
-func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
+const (
+	apiOrderDisputeFilterNeedsAction         = "needs_action"
+	apiOrderDisputeFilterWaitingCounterparty = "waiting_counterparty"
+	apiOrderDisputeFilterPlatformReview      = "platform_review"
+)
+
+func filterAPIOrders(r *http.Request, items []apiorder.Order, viewerUserID string) []apiorder.Order {
 	statuses := querySet(r, "statuses")
 	serviceID := strings.TrimSpace(r.URL.Query().Get("serviceId"))
 	query := r.URL.Query().Get("q")
 	dateRange := r.URL.Query().Get("dateRange")
 	risk := r.URL.Query().Get("risk")
+	dispute := r.URL.Query().Get("dispute")
 	now := time.Now()
 	filtered := make([]apiorder.Order, 0, len(items))
 	for _, item := range items {
@@ -240,6 +236,29 @@ func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
 		hasRiskNote := apiorder.IsDisputeActive(item.DisputeStatus) || strings.TrimSpace(item.CancelReason) != ""
 		if risk == "high" && !apiorder.IsDisputeActive(item.DisputeStatus) || risk == "has_note" && !hasRiskNote {
 			continue
+		}
+		activeDispute := apiorder.IsDisputeActive(item.DisputeStatus)
+		switch dispute {
+		case "active":
+			if !activeDispute {
+				continue
+			}
+		case "none":
+			if activeDispute {
+				continue
+			}
+		case apiOrderDisputeFilterNeedsAction:
+			if !activeDispute || item.DisputeNextUserID != viewerUserID {
+				continue
+			}
+		case apiOrderDisputeFilterWaitingCounterparty:
+			if !activeDispute || item.DisputeNextActor == "admin" || item.DisputeNextUserID == "" || item.DisputeNextUserID == viewerUserID {
+				continue
+			}
+		case apiOrderDisputeFilterPlatformReview:
+			if !activeDispute || item.DisputeNextActor != "admin" {
+				continue
+			}
 		}
 		if !containsFold(query, item.ID, item.OrderNo, item.APIServiceID, item.ServiceTitleSnapshot, item.BuyerUserID, item.SellerUserID) {
 			continue
@@ -271,6 +290,15 @@ func filterAPIOrders(r *http.Request, items []apiorder.Order) []apiorder.Order {
 		sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt) })
 	}
 	return filtered
+}
+
+func validateAPIOrderListQuery(r *http.Request) *domain.AppError {
+	dispute := strings.TrimSpace(r.URL.Query().Get("dispute"))
+	if apiorder.IsAdminOrderDispute(dispute) || dispute == apiOrderDisputeFilterNeedsAction || dispute == apiOrderDisputeFilterWaitingCounterparty || dispute == apiOrderDisputeFilterPlatformReview {
+		return nil
+	}
+	detail := "纠纷筛选无效。"
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "List query invalid", detail, "dispute", "invalid", detail)
 }
 
 func apiOrderActionRequired(status, sortMode string) bool {

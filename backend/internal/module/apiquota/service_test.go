@@ -87,6 +87,60 @@ func TestCreateOfferRejectsNewPreimportedDeliveryWithStableFieldReason(t *testin
 	}
 }
 
+func TestValidatePublishableBatchUsesCurrentMerchantDeclarationContract(t *testing.T) {
+	now := time.Date(2026, 8, 16, 9, 0, 0, 0, time.UTC)
+
+	t.Run("legacy performance fields are optional", func(t *testing.T) {
+		batch := validBatch(now)
+		batch.DeclaredTTFTBand = ""
+		batch.PerformanceConfirmedAt = nil
+
+		if appErr := validatePublishableBatch(batch, now); appErr != nil {
+			t.Fatalf("legacy performance fields must not block publication: %v", appErr)
+		}
+	})
+
+	tests := []struct {
+		name      string
+		mutate    func(*Batch)
+		field     string
+		errorCode string
+	}{
+		{
+			name: "maximum concurrency remains required",
+			mutate: func(batch *Batch) {
+				batch.DeclaredMaxConcurrency = 0
+			},
+			field:     "declaredMaxConcurrency",
+			errorCode: "required",
+		},
+		{
+			name: "prompt audit selection remains required",
+			mutate: func(batch *Batch) {
+				batch.PromptAuditEnabled = nil
+			},
+			field:     "promptAuditEnabled",
+			errorCode: "required",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			batch := validBatch(now)
+			batch.DeclaredTTFTBand = ""
+			batch.PerformanceConfirmedAt = nil
+			test.mutate(&batch)
+
+			appErr := validatePublishableBatch(batch, now)
+			if appErr == nil || appErr.Code != domain.CodeValidationFailed || len(appErr.FieldErrors) != 1 {
+				t.Fatalf("expected one field validation error, got %+v", appErr)
+			}
+			if fieldErr := appErr.FieldErrors[0]; fieldErr.Field != test.field || fieldErr.Code != test.errorCode {
+				t.Fatalf("unexpected field validation error: %+v", fieldErr)
+			}
+		})
+	}
+}
+
 func TestCreateRoundSupportsOneThousandCopiesAndRejectsDuplicateOffer(t *testing.T) {
 	now := time.Date(2026, 7, 19, 9, 0, 0, 0, time.UTC)
 	batch := validBatch(now)

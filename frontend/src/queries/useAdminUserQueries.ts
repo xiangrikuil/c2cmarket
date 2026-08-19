@@ -20,10 +20,11 @@ export const adminUserQueryKeys = {
   session: ['admin-users', 'session'] as const,
 }
 
-export function useAdminUserDirectory(query: Ref<AdminUserDirectoryQuery> | AdminUserDirectoryQuery) {
+export function useAdminUserDirectory(query: Ref<AdminUserDirectoryQuery> | AdminUserDirectoryQuery, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => adminUserQueryKeys.directory(valueOf(query))),
     queryFn: () => getAdminUserDirectory(valueOf(query)),
+    enabled: computed(() => valueOf(enabled)),
     placeholderData: keepPreviousData,
     refetchOnMount: 'always',
   })

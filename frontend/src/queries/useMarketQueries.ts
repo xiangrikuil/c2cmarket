@@ -47,6 +47,7 @@ import {
   getApiQuotaOffers,
   getApiQuotaOffersPage,
   getApiQuotaSaleSlots,
+  getApiPackageFilterOptions,
   getCarpoolApplicationById,
   getCarpoolApplicationEligibility,
   getCarpoolApplicationContacts,
@@ -55,9 +56,9 @@ import {
   getMerchantApiPurchaseIntents,
   getMerchantApiOrders,
   getMerchantApiOrdersPage,
+  getSellerCommerceStatus,
   getMerchantCarpoolApplications,
   getMerchantCarpoolApplicationsPage,
-  getMyContactMethods,
   getMyFeedbackTicket,
   getMyFeedbackTickets,
   getMyOfficialPriceLeads,
@@ -105,7 +106,7 @@ import {
   pauseApiService,
   publishApiService,
   searchMarket,
-  sendContactVerification,
+  startContactEmailVerification,
   setBackupPassword,
   setDefaultContactMethod,
   startEmailVerification,
@@ -121,7 +122,7 @@ import {
   updateMyProfile,
   toggleFavorite,
   useLinuxDoAvatar,
-  verifyContactMethod,
+  confirmContactEmailVerification,
   type AdminSection,
   type AdminSectionPageFilters,
   type ApiOrderFilters,
@@ -161,10 +162,10 @@ import {
 } from '@/lib/api'
 import type { OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import { nextUnseenCursor, type CursorPageRequest } from '@/lib/cursorPagination'
-import { myProfileQueryKey } from '@/queries/useAppShellQueries'
+import { myContactMethodsQueryKey, myProfileQueryKey } from '@/queries/useAppShellQueries'
 
 export { useHomeMarket } from '@/queries/useHomeMarketQuery'
-export { myProfileQueryKey, useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+export { myContactMethodsQueryKey, myProfileQueryKey, useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications, useMyContactMethodsQuery } from '@/queries/useAppShellQueries'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value
@@ -310,6 +311,15 @@ export function useCarpoolPaymentMethods() {
 
 export function useModelCatalog() {
   return useQuery({ queryKey: ['model-catalog', 'active'], queryFn: getModelCatalog })
+}
+
+export function useApiPackageFilterOptions(enabled: Ref<boolean> | boolean = true) {
+  return useQuery({
+    queryKey: ['api-services', 'filter-options', 'fixed_package'],
+    queryFn: getApiPackageFilterOptions,
+    enabled: computed(() => valueOf(enabled)),
+    staleTime: 30_000,
+  })
 }
 
 export function useApiServices(filters: Ref<ApiServiceFilters> | ApiServiceFilters = {}) {
@@ -468,11 +478,12 @@ export function useInfiniteApiQuotaOffers(
   })
 }
 
-export function useApiQuotaSaleSlots() {
+export function useApiQuotaSaleSlots(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: ['api-quota-sale-slots'],
     queryFn: getApiQuotaSaleSlots,
     refetchOnMount: 'always',
+    enabled: computed(() => valueOf(enabled)),
   })
 }
 
@@ -619,10 +630,6 @@ export function useImportApiQuotaCredentialsMutation() {
   })
 }
 
-export function myContactMethodsQueryKey() {
-  return ['my-contact-methods'] as const
-}
-
 export function apiPaymentAccountSettingsQueryKey() {
   return ['api-payment-account-settings'] as const
 }
@@ -707,15 +714,6 @@ export function useUseLinuxDoAvatarMutation() {
   })
 }
 
-export function useMyContactMethodsQuery() {
-  return useQuery({
-    queryKey: myContactMethodsQueryKey(),
-    queryFn: getMyContactMethods,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  })
-}
-
 export function useCreateContactMethodMutation() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -756,14 +754,14 @@ export function useSetDefaultContactMethodMutation() {
   })
 }
 
-export function useSendContactVerificationMutation() {
-  return useMutation({ mutationFn: (contactId: string) => sendContactVerification(contactId) })
+export function useStartContactEmailVerificationMutation() {
+  return useMutation({ mutationFn: (contactId: string) => startContactEmailVerification(contactId) })
 }
 
-export function useVerifyContactMethodMutation() {
+export function useConfirmContactEmailVerificationMutation() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (contactId: string) => verifyContactMethod(contactId),
+    mutationFn: ({ contactId, code }: { contactId: string, code: string }) => confirmContactEmailVerification(contactId, code),
     onSuccess() {
       queryClient.invalidateQueries({ queryKey: myContactMethodsQueryKey() })
     },
@@ -902,6 +900,15 @@ export function useMerchantApiOrdersPage(
   return useQuery({
     queryKey: computed(() => ['merchant-api-orders', 'page', valueOf(filters), valueOf(page)]),
     queryFn: () => getMerchantApiOrdersPage(valueOf(filters), valueOf(page)),
+    enabled: computed(() => valueOf(enabled)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useSellerCommerceStatus(enabled: Ref<boolean> | boolean = true) {
+  return useQuery({
+    queryKey: ['seller-commerce-status'],
+    queryFn: getSellerCommerceStatus,
     enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })

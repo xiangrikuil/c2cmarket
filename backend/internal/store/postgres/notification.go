@@ -80,15 +80,20 @@ func (s *Store) MarkNotificationRead(ctx context.Context, userID, notificationID
 	if item.ReadAt != nil {
 		return item, nil
 	}
-	updated, err := scanNotification(ctx, s.pool, `
+	commandTag, err := s.pool.Exec(ctx, `
 		UPDATE notifications
 		SET read_at = $3
 		WHERE id = $1 AND user_id = $2
-		RETURNING
-			id::text, user_id::text, type, title, body, target_type, target_id::text,
-			target_url, source_event_type, COALESCE(source_event_id::text, ''),
-			read_at, created_at
 	`, notificationID, userID, now)
+	if err != nil {
+		return notification.Notification{}, internalStoreError()
+	}
+	if commandTag.RowsAffected() == 0 {
+		return notification.Notification{}, notificationNotFound()
+	}
+	updated, err := scanNotification(ctx, s.pool, notificationSelectSQL+`
+		WHERE notification.id = $1 AND notification.user_id = $2
+	`, notificationID, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return notification.Notification{}, notificationNotFound()
 	}
@@ -165,6 +170,7 @@ func scanNotificationRow(row scanner) (notification.Notification, error) {
 		&item.TargetURL,
 		&item.SourceEventType,
 		&item.SourceEventID,
+		&item.ActionRequired,
 		&item.ReadAt,
 		&item.CreatedAt,
 	)
@@ -177,7 +183,21 @@ func notificationNotFound() *domain.AppError {
 
 const notificationSelectSQL = `
 SELECT
-	id::text, user_id::text, type, title, body, target_type, target_id::text,
-	target_url, source_event_type, COALESCE(source_event_id::text, ''),
-	read_at, created_at
-FROM notifications`
+	notification.id::text, notification.user_id::text, notification.type,
+	notification.title, notification.body, notification.target_type,
+	notification.target_id::text, notification.target_url,
+	notification.source_event_type, COALESCE(notification.source_event_id::text, ''),
+	EXISTS (
+		SELECT 1
+		FROM dispute_cases dispute
+		JOIN api_order_dispute_remedies remedy ON remedy.dispute_case_id = dispute.id
+		WHERE notification.target_type = 'dispute'
+		  AND notification.source_event_type IN ('dispute.remedy_claimed', 'dispute.remedy_confirmation_due')
+		  AND dispute.id = notification.target_id
+		  AND dispute.active = true
+		  AND remedy.status = 'claimed_fulfilled'
+		  AND remedy.beneficiary_user_id = notification.user_id
+		  AND remedy.confirmation_due_at > now()
+	) AS action_required,
+	notification.read_at, notification.created_at
+FROM notifications notification`

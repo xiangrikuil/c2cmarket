@@ -25,9 +25,10 @@ import {
   type MockPersona,
 } from '@/lib/mockAuth'
 import type {
-	AccountAppealSessionResponse,
-	AccountGovernanceBusinessCenter,
+  AccountAppealSessionResponse,
+  AccountGovernanceBusinessCenter,
   AccountGovernanceAppeal as AccountGovernanceAppealResponse,
+  DevPersonaSessionResponse,
   EmailRegistrationConfirmRequest,
   EmailRegistrationStartResponse,
   OAuthStartResponse,
@@ -55,9 +56,7 @@ export type BackendSession = SessionResponse
 
 export type DevPersona = 'buyer' | 'seller' | 'admin'
 
-export type DevPersonaSession = BackendSession & {
-  persona: DevPersona
-}
+export type DevPersonaSession = DevPersonaSessionResponse
 
 export type {
   OAuthStartResponse,

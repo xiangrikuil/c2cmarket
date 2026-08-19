@@ -89,6 +89,7 @@ async function shareService() {
             <span class="block truncate font-semibold">{{ getApiMerchantDisplayName(service) }}</span>
             <span class="mt-1 flex flex-wrap items-center gap-1.5">
               <ApiMerchantBadges :service="service" />
+              <Badge v-for="identity in service.communityIdentities" :key="identity.code" variant="outline">{{ identity.name }}</Badge>
               <template v-if="showSourceAuthorVerification">
                 <SourceAuthorVerificationBadge :verification="service.sourceAuthorVerification" />
               </template>

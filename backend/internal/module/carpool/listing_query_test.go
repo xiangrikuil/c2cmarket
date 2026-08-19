@@ -39,9 +39,8 @@ func TestMyListingsViewsFilterBeforePagination(t *testing.T) {
 	fixtures := []Listing{
 		{ID: "recruiting-b", OwnerUserID: owner.ID, Status: ListingStatusActive, ActiveBuyerMembers: 0, UpdatedAt: now},
 		{ID: "recruiting-a", OwnerUserID: owner.ID, Status: ListingStatusActive, ActiveBuyerMembers: 0, UpdatedAt: now},
-		{ID: "serving", OwnerUserID: owner.ID, Status: ListingStatusActive, ActiveBuyerMembers: 1, UpdatedAt: now.Add(-time.Minute)},
-		{ID: "rejected", OwnerUserID: owner.ID, Status: ListingStatusRejected, UpdatedAt: now.Add(-2 * time.Minute)},
-		{ID: "removed", OwnerUserID: owner.ID, Status: ListingStatusRemoved, UpdatedAt: now.Add(-3 * time.Minute)},
+		{ID: "serving", OwnerUserID: owner.ID, Status: ListingStatusStopped, GovernanceStatus: "clear", ActiveBuyerMembers: 1, UpdatedAt: now.Add(-time.Minute)},
+		{ID: "removed", OwnerUserID: owner.ID, Status: ListingStatusStopped, GovernanceStatus: "removed", UpdatedAt: now.Add(-3 * time.Minute)},
 		{ID: "draft", OwnerUserID: owner.ID, Status: ListingStatusDraft, UpdatedAt: now.Add(-4 * time.Minute)},
 		{ID: "changes", OwnerUserID: owner.ID, Status: ListingStatusChangesRequested, UpdatedAt: now.Add(-5 * time.Minute)},
 		{ID: "pending", OwnerUserID: owner.ID, Status: ListingStatusPendingReview, UpdatedAt: now.Add(-6 * time.Minute)},
@@ -59,8 +58,8 @@ func TestMyListingsViewsFilterBeforePagination(t *testing.T) {
 	}{
 		{view: OwnerListingViewRecruiting, want: []string{"recruiting-b", "recruiting-a"}},
 		{view: OwnerListingViewServing, want: []string{"serving"}},
-		{view: OwnerListingViewHistory, want: []string{"rejected", "removed"}},
-		{view: OwnerListingViewNeedsEdit, want: []string{"draft", "changes", "pending", "paused"}},
+		{view: OwnerListingViewHistory, want: []string{"removed"}},
+		{view: OwnerListingViewNeedsEdit, want: []string{"draft"}},
 	}
 	for _, test := range tests {
 		t.Run(test.view, func(t *testing.T) {

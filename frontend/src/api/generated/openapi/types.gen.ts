@@ -60,6 +60,7 @@ export type NotificationReadAllResult = {
 export type NavigationBadgeRoleSummary = {
     carpoolActions: number;
     apiOrderActions: number;
+    apiOrderDisputes: number;
 };
 
 export type NavigationBadgeAdminSummary = {
@@ -76,13 +77,22 @@ export type NavigationBadgeSummary = {
     notificationUnread: number;
     importantAnnouncementUnread: number;
     feedbackUnread: number;
+    /**
+     * Current-user feedback tickets with an unread administrator reply or needs_user_info status, counted once per ticket, plus open moderation information requests assigned to the current user.
+     */
+    supportActionCount: number;
     buyer: NavigationBadgeRoleSummary;
     merchant: NavigationBadgeRoleSummary;
     admin: NavigationBadgeAdminSummary | null;
 };
 
 export type AnnouncementAudience = {
-    type: 'all';
+    type: 'all' | 'roles' | 'specific_users';
+    roles?: Array<'buyer' | 'merchant' | 'admin'>;
+    /**
+     * Administrator-only explicit recipient identifiers; omitted from user and public responses.
+     */
+    userIds?: Array<string>;
 };
 
 export type AnnouncementReceipt = {
@@ -91,6 +101,7 @@ export type AnnouncementReceipt = {
     firstSeenAt?: string;
     readAt?: string;
     dismissedAt?: string;
+    acknowledgedAt?: string;
 };
 
 export type Announcement = {
@@ -103,12 +114,13 @@ export type Announcement = {
      */
     contentMarkdown: string;
     category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
-    level: 'normal' | 'important';
+    level: 'normal' | 'important' | 'critical';
     status: 'draft' | 'scheduled' | 'published' | 'offline' | 'expired' | 'archived';
-    channels: Array<'message_center' | 'home_banner'>;
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
     audience: AnnouncementAudience;
     isPinned: boolean;
     isDismissible: boolean;
+    requiresAck: boolean;
     ctaLabel?: string;
     ctaUrl?: string;
     publishAt: string;
@@ -130,15 +142,44 @@ export type AnnouncementList = {
     nextCursor?: string | null;
 };
 
+export type PublicAnnouncement = {
+    id: string;
+    slug: string;
+    title: string;
+    summary: string;
+    contentMarkdown: string;
+    category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
+    level: 'important' | 'critical';
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
+    audience: {
+        type: 'all';
+    };
+    isPinned: boolean;
+    isDismissible: boolean;
+    requiresAck: boolean;
+    ctaLabel?: string;
+    ctaUrl?: string;
+    publishAt: string;
+    expireAt?: string;
+    contentUpdatedAt: string;
+    version: number;
+};
+
+export type PublicAnnouncementList = {
+    items: Array<PublicAnnouncement>;
+};
+
 export type AnnouncementFormRequest = {
     title: string;
     summary: string;
     contentMarkdown: string;
     category: 'platform' | 'rules' | 'maintenance' | 'feature' | 'risk' | 'operation';
-    level: 'normal' | 'important';
-    channels: Array<'message_center' | 'home_banner'>;
+    level: 'normal' | 'important' | 'critical';
+    channels: Array<'message_center' | 'home_banner' | 'global_bar' | 'modal'>;
+    audience: AnnouncementAudience;
     isPinned: boolean;
     isDismissible: boolean;
+    requiresAck: boolean;
     ctaLabel?: string;
     ctaUrl?: string;
     publishAt: string;
@@ -261,6 +302,38 @@ export type UsernameAvailability = {
     available: boolean;
 };
 
+export type CommunityIdentity = {
+    code: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR';
+    name: string;
+    description: string;
+    grantedAt: string;
+    revokedAt?: string | null;
+    source?: 'AUTO' | 'ADMIN' | 'BACKFILL';
+};
+
+export type CommunityIdentityGrantRequest = {
+    identityType: 'BETA_CONTRIBUTOR';
+    reason: string;
+};
+
+export type CommunityIdentityRevokeRequest = {
+    reason: string;
+};
+
+export type AdminCommunityIdentity = CommunityIdentity & {
+    id?: string;
+    source?: string;
+    qualifiedAt?: string | null;
+    grantedBy?: string;
+    grantReason?: string;
+    revokedBy?: string;
+    revokeReason?: string;
+};
+
+export type AdminCommunityIdentityList = {
+    items: Array<AdminCommunityIdentity>;
+};
+
 export type MyProfile = {
     id: string;
     username: string;
@@ -282,6 +355,7 @@ export type MyProfile = {
         [key: string]: unknown;
     };
     badges: Array<string>;
+    communityIdentities: Array<CommunityIdentity>;
     restrictions: Array<string>;
     usernameChangePolicy: {
         [key: string]: unknown;
@@ -624,6 +698,7 @@ export type PublicUserProfile = {
     linuxDoUsername: string | null;
     trustLevel: number | null;
     badges: Array<string>;
+    communityIdentities: Array<CommunityIdentity>;
     accountStatus: string;
     createdAt: string | null;
     lastActiveAt: string | null;
@@ -765,6 +840,7 @@ export type DevPersonaSessionRequest = {
 export type DevPersonaSessionResponse = {
     persona: 'buyer' | 'seller' | 'admin';
     user: User;
+    audience: 'normal';
     csrfToken: string;
     expiresAt: string;
 };
@@ -1759,11 +1835,16 @@ export type QuotaUsagePolicy = {
 export type ApiServiceRequest = unknown & {
     merchantProfileId?: string;
     merchantIdentityMode?: 'public_profile' | 'store_alias';
+    /**
+     * Enabled WeChat contact owned by the merchant. Retained as a compatibility alias for the single item in ownerContactMethodIds.
+     */
     ownerContactMethodId?: string;
     /**
-     * Ordered merchant contacts to freeze for each purchase intent. The first item is also returned through ownerContactMethodId for compatibility.
+     * Exactly one enabled WeChat contact owned by the merchant. Its current version is frozen for each purchase intent.
      */
-    ownerContactMethodIds?: Array<string>;
+    ownerContactMethodIds?: [
+        string
+    ];
     /**
      * Optional while saving a draft. Publication and order acceptance require an enabled, verified connection owned by the seller.
      */
@@ -2024,6 +2105,10 @@ export type PublicApiService = {
     responseMedianMinutes?: number | null;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
+    /**
+     * Public community identities for a public-profile merchant. Detail responses only; omitted for store aliases and list projections.
+     */
+    communityIdentities?: Array<CommunityIdentity>;
     version: number;
     createdAt: string;
     updatedAt: string;
@@ -2044,13 +2129,15 @@ export type ApiService = {
      */
     merchantAvatarUrl?: string;
     /**
-     * Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
+     * Owner/admin view only. Enabled WeChat contact frozen for new transactions; public clients must create purchase intents instead of reading contact values from service detail.
      */
     ownerContactMethodId?: string;
     /**
-     * Owner/admin view only. Ordered contact-method identifiers; public service projections omit this field.
+     * Owner/admin view only. Contains exactly the single enabled WeChat contact identifier; public service projections omit this field.
      */
-    ownerContactMethodIds?: Array<string>;
+    ownerContactMethodIds?: [
+        string
+    ];
     /**
      * Owner/admin-only reusable probe connection binding. Public service DTOs never expose it.
      */
@@ -2211,6 +2298,21 @@ export type ApiServiceList = {
 export type PublicApiServiceList = {
     items: Array<PublicApiService>;
     nextCursor?: string | null;
+};
+
+export type PublicApiPackageModelFilterOption = {
+    id: string;
+    modelKey: string;
+    providerCode: string;
+    providerCategory: string;
+    providerName: string;
+    providerSortOrder: number;
+    sortOrder: number;
+};
+
+export type PublicApiPackageFilterOptions = {
+    models: Array<PublicApiPackageModelFilterOption>;
+    durations: Array<1 | 3 | 7 | 30>;
 };
 
 export type ApiServicePromotionPlacement = 'api_market_top';
@@ -2524,6 +2626,9 @@ export type CreateApiQuotaOrderRequest = {
      * Required for scheduled offers and omitted for continuous offers.
      */
     saleRoundId?: string;
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen for the quota order.
+     */
     buyerContactMethodId: string;
     selectedAccessMode: string;
     paymentMethod: 'wechat' | 'alipay';
@@ -2534,6 +2639,9 @@ export type CreateApiQuotaOrderRequest = {
 };
 
 export type CreateApiPurchaseIntentRequest = {
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen for the purchase intent.
+     */
     buyerContactMethodId: string;
     selectedAccessMode: 'merchant_operated_endpoint' | 'buyer_dedicated_sub_key' | 'buyer_dedicated_panel_subaccount' | 'fixed_package_offsite' | 'manual_offsite_arrangement';
     requestedCnyAmount: DecimalString;
@@ -2773,6 +2881,34 @@ export type ApiOrderDisputeRequest = {
      * Immutable credential-free initial message.
      */
     reason: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
+};
+
+export type SellerCommerceDispute = {
+    disputeId: string;
+    orderId: string;
+    orderNo: string;
+    apiServiceId: string;
+    serviceTitle: string;
+    status: 'negotiating' | 'pending_seller_response' | 'pending_applicant_decision' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation';
+    nextActor: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
+    dueAt?: string | null;
+    restrictionLevel: 'normal' | 'service_limited' | 'account_limited';
+    reasonCodes: Array<'service_multiple_buyers' | 'seller_response_overdue' | 'account_multiple_buyers' | 'remedy_fulfillment_overdue'>;
+};
+
+export type SellerCommerceStatus = {
+    level: 'normal' | 'service_limited' | 'account_limited';
+    activeDisputeCount: number;
+    activeBuyerCount: number;
+    blockingDisputeCount: number;
+    affectedServiceIds: Array<string>;
+    reasonCodes: Array<'service_multiple_buyers' | 'seller_response_overdue' | 'account_multiple_buyers' | 'remedy_fulfillment_overdue'>;
+    disputes: Array<SellerCommerceDispute>;
+    /**
+     * Earliest automatic buyer-side deadline among currently blocking disputes when one exists; null when release requires an explicit action.
+     */
+    nextReleaseAt?: string | null;
 };
 
 /**
@@ -2801,8 +2937,32 @@ export type ApiOrder = {
     /**
      * Order projection of the linked dispute phase. The order fulfillment status remains independent.
      */
-    disputeStatus: 'none' | 'negotiating' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
+    disputeStatus: 'none' | 'negotiating' | 'pending_seller_response' | 'pending_applicant_decision' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
+    /**
+     * Current active dispute only. Omitted after the case closes.
+     */
     disputeCaseId?: string;
+    /**
+     * Latest historical dispute, including a closed case when there is no active dispute.
+     */
+    latestDisputeCaseId?: string;
+    hasDisputeHistory: boolean;
+    disputeNextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
+    disputeDueAt?: string | null;
+    /**
+     * Server-derived viewer-specific pending action flag.
+     */
+    disputeNeedsAction: boolean;
+    /**
+     * True when the seller's 24-hour response deadline has passed while a late seller decision remains possible.
+     */
+    disputeResponseOverdue: boolean;
+    disputeAvailableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
+    /**
+     * Current remedy projection only; it does not mean the action has been fulfilled.
+     */
+    activeRemedyAction?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    activeRemedySource?: 'admin_decision' | 'mutual_agreement' | 'seller_acceptance';
     /**
      * Frozen validity expiry plus the 24-hour reporting grace period. This does not extend service validity.
      */
@@ -2880,12 +3040,24 @@ export type ApiOrder = {
     paymentSubmittedAt?: string | null;
     merchantConfirmDueAt?: string | null;
     merchantConfirmOverdue: boolean;
+    /**
+     * Persisted lateness fact. It never cancels the paid order or releases inventory.
+     */
+    merchantConfirmOverdueAt?: string | null;
     paymentIssueReason?: 'not_received' | 'amount_mismatch' | 'remark_mismatch';
     paymentIssueNote?: string;
     paymentIssueReportedAt?: string | null;
     paidConfirmedAt?: string | null;
     deliveryDueAt?: string | null;
     deliveryOverdue: boolean;
+    /**
+     * Persisted delivery lateness fact. It does not automatically refund, cancel, or sanction.
+     */
+    deliveryOverdueAt?: string | null;
+    /**
+     * Timestamp of the single pre-deadline delivery reminder. An overdue first maintenance run does not backfill it.
+     */
+    deliveryDueRemindedAt?: string | null;
     /**
      * Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
      */
@@ -2899,6 +3071,16 @@ export type ApiOrder = {
      * Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses. After destruction it contains audit timestamps and no secret payload fields.
      */
     deliveryCredential?: ApiOrderDeliveryCredential;
+    /**
+     * Independent commercial result. It does not replace order fulfillment status.
+     */
+    commercialOutcome: 'pending' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'cancelled_unpaid' | 'closed_unverified';
+    commercialOutcomeUpdatedAt?: string | null;
+    /**
+     * First-delivery validity failure fact. No quota replacement, expiry extension, or inventory restoration occurs.
+     */
+    quotaValidityIssueAt?: string | null;
+    quotaValidityIssueReason?: 'delivery_insufficient';
     /**
      * Present only after completion. Automatic completion records review-window expiry and is not a buyer rating or endorsement.
      */
@@ -3101,7 +3283,7 @@ export type RiskAcknowledgement = {
 export type CreateCarpoolListingRequest = {
     productPlanId: string;
     /**
-     * Owner-selected contact method. The platform freezes its current version only when an application is accepted.
+     * Owner's enabled WeChat contact. The platform freezes its current version only when an application is accepted.
      */
     ownerContactMethodId: string;
     cycleTerm: CarpoolCycleTermInput;
@@ -3112,9 +3294,9 @@ export type CreateCarpoolListingRequest = {
      */
     accessArrangement: string;
     /**
-     * Public listing distribution method. Describes whether the owner supports Sub2API-managed use or another off-platform arrangement.
+     * Public non-sensitive distribution method. Account login describes an off-platform login arrangement; the platform never collects credentials.
      */
-    distributionMethod: 'sub2api' | 'other';
+    distributionMethod: 'sub2api' | 'account_login' | 'other';
     /**
      * Public non-sensitive distribution note. Required when distributionMethod is other. Must not contain account credentials, panel URLs, passwords, keys, tokens, sessions, cookies, or owner credentials.
      */
@@ -3141,13 +3323,13 @@ export type CreateCarpoolListingRequest = {
      */
     serviceMultiplier: DecimalString;
     /**
-     * Owner-declared per-seat daily quota amount. It uses the selected product plan quota label and unit.
+     * Per-member daily maximum spend in USD. Null means unlimited.
      */
-    dailyQuotaAmount: DecimalString;
+    dailySpendLimitUsd: string | null;
     /**
-     * Owner-declared per-seat weekly quota amount. Label and unit come from the selected product plan and are not accepted from the client.
+     * Per-member weekly maximum spend in USD. Null means unlimited.
      */
-    weeklyQuotaAmount: DecimalString;
+    weeklySpendLimitUsd: string | null;
     /**
      * Whether the declared quota follows the official provider reset schedule.
      */
@@ -3155,11 +3337,11 @@ export type CreateCarpoolListingRequest = {
     /**
      * Owner-declared VPS region free text. It is informational and is not a catalog filter.
      */
-    vpsRegion: string;
+    vpsRegion?: string | null;
     /**
      * Whether the owner declares that the access path supports direct connection from mainland China.
      */
-    supportsMainlandChinaDirectConnection: boolean;
+    supportsMainlandChinaDirectConnection?: boolean | null;
     openingChannelCode: 'web' | 'ios_app_store' | 'google_play' | 'team_seat' | 'other';
     /**
      * Required only when openingChannelCode is other.
@@ -3175,9 +3357,9 @@ export type CreateCarpoolListingRequest = {
      */
     buyerSeatCapacity: number;
     /**
-     * Active buyer members only. Excludes the listing owner.
+     * Seats already occupied outside the platform. Platform memberships are derived and cannot be supplied by the owner.
      */
-    activeBuyerMembers: number;
+    offlineOccupiedSeats: number;
     riskAcknowledgement?: RiskAcknowledgement;
 };
 
@@ -3213,12 +3395,15 @@ export type CarpoolListing = {
     id: string;
     ownerUserId: string;
     productPlanId: string;
+    /**
+     * Owner's enabled WeChat contact used for new applications.
+     */
     ownerContactMethodId: string;
     cycleTerm: CarpoolCycleTerm;
     title: string;
     summary: string;
     accessArrangement: string;
-    distributionMethod: 'sub2api' | 'other';
+    distributionMethod: 'sub2api' | 'account_login' | 'other';
     distributionMethodNote: string;
     providesAdminAccount: boolean;
     regionCode: string;
@@ -3226,8 +3411,8 @@ export type CarpoolListing = {
     sourceUrl?: string;
     priceMonthlyCny: DecimalString;
     serviceMultiplier: DecimalString;
-    dailyQuotaAmount: string | null;
-    weeklyQuotaAmount: DecimalString;
+    dailySpendLimitUsd: string | null;
+    weeklySpendLimitUsd: string | null;
     followsOfficialQuotaReset: boolean | null;
     vpsRegion: string | null;
     supportsMainlandChinaDirectConnection: boolean | null;
@@ -3243,15 +3428,25 @@ export type CarpoolListing = {
      */
     buyerSeatCapacity: number;
     /**
-     * Active buyer members only. Excludes the listing owner.
+     * Owner-declared seats already occupied outside the platform.
+     */
+    offlineOccupiedSeats: number;
+    /**
+     * Active platform memberships, derived by the server.
      */
     activeBuyerMembers: number;
-    reservedSeats: number;
     availableSeats: number;
     applicationEligibility: CarpoolApplicationEligibility;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
-    status: 'draft' | 'pending_review' | 'changes_requested' | 'active' | 'paused' | 'rejected' | 'removed';
+    /**
+     * Public community identities for the owner. Detail responses only; omitted from list and transaction projections.
+     */
+    communityIdentities?: Array<CommunityIdentity>;
+    status: 'draft' | 'active' | 'stopped';
+    governanceStatus: 'clear' | 'removed';
+    recruitmentStopReason?: '' | 'owner' | 'full' | 'migration';
+    conditionsVersion: number;
     reviewReason?: string | null;
     reviewedAt?: string | null;
     policyVersion: number;
@@ -3289,9 +3484,9 @@ export type FavoriteStatus = {
 
 export type ReviewCenterRow = {
     id: string;
-    transactionType: 'carpool_membership' | 'api_order';
+    transactionType: 'api_order';
     transactionId: string;
-    sourceType: 'carpool_membership' | 'api_order';
+    sourceType: 'api_order';
     sourceId: string;
     direction: 'pending' | 'sent' | 'received';
     target: string;
@@ -3299,7 +3494,7 @@ export type ReviewCenterRow = {
     counterpartyName: string;
     reviewerRole: 'buyer' | 'seller';
     revieweeRole: 'buyer' | 'seller';
-    status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed';
+    status: 'reviewable' | 'paused' | 'expired' | 'sealed' | 'published' | 'removed';
     visibility: 'none' | 'sealed' | 'published' | 'removed';
     /**
      * Tags allowed for this transaction type and review direction.
@@ -3318,6 +3513,8 @@ export type ReviewCenterRow = {
     note: string | null;
     completedAt: string;
     reviewDeadlineAt: string;
+    commercialOutcome: '' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'legacy_fulfillment';
+    reviewPaused: boolean;
     submittedAt: string | null;
     visibleAt: string | null;
     frozenAt: string | null;
@@ -3358,13 +3555,14 @@ export type PublicReview = {
     username: string;
     date: string;
     serviceType: string;
-    transactionType: 'carpool_membership' | 'api_order';
+    transactionType: 'api_order';
     reviewerRole: 'buyer' | 'seller';
     revieweeRole: 'buyer' | 'seller';
     rating: number;
     tags: Array<string>;
     note: string;
     verified: boolean;
+    commercialOutcome: '' | 'normal_fulfillment' | 'continued_fulfillment' | 'full_refund' | 'partial_refund' | 'legacy_fulfillment';
 };
 
 export type PublicReviewList = {
@@ -3497,32 +3695,72 @@ export type InfoSupplementRequest = {
      * Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
      */
     body: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
-export type DisputeMessageRequest = {
+/**
+ * Private uploaded assets bound atomically to this action. Each asset may be bound only once.
+ */
+export type DisputeEvidenceAssetIds = Array<string>;
+
+export type DisputeEvidenceUploadRequest = {
+    kind: 'payment_result' | 'refund_result' | 'api_error' | 'quota_insufficient' | 'expired_early' | 'description_mismatch' | 'other_redacted_fact';
     /**
-     * Immutable credential-free plain text.
+     * Confirms that credentials and unrelated private data were removed before upload.
      */
-    body: string;
+    redactionConfirmed: boolean;
+    files: Array<Blob | File>;
 };
 
-export type DisputeSettlementProposalRequest = {
-    resolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
-    /**
-     * Required only for partial_refund and must not exceed the API order amount.
-     */
-    amountCny?: string | null;
-    /**
-     * Exact credential-free terms that the counterparty will confirm or reject.
-     */
-    terms: string;
+export type DisputeEvidenceAsset = {
+    id: string;
+    kind: 'payment_result' | 'refund_result' | 'api_error' | 'quota_insufficient' | 'expired_early' | 'description_mismatch' | 'other_redacted_fact';
+    mime: 'image/jpeg' | 'image/png';
+    byteSize: number;
+    width: number;
+    height: number;
+    createdAt: string;
+    contentPath: string;
+    version: number;
 };
 
-export type DisputeParticipantReasonRequest = {
+export type DisputeEvidenceReference = DisputeEvidenceAsset & {
+    visibility: 'participants_admin' | 'submitter_admin' | 'appellant_admin';
+    usage: 'dispute_initial' | 'platform_escalation' | 'formal_response' | 'message' | 'info_supplement' | 'remedy_claim' | 'remedy_contest' | 'appeal';
+    sourceType: 'dispute_case' | 'dispute_message' | 'info_supplement' | 'dispute_remedy' | 'appeal';
+    sourceId: string;
+};
+
+export type DisputeEvidenceUploadResponse = {
+    items: Array<DisputeEvidenceAsset>;
+};
+
+export type DisputeEvidenceQuarantineRequest = {
     reason: string;
 };
 
-export type DisputeEscalationRequest = {
+export type DisputeEvidenceQuarantineResult = {
+    id: string;
+    status: 'quarantined';
+    quarantinedExpiresAt: string;
+    version: number;
+};
+
+export type DisputeSellerDecisionRequest = {
+    decision: 'accepted' | 'rejected';
+    /**
+     * Immutable credential-free seller decision reason.
+     */
+    reason: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
+};
+
+export type DisputePlatformInterventionRequest = {
+    reason: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
+};
+
+export type DisputeParticipantReasonRequest = {
     reason: string;
 };
 
@@ -3548,6 +3786,7 @@ export type DisputeRemedyClaimRequest = {
      * Credential-free declaration from the responsible participant; it does not close the dispute.
      */
     note: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type DisputeRemedyConfirmRequest = {
@@ -3562,6 +3801,7 @@ export type DisputeRemedyContestRequest = {
      * Required credential-free explanation that returns the dispute to platform review.
      */
     reason: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type DisputeMessage = {
@@ -3577,11 +3817,16 @@ export type DisputeSettlementProposal = {
     resolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     amountCny?: DecimalString;
     terms: string;
+    fulfillmentRequired: boolean;
+    responsibleUserId?: string;
+    beneficiaryUserId?: string;
+    dueAt?: string | null;
     status: 'pending' | 'accepted' | 'rejected' | 'superseded';
     acceptedByUserId?: string;
     acceptedAt?: string | null;
     rejectedByUserId?: string;
     rejectedAt?: string | null;
+    supersededReason?: 'new_proposal' | 'platform_escalation';
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3595,14 +3840,23 @@ export type DisputeRemedy = {
     responsibleUserId: string;
     beneficiaryUserId: string;
     instructions: string;
-    status: 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'overdue' | 'cancelled';
+    status: 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'cancelled';
     dueAt: string;
     claimedAt?: string;
     confirmationDueAt?: string;
     confirmedAt?: string;
     contestedAt?: string;
     confirmationExpiredAt?: string;
-    overdueAt?: string;
+    /**
+     * Independent lateness fact. Only late_confirmed may support reputation or sanctions.
+     */
+    latenessStatus: 'not_due' | 'on_time' | 'late_unreviewed' | 'late_confirmed' | 'late_excused';
+    lateAt?: string | null;
+    latenessDecidedAt?: string | null;
+    latenessReason?: string;
+    claimedLate: boolean;
+    source: 'admin_decision' | 'mutual_agreement' | 'seller_acceptance';
+    settlementProposalId?: string;
     claimNote?: string;
     responseNote?: string;
     createdAt: string;
@@ -3612,6 +3866,14 @@ export type DisputeRemedy = {
 
 export type DisputeCase = {
     id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * At most one active case may exist per API order; closed historical cases remain readable.
+     */
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -3640,7 +3902,7 @@ export type DisputeCase = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -3659,6 +3921,43 @@ export type DisputeCase = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    /**
+     * Frozen terminal snapshot. Appeal approval reverses only effects matching the appellant.
+     */
+    adverselyAffectedUserIds?: Array<string>;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed?: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
+    nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
+    dueAt?: string | null;
+    /**
+     * Admin-only immutable credential-free order fact snapshot.
+     */
+    factSnapshotJson?: string;
+    applicantStatement?: string;
+    respondentResponse?: string;
+    respondedByUserId?: string;
+    respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     /**
      * Present on current-user dispute responses. True only when the case is resolved or closed and the current user is eligible to appeal; when a subject is assigned, only that subject is eligible.
      */
@@ -3681,6 +3980,7 @@ export type DisputeCase = {
      * Newest-first auditable API-order remedy history.
      */
     readonly remedies?: Array<DisputeRemedy>;
+    readonly evidence?: Array<DisputeEvidenceReference>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3864,6 +4164,7 @@ export type CreateAppealRequest = unknown & {
      * Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
      */
     statement: string;
+    evidenceAssetIds?: DisputeEvidenceAssetIds;
 };
 
 export type Appeal = {
@@ -3896,6 +4197,7 @@ export type Appeal = {
     createdAt: string;
     updatedAt: string;
     version: number;
+    readonly evidence?: Array<DisputeEvidenceReference>;
 };
 
 export type AppealList = {
@@ -4143,7 +4445,19 @@ export type SelfReportList = {
 };
 
 export type SelfDispute = {
+    /**
+     * Authoritative authenticated viewer identity for message and action attribution.
+     */
+    viewerUserId: string;
     id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * True only while this is the current active case for its API order.
+     */
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -4160,7 +4474,7 @@ export type SelfDispute = {
      * Present on authorized detail and mutation responses for message attribution.
      */
     counterpartyUserId?: string;
-    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -4171,6 +4485,35 @@ export type SelfDispute = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
+    nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
+    dueAt?: string | null;
+    applicantStatement?: string;
+    respondentResponse?: string;
+    respondedByUserId?: string;
+    respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -4192,6 +4535,7 @@ export type SelfDispute = {
      * Newest-first API-order remedy history visible to both participants.
      */
     readonly remedies?: Array<DisputeRemedy>;
+    readonly evidence?: Array<DisputeEvidenceReference>;
 };
 
 export type SelfDisputeList = {
@@ -4311,6 +4655,9 @@ export type FeedbackTicketList = {
 };
 
 export type CreateCarpoolApplicationRequest = {
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen when the application is accepted.
+     */
     buyerContactMethodId: string;
     riskAcknowledgement?: RiskAcknowledgement;
 };
@@ -4319,31 +4666,53 @@ export type EmptyRequest = {
     [key: string]: never;
 };
 
+export type CarpoolListingConditionsSnapshot = {
+    title: string;
+    priceMonthlyCny: DecimalString;
+    dailySpendLimitUsd: string | null;
+    weeklySpendLimitUsd: string | null;
+    followsOfficialQuotaReset: boolean;
+    buyerSeatCapacity: number;
+    offlineOccupiedSeats: number;
+    regionCode: string;
+    regionName: string;
+    vpsRegion: string | null;
+    supportsMainlandChinaDirectConnection: boolean | null;
+    openingChannelCode: string;
+    customOpeningChannel: string;
+    paymentMethodCode: string;
+    customPaymentMethod: string;
+    distributionMethod: 'sub2api' | 'account_login' | 'other';
+    distributionMethodNote: string;
+    providesAdminAccount: boolean;
+    accessArrangement: string;
+    cycleTerm?: CarpoolCycleTermInput;
+    policyVersion: number;
+    riskNoticeCode: string;
+};
+
 export type CarpoolApplication = {
     id: string;
     carpoolListingId: string;
     buyerUserId: string;
     ownerUserId: string;
     productPlanId: string;
+    /**
+     * Buyer's enabled WeChat contact selected for this application.
+     */
     buyerContactMethodId: string;
-    status: 'pending_owner' | 'accepted_reserved' | 'joined' | 'rejected' | 'cancelled_by_buyer' | 'expired';
+    status: 'pending_owner' | 'joined' | 'rejected' | 'cancelled_by_buyer';
     seatCount: 1;
     listingTitleSnapshot: string;
     priceMonthlyCny: DecimalString;
     policyVersionSnapshot: number;
     buyerReputation: ReputationSummary | null;
     riskNoticeCode?: string;
+    conditionsVersionSnapshot: number;
+    conditionsSnapshot: CarpoolListingConditionsSnapshot;
+    acceptedConditionsVersion: number;
+    conditionsAcceptedAt: string;
     contactSessionId?: string;
-    /**
-     * Absolute deadline for the seat reservation. Expired reservations do not consume capacity even before scheduler materialization.
-     */
-    reservationExpiresAt?: string | null;
-    /**
-     * Deadline for buyer and owner to confirm the off-platform arrangement. This is separate from payment and does not imply platform guarantee.
-     */
-    joinConfirmationDeadline?: string | null;
-    buyerConfirmedAt?: string | null;
-    ownerConfirmedAt?: string | null;
     joinedAt?: string | null;
     decisionReason?: string | null;
     decidedAt?: string | null;
@@ -4365,21 +4734,25 @@ export type CarpoolMembership = {
     buyerUserId: string;
     ownerUserId: string;
     productPlanId: string;
-    status: 'active' | 'completed' | 'left' | 'removed';
+    status: 'active' | 'left' | 'removed';
     seatCount: 1;
     priceMonthlyCny: DecimalString;
     policyVersionSnapshot: number;
     riskNoticeCode?: string;
+    conditionsVersionSnapshot: number;
+    conditionsSnapshot: CarpoolListingConditionsSnapshot;
     joinedAt: string;
-    buyerCompletedAt?: string | null;
-    ownerCompletedAt?: string | null;
-    completedAt?: string | null;
     endedAt?: string | null;
     endedReason?: string;
     endedByUserId?: string;
+    ownerNote?: string;
     version: number;
     createdAt: string;
     updatedAt: string;
+};
+
+export type CarpoolMembershipOwnerNoteRequest = {
+    note: string;
 };
 
 export type CarpoolMembershipList = {
@@ -4554,6 +4927,9 @@ export type CreateContactMethodRequest = {
     label: string;
     value?: string;
     displayValue?: string;
+    /**
+     * For WeChat, the server normalizes this field to all transaction scopes. Other contact types retain the submitted supported scopes.
+     */
     usageScopes: Array<ContactUsageScope>;
     isDefault?: boolean;
     enabled?: boolean;
@@ -4569,6 +4945,9 @@ export type ContactMethod = {
      * Returned only in authorized self/contact-window contexts when implemented.
      */
     displayValue?: string;
+    /**
+     * WeChat always contains all transaction scopes after server normalization.
+     */
     usageScopes: Array<ContactUsageScope>;
     isDefault: boolean;
     enabled: boolean;
@@ -4579,6 +4958,21 @@ export type ContactMethod = {
 };
 
 export type ContactUsageScope = 'carpool_owner' | 'api_merchant' | 'buyer' | 'dispute';
+
+export type ContactEmailVerificationChallenge = {
+    contactMethodId: string;
+    contactMethodVersionId: string;
+    email: string;
+    expiresAt: string;
+    /**
+     * Present only in development/test local automation responses.
+     */
+    devCode?: string;
+};
+
+export type ConfirmContactEmailVerificationRequest = {
+    code: string;
+};
 
 export type ContactMethodList = {
     items: Array<ContactMethod>;
@@ -4602,7 +4996,7 @@ export type ContactSession = {
 
 export type ContactSessionContacts = {
     sessionId: string;
-    endsAt: string;
+    endsAt: string | null;
     items: Array<{
         side: 'buyer' | 'seller';
         subjectId: string;
@@ -4752,6 +5146,14 @@ export type ReportListWritable = {
 
 export type DisputeCaseWritable = {
     id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * At most one active case may exist per API order; closed historical cases remain readable.
+     */
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -4780,7 +5182,7 @@ export type DisputeCaseWritable = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -4799,6 +5201,43 @@ export type DisputeCaseWritable = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    /**
+     * Frozen terminal snapshot. Appeal approval reverses only effects matching the appellant.
+     */
+    adverselyAffectedUserIds?: Array<string>;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed?: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
+    nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
+    dueAt?: string | null;
+    /**
+     * Admin-only immutable credential-free order fact snapshot.
+     */
+    factSnapshotJson?: string;
+    applicantStatement?: string;
+    respondentResponse?: string;
+    respondedByUserId?: string;
+    respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -4809,8 +5248,57 @@ export type DisputeListWritable = {
     nextCursor?: string | null;
 };
 
-export type SelfDisputeWritable = {
+export type AppealWritable = {
     id: string;
+    /**
+     * Admin response only.
+     */
+    appellantUserId?: string;
+    appellantUsername: string;
+    appellantName: string;
+    reportId?: string;
+    disputeId?: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order' | 'account_governance';
+    targetId: string;
+    title: string;
+    /**
+     * Admin response only; public endpoints never expose appeal statements.
+     */
+    statement?: string;
+    status: 'submitted' | 'approved' | 'rejected';
+    /**
+     * Admin/self moderation context only.
+     */
+    adminReason?: string;
+    /**
+     * Admin response only.
+     */
+    handledByAdminId?: string;
+    handledAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type AppealListWritable = {
+    items: Array<AppealWritable>;
+    nextCursor?: string | null;
+};
+
+export type SelfDisputeWritable = {
+    /**
+     * Authoritative authenticated viewer identity for message and action attribution.
+     */
+    viewerUserId: string;
+    id: string;
+    /**
+     * Canonical API order relation for API-order disputes.
+     */
+    apiOrderId?: string;
+    /**
+     * True only while this is the current active case for its API order.
+     */
+    active: boolean;
     reportId?: string;
     targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
     targetId: string;
@@ -4827,7 +5315,7 @@ export type SelfDisputeWritable = {
      * Present on authorized detail and mutation responses for message attribution.
      */
     counterpartyUserId?: string;
-    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'pending_seller_response' | 'pending_applicant_decision' | 'voluntary_fulfillment' | 'open' | 'waiting_info' | 'resolved' | 'closed' | 'withdrawn' | 'self_resolved';
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
@@ -4838,6 +5326,35 @@ export type SelfDisputeWritable = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Frozen terminal reason used for appeal eligibility and audit.
+     */
+    finalReason?: string;
+    appealExpiresAt?: string | null;
+    negotiationChannels?: Array<'wechat' | 'email' | 'linux_do' | 'in_site' | 'other'>;
+    negotiationEndedConfirmed: boolean;
+    negotiationSummary?: string;
+    requestedPlatformAction?: string;
+    /**
+     * Immutable credential-free applicant reason for requesting platform intervention.
+     */
+    platformInterventionReason?: string;
+    escalatedByUserId?: string;
+    escalatedAt?: string | null;
+    nextActor?: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none';
+    dueAt?: string | null;
+    applicantStatement?: string;
+    respondentResponse?: string;
+    respondedByUserId?: string;
+    respondedAt?: string | null;
+    sellerDecision?: 'accepted' | 'rejected';
+    sellerDecisionReason?: string;
+    sellerDecidedByUserId?: string;
+    sellerDecidedAt?: string | null;
+    sellerResponseLate: boolean;
+    responseOverdue: boolean;
+    applicantDecisionDueAt?: string | null;
+    availableActions: Array<'seller_decision' | 'request_platform_intervention' | 'withdraw' | 'claim_remedy' | 'confirm_remedy' | 'contest_remedy'>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -4865,7 +5382,7 @@ export type SelfModerationSupplementMutationWritable = {
 export type AdminReportMutationWritable = {
     report?: ReportWritable;
     dispute?: DisputeCaseWritable;
-    appeal?: Appeal;
+    appeal?: AppealWritable;
 };
 
 export type EmptyRequestWritable = {
@@ -4883,7 +5400,7 @@ export type IfMatch = string;
  */
 export type IfMatchAllowZero = string;
 
-export type ReviewTransactionType = 'carpool_membership' | 'api_order';
+export type ReviewTransactionType = 'api_order';
 
 export type ResourceId = string;
 
@@ -6126,11 +6643,38 @@ export type ListAnnouncementsResponses = {
 
 export type ListAnnouncementsResponse = ListAnnouncementsResponses[keyof ListAnnouncementsResponses];
 
+export type ListPublicActiveAnnouncementsData = {
+    body?: never;
+    path?: never;
+    query: {
+        channel: 'global_bar' | 'modal';
+    };
+    url: '/api/v1/announcements/public-active';
+};
+
+export type ListPublicActiveAnnouncementsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListPublicActiveAnnouncementsError = ListPublicActiveAnnouncementsErrors[keyof ListPublicActiveAnnouncementsErrors];
+
+export type ListPublicActiveAnnouncementsResponses = {
+    /**
+     * Public global announcements without receipt, operator, or targeted-user data.
+     */
+    200: PublicAnnouncementList;
+};
+
+export type ListPublicActiveAnnouncementsResponse = ListPublicActiveAnnouncementsResponses[keyof ListPublicActiveAnnouncementsResponses];
+
 export type ListActiveAnnouncementsData = {
     body?: never;
     path?: never;
     query?: {
-        channel?: 'message_center' | 'home_banner';
+        channel?: 'message_center' | 'home_banner' | 'global_bar' | 'modal';
     };
     url: '/api/v1/announcements/active';
 };
@@ -6322,7 +6866,16 @@ export type ListPublicApiServicesData = {
          * Maximum accepted minimum purchase amount in CNY.
          */
         minimumIntentCnyMax?: string;
+        /**
+         * Legacy singular package-model filter. It is merged into packageModelCatalogIds when both forms are supplied.
+         *
+         * @deprecated
+         */
         packageModelCatalogId?: string;
+        /**
+         * Repeat this parameter to match any selected package model. Values are trimmed and deduplicated; zero values means all models.
+         */
+        packageModelCatalogIds?: Array<string>;
         packageDurationDays?: 1 | 3 | 7 | 30;
         /**
          * Maximum total price for an enabled package with stock.
@@ -6332,10 +6885,19 @@ export type ListPublicApiServicesData = {
          * Maximum merchant multiplier for the selected package model.
          */
         packageMultiplierMax?: string;
-        sort?: 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
+        sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
     };
     url: '/api/v1/api-services';
 };
+
+export type ListPublicApiServicesErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListPublicApiServicesError = ListPublicApiServicesErrors[keyof ListPublicApiServicesErrors];
 
 export type ListPublicApiServicesResponses = {
     /**
@@ -6345,6 +6907,33 @@ export type ListPublicApiServicesResponses = {
 };
 
 export type ListPublicApiServicesResponse = ListPublicApiServicesResponses[keyof ListPublicApiServicesResponses];
+
+export type GetPublicApiPackageFilterOptionsData = {
+    body?: never;
+    path?: never;
+    query: {
+        billingMode: 'fixed_package';
+    };
+    url: '/api/v1/api-services/filter-options';
+};
+
+export type GetPublicApiPackageFilterOptionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetPublicApiPackageFilterOptionsError = GetPublicApiPackageFilterOptionsErrors[keyof GetPublicApiPackageFilterOptionsErrors];
+
+export type GetPublicApiPackageFilterOptionsResponses = {
+    /**
+     * Current model and duration choices for fixed-package discovery.
+     */
+    200: PublicApiPackageFilterOptions;
+};
+
+export type GetPublicApiPackageFilterOptionsResponse = GetPublicApiPackageFilterOptionsResponses[keyof GetPublicApiPackageFilterOptionsResponses];
 
 export type ListPublicApiServicePromotionsData = {
     body?: never;
@@ -6597,7 +7186,7 @@ export type ListPublicApiQuotaOffersData = {
         maxMultiplier?: string;
         onlyOrderable?: boolean;
         saleMode?: 'continuous' | 'scheduled';
-        sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
+        sort?: 'updated_desc' | 'recommended' | 'reputation_desc' | 'completed_desc' | 'response_fast' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
         /**
          * Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
          */
@@ -7301,7 +7890,7 @@ export type CreateTransactionReviewData = {
         'Idempotency-Key': string;
     };
     path: {
-        type: 'carpool_membership' | 'api_order';
+        type: 'api_order';
         id: string;
     };
     query?: never;
@@ -7348,7 +7937,7 @@ export type EditTransactionReviewData = {
         'Idempotency-Key': string;
     };
     path: {
-        type: 'carpool_membership' | 'api_order';
+        type: 'api_order';
         id: string;
     };
     query?: never;
@@ -7388,52 +7977,6 @@ export type EditTransactionReviewResponses = {
 };
 
 export type EditTransactionReviewResponse = EditTransactionReviewResponses[keyof EditTransactionReviewResponses];
-
-export type SubmitCarpoolMembershipReviewData = {
-    body: SubmitReviewRequest;
-    headers: {
-        'Idempotency-Key': string;
-    };
-    path: {
-        membershipId: string;
-    };
-    query?: never;
-    url: '/api/v1/me/reviews/carpool-memberships/{membershipId}';
-};
-
-export type SubmitCarpoolMembershipReviewErrors = {
-    /**
-     * Problem Details error.
-     */
-    401: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-};
-
-export type SubmitCarpoolMembershipReviewError = SubmitCarpoolMembershipReviewErrors[keyof SubmitCarpoolMembershipReviewErrors];
-
-export type SubmitCarpoolMembershipReviewResponses = {
-    /**
-     * Review center row after the submit/update.
-     */
-    200: ReviewCenterRow;
-};
-
-export type SubmitCarpoolMembershipReviewResponse = SubmitCarpoolMembershipReviewResponses[keyof SubmitCarpoolMembershipReviewResponses];
 
 export type CreateReportData = {
     body: CreateReportRequest;
@@ -7628,8 +8171,39 @@ export type GetMyDisputeResponses = {
 
 export type GetMyDisputeResponse = GetMyDisputeResponses[keyof GetMyDisputeResponses];
 
-export type AppendMyDisputeMessageData = {
-    body: DisputeMessageRequest;
+export type GetMyDisputeEvidenceContentData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/dispute-evidence/{id}/content';
+};
+
+export type GetMyDisputeEvidenceContentErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetMyDisputeEvidenceContentError = GetMyDisputeEvidenceContentErrors[keyof GetMyDisputeEvidenceContentErrors];
+
+export type GetMyDisputeEvidenceContentResponses = {
+    /**
+     * Private evidence image bytes.
+     */
+    200: Blob | File;
+};
+
+export type GetMyDisputeEvidenceContentResponse = GetMyDisputeEvidenceContentResponses[keyof GetMyDisputeEvidenceContentResponses];
+
+export type DecideMyDisputeAsSellerData = {
+    body: DisputeSellerDecisionRequest;
     headers: {
         'Idempotency-Key': string;
     };
@@ -7637,10 +8211,10 @@ export type AppendMyDisputeMessageData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/me/disputes/{id}/messages';
+    url: '/api/v1/me/disputes/{id}/seller-decision';
 };
 
-export type AppendMyDisputeMessageErrors = {
+export type DecideMyDisputeAsSellerErrors = {
     /**
      * Problem Details error.
      */
@@ -7659,19 +8233,19 @@ export type AppendMyDisputeMessageErrors = {
     422: ProblemDetails;
 };
 
-export type AppendMyDisputeMessageError = AppendMyDisputeMessageErrors[keyof AppendMyDisputeMessageErrors];
+export type DecideMyDisputeAsSellerError = DecideMyDisputeAsSellerErrors[keyof DecideMyDisputeAsSellerErrors];
 
-export type AppendMyDisputeMessageResponses = {
+export type DecideMyDisputeAsSellerResponses = {
     /**
      * Updated dispute detail.
      */
     200: SelfDispute;
 };
 
-export type AppendMyDisputeMessageResponse = AppendMyDisputeMessageResponses[keyof AppendMyDisputeMessageResponses];
+export type DecideMyDisputeAsSellerResponse = DecideMyDisputeAsSellerResponses[keyof DecideMyDisputeAsSellerResponses];
 
-export type CreateMyDisputeSettlementProposalData = {
-    body: DisputeSettlementProposalRequest;
+export type RequestMyDisputePlatformInterventionData = {
+    body: DisputePlatformInterventionRequest;
     headers: {
         'Idempotency-Key': string;
     };
@@ -7679,10 +8253,10 @@ export type CreateMyDisputeSettlementProposalData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/me/disputes/{id}/settlement-proposals';
+    url: '/api/v1/me/disputes/{id}/platform-intervention';
 };
 
-export type CreateMyDisputeSettlementProposalErrors = {
+export type RequestMyDisputePlatformInterventionErrors = {
     /**
      * Problem Details error.
      */
@@ -7701,70 +8275,30 @@ export type CreateMyDisputeSettlementProposalErrors = {
     422: ProblemDetails;
 };
 
-export type CreateMyDisputeSettlementProposalError = CreateMyDisputeSettlementProposalErrors[keyof CreateMyDisputeSettlementProposalErrors];
+export type RequestMyDisputePlatformInterventionError = RequestMyDisputePlatformInterventionErrors[keyof RequestMyDisputePlatformInterventionErrors];
 
-export type CreateMyDisputeSettlementProposalResponses = {
+export type RequestMyDisputePlatformInterventionResponses = {
     /**
-     * Updated dispute detail.
+     * Updated dispute detail in platform review.
      */
     200: SelfDispute;
 };
 
-export type CreateMyDisputeSettlementProposalResponse = CreateMyDisputeSettlementProposalResponses[keyof CreateMyDisputeSettlementProposalResponses];
+export type RequestMyDisputePlatformInterventionResponse = RequestMyDisputePlatformInterventionResponses[keyof RequestMyDisputePlatformInterventionResponses];
 
-export type ConfirmMyDisputeSettlementProposalData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-        proposalId: string;
-    };
-    query?: never;
-    url: '/api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/confirm';
-};
-
-export type ConfirmMyDisputeSettlementProposalErrors = {
-    /**
-     * Problem Details error.
-     */
-    401: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-};
-
-export type ConfirmMyDisputeSettlementProposalError = ConfirmMyDisputeSettlementProposalErrors[keyof ConfirmMyDisputeSettlementProposalErrors];
-
-export type ConfirmMyDisputeSettlementProposalResponses = {
-    /**
-     * Dispute closed after bilateral confirmation.
-     */
-    200: SelfDispute;
-};
-
-export type ConfirmMyDisputeSettlementProposalResponse = ConfirmMyDisputeSettlementProposalResponses[keyof ConfirmMyDisputeSettlementProposalResponses];
-
-export type RejectMyDisputeSettlementProposalData = {
+export type WithdrawMyDisputeData = {
     body: DisputeParticipantReasonRequest;
     headers: {
         'Idempotency-Key': string;
     };
     path: {
         id: string;
-        proposalId: string;
     };
     query?: never;
-    url: '/api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/reject';
+    url: '/api/v1/me/disputes/{id}/withdraw';
 };
 
-export type RejectMyDisputeSettlementProposalErrors = {
+export type WithdrawMyDisputeErrors = {
     /**
      * Problem Details error.
      */
@@ -7783,58 +8317,16 @@ export type RejectMyDisputeSettlementProposalErrors = {
     422: ProblemDetails;
 };
 
-export type RejectMyDisputeSettlementProposalError = RejectMyDisputeSettlementProposalErrors[keyof RejectMyDisputeSettlementProposalErrors];
+export type WithdrawMyDisputeError = WithdrawMyDisputeErrors[keyof WithdrawMyDisputeErrors];
 
-export type RejectMyDisputeSettlementProposalResponses = {
+export type WithdrawMyDisputeResponses = {
     /**
-     * Proposal rejected; dispute remains negotiating.
+     * Updated dispute detail.
      */
     200: SelfDispute;
 };
 
-export type RejectMyDisputeSettlementProposalResponse = RejectMyDisputeSettlementProposalResponses[keyof RejectMyDisputeSettlementProposalResponses];
-
-export type EscalateMyDisputeData = {
-    body: DisputeEscalationRequest;
-    headers: {
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/me/disputes/{id}/escalate';
-};
-
-export type EscalateMyDisputeErrors = {
-    /**
-     * Problem Details error.
-     */
-    401: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-};
-
-export type EscalateMyDisputeError = EscalateMyDisputeErrors[keyof EscalateMyDisputeErrors];
-
-export type EscalateMyDisputeResponses = {
-    /**
-     * Dispute moved to platform review.
-     */
-    200: SelfDispute;
-};
-
-export type EscalateMyDisputeResponse = EscalateMyDisputeResponses[keyof EscalateMyDisputeResponses];
+export type WithdrawMyDisputeResponse = WithdrawMyDisputeResponses[keyof WithdrawMyDisputeResponses];
 
 export type ClaimMyDisputeRemedyFulfilledData = {
     body: DisputeRemedyClaimRequest;
@@ -8163,6 +8655,74 @@ export type GetMyCarpoolResponses = {
 
 export type GetMyCarpoolResponse = GetMyCarpoolResponses[keyof GetMyCarpoolResponses];
 
+export type StopMyCarpoolRecruitingData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/carpools/{id}/stop-recruiting';
+};
+
+export type StopMyCarpoolRecruitingErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+};
+
+export type StopMyCarpoolRecruitingError = StopMyCarpoolRecruitingErrors[keyof StopMyCarpoolRecruitingErrors];
+
+export type StopMyCarpoolRecruitingResponses = {
+    /**
+     * Recruitment stopped without changing pending applications or active memberships.
+     */
+    200: CarpoolListing;
+};
+
+export type StopMyCarpoolRecruitingResponse = StopMyCarpoolRecruitingResponses[keyof StopMyCarpoolRecruitingResponses];
+
+export type ResumeMyCarpoolRecruitingData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/carpools/{id}/resume-recruiting';
+};
+
+export type ResumeMyCarpoolRecruitingErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+};
+
+export type ResumeMyCarpoolRecruitingError = ResumeMyCarpoolRecruitingErrors[keyof ResumeMyCarpoolRecruitingErrors];
+
+export type ResumeMyCarpoolRecruitingResponses = {
+    /**
+     * Recruitment resumed when governance is clear and seats are available.
+     */
+    200: CarpoolListing;
+};
+
+export type ResumeMyCarpoolRecruitingResponse = ResumeMyCarpoolRecruitingResponses[keyof ResumeMyCarpoolRecruitingResponses];
+
 export type ListMyCarpoolApplicationsData = {
     body?: never;
     path?: never;
@@ -8254,20 +8814,23 @@ export type CancelMyCarpoolApplicationResponses = {
 
 export type CancelMyCarpoolApplicationResponse = CancelMyCarpoolApplicationResponses[keyof CancelMyCarpoolApplicationResponses];
 
-export type ConfirmMyCarpoolApplicationJoinData = {
+export type ConfirmMyCarpoolApplicationConditionsData = {
     body: EmptyRequestWritable;
     headers: {
         'If-Match': string;
-        'Idempotency-Key': string;
     };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/me/carpool-applications/{id}/confirm-join';
+    url: '/api/v1/me/carpool-applications/{id}/confirm-conditions';
 };
 
-export type ConfirmMyCarpoolApplicationJoinErrors = {
+export type ConfirmMyCarpoolApplicationConditionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
     /**
      * Problem Details error.
      */
@@ -8282,16 +8845,16 @@ export type ConfirmMyCarpoolApplicationJoinErrors = {
     428: ProblemDetails;
 };
 
-export type ConfirmMyCarpoolApplicationJoinError = ConfirmMyCarpoolApplicationJoinErrors[keyof ConfirmMyCarpoolApplicationJoinErrors];
+export type ConfirmMyCarpoolApplicationConditionsError = ConfirmMyCarpoolApplicationConditionsErrors[keyof ConfirmMyCarpoolApplicationConditionsErrors];
 
-export type ConfirmMyCarpoolApplicationJoinResponses = {
+export type ConfirmMyCarpoolApplicationConditionsResponses = {
     /**
-     * Buyer-side join confirmation recorded. When both sides confirm, membership becomes active.
+     * Latest conditions frozen into the pending application.
      */
     200: CarpoolApplication;
 };
 
-export type ConfirmMyCarpoolApplicationJoinResponse = ConfirmMyCarpoolApplicationJoinResponses[keyof ConfirmMyCarpoolApplicationJoinResponses];
+export type ConfirmMyCarpoolApplicationConditionsResponse = ConfirmMyCarpoolApplicationConditionsResponses[keyof ConfirmMyCarpoolApplicationConditionsResponses];
 
 export type ListMyCarpoolMembershipsData = {
     body?: never;
@@ -8317,45 +8880,6 @@ export type ListMyCarpoolMembershipsResponses = {
 };
 
 export type ListMyCarpoolMembershipsResponse = ListMyCarpoolMembershipsResponses[keyof ListMyCarpoolMembershipsResponses];
-
-export type ConfirmMyCarpoolMembershipCompleteData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/me/carpool-memberships/{id}/confirm-complete';
-};
-
-export type ConfirmMyCarpoolMembershipCompleteErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ConfirmMyCarpoolMembershipCompleteError = ConfirmMyCarpoolMembershipCompleteErrors[keyof ConfirmMyCarpoolMembershipCompleteErrors];
-
-export type ConfirmMyCarpoolMembershipCompleteResponses = {
-    /**
-     * Buyer-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-     */
-    200: CarpoolMembership;
-};
-
-export type ConfirmMyCarpoolMembershipCompleteResponse = ConfirmMyCarpoolMembershipCompleteResponses[keyof ConfirmMyCarpoolMembershipCompleteResponses];
 
 export type LeaveMyCarpoolMembershipData = {
     body: MembershipEndRequest;
@@ -8537,9 +9061,22 @@ export type ListMyApiOrdersData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Filter by active-dispute state or by the current participant queue.
+         */
+        dispute?: 'all' | 'active' | 'none' | 'needs_action' | 'waiting_counterparty' | 'platform_review';
     };
     url: '/api/v1/me/api-orders';
 };
+
+export type ListMyApiOrdersErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListMyApiOrdersError = ListMyApiOrdersErrors[keyof ListMyApiOrdersErrors];
 
 export type ListMyApiOrdersResponses = {
     /**
@@ -8782,6 +9319,45 @@ export type OpenMyApiOrderDisputeResponses = {
 };
 
 export type OpenMyApiOrderDisputeResponse = OpenMyApiOrderDisputeResponses[keyof OpenMyApiOrderDisputeResponses];
+
+export type UploadMyApiOrderDisputeEvidenceData = {
+    body: DisputeEvidenceUploadRequest;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/api-orders/{id}/dispute-evidence';
+};
+
+export type UploadMyApiOrderDisputeEvidenceErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type UploadMyApiOrderDisputeEvidenceError = UploadMyApiOrderDisputeEvidenceErrors[keyof UploadMyApiOrderDisputeEvidenceErrors];
+
+export type UploadMyApiOrderDisputeEvidenceResponses = {
+    /**
+     * Processed private evidence assets ready for one-time binding.
+     */
+    201: DisputeEvidenceUploadResponse;
+};
+
+export type UploadMyApiOrderDisputeEvidenceResponse = UploadMyApiOrderDisputeEvidenceResponses[keyof UploadMyApiOrderDisputeEvidenceResponses];
 
 export type ReportMyApiOrderLatePaymentData = {
     body: ApiOrderLatePaymentRequest;
@@ -9287,6 +9863,33 @@ export type DismissAnnouncementResponses = {
 
 export type DismissAnnouncementResponse = DismissAnnouncementResponses[keyof DismissAnnouncementResponses];
 
+export type AcknowledgeAnnouncementData = {
+    body: EmptyRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/announcements/{id}/acknowledge';
+};
+
+export type AcknowledgeAnnouncementErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+};
+
+export type AcknowledgeAnnouncementError = AcknowledgeAnnouncementErrors[keyof AcknowledgeAnnouncementErrors];
+
+export type AcknowledgeAnnouncementResponses = {
+    /**
+     * Durable acknowledgement for the current critical announcement revision.
+     */
+    200: AnnouncementReceipt;
+};
+
+export type AcknowledgeAnnouncementResponse = AcknowledgeAnnouncementResponses[keyof AcknowledgeAnnouncementResponses];
+
 export type ListOwnerCarpoolApplicationsData = {
     body?: never;
     path?: never;
@@ -9371,7 +9974,7 @@ export type AcceptCarpoolApplicationError = AcceptCarpoolApplicationErrors[keyof
 
 export type AcceptCarpoolApplicationResponses = {
     /**
-     * Application accepted and a 30-minute contact window opened.
+     * Application joined, active membership created, and lifecycle-bound contact access opened atomically.
      */
     200: CarpoolApplication;
 };
@@ -9413,84 +10016,6 @@ export type RejectCarpoolApplicationResponses = {
 
 export type RejectCarpoolApplicationResponse = RejectCarpoolApplicationResponses[keyof RejectCarpoolApplicationResponses];
 
-export type WithdrawCarpoolAcceptanceData = {
-    body: MembershipEndRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/carpool-applications/{id}/withdraw-acceptance';
-};
-
-export type WithdrawCarpoolAcceptanceErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type WithdrawCarpoolAcceptanceError = WithdrawCarpoolAcceptanceErrors[keyof WithdrawCarpoolAcceptanceErrors];
-
-export type WithdrawCarpoolAcceptanceResponses = {
-    /**
-     * Owner withdrew an accepted reservation before the application joined.
-     */
-    200: CarpoolApplication;
-};
-
-export type WithdrawCarpoolAcceptanceResponse = WithdrawCarpoolAcceptanceResponses[keyof WithdrawCarpoolAcceptanceResponses];
-
-export type ConfirmOwnerCarpoolApplicationJoinData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/carpool-applications/{id}/confirm-join';
-};
-
-export type ConfirmOwnerCarpoolApplicationJoinErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ConfirmOwnerCarpoolApplicationJoinError = ConfirmOwnerCarpoolApplicationJoinErrors[keyof ConfirmOwnerCarpoolApplicationJoinErrors];
-
-export type ConfirmOwnerCarpoolApplicationJoinResponses = {
-    /**
-     * Owner-side join confirmation recorded. When both sides confirm, membership becomes active.
-     */
-    200: CarpoolApplication;
-};
-
-export type ConfirmOwnerCarpoolApplicationJoinResponse = ConfirmOwnerCarpoolApplicationJoinResponses[keyof ConfirmOwnerCarpoolApplicationJoinResponses];
-
 export type ListOwnerCarpoolMembershipsData = {
     body?: never;
     path?: never;
@@ -9515,45 +10040,6 @@ export type ListOwnerCarpoolMembershipsResponses = {
 };
 
 export type ListOwnerCarpoolMembershipsResponse = ListOwnerCarpoolMembershipsResponses[keyof ListOwnerCarpoolMembershipsResponses];
-
-export type ConfirmOwnerCarpoolMembershipCompleteData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/carpool-memberships/{id}/confirm-complete';
-};
-
-export type ConfirmOwnerCarpoolMembershipCompleteErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ConfirmOwnerCarpoolMembershipCompleteError = ConfirmOwnerCarpoolMembershipCompleteErrors[keyof ConfirmOwnerCarpoolMembershipCompleteErrors];
-
-export type ConfirmOwnerCarpoolMembershipCompleteResponses = {
-    /**
-     * Owner-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-     */
-    200: CarpoolMembership;
-};
-
-export type ConfirmOwnerCarpoolMembershipCompleteResponse = ConfirmOwnerCarpoolMembershipCompleteResponses[keyof ConfirmOwnerCarpoolMembershipCompleteResponses];
 
 export type RemoveOwnerCarpoolMembershipData = {
     body: MembershipEndRequest;
@@ -9593,6 +10079,49 @@ export type RemoveOwnerCarpoolMembershipResponses = {
 };
 
 export type RemoveOwnerCarpoolMembershipResponse = RemoveOwnerCarpoolMembershipResponses[keyof RemoveOwnerCarpoolMembershipResponses];
+
+export type UpdateOwnerCarpoolMembershipNoteData = {
+    body: CarpoolMembershipOwnerNoteRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/carpool-memberships/{id}/note';
+};
+
+export type UpdateOwnerCarpoolMembershipNoteErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateOwnerCarpoolMembershipNoteError = UpdateOwnerCarpoolMembershipNoteErrors[keyof UpdateOwnerCarpoolMembershipNoteErrors];
+
+export type UpdateOwnerCarpoolMembershipNoteResponses = {
+    /**
+     * Updated private owner note.
+     */
+    200: CarpoolMembership;
+};
+
+export type UpdateOwnerCarpoolMembershipNoteResponse = UpdateOwnerCarpoolMembershipNoteResponses[keyof UpdateOwnerCarpoolMembershipNoteResponses];
 
 export type ListOwnerApiServicesData = {
     body?: never;
@@ -10899,9 +11428,22 @@ export type ListOwnerApiOrdersData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Filter by active-dispute state or by the seller's current queue.
+         */
+        dispute?: 'all' | 'active' | 'none' | 'needs_action' | 'waiting_counterparty' | 'platform_review';
     };
     url: '/api/v1/owner/api-orders';
 };
+
+export type ListOwnerApiOrdersErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListOwnerApiOrdersError = ListOwnerApiOrdersErrors[keyof ListOwnerApiOrdersErrors];
 
 export type ListOwnerApiOrdersResponses = {
     /**
@@ -10911,6 +11453,31 @@ export type ListOwnerApiOrdersResponses = {
 };
 
 export type ListOwnerApiOrdersResponse = ListOwnerApiOrdersResponses[keyof ListOwnerApiOrdersResponses];
+
+export type GetSellerCommerceStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-orders/commerce-status';
+};
+
+export type GetSellerCommerceStatusErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type GetSellerCommerceStatusError = GetSellerCommerceStatusErrors[keyof GetSellerCommerceStatusErrors];
+
+export type GetSellerCommerceStatusResponses = {
+    /**
+     * Current seller commerce status. Sensitive dispute relations are private and must not be cached.
+     */
+    200: SellerCommerceStatus;
+};
+
+export type GetSellerCommerceStatusResponse = GetSellerCommerceStatusResponses[keyof GetSellerCommerceStatusResponses];
 
 export type GetOwnerApiOrderData = {
     body?: never;
@@ -11063,49 +11630,6 @@ export type SubmitOwnerApiOrderDeliveryResponses = {
 };
 
 export type SubmitOwnerApiOrderDeliveryResponse = SubmitOwnerApiOrderDeliveryResponses[keyof SubmitOwnerApiOrderDeliveryResponses];
-
-export type OpenOwnerApiOrderDisputeData = {
-    body: ApiOrderDisputeRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/owner/api-orders/{id}/dispute';
-};
-
-export type OpenOwnerApiOrderDisputeErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type OpenOwnerApiOrderDisputeError = OpenOwnerApiOrderDisputeErrors[keyof OpenOwnerApiOrderDisputeErrors];
-
-export type OpenOwnerApiOrderDisputeResponses = {
-    /**
-     * API order dispute case opened by the service owner and linked to the order.
-     */
-    200: ApiOrder;
-};
-
-export type OpenOwnerApiOrderDisputeResponse = OpenOwnerApiOrderDisputeResponses[keyof OpenOwnerApiOrderDisputeResponses];
 
 export type ResolveOwnerApiOrderLatePaymentData = {
     body: ApiOrderLatePaymentRequest;
@@ -11740,7 +12264,7 @@ export type PauseCarpoolError = PauseCarpoolErrors[keyof PauseCarpoolErrors];
 
 export type PauseCarpoolResponses = {
     /**
-     * Carpool listing paused.
+     * Carpool listing removed from public visibility without changing recruitment state.
      */
     200: CarpoolListing;
 };
@@ -11775,7 +12299,7 @@ export type RestoreCarpoolError = RestoreCarpoolErrors[keyof RestoreCarpoolError
 
 export type RestoreCarpoolResponses = {
     /**
-     * Carpool listing restored to active.
+     * Carpool listing governance restored without changing recruitment state.
      */
     200: CarpoolListing;
 };
@@ -12902,6 +13426,130 @@ export type GetAdminUserResponses = {
 
 export type GetAdminUserResponse = GetAdminUserResponses[keyof GetAdminUserResponses];
 
+export type ListAdminCommunityIdentitiesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities';
+};
+
+export type ListAdminCommunityIdentitiesErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type ListAdminCommunityIdentitiesError = ListAdminCommunityIdentitiesErrors[keyof ListAdminCommunityIdentitiesErrors];
+
+export type ListAdminCommunityIdentitiesResponses = {
+    /**
+     * Administrator-only community identity records, including grant and revoke provenance.
+     */
+    200: AdminCommunityIdentityList;
+};
+
+export type ListAdminCommunityIdentitiesResponse = ListAdminCommunityIdentitiesResponses[keyof ListAdminCommunityIdentitiesResponses];
+
+export type GrantAdminCommunityIdentityData = {
+    body: CommunityIdentityGrantRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities';
+};
+
+export type GrantAdminCommunityIdentityErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type GrantAdminCommunityIdentityError = GrantAdminCommunityIdentityErrors[keyof GrantAdminCommunityIdentityErrors];
+
+export type GrantAdminCommunityIdentityResponses = {
+    /**
+     * Community identity granted atomically with its notification.
+     */
+    200: AdminCommunityIdentity;
+};
+
+export type GrantAdminCommunityIdentityResponse = GrantAdminCommunityIdentityResponses[keyof GrantAdminCommunityIdentityResponses];
+
+export type RevokeAdminCommunityIdentityData = {
+    body: CommunityIdentityRevokeRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+        identityType: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR';
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities/{identityType}/revoke';
+};
+
+export type RevokeAdminCommunityIdentityErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RevokeAdminCommunityIdentityError = RevokeAdminCommunityIdentityErrors[keyof RevokeAdminCommunityIdentityErrors];
+
+export type RevokeAdminCommunityIdentityResponses = {
+    /**
+     * Community identity soft-revoked while retaining its history.
+     */
+    200: AdminCommunityIdentity;
+};
+
+export type RevokeAdminCommunityIdentityResponse = RevokeAdminCommunityIdentityResponses[keyof RevokeAdminCommunityIdentityResponses];
+
 export type UpdateAdminUserStatusData = {
     body: AdminUserStatusRequest;
     headers: {
@@ -13562,7 +14210,7 @@ export type CloseDisputeResponses = {
 
 export type CloseDisputeResponse = CloseDisputeResponses[keyof CloseDisputeResponses];
 
-export type MarkDisputeRemedyOverdueData = {
+export type ConfirmDisputeRemedyLatenessData = {
     body: ReportActionRequest;
     headers: {
         'If-Match': string;
@@ -13572,10 +14220,10 @@ export type MarkDisputeRemedyOverdueData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/admin/disputes/{id}/remedy/mark-overdue';
+    url: '/api/v1/admin/disputes/{id}/remedy/confirm-lateness';
 };
 
-export type MarkDisputeRemedyOverdueErrors = {
+export type ConfirmDisputeRemedyLatenessErrors = {
     /**
      * Problem Details error.
      */
@@ -13590,16 +14238,55 @@ export type MarkDisputeRemedyOverdueErrors = {
     428: ProblemDetails;
 };
 
-export type MarkDisputeRemedyOverdueError = MarkDisputeRemedyOverdueErrors[keyof MarkDisputeRemedyOverdueErrors];
+export type ConfirmDisputeRemedyLatenessError = ConfirmDisputeRemedyLatenessErrors[keyof ConfirmDisputeRemedyLatenessErrors];
 
-export type MarkDisputeRemedyOverdueResponses = {
+export type ConfirmDisputeRemedyLatenessResponses = {
     /**
-     * Remedy marked overdue and dispute closed by an administrator.
+     * Remedy lateness confirmed as an independent governance fact.
      */
     200: AdminReportMutation;
 };
 
-export type MarkDisputeRemedyOverdueResponse = MarkDisputeRemedyOverdueResponses[keyof MarkDisputeRemedyOverdueResponses];
+export type ConfirmDisputeRemedyLatenessResponse = ConfirmDisputeRemedyLatenessResponses[keyof ConfirmDisputeRemedyLatenessResponses];
+
+export type ExcuseDisputeRemedyLatenessData = {
+    body: ReportActionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/remedy/excuse-lateness';
+};
+
+export type ExcuseDisputeRemedyLatenessErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ExcuseDisputeRemedyLatenessError = ExcuseDisputeRemedyLatenessErrors[keyof ExcuseDisputeRemedyLatenessErrors];
+
+export type ExcuseDisputeRemedyLatenessResponses = {
+    /**
+     * Remedy lateness excused as an independent governance fact.
+     */
+    200: AdminReportMutation;
+};
+
+export type ExcuseDisputeRemedyLatenessResponse = ExcuseDisputeRemedyLatenessResponses[keyof ExcuseDisputeRemedyLatenessResponses];
 
 export type CreateDisputeReputationOutcomeData = {
     body: CreateDisputeReputationOutcomeRequest;
@@ -13745,6 +14432,96 @@ export type ApplyApiOrderSanctionResponses = {
 };
 
 export type ApplyApiOrderSanctionResponse = ApplyApiOrderSanctionResponses[keyof ApplyApiOrderSanctionResponses];
+
+export type GetAdminDisputeEvidenceContentData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/dispute-evidence/{id}/content';
+};
+
+export type GetAdminDisputeEvidenceContentErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetAdminDisputeEvidenceContentError = GetAdminDisputeEvidenceContentErrors[keyof GetAdminDisputeEvidenceContentErrors];
+
+export type GetAdminDisputeEvidenceContentResponses = {
+    /**
+     * Private evidence image bytes.
+     */
+    200: Blob | File;
+};
+
+export type GetAdminDisputeEvidenceContentResponse = GetAdminDisputeEvidenceContentResponses[keyof GetAdminDisputeEvidenceContentResponses];
+
+export type QuarantineAdminDisputeEvidenceData = {
+    body: DisputeEvidenceQuarantineRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/dispute-evidence/{id}/quarantine';
+};
+
+export type QuarantineAdminDisputeEvidenceErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type QuarantineAdminDisputeEvidenceError = QuarantineAdminDisputeEvidenceErrors[keyof QuarantineAdminDisputeEvidenceErrors];
+
+export type QuarantineAdminDisputeEvidenceResponses = {
+    /**
+     * Evidence quarantined and scheduled for bounded destruction.
+     */
+    200: DisputeEvidenceQuarantineResult;
+};
+
+export type QuarantineAdminDisputeEvidenceResponse = QuarantineAdminDisputeEvidenceResponses[keyof QuarantineAdminDisputeEvidenceResponses];
 
 export type CreateUserReputationRestrictionData = {
     body: CreateUserReputationRestrictionRequest;
@@ -16463,8 +17240,43 @@ export type SetDefaultContactMethodResponses = {
 
 export type SetDefaultContactMethodResponse = SetDefaultContactMethodResponses[keyof SetDefaultContactMethodResponses];
 
-export type VerifyContactMethodData = {
+export type StartContactEmailVerificationData = {
     body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/contact-methods/{id}/email-verification/start';
+};
+
+export type StartContactEmailVerificationErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type StartContactEmailVerificationError = StartContactEmailVerificationErrors[keyof StartContactEmailVerificationErrors];
+
+export type StartContactEmailVerificationResponses = {
+    /**
+     * Contact email verification challenge created.
+     */
+    200: ContactEmailVerificationChallenge;
+};
+
+export type StartContactEmailVerificationResponse = StartContactEmailVerificationResponses[keyof StartContactEmailVerificationResponses];
+
+export type ConfirmContactEmailVerificationData = {
+    body: ConfirmContactEmailVerificationRequest;
     headers: {
         'Idempotency-Key': string;
     };
@@ -16472,17 +17284,38 @@ export type VerifyContactMethodData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/contact-methods/{id}/verify';
+    url: '/api/v1/contact-methods/{id}/email-verification/confirm';
 };
 
-export type VerifyContactMethodResponses = {
+export type ConfirmContactEmailVerificationErrors = {
     /**
-     * Contact method marked verified.
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ConfirmContactEmailVerificationError = ConfirmContactEmailVerificationErrors[keyof ConfirmContactEmailVerificationErrors];
+
+export type ConfirmContactEmailVerificationResponses = {
+    /**
+     * Contact method marked verified without changing the account email.
      */
     200: ContactMethod;
 };
 
-export type VerifyContactMethodResponse = VerifyContactMethodResponses[keyof VerifyContactMethodResponses];
+export type ConfirmContactEmailVerificationResponse = ConfirmContactEmailVerificationResponses[keyof ConfirmContactEmailVerificationResponses];
 
 export type CreateDevContactSessionData = {
     body: CreateDevContactSessionRequest;

@@ -657,6 +657,10 @@ func assertPublicQuotaFiltersBeforePagination(t *testing.T, store *Store, ownerI
 		t.Fatalf("system-slot exclusion must run before pagination: page=%+v error=%v", excludedPage, appErr)
 	}
 	for _, sortMode := range []string{
+		apiquota.PublicOfferSortRecommended,
+		apiquota.PublicOfferSortReputationDesc,
+		apiquota.PublicOfferSortCompletedDesc,
+		apiquota.PublicOfferSortResponseFast,
 		apiquota.PublicOfferSortUnitPriceAsc,
 		apiquota.PublicOfferSortAllowanceDesc,
 		apiquota.PublicOfferSortDeliveryAsc,
@@ -681,6 +685,12 @@ func assertPublicQuotaFiltersBeforePagination(t *testing.T, store *Store, ownerI
 				case apiquota.PublicOfferSortDeliveryAsc:
 					if previous.DeliveryETAMinutes > current.DeliveryETAMinutes || previous.DeliveryETAMinutes == current.DeliveryETAMinutes && previous.ID >= current.ID {
 						t.Fatalf("delivery keyset order broke at %d: %+v then %+v", index, previous, current)
+					}
+				case apiquota.PublicOfferSortRecommended, apiquota.PublicOfferSortReputationDesc,
+					apiquota.PublicOfferSortCompletedDesc, apiquota.PublicOfferSortResponseFast:
+					comparison := integrationDecimal(t, previous.PublicSortValue).Cmp(integrationDecimal(t, current.PublicSortValue))
+					if comparison > 0 || comparison == 0 && previous.ID >= current.ID {
+						t.Fatalf("derived keyset order broke at %d: %+v then %+v", index, previous, current)
 					}
 				}
 			}

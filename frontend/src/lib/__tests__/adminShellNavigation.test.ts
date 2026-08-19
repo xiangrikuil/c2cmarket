@@ -23,7 +23,7 @@ describe('独立管理端与渐进导航', () => {
   })
 
   it('普通侧栏不混排后台目录', () => {
-    expect(appShellSource).toContain("{ label: '进入管理台', to: '/admin'")
+    expect(appShellSource).toContain("{ key: 'admin', label: '进入管理台', to: '/admin'")
     for (const label of ['套餐目录', 'API 模型目录', '官网价格维护', '车源管理', '举报纠纷']) {
       expect(appShellSource).not.toContain(`{ label: '${label}', to: '/admin`)
     }

@@ -23,7 +23,10 @@ export type CarpoolWarrantyMode =
 
 export type CarpoolDistributionMethod =
   | 'sub2api'
+  | 'account_login'
   | 'other'
+
+export type QuotaLimitMode = 'amount' | 'unlimited'
 
 export type CatalogProviderCode = string
 export type CatalogCategoryCode = string
@@ -100,7 +103,9 @@ export type CarpoolPublishForm = {
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  dailyQuotaMode: QuotaLimitMode
   dailyQuotaAmount: number | null
+  weeklyQuotaMode: QuotaLimitMode
   weeklyQuotaAmount: number | null
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string
@@ -147,6 +152,7 @@ export type PublishTaskKey =
   | 'openingChannel'
   | 'paymentMethods'
   | 'distribution'
+  | 'riskAcknowledgement'
   | 'rulesNote'
 
 export type PublishSectionKey =

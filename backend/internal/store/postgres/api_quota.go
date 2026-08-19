@@ -465,7 +465,7 @@ func (s *Store) ConfirmAPIQuotaSaleRoundFulfillmentWithIdempotency(ctx context.C
 		if !serviceReady || !batchReady {
 			return apiquota.SaleRound{}, invalidQuotaState("卖家账号、服务、探针、收款配置或额度批次当前不可履约。")
 		}
-		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, input.OwnerUserID, now); appErr != nil {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, input.OwnerUserID, round.APIServiceID, now); appErr != nil {
 			return apiquota.SaleRound{}, appErr
 		}
 		if round.FulfillmentConfirmedAt == nil {
@@ -521,7 +521,7 @@ func publishAPIQuotaBatchInTx(ctx context.Context, tx pgx.Tx, input apiquota.Bat
 	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, batch.APIServiceID); appErr != nil {
 		return apiquota.Batch{}, appErr
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, batch.APIServiceID, now); appErr != nil {
 		return apiquota.Batch{}, appErr
 	}
 	if batch.Status != apiquota.BatchStatusDraft {
@@ -703,7 +703,7 @@ func (s *Store) updateAPIQuotaBatchStatusInTx(ctx context.Context, tx pgx.Tx, in
 		if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, batch.APIServiceID); appErr != nil {
 			return apiquota.Batch{}, appErr
 		}
-		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, batch.APIServiceID, now); appErr != nil {
 			return apiquota.Batch{}, appErr
 		}
 	}
@@ -896,6 +896,7 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 	if appErr != nil {
 		return domain.Page[apiquota.OfferCard]{}, appErr
 	}
+	serviceSortExpression := apiServiceSortExpression("s", sortMode)
 	if page.Cursor != "" {
 		switch sortMode {
 		case apiquota.PublicOfferSortUnitPriceAsc, apiquota.PublicOfferSortAllowanceDesc:
@@ -906,6 +907,11 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 			value, err := strconv.Atoi(scalarPosition.Value)
 			if err != nil || value < 0 {
 				return domain.Page[apiquota.OfferCard]{}, invalidPageCursorError()
+			}
+		}
+		if serviceSortExpression != "" {
+			if appErr := validateNonNegativeDecimalCursor(scalarPosition); appErr != nil {
+				return domain.Page[apiquota.OfferCard]{}, appErr
 			}
 		}
 	}
@@ -927,7 +933,16 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		cursorValue, cursorID = scalarPosition.Value, nullUUID(scalarPosition.ID)
 		orderBy = `ORDER BY o.delivery_eta_minutes ASC, o.id ASC`
 	}
-	rows, err := s.pool.Query(ctx, publicAPIQuotaOffersQuery+`
+	if serviceSortExpression != "" {
+		cursorCondition = `($5 = '' OR (` + serviceSortExpression + `, o.id) > ($5::numeric, $6::uuid))`
+		cursorValue, cursorID = scalarPosition.Value, nullUUID(scalarPosition.ID)
+		orderBy = `ORDER BY ` + serviceSortExpression + ` ASC, o.id ASC`
+	}
+	query := publicAPIQuotaOffersQuery
+	if serviceSortExpression != "" {
+		query = publicAPIQuotaOffersQueryWithSort(serviceSortExpression)
+	}
+	rows, err := s.pool.Query(ctx, query+`
 		  AND ($2 = '' OR o.distribution_system = $2)
 		  AND (NOT $3 OR o.model_multiplier = 1.0000)
 		  AND (
@@ -989,7 +1004,13 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 	defer rows.Close()
 	items := make([]apiquota.OfferCard, 0, page.Limit+1)
 	for rows.Next() {
-		card, err := scanAPIQuotaOfferCard(rows)
+		var card apiquota.OfferCard
+		var err error
+		if serviceSortExpression != "" {
+			card, err = scanAPIQuotaOfferCardWithSortValue(rows)
+		} else {
+			card, err = scanAPIQuotaOfferCard(rows)
+		}
 		if err != nil {
 			return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 		}
@@ -999,6 +1020,11 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 	}
 	switch sortMode {
+	case apiquota.PublicOfferSortRecommended, apiquota.PublicOfferSortReputationDesc,
+		apiquota.PublicOfferSortCompletedDesc, apiquota.PublicOfferSortResponseFast:
+		return pageFromScalarItems(items, page, sortMode, func(item apiquota.OfferCard) (string, string) {
+			return item.PublicSortValue, item.ID
+		}), nil
 	case apiquota.PublicOfferSortUnitPriceAsc:
 		return pageFromScalarItems(items, page, sortMode, func(item apiquota.OfferCard) (string, string) { return item.CNYPerUSD, item.ID }), nil
 	case apiquota.PublicOfferSortAllowanceDesc:
@@ -1192,10 +1218,11 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	var serviceOrderable bool
 	var declaredMaxConcurrency int
 	var performanceConfirmedAt *time.Time
+	var promptAuditEnabled *bool
 	err = tx.QueryRow(ctx, `
 		SELECT s.title, s.distribution_system, (`+apiServiceFulfillmentReadyPredicate("s")+`),
 		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0),
-		       s.performance_confirmed_at
+		       s.performance_confirmed_at, s.prompt_audit_enabled
 		FROM api_services s
 		WHERE s.id = $1 AND s.owner_user_id = $2
 		FOR UPDATE OF s
@@ -1206,6 +1233,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 		&declaredTTFTBand,
 		&declaredMaxConcurrency,
 		&performanceConfirmedAt,
+		&promptAuditEnabled,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, quotaNotFound("API 服务不存在。")
@@ -1216,11 +1244,14 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	if !serviceOrderable {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, invalidQuotaState("关联 API 服务当前不可接单。")
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, publication.Batch.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, publication.Batch.OwnerUserID, publication.Batch.APIServiceID, now); appErr != nil {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, appErr
 	}
-	if declaredTTFTBand == "" || declaredMaxConcurrency < 1 || performanceConfirmedAt == nil {
-		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、商户声明最大并发和最近确认时间。")
+	if declaredMaxConcurrency < 1 {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Maximum concurrency required", "发布额度包前必须填写商户声明最大并发。", "declaredMaxConcurrency", "required", "请输入大于 0 的最大并发。")
+	}
+	if promptAuditEnabled == nil {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Prompt audit selection required", "发布额度包前必须声明是否开启提示词审计。", "promptAuditEnabled", "required", "请选择是否开启提示词审计。")
 	}
 	var flexibleQuotaSaleOpen bool
 	if err := tx.QueryRow(ctx, `
@@ -1261,6 +1292,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	publication.Batch.DeclaredTTFTBand = declaredTTFTBand
 	publication.Batch.DeclaredMaxConcurrency = declaredMaxConcurrency
 	publication.Batch.PerformanceConfirmedAt = performanceConfirmedAt
+	publication.Batch.PromptAuditEnabled = promptAuditEnabled
 	publication.Offer.DistributionSystem = distributionSystem
 
 	_, err = tx.Exec(ctx, `
@@ -1590,10 +1622,10 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if orderContext.OwnerUserID == input.BuyerUserID {
 		return apiorder.Order{}, idempotency.Completion{}, invalidQuotaState("不能购买自己发布的额度包。")
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, orderContext.APIServiceID, now); appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
-	buyerMethod, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	buyerMethod, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "购买额度包前必须先配置微信联系方式。")
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
@@ -1746,6 +1778,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		SellerUserID:                  orderContext.OwnerUserID,
 		Status:                        apiorder.StatusPendingPayment,
 		DisputeStatus:                 apiorder.DisputeStatusNone,
+		CommercialOutcome:             apiorder.CommercialOutcomePending,
 		ServiceTitleSnapshot:          orderContext.ServiceTitle,
 		ServiceVersionSnapshot:        orderContext.ServiceVersion,
 		BillingModeSnapshot:           orderContext.BillingMode,
@@ -2192,6 +2225,13 @@ var publicAPIQuotaOffersQuery = `
 	  AND s.moderation_status = 'clear'
 `
 
+func publicAPIQuotaOffersQueryWithSort(sortExpression string) string {
+	if strings.TrimSpace(sortExpression) == "" {
+		return publicAPIQuotaOffersQuery
+	}
+	return strings.Replace(publicAPIQuotaOffersQuery, "\n\tFROM api_quota_offers", ",\n\t       "+sortExpression+"\n\tFROM api_quota_offers", 1)
+}
+
 func getAPIQuotaBatch(ctx context.Context, q queryer, ownerUserID, batchID string, forUpdate bool) (apiquota.Batch, error) {
 	query := `
 		SELECT ` + apiQuotaBatchColumns + `
@@ -2297,11 +2337,26 @@ func listAPIQuotaAllocations(ctx context.Context, q queryer, ownerUserID, batchI
 
 func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 	var card apiquota.OfferCard
+	if err := scanAPIQuotaOfferCardValues(row, &card, nil); err != nil {
+		return apiquota.OfferCard{}, err
+	}
+	return card, nil
+}
+
+func scanAPIQuotaOfferCardWithSortValue(row scanner) (apiquota.OfferCard, error) {
+	var card apiquota.OfferCard
+	if err := scanAPIQuotaOfferCardValues(row, &card, &card.PublicSortValue); err != nil {
+		return apiquota.OfferCard{}, err
+	}
+	return card, nil
+}
+
+func scanAPIQuotaOfferCardValues(row scanner, card *apiquota.OfferCard, sortValue *string) error {
 	var currentID, currentSystemSlotKey, currentName, currentStatus string
 	var currentStarts, currentEnds, currentFulfillmentConfirmedAt *time.Time
 	var nextID, nextSystemSlotKey, nextName, nextStatus string
 	var nextStarts, nextEnds, nextFulfillmentConfirmedAt *time.Time
-	err := row.Scan(
+	destinations := []any{
 		&card.ID, &card.BatchID, &card.APIServiceID, &card.OwnerUserID,
 		&card.PreviousVersionID, &card.DistributionSystem, &card.Name,
 		&card.USDAllowance, &card.PriceCNY, &card.CNYPerUSD, &card.ModelMultiplier,
@@ -2317,9 +2372,13 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 		&currentID, &currentSystemSlotKey, &currentName, &currentStarts, &currentEnds, &currentStatus, &currentFulfillmentConfirmedAt,
 		&nextID, &nextSystemSlotKey, &nextName, &nextStarts, &nextEnds, &nextStatus, &nextFulfillmentConfirmedAt,
 		&card.AvailableCopies, &card.CredentialAvailableCopies,
-	)
+	}
+	if sortValue != nil {
+		destinations = append(destinations, sortValue)
+	}
+	err := row.Scan(destinations...)
 	if err != nil {
-		return apiquota.OfferCard{}, err
+		return err
 	}
 	if currentID != "" && currentStarts != nil && currentEnds != nil {
 		card.CurrentRound = &apiquota.SaleRound{ID: currentID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: currentSystemSlotKey, Name: currentName, StartsAt: *currentStarts, EndsAt: *currentEnds, Status: currentStatus, FulfillmentConfirmedAt: currentFulfillmentConfirmedAt}
@@ -2327,7 +2386,7 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 	if nextID != "" && nextStarts != nil && nextEnds != nil {
 		card.NextRound = &apiquota.SaleRound{ID: nextID, BatchID: card.BatchID, APIServiceID: card.APIServiceID, OwnerUserID: card.OwnerUserID, SystemSlotKey: nextSystemSlotKey, Name: nextName, StartsAt: *nextStarts, EndsAt: *nextEnds, Status: nextStatus, FulfillmentConfirmedAt: nextFulfillmentConfirmedAt}
 	}
-	return card, nil
+	return nil
 }
 
 func allocationAmount(allowance string, copies int) (string, bool) {

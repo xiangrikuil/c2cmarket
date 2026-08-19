@@ -2,7 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useNow } from '@vueuse/core'
-import { CheckCircle2, Clock3, FileText, Gavel, MessageSquareText, RefreshCw, Scale, ShieldAlert, TriangleAlert, Users } from 'lucide-vue-next'
+import { CheckCircle2, Clock3, FileText, Gavel, RefreshCw, Scale, ShieldAlert, TriangleAlert, Users } from 'lucide-vue-next'
+import AdminDisputeActivityTimeline from '@/components/admin/AdminDisputeActivityTimeline.vue'
 import { toast } from 'vue-sonner'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -42,7 +43,8 @@ import { BackendProblemError } from '@/lib/backendClient'
 import {
   backendAdminDisputeDetail,
   backendAdminReportDetail,
-  backendMarkAdminDisputeRemedyOverdue,
+  backendConfirmAdminDisputeRemedyLateness,
+  backendExcuseAdminDisputeRemedyLateness,
   backendResolveAdminDispute,
   mapAdminDisputeRow,
   type AdminDisputeDetail,
@@ -57,7 +59,8 @@ import type { AdminRow } from '@/lib/api'
 import type { DisputeRemedyRequest } from '@/api/generated/openapi'
 import type { DisputeReputationOutcome } from '@/types/reputation'
 import {
-  apiOrderDisputeIssueLabels,
+  apiOrderDisputeRemedyLatenessLabels,
+  apiOrderDisputeRemedySourceLabels,
   apiOrderDisputeRemedyStatusLabels,
   apiOrderDisputeResolutionLabels,
   type ApiOrderDisputeResolution,
@@ -88,10 +91,11 @@ const outcomeErrors = ref<Partial<Record<keyof OutcomeForm, string>>>({})
 const submitError = ref('')
 const initializedCaseVersion = ref('')
 const resolutionSubmitting = ref(false)
-const overdueSubmitting = ref(false)
+const latenessSubmitting = ref(false)
 const remedyErrors = ref<Record<string, string>>({})
-const overdueReason = ref('')
-const overdueConfirmed = ref(false)
+const latenessDecision = ref<'confirm' | 'excuse'>('confirm')
+const latenessReason = ref('')
+const latenessConfirmed = ref(false)
 const sanctionInternalReason = ref('')
 const sanctionConfirmed = ref(false)
 const sanctionSubmitError = ref('')
@@ -183,10 +187,14 @@ const currentRemedy = computed(() => dispute.value?.remedies?.[0] ?? null)
 const hasActiveRemedy = computed(() => currentRemedy.value?.status === 'pending' || currentRemedy.value?.status === 'claimed_fulfilled')
 const now = useNow({ interval: 1000 })
 const remedyDeadlineReached = computed(() => Boolean(currentRemedy.value?.dueAt) && now.value.getTime() >= new Date(currentRemedy.value!.dueAt).getTime())
-const hasOverdueAPIOrderRemedy = computed(() => dispute.value?.targetType === 'api_order' && currentRemedy.value?.status === 'overdue')
+const canDecideRemedyLateness = computed(() => dispute.value?.targetType === 'api_order' && Boolean(currentRemedy.value) && (
+  currentRemedy.value?.latenessStatus === 'late_unreviewed'
+  || (currentRemedy.value?.latenessStatus === 'not_due' && remedyDeadlineReached.value)
+))
+const hasConfirmedAPIOrderRemedyLateness = computed(() => dispute.value?.targetType === 'api_order' && currentRemedy.value?.latenessStatus === 'late_confirmed')
 const sanctionRecommendationEnabled = computed(() => Boolean(
   props.open
-  && hasOverdueAPIOrderRemedy.value
+  && hasConfirmedAPIOrderRemedyLateness.value
   && existingOutcome.value?.status === 'active'
   && ['responsible', 'shared'].includes(existingOutcome.value.responsibility),
 ))
@@ -204,8 +212,9 @@ const canApplySanction = computed(() => Boolean(
 const currentStep = computed(() => {
   if (existingOutcome.value) return 'complete'
   if (dispute.value?.status === 'open' || dispute.value?.status === 'waiting_info') return 'resolution'
+  if (canDecideRemedyLateness.value) return 'remedy'
   if (dispute.value?.status === 'resolved' && hasActiveRemedy.value) return 'remedy'
-  if (dispute.value?.status === 'resolved' || hasOverdueAPIOrderRemedy.value) return 'outcome'
+  if (dispute.value?.status === 'resolved' || hasConfirmedAPIOrderRemedyLateness.value) return 'outcome'
   return 'closed'
 })
 const outcomeParticipantsUnavailable = computed(() => currentStep.value === 'outcome' && participants.value.length === 0)
@@ -223,8 +232,9 @@ watch(
     resolutionErrors.value = {}
     outcomeErrors.value = {}
     remedyErrors.value = {}
-    overdueReason.value = ''
-    overdueConfirmed.value = false
+    latenessDecision.value = 'confirm'
+    latenessReason.value = ''
+    latenessConfirmed.value = false
     sanctionInternalReason.value = ''
     sanctionConfirmed.value = false
     sanctionSubmitError.value = ''
@@ -298,11 +308,12 @@ function targetTypeLabel(value?: string) {
 }
 
 function statusLabel(value?: AdminDisputeDetail['status']) {
-	if (value === 'negotiating') return '协商中'
   if (value === 'open') return '待裁决'
   if (value === 'waiting_info') return '等待补充'
   if (value === 'resolved') return '已裁决'
   if (value === 'closed') return '已关闭'
+  if (value === 'withdrawn') return '已撤回'
+  if (value === 'self_resolved') return '线下已解决'
   return '加载中'
 }
 
@@ -413,23 +424,27 @@ function buildRemedyRequest(): DisputeRemedyRequest | null {
   }
 }
 
-async function markRemedyOverdue() {
-  if (!dispute.value || !currentRemedy.value || overdueSubmitting.value || overdueReason.value.trim().length < 2 || !overdueConfirmed.value) return
-  overdueSubmitting.value = true
+async function decideRemedyLateness() {
+  if (!dispute.value || !currentRemedy.value || latenessSubmitting.value || latenessReason.value.trim().length < 2 || !latenessConfirmed.value) return
+  latenessSubmitting.value = true
   submitError.value = ''
   try {
-    const updated = await backendMarkAdminDisputeRemedyOverdue({
+    const action = latenessDecision.value === 'confirm'
+      ? backendConfirmAdminDisputeRemedyLateness
+      : backendExcuseAdminDisputeRemedyLateness
+    const updated = await action({
       disputeId: dispute.value.id,
       expectedVersion: dispute.value.version,
-      reason: overdueReason.value.trim(),
+      reason: latenessReason.value.trim(),
     })
     queryClient.setQueryData(disputeQueryKey.value, updated)
     emit('updated', mapAdminDisputeRow(updated))
-    toast.success('已确认整改逾期并结案。')
+    latenessConfirmed.value = false
+    toast.success(latenessDecision.value === 'confirm' ? '已确认整改迟到，履行进度保持不变。' : '已豁免整改迟到，履行进度保持不变。')
   } catch (error) {
-    if (!await recoverSubmissionConflict(error)) submitError.value = errorMessage(error, '整改逾期确认失败。')
+    if (!await recoverSubmissionConflict(error)) submitError.value = errorMessage(error, '整改迟到裁定失败。')
   } finally {
-    overdueSubmitting.value = false
+    latenessSubmitting.value = false
   }
 }
 
@@ -600,45 +615,10 @@ async function applySanction() {
             </div>
           </section>
 
-          <section v-if="dispute.targetType === 'api_order'" class="space-y-5 border-b border-border py-5">
-            <div class="flex items-center gap-2">
-              <MessageSquareText class="h-4 w-4" />
-              <h2 class="text-sm font-semibold">订单协商记录</h2>
-            </div>
-            <dl class="grid gap-3 sm:grid-cols-3">
-              <div>
-                <dt class="text-xs text-muted-foreground">问题类型</dt>
-                <dd class="mt-1 text-sm font-medium">{{ dispute.issueCode ? apiOrderDisputeIssueLabels[dispute.issueCode] : '历史纠纷' }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">诉求</dt>
-                <dd class="mt-1 text-sm font-medium">{{ dispute.requestedResolution ? apiOrderDisputeResolutionLabels[dispute.requestedResolution] : '未结构化记录' }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">诉求金额</dt>
-                <dd class="mt-1 text-sm font-medium">{{ dispute.requestedAmountCny ? `¥${dispute.requestedAmountCny}` : '不涉及' }}</dd>
-              </div>
-            </dl>
-            <div v-if="dispute.messages?.length" class="space-y-3">
-              <article v-for="message in dispute.messages" :key="message.id" class="border-l-2 border-border pl-3">
-                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span>{{ negotiationParticipantLabel(message.senderUserId) }}</span>
-                  <LocalTime :value="message.createdAt" />
-                </div>
-                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ message.body }}</p>
-              </article>
-            </div>
-            <p v-else class="text-sm text-muted-foreground">暂无订单内留言。</p>
-            <div v-if="dispute.settlementProposals?.length" class="space-y-3">
-              <article v-for="proposal in dispute.settlementProposals" :key="proposal.id" class="border-l-2 border-warning pl-3">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <span class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[proposal.resolution] }}<span v-if="proposal.amountCny"> · ¥{{ proposal.amountCny }}</span></span>
-                  <Badge variant="secondary">{{ proposal.status }}</Badge>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ proposal.terms }}</p>
-              </article>
-            </div>
-            <div v-if="currentRemedy" class="space-y-3 border-t border-border pt-4">
+          <AdminDisputeActivityTimeline v-if="dispute.targetType === 'api_order'" :dispute="dispute" />
+
+          <section v-if="dispute.targetType === 'api_order' && currentRemedy" class="space-y-5 border-b border-border py-5">
+            <div class="space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="text-sm font-semibold">当前整改要求</h3>
                 <Badge variant="status">{{ apiOrderDisputeRemedyStatusLabels[currentRemedy.status] }}</Badge>
@@ -655,6 +635,14 @@ async function applySanction() {
                 <div>
                   <dt class="text-xs text-muted-foreground">履行期限</dt>
                   <dd class="mt-1 text-sm font-medium"><LocalTime :value="currentRemedy.dueAt" /></dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-muted-foreground">整改来源</dt>
+                  <dd class="mt-1 text-sm font-medium">{{ apiOrderDisputeRemedySourceLabels[currentRemedy.source] }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-muted-foreground">迟到事实</dt>
+                  <dd class="mt-1 text-sm font-medium">{{ apiOrderDisputeRemedyLatenessLabels[currentRemedy.latenessStatus] }}</dd>
                 </div>
               </dl>
               <div class="border-l-2 border-warning pl-3">
@@ -675,7 +663,7 @@ async function applySanction() {
           <section class="space-y-4 border-b border-border py-5">
             <div class="flex items-center gap-2">
               <FileText class="h-4 w-4" />
-              <h2 class="text-sm font-semibold">现有证据</h2>
+              <h2 class="text-sm font-semibold">关联举报与目标快照</h2>
             </div>
             <p v-if="!reportId" class="text-sm text-muted-foreground">参与方从关联业务对象直接申请平台介入，无关联举报记录。</p>
             <SkeletonBlock v-else-if="reportQuery.isPending.value" :lines="4" />
@@ -834,23 +822,38 @@ async function applySanction() {
                 <LocalTime v-if="currentRemedy.confirmationDueAt" :value="currentRemedy.confirmationDueAt" />
               </AlertDescription>
             </Alert>
-            <template v-else-if="currentRemedy.status === 'pending'">
-              <Alert v-if="!remedyDeadlineReached">
-                <Clock3 class="h-4 w-4" />
-                <AlertTitle>整改期限尚未到达</AlertTitle>
-                <AlertDescription>责任方仍可声明履行。平台不能提前确认逾期。</AlertDescription>
-              </Alert>
-              <div class="space-y-3 border-t border-border pt-4">
-                <label class="space-y-1.5 text-sm">
-                  <span class="font-medium">逾期确认原因</span>
-                  <Textarea v-model="overdueReason" rows="3" maxlength="800" placeholder="记录平台核对到的逾期未履行事实。" />
-                </label>
-                <label class="flex items-start gap-3 border border-border bg-muted/30 p-3 text-sm">
-                  <Checkbox v-model="overdueConfirmed" class="mt-0.5" />
-                  <span>我确认当前时间已达到裁决期限，且责任方仍未声明履行。该动作会形成后续处罚可消费的逾期事实。</span>
-                </label>
-              </div>
-            </template>
+            <Alert>
+              <Clock3 class="h-4 w-4" />
+              <AlertTitle>{{ apiOrderDisputeRemedyLatenessLabels[currentRemedy.latenessStatus] }}</AlertTitle>
+              <AlertDescription>
+                迟到裁定与履行进度分别记录。确认或豁免迟到都不会取消整改、关闭案件或表示退款已经完成。
+              </AlertDescription>
+            </Alert>
+            <Alert v-if="currentRemedy.status === 'pending' && !remedyDeadlineReached">
+              <Clock3 class="h-4 w-4" />
+              <AlertTitle>整改期限尚未到达</AlertTitle>
+              <AlertDescription>责任方仍可声明履行。平台不能提前裁定迟到。</AlertDescription>
+            </Alert>
+            <div v-if="canDecideRemedyLateness" class="space-y-3 border-t border-border pt-4">
+              <label class="space-y-1.5 text-sm">
+                <span class="font-medium">迟到裁定</span>
+                <Select v-model="latenessDecision">
+                  <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="confirm">确认迟到</SelectItem>
+                    <SelectItem value="excuse">豁免迟到</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label class="space-y-1.5 text-sm">
+                <span class="font-medium">裁定原因</span>
+                <Textarea v-model="latenessReason" rows="3" maxlength="800" :placeholder="latenessDecision === 'confirm' ? '记录平台核对到的迟到事实。' : '记录可核实的客观豁免依据。'" />
+              </label>
+              <label class="flex items-start gap-3 border border-border bg-muted/30 p-3 text-sm">
+                <Checkbox v-model="latenessConfirmed" class="mt-0.5" />
+                <span>我确认该裁定只记录迟到事实，不改变当前履行进度；只有“确认迟到”可作为后续责任或限制依据。</span>
+              </label>
+            </div>
           </section>
 
           <section v-else-if="currentStep === 'outcome'" class="space-y-4 pt-5">
@@ -1029,12 +1032,12 @@ async function applySanction() {
           <Gavel class="h-4 w-4" />保存基础裁决
         </Button>
         <Button
-          v-else-if="currentStep === 'remedy' && currentRemedy?.status === 'pending'"
-          variant="destructive"
-          :disabled="!remedyDeadlineReached || overdueReason.trim().length < 2 || !overdueConfirmed || overdueSubmitting"
-          @click="markRemedyOverdue"
+          v-else-if="currentStep === 'remedy' && canDecideRemedyLateness"
+          :variant="latenessDecision === 'confirm' ? 'destructive' : 'default'"
+          :disabled="latenessReason.trim().length < 2 || !latenessConfirmed || latenessSubmitting"
+          @click="decideRemedyLateness"
         >
-          <Clock3 class="h-4 w-4" />确认逾期未履行
+          <Clock3 class="h-4 w-4" />{{ latenessDecision === 'confirm' ? '确认迟到' : '豁免迟到' }}
         </Button>
         <Button
           v-else-if="currentStep === 'outcome'"

@@ -143,12 +143,12 @@ describe('个人中心待办聚合', () => {
   it('只保留当前买家或商户需要行动的真实状态', () => {
     const tasks = buildPendingTasks({
       buyerCarpoolApplications: [
-        carpoolApplication('ride-buyer-action', 'accepted_reserved', '2026-07-26 09:00'),
-        carpoolApplication('ride-buyer-wait', 'joined_pending_confirmation', '2026-07-26 10:00'),
+        carpoolApplication('ride-buyer-action', 'disputed', '2026-07-26 09:00'),
+        carpoolApplication('ride-buyer-wait', 'active', '2026-07-26 10:00'),
       ],
       ownerCarpoolApplications: [
         carpoolApplication('ride-owner-action', 'pending_owner', '2026-07-26 11:00'),
-        carpoolApplication('ride-owner-wait', 'accepted_reserved', '2026-07-26 12:00'),
+        carpoolApplication('ride-owner-wait', 'active', '2026-07-26 12:00'),
       ],
       buyerApiOrders: [
         apiOrder('order-buyer-action', 'payment_issue', '2026-07-26 13:00'),
@@ -161,10 +161,10 @@ describe('个人中心待办聚合', () => {
     })
 
     expect(tasks.map(item => item.id)).toEqual([
+      'ride-buyer-action',
       'order-buyer-action',
       'order-merchant-action',
       'ride-owner-action',
-      'ride-buyer-action',
     ])
     expect(tasks.find(item => item.id === 'ride-owner-action')?.to).toBe('/merchant/carpool-applications/ride-owner-action')
     expect(tasks.find(item => item.id === 'order-buyer-action')).toMatchObject({
@@ -182,7 +182,7 @@ describe('个人中心待办聚合', () => {
       buyerCarpoolApplications: [
         carpoolApplication('dispute-old', 'disputed', '2026-07-25 10:00'),
         carpoolApplication('dispute-new', 'disputed', '2026-07-26 10:00'),
-        carpoolApplication('buyer-payment-later', 'accepted_reserved', '2026-07-26 12:00'),
+        carpoolApplication('buyer-active', 'active', '2026-07-26 12:00'),
       ],
       ownerCarpoolApplications: [],
       buyerApiOrders: [apiOrder('payment-issue', 'payment_issue', '2026-07-26 11:00')],
@@ -193,7 +193,6 @@ describe('个人中心待办聚合', () => {
       'dispute-new',
       'dispute-old',
       'payment-issue',
-      'buyer-payment-later',
     ])
   })
 })
@@ -237,7 +236,7 @@ describe('个人中心账户完整度', () => {
   it('普通用户不需要配置 API 收款方式', () => {
     const completeness = buildAccountCompleteness({
       profile: profile(),
-      enabledContactCount: 1,
+      wechatBound: true,
       hasApiServices: false,
       apiPaymentComplete: false,
     })
@@ -250,7 +249,7 @@ describe('个人中心账户完整度', () => {
   it('已发布 API 服务时将收款设置加入分母和提醒', () => {
     const completeness = buildAccountCompleteness({
       profile: profile(),
-      enabledContactCount: 1,
+      wechatBound: true,
       hasApiServices: true,
       apiPaymentComplete: false,
     })
@@ -262,20 +261,35 @@ describe('个人中心账户完整度', () => {
     })
   })
 
-  it('未绑定 linux.do 时不把备用密码计入完整度', () => {
+  it('未绑定微信时将微信提醒置于其他账户完善项之前', () => {
     const completeness = buildAccountCompleteness({
       profile: profile({
         emailVerified: false,
         passwordConfigured: false,
         linuxDoBinding: { bound: false } as UserProfile['linuxDoBinding'],
       }),
-      enabledContactCount: 0,
+      wechatBound: false,
       hasApiServices: true,
       apiPaymentComplete: false,
     })
 
-    expect(getPrimaryAccountAlert(completeness)?.id).toBe('linuxdo')
+    expect(getPrimaryAccountAlert(completeness)).toMatchObject({
+      id: 'contact',
+      title: '请先绑定微信',
+      to: '/my/contacts',
+    })
     expect(completeness.tasks.map(item => item.id)).not.toContain('password')
+  })
+
+  it('绑定微信后继续提示缺失的社区身份', () => {
+    const completeness = buildAccountCompleteness({
+      profile: profile({ linuxDoBinding: { bound: false } as UserProfile['linuxDoBinding'] }),
+      wechatBound: true,
+      hasApiServices: false,
+      apiPaymentComplete: false,
+    })
+
+    expect(getPrimaryAccountAlert(completeness)?.id).toBe('linuxdo')
   })
 
   it('相关 API 订单按 ID 去重', () => {

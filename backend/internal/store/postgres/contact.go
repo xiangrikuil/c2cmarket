@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -49,6 +50,9 @@ func createContactMethodInTx(ctx context.Context, tx pgx.Tx, input contact.Conta
 		VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10)
 	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, false, method.Enabled, method.CreatedAt, method.UpdatedAt, method.Version)
 	if err != nil {
+		if isUniqueViolationOnConstraint(err, "ux_contact_methods_one_enabled_wechat") {
+			return contact.DuplicateEnabledWechatError()
+		}
 		return internalStoreError()
 	}
 	_, err = tx.Exec(ctx, `
@@ -122,7 +126,7 @@ func (s *Store) ListContactMethods(ctx context.Context, userID string) ([]contac
 		       COALESCE(v.encryption_format, ''), m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
 		FROM contact_methods m
-		LEFT JOIN contact_method_versions v ON v.id = m.current_version_id
+		JOIN contact_method_versions v ON v.id = m.current_version_id
 		WHERE m.user_id = $1 AND m.enabled = true
 		ORDER BY m.is_default DESC, m.updated_at DESC
 	`, userID)
@@ -192,11 +196,14 @@ func (s *Store) UpdateContactMethodWithIdempotency(ctx context.Context, entry id
 
 func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input contact.UpdateContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion, encoded encodedContactValue) (contact.ContactMethod, *domain.AppError) {
 	var current contact.ContactMethod
+	var currentFingerprint string
 	err := tx.QueryRow(ctx, `
-		SELECT id::text, user_id::text, type, label, usage_scopes, enabled, is_default, verified_at,
-		       COALESCE(current_version_id::text, ''), created_at, updated_at, version
-		FROM contact_methods
-		WHERE id = $1 AND user_id = $2 AND enabled = true
+		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, m.enabled, m.is_default, m.verified_at,
+		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version,
+		       COALESCE(v.value_fingerprint, '')
+		FROM contact_methods m
+		JOIN contact_method_versions v ON v.id = m.current_version_id
+		WHERE m.id = $1 AND m.user_id = $2 AND m.enabled = true
 		FOR UPDATE
 	`, input.MethodID, input.UserID).Scan(
 		&current.ID,
@@ -211,12 +218,16 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 		&current.CreatedAt,
 		&current.UpdatedAt,
 		&current.Version,
+		&currentFingerprint,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contact.ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 	}
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
+	}
+	if current.Type == "wechat" && (input.Type != "wechat" || !input.Enabled) {
+		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能停用或改为其他联系方式。")
 	}
 
 	method.ID = current.ID
@@ -227,36 +238,40 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 	}
 	method.Version = current.Version + 1
 	method.DisplayValue = input.Value
-	version.ContactMethodID = current.ID
-	version.OwnerUserID = current.UserID
-	method.CurrentVersionID = version.ID
-	if input.Type != current.Type {
+	valueChanged := input.Type != current.Type || subtle.ConstantTimeCompare([]byte(currentFingerprint), []byte(encoded.Fingerprint)) != 1
+	if valueChanged {
+		version.ContactMethodID = current.ID
+		version.OwnerUserID = current.UserID
+		method.CurrentVersionID = version.ID
 		method.VerifiedAt = nil
 	} else {
+		method.CurrentVersionID = current.CurrentVersionID
 		method.VerifiedAt = current.VerifiedAt
 	}
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO contact_method_versions (
-			id, contact_method_id, owner_user_id, value_ciphertext, value_nonce,
-			masked_value, value_fingerprint, encryption_key_version, fingerprint_key_version,
-			encryption_format, created_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, version.ID, version.ContactMethodID, version.OwnerUserID, encoded.Ciphertext, encoded.Nonce,
-		version.MaskedValue, encoded.Fingerprint, encoded.EncryptionKeyVersion, encoded.FingerprintKeyVersion,
-		encoded.CipherFormat, version.CreatedAt)
-	if err != nil {
-		return contact.ContactMethod{}, internalStoreError()
-	}
+	if valueChanged {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO contact_method_versions (
+				id, contact_method_id, owner_user_id, value_ciphertext, value_nonce,
+				masked_value, value_fingerprint, encryption_key_version, fingerprint_key_version,
+				encryption_format, created_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, version.ID, version.ContactMethodID, version.OwnerUserID, encoded.Ciphertext, encoded.Nonce,
+			version.MaskedValue, encoded.Fingerprint, encoded.EncryptionKeyVersion, encoded.FingerprintKeyVersion,
+			encoded.CipherFormat, version.CreatedAt)
+		if err != nil {
+			return contact.ContactMethod{}, internalStoreError()
+		}
 
-	_, err = tx.Exec(ctx, `
-		UPDATE contact_method_versions
-		SET retired_at = $3
-		WHERE id = $1 AND owner_user_id = $2
-	`, current.CurrentVersionID, current.UserID, method.UpdatedAt)
-	if err != nil {
-		return contact.ContactMethod{}, internalStoreError()
+		_, err = tx.Exec(ctx, `
+			UPDATE contact_method_versions
+			SET retired_at = $3
+			WHERE id = $1 AND owner_user_id = $2
+		`, current.CurrentVersionID, current.UserID, method.UpdatedAt)
+		if err != nil {
+			return contact.ContactMethod{}, internalStoreError()
+		}
 	}
 	if method.IsDefault {
 		if appErr := clearContactDefaultsInTx(ctx, tx, method.UserID, method.ID, method.UpdatedAt, input.RequestID); appErr != nil {
@@ -272,16 +287,19 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, method.CurrentVersionID, method.IsDefault,
 		method.Enabled, method.VerifiedAt, method.UpdatedAt, method.Version)
 	if err != nil {
+		if isUniqueViolationOnConstraint(err, "ux_contact_methods_one_enabled_wechat") {
+			return contact.ContactMethod{}, contact.DuplicateEnabledWechatError()
+		}
 		return contact.ContactMethod{}, internalStoreError()
 	}
 	eventType := "contact_method.updated"
 	if current.Enabled && !method.Enabled {
 		eventType = "contact_method.disabled"
 	}
-	if appErr := insertContactMethodEvent(ctx, tx, method, eventType, input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"}, method.UpdatedAt); appErr != nil {
+	if appErr := insertContactMethodEvent(ctx, tx, method, eventType, input.RequestID, contactMethodChangedFields(current, method, valueChanged), method.UpdatedAt); appErr != nil {
 		return contact.ContactMethod{}, appErr
 	}
-	return method, nil
+	return s.getContactMethodWithValue(ctx, tx, method.UserID, method.ID)
 }
 
 func (s *Store) DeleteContactMethod(ctx context.Context, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
@@ -334,6 +352,24 @@ func (s *Store) DeleteContactMethodWithIdempotency(ctx context.Context, entry id
 }
 
 func deleteContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
+	var currentType string
+	if err := tx.QueryRow(ctx, `
+		SELECT type
+		FROM contact_methods
+		WHERE id = $1 AND user_id = $2 AND enabled = true
+		FOR UPDATE
+	`, methodID, userID).Scan(&currentType); errors.Is(err, pgx.ErrNoRows) {
+		return contact.ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+	} else if err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	if currentType == "wechat" {
+		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能解除绑定。")
+	}
+	if currentType == "linuxdo" {
+		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
+	}
+
 	var method contact.ContactMethod
 	err := tx.QueryRow(ctx, `
 		UPDATE contact_methods
@@ -447,27 +483,66 @@ func (s *Store) setDefaultContactMethodInTx(ctx context.Context, tx pgx.Tx, user
 	return method, nil
 }
 
-func (s *Store) VerifyContactMethod(ctx context.Context, userID, methodID, requestID string, verifiedAt time.Time) (contact.ContactMethod, *domain.AppError) {
+func (s *Store) CreateContactEmailVerificationCode(ctx context.Context, challenge contact.ContactEmailVerificationCode) *domain.AppError {
 	if s == nil || s.pool == nil || s.contactCodec == nil {
-		return contact.ContactMethod{}, internalStoreError()
+		return internalStoreError()
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return contact.ContactMethod{}, internalStoreError()
+		return internalStoreError()
 	}
 	defer rollback(ctx, tx)
-	method, appErr := s.verifyContactMethodInTx(ctx, tx, userID, methodID, requestID, verifiedAt)
+
+	var methodType, currentVersionID string
+	err = tx.QueryRow(ctx, `
+		SELECT type, current_version_id::text
+		FROM contact_methods
+		WHERE id = $1 AND user_id = $2 AND enabled = true
+		FOR UPDATE
+	`, challenge.ContactMethodID, challenge.UserID).Scan(&methodType, &currentVersionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return contactMethodNotFoundError()
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	if methodType != "email" {
+		return contactEmailMethodRequiredError()
+	}
+	method, appErr := s.getContactMethodWithValue(ctx, tx, challenge.UserID, challenge.ContactMethodID)
 	if appErr != nil {
-		return contact.ContactMethod{}, appErr
+		return appErr
+	}
+	if currentVersionID != challenge.ContactMethodVersionID || !strings.EqualFold(strings.TrimSpace(method.DisplayValue), strings.TrimSpace(challenge.Email)) {
+		return contactEmailChangedError()
+	}
+	if _, err = tx.Exec(ctx, `
+		UPDATE email_verification_codes
+		SET consumed_at = $2
+		WHERE contact_method_id = $1
+		  AND purpose = 'contact_email'
+		  AND consumed_at IS NULL
+	`, challenge.ContactMethodID, challenge.CreatedAt); err != nil {
+		return internalStoreError()
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO email_verification_codes (
+			user_id, email, purpose, code_hash, expires_at, created_at,
+			contact_method_id, contact_method_version_id
+		)
+		VALUES ($1, lower($2), 'contact_email', $3, $4, $5, $6, $7)
+	`, challenge.UserID, challenge.Email, challenge.CodeHash, challenge.ExpiresAt, challenge.CreatedAt,
+		challenge.ContactMethodID, challenge.ContactMethodVersionID); err != nil {
+		return internalStoreError()
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return contact.ContactMethod{}, internalStoreError()
+		return internalStoreError()
 	}
-	return method, nil
+	return nil
 }
 
-func (s *Store) VerifyContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, userID, methodID, requestID string, verifiedAt time.Time, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
-	if s == nil || s.pool == nil || s.contactCodec == nil {
+func (s *Store) ConfirmContactEmailVerificationWithIdempotency(ctx context.Context, entry idempotency.Entry, input contact.ConfirmContactEmailInput, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil || s.contactCodec == nil || buildCompletion == nil {
 		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -475,19 +550,108 @@ func (s *Store) VerifyContactMethodWithIdempotency(ctx context.Context, entry id
 		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
+
+	// 联系方式行是父级锁；发码与确认必须统一先锁联系方式、再锁挑战，避免并发互等。
+	var methodType, currentVersionID string
+	err = tx.QueryRow(ctx, `
+		SELECT type, current_version_id::text
+		FROM contact_methods
+		WHERE id = $1 AND user_id = $2 AND enabled = true
+		FOR UPDATE
+	`, input.ContactMethodID, input.UserID).Scan(&methodType, &currentVersionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return contact.ContactMethod{}, idempotency.Completion{}, contactMethodNotFoundError()
+	}
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+
+	var codeID, storedHash, challengeVersionID, challengeEmail string
+	var expiresAt time.Time
+	var attemptCount int
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, code_hash, contact_method_version_id::text, email, expires_at, attempt_count
+		FROM email_verification_codes
+		WHERE user_id = $1
+		  AND contact_method_id = $2
+		  AND purpose = 'contact_email'
+		  AND consumed_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT 1
+		FOR UPDATE
+	`, input.UserID, input.ContactMethodID).Scan(
+		&codeID, &storedHash, &challengeVersionID, &challengeEmail, &expiresAt, &attemptCount,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return contact.ContactMethod{}, idempotency.Completion{}, invalidContactEmailVerificationStoreError()
+	}
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	if methodType != "email" || challengeVersionID != currentVersionID || challengeVersionID != input.ContactMethodVersionID ||
+		!strings.EqualFold(challengeEmail, input.Email) {
+		if appErr := consumeContactEmailChallengeInTx(ctx, tx, codeID, input.Now); appErr != nil {
+			return contact.ContactMethod{}, idempotency.Completion{}, appErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+		}
+		return contact.ContactMethod{}, idempotency.Completion{}, invalidContactEmailVerificationStoreError()
+	}
+	if !input.Now.Before(expiresAt) || attemptCount >= contact.ContactEmailVerificationMaxAttempts {
+		if appErr := consumeContactEmailChallengeInTx(ctx, tx, codeID, input.Now); appErr != nil {
+			return contact.ContactMethod{}, idempotency.Completion{}, appErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+		}
+		return contact.ContactMethod{}, idempotency.Completion{}, invalidContactEmailVerificationStoreError()
+	}
+	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(strings.TrimSpace(input.CodeHash))) != 1 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE email_verification_codes
+			SET attempt_count = attempt_count + 1,
+			    consumed_at = CASE WHEN attempt_count + 1 >= $3 THEN $2 ELSE consumed_at END
+			WHERE id = $1
+		`, codeID, input.Now, contact.ContactEmailVerificationMaxAttempts); err != nil {
+			return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+		}
+		return contact.ContactMethod{}, idempotency.Completion{}, invalidContactEmailVerificationStoreError()
+	}
+
 	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
 	if appErr != nil {
 		return contact.ContactMethod{}, idempotency.Completion{}, appErr
 	}
-	method, appErr := s.verifyContactMethodInTx(ctx, tx, userID, methodID, requestID, verifiedAt)
+	commandTag, err := tx.Exec(ctx, `
+		UPDATE contact_methods
+		SET verified_at = $3, updated_at = $3, version = version + 1
+		WHERE id = $1 AND user_id = $2 AND enabled = true AND current_version_id = $4
+	`, input.ContactMethodID, input.UserID, input.Now, input.ContactMethodVersionID)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	if commandTag.RowsAffected() != 1 {
+		return contact.ContactMethod{}, idempotency.Completion{}, invalidContactEmailVerificationStoreError()
+	}
+	if appErr := consumeContactEmailChallengeInTx(ctx, tx, codeID, input.Now); appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	method, appErr := s.getContactMethodWithValue(ctx, tx, input.UserID, input.ContactMethodID)
 	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if appErr := insertContactMethodEvent(ctx, tx, method, "contact_method.verified", input.RequestID, []string{"verifiedAt"}, input.Now); appErr != nil {
 		return contact.ContactMethod{}, idempotency.Completion{}, appErr
 	}
 	completion, appErr := buildCompletion(method)
 	if appErr != nil {
 		return contact.ContactMethod{}, idempotency.Completion{}, appErr
 	}
-	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, verifiedAt); appErr != nil {
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, input.Now); appErr != nil {
 		return contact.ContactMethod{}, idempotency.Completion{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -496,26 +660,54 @@ func (s *Store) VerifyContactMethodWithIdempotency(ctx context.Context, entry id
 	return method, completion, nil
 }
 
-func (s *Store) verifyContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, requestID string, verifiedAt time.Time) (contact.ContactMethod, *domain.AppError) {
-	commandTag, err := tx.Exec(ctx, `
-		UPDATE contact_methods
-		SET verified_at = $3, updated_at = $3, version = version + 1
-		WHERE id = $1 AND user_id = $2 AND enabled = true
-	`, methodID, userID, verifiedAt)
-	if err != nil {
-		return contact.ContactMethod{}, internalStoreError()
+func consumeContactEmailChallengeInTx(ctx context.Context, tx pgx.Tx, codeID string, consumedAt time.Time) *domain.AppError {
+	if _, err := tx.Exec(ctx, `
+		UPDATE email_verification_codes
+		SET consumed_at = COALESCE(consumed_at, $2)
+		WHERE id = $1
+	`, codeID, consumedAt); err != nil {
+		return internalStoreError()
 	}
-	if commandTag.RowsAffected() != 1 {
-		return contact.ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+	return nil
+}
+
+func invalidContactEmailVerificationStoreError() *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeVerificationCodeInvalid, "Verification code invalid", "验证码无效或已过期。", "code", "invalid", "验证码无效或已过期。")
+}
+
+func contactEmailMethodRequiredError() *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Email contact required", "当前联系方式不是邮箱。", "contactMethodId", "not_email", "请选择邮箱联系方式。")
+}
+
+func contactEmailChangedError() *domain.AppError {
+	return domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact email changed", "邮箱联系方式已变化，请重新获取验证码。")
+}
+
+func contactMethodNotFoundError() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+}
+
+func contactMethodChangedFields(before, after contact.ContactMethod, valueChanged bool) []string {
+	fields := make([]string, 0, 6)
+	if before.Type != after.Type {
+		fields = append(fields, "type")
 	}
-	method, appErr := s.getContactMethodWithValue(ctx, tx, userID, methodID)
-	if appErr != nil {
-		return contact.ContactMethod{}, appErr
+	if before.Label != after.Label {
+		fields = append(fields, "label")
 	}
-	if appErr := insertContactMethodEvent(ctx, tx, method, "contact_method.verified", requestID, []string{"verifiedAt"}, method.UpdatedAt); appErr != nil {
-		return contact.ContactMethod{}, appErr
+	if valueChanged {
+		fields = append(fields, "value")
 	}
-	return method, nil
+	if strings.Join(before.UsageScopes, "\x00") != strings.Join(after.UsageScopes, "\x00") {
+		fields = append(fields, "usageScopes")
+	}
+	if before.IsDefault != after.IsDefault {
+		fields = append(fields, "isDefault")
+	}
+	if before.Enabled != after.Enabled {
+		fields = append(fields, "enabled")
+	}
+	return fields
 }
 
 func (s *Store) CreateContactSession(ctx context.Context, input contact.CreateContactSessionInput, session contact.ContactSession, now time.Time) (contact.ContactSession, *domain.AppError) {
@@ -571,7 +763,7 @@ func (s *Store) ReadContactSession(ctx context.Context, sessionID, viewerUserID,
 	defer rollback(ctx, tx)
 
 	var buyerUserID, sellerUserID, status string
-	var endsAt time.Time
+	var endsAt *time.Time
 	err = tx.QueryRow(ctx, `
 		SELECT buyer_user_id::text, seller_user_id::text, status, ends_at
 		FROM contact_sessions
@@ -587,8 +779,9 @@ func (s *Store) ReadContactSession(ctx context.Context, sessionID, viewerUserID,
 	if viewerUserID != buyerUserID && viewerUserID != sellerUserID {
 		return contact.ContactSessionView{}, domain.NewError(http.StatusForbidden, domain.CodeContactAccessForbidden, "Contact access forbidden", "你不是该联系窗口参与方。")
 	}
-	if status != "open" || !now.Before(endsAt) {
-		if status == "open" && !now.Before(endsAt) {
+	expired := endsAt != nil && !now.Before(*endsAt)
+	if status != "open" || expired {
+		if status == "open" && expired {
 			_, _ = tx.Exec(ctx, `UPDATE contact_sessions SET status = 'expired' WHERE id = $1 AND status = 'open'`, sessionID)
 		}
 		return contact.ContactSessionView{}, domain.NewError(http.StatusConflict, domain.CodeContactWindowExpired, "Contact window expired", "联系窗口已过期。")
@@ -747,6 +940,18 @@ func lockContactVersionForOwner(ctx context.Context, q queryer, methodID, ownerI
 }
 
 func lockContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredScope, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
+	return lockContactVersionForOwnerTypeAndScope(ctx, q, methodID, ownerID, "", requiredScope, detail)
+}
+
+func lockWechatContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredScope, field, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
+	method, version, appErr := lockContactVersionForOwnerTypeAndScope(ctx, q, methodID, ownerID, contact.MethodTypeWechat, requiredScope, detail)
+	if appErr != nil && appErr.Code == domain.CodeContactMethodNotOwned {
+		return contact.ContactMethod{}, contact.ContactMethodVersion{}, contact.WechatRequiredError(field, detail)
+	}
+	return method, version, appErr
+}
+
+func lockContactVersionForOwnerTypeAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredType, requiredScope, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
 	var method contact.ContactMethod
 	var version contact.ContactMethodVersion
 	err := q.QueryRow(ctx, `
@@ -764,9 +969,10 @@ func lockContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID
 		  AND m.current_version_id IS NOT NULL
 		  AND v.retired_at IS NULL
 		  AND v.destroyed_at IS NULL
-		  AND ($3 = '' OR $3 = ANY(m.usage_scopes))
+		  AND ($3 = '' OR m.type = $3)
+		  AND ($4 = '' OR $4 = ANY(m.usage_scopes))
 		FOR UPDATE
-	`, methodID, ownerID, strings.TrimSpace(requiredScope)).Scan(
+	`, methodID, ownerID, strings.TrimSpace(requiredType), strings.TrimSpace(requiredScope)).Scan(
 		&method.ID,
 		&method.UserID,
 		&method.Type,

@@ -75,7 +75,7 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 		t.Fatalf("create buyer contact: %v", appErr)
 	}
 	applicationBuyerContact, appErr := contactService.CreateMethod(ctx, contact.ContactMethodInput{
-		UserID: buyerUserID, Type: "telegram", Label: "申请人联系", Value: "audit-application-buyer-contact",
+		UserID: buyerUserID, Type: "wechat", Label: "申请人微信", Value: "audit-application-buyer-contact",
 		UsageScopes: []string{contact.UsageScopeBuyer}, Enabled: true, RequestID: "application-buyer-contact-create",
 	})
 	if appErr != nil {
@@ -228,46 +228,37 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 	}
 
 	now = now.Add(time.Minute)
-	reservedInput := applicationInput
-	reservedInput.RequestID = "carpool-application-reserved-create-request"
-	reserved, _, created, appErr := service.CreateApplicationWithIdempotency(
-		ctx, buyer, "carpool-application-reserved-create", "application-reserved-create-key", "application-reserved-create-hash", reservedInput, applicationBuilder,
+	joinedInput := applicationInput
+	joinedInput.RequestID = "carpool-application-joined-create-request"
+	joined, _, created, appErr := service.CreateApplicationWithIdempotency(
+		ctx, buyer, "carpool-application-joined-create", "application-joined-create-key", "application-joined-create-hash", joinedInput, applicationBuilder,
 	)
 	if appErr != nil || !created {
-		t.Fatalf("create reservation application: application=%+v created=%t error=%v", reserved, created, appErr)
+		t.Fatalf("create joined application: application=%+v created=%t error=%v", joined, created, appErr)
 	}
-	reserved, _, changed, appErr = service.AcceptApplicationWithIdempotency(
+	joined, _, changed, appErr = service.AcceptApplicationWithIdempotency(
 		ctx, userID, "carpool-application-accept", "application-accept-key", "application-accept-hash",
 		carpool.AcceptApplicationInput{
-			ApplicationID: reserved.ID, OwnerUserID: userID, ExpectedVersion: reserved.Version,
+			ApplicationID: joined.ID, OwnerUserID: userID, ExpectedVersion: joined.Version,
 			RequestID: "carpool-application-accept-request",
 		}, applicationBuilder,
 	)
-	if appErr != nil || !changed || reserved.Status != carpool.ApplicationStatusAcceptedReserved {
-		t.Fatalf("accept reservation application: application=%+v changed=%t error=%v", reserved, changed, appErr)
+	if appErr != nil || !changed || joined.Status != carpool.ApplicationStatusJoined || joined.JoinedAt == nil {
+		t.Fatalf("accept joined application: application=%+v changed=%t error=%v", joined, changed, appErr)
 	}
-	now = now.Add(carpool.JoinConfirmationDuration + time.Minute)
-	replacementInput := applicationInput
-	replacementInput.RequestID = "carpool-application-after-expiry-request"
-	replacement, _, created, appErr := service.CreateApplicationWithIdempotency(
-		ctx, buyer, "carpool-application-after-expiry", "application-after-expiry-key", "application-after-expiry-hash", replacementInput, applicationBuilder,
-	)
-	if appErr != nil || !created {
-		t.Fatalf("create application after reservation expiry: application=%+v created=%t error=%v", replacement, created, appErr)
-	}
-	var expiredStatus, expiredActorKind string
-	var expiredActorID *string
+	var joinedStatus, joinedActorKind string
+	var joinedActorID *string
 	if err := store.pool.QueryRow(ctx, `
 		SELECT metadata_json->>'status', actor_kind, actor_user_id::text
 		FROM domain_events
 		WHERE aggregate_type = 'carpool_application'
 		  AND aggregate_id = $1
-		  AND event_type = 'carpool_application.expired'
-	`, reserved.ID).Scan(&expiredStatus, &expiredActorKind, &expiredActorID); err != nil {
-		t.Fatalf("read reservation expiry event: %v", err)
+		  AND event_type = 'carpool_application.joined'
+	`, joined.ID).Scan(&joinedStatus, &joinedActorKind, &joinedActorID); err != nil {
+		t.Fatalf("read joined event: %v", err)
 	}
-	if expiredStatus != carpool.ApplicationStatusExpired || expiredActorKind != "system" || expiredActorID != nil {
-		t.Fatalf("unexpected reservation expiry event: status=%q actorKind=%q actorID=%v", expiredStatus, expiredActorKind, expiredActorID)
+	if joinedStatus != carpool.ApplicationStatusJoined || joinedActorKind != "user" || joinedActorID == nil || *joinedActorID != userID {
+		t.Fatalf("unexpected joined event: status=%q actorKind=%q actorID=%v", joinedStatus, joinedActorKind, joinedActorID)
 	}
 
 	now = now.Add(time.Minute)
@@ -284,14 +275,18 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 			DELETE FROM users WHERE id = $1;
 		`, admin.ID)
 	})
+	currentListing, appErr := service.AdminListing(ctx, admin, published.ID)
+	if appErr != nil {
+		t.Fatalf("read listing before governance removal: %v", appErr)
+	}
 	paused, _, changed, appErr := service.UpdateListingReviewStatusWithIdempotency(ctx, admin, "carpool-pause", "pause-key", "pause-hash", carpool.ReviewInput{
-		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: published.Version, RequestID: "carpool-pause-request",
+		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: currentListing.Version, RequestID: "carpool-pause-request",
 	}, completionBuilder)
-	if appErr != nil || !changed || paused.Status != carpool.ListingStatusPaused {
+	if appErr != nil || !changed || paused.Status != currentListing.Status || paused.GovernanceStatus != "removed" {
 		t.Fatalf("pause listing atomically: listing=%+v changed=%t error=%v", paused, changed, appErr)
 	}
 	if _, _, changed, appErr = service.UpdateListingReviewStatusWithIdempotency(ctx, admin, "carpool-pause", "pause-key", "pause-hash", carpool.ReviewInput{
-		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: published.Version, RequestID: "carpool-pause-request",
+		ListingID: published.ID, Action: "pause", Status: carpool.ListingStatusPaused, Reason: "审计暂停", ExpectedVersion: currentListing.Version, RequestID: "carpool-pause-request",
 	}, completionBuilder); appErr != nil || changed {
 		t.Fatalf("replay listing pause: changed=%t error=%v", changed, appErr)
 	}
@@ -320,8 +315,8 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 
 	invalidInput := validCarpoolListingAuditInput(buyerOnlyContact.ID, "invalid-scope-request")
 	_, _, _, appErr = service.CreateListingWithIdempotency(ctx, owner, "carpool-create-invalid", "invalid-key", "invalid-hash", invalidInput, completionBuilder)
-	if appErr == nil || appErr.Code != domain.CodeContactMethodNotOwned {
-		t.Fatalf("buyer-only contact was accepted for listing: %#v", appErr)
+	if appErr == nil || appErr.Code != domain.CodeContactMethodRequired || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "wechat_required" {
+		t.Fatalf("non-WeChat contact returned an unexpected listing error: %#v", appErr)
 	}
 	var invalidListings, invalidEvents int
 	if err := store.pool.QueryRow(ctx, `SELECT count(*)::int FROM carpool_listings WHERE owner_user_id = $1 AND id <> $2`, userID, listing.ID).Scan(&invalidListings); err != nil {
@@ -384,7 +379,7 @@ func validCarpoolListingUpdateAuditInput(listing carpool.Listing, contactMethodI
 		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
 		OpeningChannelCode:                    input.OpeningChannelCode, CustomOpeningChannel: input.CustomOpeningChannel,
 		PaymentMethodCode: input.PaymentMethodCode, CustomPaymentMethod: input.CustomPaymentMethod,
-		BuyerSeatCapacity: input.BuyerSeatCapacity, ActiveBuyerMembers: input.ActiveBuyerMembers,
+		BuyerSeatCapacity: input.BuyerSeatCapacity, OfflineOccupiedSeats: input.OfflineOccupiedSeats,
 		RiskAcknowledgement: input.RiskAcknowledgement, ExpectedVersion: listing.Version, RequestID: requestID,
 	}
 }

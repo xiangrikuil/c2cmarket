@@ -2,12 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Clock3, FileCheck2, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
-import ApiOrderDisputePanel from '@/components/api-order/ApiOrderDisputePanel.vue'
+import ApiOrderDeliveryCredentialCard from '@/components/api-order/ApiOrderDeliveryCredentialCard.vue'
 import ApiRefundPolicyEvidence from '@/components/api-order/ApiRefundPolicyEvidence.vue'
+import DisputeEvidencePicker from '@/components/api-order/DisputeEvidencePicker.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import ReviewDialog from '@/components/review/ReviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -31,7 +32,6 @@ import StatusBadge from '@/components/market/StatusBadge.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
-  getApiOrderDeliveryKindLabel,
 	getApiOrderDisputeStatusDescription,
 	getApiOrderDisputeStatusLabel,
   getApiOrderDisplayStatus,
@@ -59,17 +59,18 @@ import {
 } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels, apiPaymentMethodRequiresQrCode } from '@/lib/apiPaymentSettings'
 import {
+  apiOrderCommercialOutcomeLabels,
   apiOrderDisputeIssueLabels,
   apiOrderDisputeResolutionLabels,
   type ApiOrderDisputeIssueCode,
   type ApiOrderDisputeResolution,
 } from '@/lib/apiOrderDispute'
 import { formatDecimal } from '@/lib/decimal'
+import type { DisputeEvidenceAsset } from '@/lib/disputeEvidenceBackend'
 import { functionalMotion } from '@/lib/motion'
 import {
   useApiOrder,
   useCancelApiOrderMutation,
-  useConfirmApiOrderCompleteMutation,
   useConfirmApiOrderPaymentMutation,
   useOpenApiOrderDisputeMutation,
   useReportApiOrderPaymentIssueMutation,
@@ -92,6 +93,13 @@ const ordinaryActionsPaused = computed(() => Boolean(order.value && (
   isApiOrderDisputeActive(order.value.disputeStatus)
   || order.value.catalogRiskHold?.status === 'active'
 )))
+const activeDispute = computed(() => Boolean(order.value && isApiOrderDisputeActive(order.value.disputeStatus)))
+const primaryStatusLabel = computed(() => {
+  if (!order.value) return ''
+  return activeDispute.value
+    ? getApiOrderDisputeStatusLabel(order.value.disputeStatus)
+    : getApiOrderDisplayStatus(order.value, perspective.value)
+})
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
@@ -124,24 +132,18 @@ const disputeRequestedResolution = ref<ApiOrderDisputeResolution>('full_refund')
 const disputeRequestedAmount = ref('')
 const disputeIssueOccurredAt = ref('')
 const disputeReason = ref('')
-const completionConfirmOpen = ref(false)
-const credentialProblemOpen = ref(false)
-const credentialProblemReason = ref<CredentialProblemReason | ''>('')
-const credentialProblemNote = ref('')
+const disputeEvidence = ref<DisputeEvidenceAsset[]>([])
 const cancelDrawerOpen = ref(false)
 const cancelReason = ref('')
 const cancelNote = ref('')
 const cancelUnpaidConfirmed = ref(false)
 const orderDetailsOpen = ref(true)
 const orderRecordsOpen = ref(false)
-const apiKeyVisible = ref(false)
-const passwordVisible = ref(false)
 const now = ref(Date.now())
 let countdownTimer: ReturnType<typeof setInterval> | undefined
 
 const submitPaymentMutation = useSubmitApiOrderPaymentMutation()
 const cancelOrderMutation = useCancelApiOrderMutation()
-const confirmCompleteMutation = useConfirmApiOrderCompleteMutation()
 const confirmPaymentMutation = useConfirmApiOrderPaymentMutation()
 const reportPaymentIssueMutation = useReportApiOrderPaymentIssueMutation()
 const reportLatePaymentMutation = useReportLateApiOrderPaymentMutation()
@@ -159,22 +161,19 @@ const canReportLatePayment = computed(() => !isMerchantView.value && Boolean(ord
 const canResolveLatePayment = computed(() => isMerchantView.value && order.value?.latePaymentStatus === 'reported')
 const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
 const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
-const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
+	&& !isMerchantView.value
 	&& (order.value.canOpenDispute ?? (order.value.status !== 'cancelled' && order.value.status !== 'completed' && (order.value.disputeStatus ?? 'none') === 'none')),
 ))
-const showDisputeStatus = computed(() => Boolean(order.value && (order.value.disputeStatus ?? 'none') !== 'none'))
-const disputeViewerUserId = computed(() => {
-  if (!order.value) return ''
-  return isMerchantView.value ? order.value.sellerId : order.value.buyerId
-})
+const showDisputeStatus = computed(() => Boolean(order.value?.hasDisputeHistory || (order.value?.disputeStatus ?? 'none') !== 'none'))
+const disputePanelId = computed(() => order.value?.disputeCaseId ?? order.value?.latestDisputeCaseId ?? '')
 const canSubmitDispute = computed(() => Boolean(
   disputeReason.value.trim()
 	&& (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim())
 	&& (order.value?.status !== 'completed' || disputeIssueOccurredAt.value),
 ))
-const canOpenReviewCenter = computed(() => order.value?.status === 'completed')
+const canOpenReviewCenter = computed(() => !activeDispute.value && order.value?.status === 'completed')
 const reviewRow = computed(() => {
   const matches = reviewCenter.value?.items.filter(item => item.transactionType === 'api_order' && item.transactionId === id.value) ?? []
   return matches.find(item => item.direction === 'pending') ?? matches.find(item => item.direction === 'sent') ?? matches[0] ?? null
@@ -273,7 +272,7 @@ const canConfirmOffPlatformPayment = computed(() => {
   if (!paymentInstructions.value) return false
   return !apiPaymentMethodRequiresQrCode(paymentInstructions.value.paymentMethod) || Boolean(paymentInstructions.value.paymentQrCodeDataUrl)
 })
-const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmCompleteMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || reportLatePaymentMutation.isPending.value || resolveLatePaymentMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
+const actionBusy = computed(() => cancelOrderMutation.isPending.value || submitPaymentMutation.isPending.value || confirmPaymentMutation.isPending.value || reportPaymentIssueMutation.isPending.value || reportLatePaymentMutation.isPending.value || resolveLatePaymentMutation.isPending.value || openDisputeMutation.isPending.value || submitDeliveryMutation.isPending.value)
 const newDisputeResolutionLabels = computed(() => Object.fromEntries(
   Object.entries(apiOrderDisputeResolutionLabels).filter(([value]) => value !== 'continue_fulfillment'),
 ))
@@ -282,17 +281,6 @@ const paymentIssueOptions: Array<{ value: ApiOrderPaymentIssueReason, label: str
   { value: 'amount_mismatch', label: '金额不符', description: '实收金额与订单金额不一致。' },
   { value: 'remark_mismatch', label: '备注不符', description: '付款备注或订单识别信息不一致。' },
 ]
-type CredentialProblemReason = 'unreachable' | 'invalid_credential' | 'quota_mismatch' | 'permission_mismatch' | 'description_mismatch' | 'other'
-const credentialProblemOptions: Array<{ value: CredentialProblemReason, label: string, description: string }> = [
-  { value: 'unreachable', label: '无法连接', description: '接入地址无法访问或服务没有响应。' },
-  { value: 'invalid_credential', label: '凭证无效', description: 'API Key、账号或初始密码无法使用。' },
-  { value: 'quota_mismatch', label: '额度不符', description: '可用额度与订单快照不一致。' },
-  { value: 'permission_mismatch', label: '权限不符', description: '模型、并发或接口权限与约定不一致。' },
-  { value: 'description_mismatch', label: '与描述不符', description: '交付内容与服务或套餐说明不一致。' },
-  { value: 'other', label: '其他问题', description: '以上原因无法准确描述当前问题。' },
-]
-const credentialProblemSubmitDisabled = computed(() => !credentialProblemReason.value
-  || (credentialProblemReason.value === 'other' && !credentialProblemNote.value.trim()))
 const flowSteps = ['创建订单', '买家付款', '商户确认收款', '商户交付', '买家核验']
 const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '完成一次性交付', '确认可用或核验期自动结束']
 const currentFlowIndex = computed(() => {
@@ -310,6 +298,7 @@ const currentFlowIndex = computed(() => {
 const orderAmountText = computed(() => order.value ? formatDecimal(order.value.amountDecimal || String(order.value.amount), 2, 2) : '0.00')
 const orderAllowanceText = computed(() => order.value ? formatDecimal(order.value.requestedUsdAllowanceDecimal || String(order.value.requestedUsdAllowance), 2, 6) : '0.00')
 const activeDeadline = computed(() => {
+  if (activeDispute.value) return null
   if (order.value?.status === 'pending_payment') return order.value.paymentExpiresAt
   if (order.value?.status === 'payment_submitted') return order.value.merchantConfirmDueAt
   if (order.value?.status === 'paid_confirmed') return order.value.deliveryDueAt
@@ -342,7 +331,7 @@ const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
 	if (order.value.catalogRiskHold?.status === 'active') return '关联模型目录被紧急阻断，付款、核款、交付、确认完成及自动超时均已暂停；仍可查看订单证据或发起纠纷。'
-	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请在下方纠纷区继续协商或等待处理。'
+	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请进入独立纠纷页面查看当前处理进度。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
@@ -483,6 +472,7 @@ async function submitOrderDispute() {
         requestedAmountCny: disputeRequestedResolution.value === 'partial_refund' ? disputeRequestedAmount.value.trim() : null,
 				issueOccurredAt: disputeIssueOccurredAt.value ? new Date(disputeIssueOccurredAt.value).toISOString() : null,
         reason: disputeReason.value.trim(),
+        evidenceAssetIds: disputeEvidence.value.map(item => item.id),
       },
       version: order.value.version,
       perspective: perspective.value,
@@ -491,8 +481,9 @@ async function submitOrderDispute() {
     disputeRequestedAmount.value = ''
 		disputeIssueOccurredAt.value = ''
     disputeReason.value = ''
+    disputeEvidence.value = []
     await refresh(order.value.id)
-    toast.success('订单纠纷已发起，双方可先协商处理。')
+    toast.success('售后申请已提交，等待卖家处理。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交订单问题失败。')
   }
@@ -512,45 +503,6 @@ async function resubmitPayment() {
     toast.success('付款信息已重新提交，等待商户核对。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '重新提交付款信息失败。')
-  }
-}
-
-async function confirmComplete() {
-  if (!order.value) return
-  try {
-    await confirmCompleteMutation.mutateAsync({ id: order.value.id, version: order.value.version })
-    completionConfirmOpen.value = false
-    await refresh(order.value.id)
-    toast.success('已确认凭证可用，订单完成。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '确认凭证可用失败。')
-  }
-}
-
-async function submitCredentialProblem() {
-  if (!order.value || !credentialProblemReason.value) return
-  const option = credentialProblemOptions.find(item => item.value === credentialProblemReason.value)
-  if (!option) return
-  const reason = `凭证异常｜${option.label}${credentialProblemNote.value.trim() ? `｜补充说明：${credentialProblemNote.value.trim()}` : ''}`
-  try {
-    await openDisputeMutation.mutateAsync({
-      id: order.value.id,
-      input: {
-        issueCode: 'service_unavailable',
-        requestedResolution: 'full_refund',
-        requestedAmountCny: null,
-        reason,
-      },
-      version: order.value.version,
-      perspective: 'buyer',
-    })
-    credentialProblemOpen.value = false
-    credentialProblemReason.value = ''
-    credentialProblemNote.value = ''
-    await refresh(order.value.id)
-    toast.success('凭证问题已提交，自动完成计时已暂停。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '提交凭证问题失败。')
   }
 }
 
@@ -598,23 +550,6 @@ async function submitDelivery() {
   }
 }
 
-async function copyValue(value: string | undefined, label: string) {
-  if (!value) return
-  try {
-    await navigator.clipboard.writeText(value)
-    toast.success(`已复制${label}。`)
-  } catch {
-    toast.error('复制失败，请手动选择文本。')
-  }
-}
-
-function maskCredential(value: string | undefined) {
-  if (!value) return ''
-  if (value.length <= 8) return '••••••••'
-  const maskedLength = Math.min(18, Math.max(8, value.length - 7))
-  return `${value.slice(0, 3)}${'•'.repeat(maskedLength)}${value.slice(-4)}`
-}
-
 async function openPaymentConfirmation() {
   if (!paymentInstructions.value) {
     toast.warning('收款资料仍在加载，请稍后重试。')
@@ -653,7 +588,7 @@ onBeforeUnmount(() => {
         <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push(backPath)"><ArrowLeft class="h-4 w-4" />{{ backLabel }}</Button>
         <div v-auto-animate="functionalMotion" class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold">{{ pageTitle }}</h1>
-          <StatusBadge :key="order.status" :status="order.status" :label="getApiOrderDisplayStatus(order, perspective)" />
+          <StatusBadge :key="`${order.status}-${order.disputeStatus}`" :status="order.status" :tone="activeDispute ? 'risk' : undefined" :label="primaryStatusLabel" />
           <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限量额度包</Badge>
         </div>
         <p class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" :title="order.serviceTitle">
@@ -702,10 +637,27 @@ onBeforeUnmount(() => {
       </AlertDescription>
     </Alert>
 
-    <Alert v-if="showDisputeStatus" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
-      <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
+    <Alert v-if="showDisputeStatus" :class="activeDispute ? 'border-risk/30 bg-risk/5' : 'border-border bg-muted/20'">
+      <ShieldAlert :class="activeDispute ? 'text-risk' : 'text-muted-foreground'" />
       <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
-      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}</AlertDescription>
+      <AlertDescription>
+        <p>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) || '该订单有历史纠纷记录，可查看最近案件的终局与申诉期限。' }}</p>
+        <Button v-if="disputePanelId" class="mt-3" size="sm" variant="outline" @click="router.push({ path: `/my/disputes/${disputePanelId}`, query: { from: isMerchantView ? 'merchant' : 'buyer', orderId: order.id } })">
+          <Headphones class="h-4 w-4" />进入纠纷处理
+        </Button>
+      </AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.quotaValidityIssueAt" variant="destructive">
+      <Clock3 />
+      <AlertTitle>首次交付有效期不足</AlertTitle>
+      <AlertDescription>交付时额度剩余不足 60 分钟，系统已拒绝本次交付并记录异常；不会自动替换额度、延长有效期或恢复库存。</AlertDescription>
+    </Alert>
+
+    <Alert v-if="order.commercialOutcome !== 'pending'">
+      <FileCheck2 />
+      <AlertTitle>{{ apiOrderCommercialOutcomeLabels[order.commercialOutcome] }}</AlertTitle>
+      <AlertDescription>该商业结果独立于订单履约状态，用于评价资格和售后事实，不代表平台代收、退款或验真。</AlertDescription>
     </Alert>
 
     <Alert v-if="order.catalogRiskHold?.status === 'active'" variant="destructive">
@@ -715,12 +667,6 @@ onBeforeUnmount(() => {
         {{ order.catalogRiskHold.reason }} 付款、核款、交付、确认完成和自动超时已暂停；订单证据与纠纷入口保持可用。
       </AlertDescription>
     </Alert>
-
-    <ApiOrderDisputePanel
-      v-if="order.disputeCaseId"
-      :dispute-id="order.disputeCaseId"
-      :viewer-user-id="disputeViewerUserId"
-    />
 
     <Alert v-if="isMerchantView && order.status === 'delivery_submitted'" class="border-success/35 bg-success/10">
       <CheckCircle2 class="text-success" />
@@ -734,7 +680,7 @@ onBeforeUnmount(() => {
           <h2 id="merchant-payment-check-title" class="font-semibold">收款核对</h2>
           <p class="mt-1 text-xs leading-5 text-muted-foreground">先核对实际到账、买家备注和订单联系方式，再确认收款。</p>
         </div>
-        <Badge :variant="canConfirmPayment ? 'trust' : 'secondary'">{{ canConfirmPayment ? '待核款' : getApiOrderDisplayStatus(order, perspective) }}</Badge>
+        <Badge :variant="activeDispute ? 'destructive' : canConfirmPayment ? 'trust' : 'secondary'">{{ canConfirmPayment ? '待核款' : primaryStatusLabel }}</Badge>
       </div>
 
       <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -799,13 +745,16 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <div class="text-xs text-muted-foreground">当前状态</div>
-            <div class="mt-3 text-xl font-semibold">{{ getApiOrderDisplayStatus(order, perspective) }}</div>
-            <div class="mt-2 text-xs text-muted-foreground">{{ order.deliveryCredential ? (isMerchantView ? '你的交付任务已结束' : '交付凭证已提交') : '无需倒计时' }}</div>
+            <div class="mt-3 text-xl font-semibold" :class="activeDispute ? 'text-risk' : ''">{{ primaryStatusLabel }}</div>
+            <div class="mt-2 text-xs text-muted-foreground">{{ activeDispute ? getApiOrderDisputeStatusDescription(order.disputeStatus) : order.deliveryCredential ? (isMerchantView ? '你的交付任务已结束' : '交付凭证已提交') : '无需倒计时' }}</div>
           </template>
         </div>
         <div v-auto-animate="functionalMotion" class="flex min-w-56 flex-col justify-center gap-2 p-5">
           <div class="text-center text-xs font-medium text-muted-foreground">当前可执行操作</div>
-          <Button v-if="canSubmitPayment" size="lg" :disabled="actionBusy || paymentInstructionsQuery.isLoading.value || countdown.expired" @click="paymentDialogOpen = true">
+          <Button v-if="activeDispute && disputePanelId" size="lg" @click="router.push({ path: `/my/disputes/${disputePanelId}`, query: { from: isMerchantView ? 'merchant' : 'buyer', orderId: order.id } })">
+            <Headphones class="h-4 w-4" />进入纠纷处理
+          </Button>
+          <Button v-else-if="canSubmitPayment" size="lg" :disabled="actionBusy || paymentInstructionsQuery.isLoading.value || countdown.expired" @click="paymentDialogOpen = true">
             <QrCode class="h-4 w-4" />{{ paymentActionLabel }}
           </Button>
           <Button v-else-if="canResubmitPayment" size="lg" :disabled="actionBusy" @click="openPaymentIssueResponse">
@@ -818,11 +767,8 @@ onBeforeUnmount(() => {
             <KeyRound class="h-4 w-4" />继续填写交付信息
           </Button>
           <template v-else-if="canConfirmComplete">
-            <Button size="lg" :disabled="actionBusy" @click="completionConfirmOpen = true">
-              <CheckCircle2 class="h-4 w-4" />确认凭证可用
-            </Button>
-            <Button v-if="canReportCredentialProblem" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="credentialProblemOpen = true">
-              <ShieldAlert class="h-4 w-4" />凭证存在问题
+            <Button size="lg" @click="router.push(`/my/api-orders/${order.id}/delivery`)">
+              <KeyRound class="h-4 w-4" />查看交付内容
             </Button>
           </template>
           <Button v-else-if="canOpenReviewCenter" size="lg" :disabled="actionBusy" @click="openReviewCenter">
@@ -838,7 +784,7 @@ onBeforeUnmount(() => {
       <Clock3 />
       <AlertTitle>商户处理已超时，订单不会自动取消</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
-        <span>你已提交付款状态，请勿重复付款。可发起订单纠纷，与商户在订单内协商处理。</span>
+        <span>你已提交付款状态，请勿重复付款。如需平台处理，可直接发起订单纠纷。</span>
         <Button v-if="canOpenDispute" size="sm" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       </AlertDescription>
     </Alert>
@@ -909,56 +855,17 @@ onBeforeUnmount(() => {
 
       <div v-auto-animate="functionalMotion" class="min-w-0 space-y-4">
 
-        <Card v-if="order.deliveryCredential" class="p-5">
-          <div class="flex items-center justify-between gap-3">
+        <ApiOrderDeliveryCredentialCard v-if="order.deliveryCredential && isMerchantView" :credential="order.deliveryCredential" title="已提交的交付内容" />
+
+        <Card v-else-if="order.deliveryCredential" class="border-primary/20 p-5">
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 class="font-semibold">接入凭证</h2>
-              <p class="mt-1 text-xs text-muted-foreground">{{ getApiOrderDeliveryKindLabel(order.deliveryCredential.deliveryKind) }} · {{ formatOrderDateTime(order.deliveryCredential.submittedAt) }}</p>
+              <h2 class="font-semibold">卖家交付内容</h2>
+              <p class="mt-1 text-sm leading-6 text-muted-foreground">API Key、接入地址或登录账密已集中到独立页面，不再与订单信息混排。</p>
             </div>
-            <Badge :variant="order.deliveryCredential.destroyedAt ? 'secondary' : 'verified'">{{ order.deliveryCredential.destroyedAt ? '已销毁' : '保留期内可查看' }}</Badge>
-          </div>
-          <div v-if="order.deliveryCredential.destroyedAt" class="mt-4 rounded-md border border-border bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
-            历史凭证已按保留策略销毁，平台仅保留交付类型、提交时间和销毁时间等审计事实。
-            <div class="mt-1 text-xs">销毁时间：{{ formatOrderDateTime(order.deliveryCredential.destroyedAt) }}</div>
-          </div>
-          <div v-else class="mt-4 space-y-3 text-sm">
-            <div v-if="order.deliveryCredential.apiBaseUrl" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">API Base URL</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.apiBaseUrl, 'API Base URL')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.apiBaseUrl }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.apiKey" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">API Key</span>
-                <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" :aria-label="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="apiKeyVisible = !apiKeyVisible">
-                    <EyeOff v-if="apiKeyVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ apiKeyVisible ? '隐藏 API Key' : '显示 API Key' }}</span>
-                  </Button>
-                  <Button size="icon" variant="outline" title="复制 API Key" aria-label="复制 API Key" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /><span class="sr-only">复制 API Key</span></Button>
-                </span>
-              </div>
-              <div class="mt-2 break-all font-mono text-xs">{{ apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey) }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.panelLoginUrl" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">登录地址</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.panelLoginUrl, '登录地址')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.panelLoginUrl }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.username" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">用户名</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.username, '用户名')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.username }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.password" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">初始密码</span>
-                <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="passwordVisible ? '隐藏初始密码' : '显示初始密码'" :aria-label="passwordVisible ? '隐藏初始密码' : '显示初始密码'" @click="passwordVisible = !passwordVisible">
-                    <EyeOff v-if="passwordVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ passwordVisible ? '隐藏初始密码' : '显示初始密码' }}</span>
-                  </Button>
-                  <Button size="icon" variant="outline" title="复制初始密码" aria-label="复制初始密码" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /><span class="sr-only">复制初始密码</span></Button>
-                </span>
-              </div>
-              <div class="mt-2 break-all font-mono text-xs">{{ passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password) }}</div>
-            </div>
-            <div v-if="order.deliveryCredential.instructions" class="rounded-md border border-border bg-muted/40 p-3 whitespace-pre-line">{{ order.deliveryCredential.instructions }}</div>
+            <Button class="shrink-0" @click="router.push(`/my/api-orders/${order.id}/delivery`)">
+              <KeyRound class="h-4 w-4" />查看交付内容<ArrowRight class="h-4 w-4" />
+            </Button>
           </div>
         </Card>
 
@@ -1068,28 +975,10 @@ onBeforeUnmount(() => {
     </Collapsible>
 
     <div class="flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-4">
-      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">发起后先由双方协商；无法达成一致时再申请平台审核。</div></div>
+      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">买家提交售后申请后，由卖家先同意或拒绝；拒绝或超时后，买家可申请平台介入。</div></div>
       <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       <Badge v-else-if="showDisputeStatus" variant="status">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</Badge>
     </div>
-
-    <Dialog v-model:open="completionConfirmOpen">
-      <DialogContent class="sm:max-w-[480px]">
-        <DialogHeader>
-          <DialogTitle>确认凭证可以使用？</DialogTitle>
-          <DialogDescription>确认后订单将立即完成并开放评价。交付凭证仅在平台保留期内可查看，请妥善保存买家专属接入信息。</DialogDescription>
-        </DialogHeader>
-        <Alert class="border-success/25 bg-success/10">
-          <CheckCircle2 class="text-success" />
-          <AlertTitle>请先完成实际核验</AlertTitle>
-          <AlertDescription>请确认接入地址、凭证、额度和权限均符合订单说明；平台不会代替你测试 API。</AlertDescription>
-        </Alert>
-        <DialogFooter>
-          <Button variant="outline" @click="completionConfirmOpen = false">返回核验</Button>
-          <Button :disabled="actionBusy" @click="confirmComplete">{{ actionBusy ? '提交中…' : '确认凭证可用' }}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
 
     <Dialog v-model:open="latePaymentDialogOpen">
       <DialogContent class="sm:max-w-[520px]">
@@ -1122,43 +1011,11 @@ onBeforeUnmount(() => {
       </DialogContent>
     </Dialog>
 
-    <Dialog v-model:open="credentialProblemOpen">
-      <DialogContent class="max-h-[92dvh] overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle>凭证存在问题</DialogTitle>
-          <DialogDescription>选择最符合的原因。提交后订单进入问题处理，24 小时自动完成计时将暂停。</DialogDescription>
-        </DialogHeader>
-        <RadioGroup v-model="credentialProblemReason" class="space-y-2">
-          <label
-            v-for="option in credentialProblemOptions"
-            :key="option.value"
-            class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted/40"
-            :class="credentialProblemReason === option.value ? 'border-warning/60 bg-warning/10' : ''"
-          >
-            <RadioGroupItem :value="option.value" class="mt-0.5" />
-            <span>
-              <span class="block text-sm font-medium">{{ option.label }}</span>
-              <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
-            </span>
-          </label>
-        </RadioGroup>
-        <label class="block space-y-2">
-          <span class="text-sm font-medium">补充说明{{ credentialProblemReason === 'other' ? '' : '（选填）' }}</span>
-          <Textarea v-model="credentialProblemNote" class="min-h-24" maxlength="400" placeholder="说明实际表现和核验时间，不要填写 API Key、密码或验证码。" />
-          <span class="block text-right text-xs text-muted-foreground">{{ credentialProblemNote.length }} / 400</span>
-        </label>
-        <DialogFooter>
-          <Button variant="outline" @click="credentialProblemOpen = false">暂不提交</Button>
-          <Button :disabled="credentialProblemSubmitDisabled || actionBusy" @click="submitCredentialProblem">{{ actionBusy ? '提交中…' : '提交凭证问题' }}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
     <Dialog v-model:open="disputeDialogOpen">
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>发起订单纠纷</DialogTitle>
-          <DialogDescription>提交后进入双方协商；任一方可在无法达成一致时申请平台审核。</DialogDescription>
+          <DialogDescription>提交后卖家有 24 小时同意或拒绝。卖家拒绝或响应超时后，你可以撤回申请或申请平台介入。</DialogDescription>
         </DialogHeader>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="block space-y-2">
@@ -1194,6 +1051,7 @@ onBeforeUnmount(() => {
           <Textarea v-model="disputeReason" class="min-h-32" maxlength="500" placeholder="请描述发生时间、当前状态和希望协助处理的事项。不要填写密码、API Key、验证码等敏感信息。" />
           <span class="block text-right text-xs text-muted-foreground">{{ disputeReason.length }} / 500</span>
         </label>
+        <DisputeEvidencePicker v-model="disputeEvidence" :order-id="order.id" />
         <Alert>
           <ShieldAlert />
           <AlertTitle>请勿提交敏感信息</AlertTitle>
@@ -1279,7 +1137,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>报告付款核对问题</DialogTitle>
-          <DialogDescription>请先通过订单内微信或 linux.do 私信联系买家核对；仍需补充时再选择明确原因。订单将保留当前锁定额度。</DialogDescription>
+          <DialogDescription>请先通过订单内微信联系买家核对；仍需补充时再选择明确原因。订单将保留当前锁定额度。</DialogDescription>
         </DialogHeader>
         <RadioGroup v-model="paymentIssueReason" class="gap-3">
           <div
@@ -1366,7 +1224,7 @@ onBeforeUnmount(() => {
             <Alert variant="destructive">
               <ShieldAlert />
               <AlertTitle>请确认尚未付款</AlertTitle>
-              <AlertDescription>如果已经付款，请不要取消订单。先通过微信或 linux.do 私信联系商户；双方沟通后仍未解决再申请平台介入。</AlertDescription>
+              <AlertDescription>如果已经付款，请不要取消订单。你可以通过订单内微信联系商户，也可以发起售后申请，由卖家先处理。</AlertDescription>
             </Alert>
 
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">

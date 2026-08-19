@@ -1,16 +1,7 @@
-import { BackendProblemError } from '@/lib/backendClient'
-import type { PublicApiQuotaOffer } from '@/lib/api'
-
-export type ApiMarketView = 'limited' | 'packages' | 'free'
-
-export function apiMarketViewFromQuery(value: unknown): ApiMarketView {
-  if (value === 'free' || value === 'packages') return value
-  return 'limited'
-}
-
-export function withApiMarketViewQuery<T extends Record<string, unknown>>(query: T, view: ApiMarketView) {
-  return { ...query, view }
-}
+import { BackendProblemError } from './backendClient'
+import type { PublicApiQuotaOffer } from './api'
+export { apiMarketPath, apiMarketQueryForView, apiMarketViewFromPath, apiMarketViewFromQuery, withApiMarketViewQuery } from './apiMarketRoutes'
+export type { ApiMarketView } from './apiMarketRoutes'
 
 export function apiQuotaDurationLabel(value: string, now = Date.now()) {
   const diff = Date.parse(value) - now

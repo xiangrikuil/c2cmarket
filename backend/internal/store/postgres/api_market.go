@@ -174,7 +174,11 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 	if maximum := strings.TrimSpace(filter.MinimumIntentCNYMax); maximum != "" {
 		where += ` AND api_services.minimum_intent_cny <= ` + addArgument(maximum) + `::numeric`
 	}
-	if strings.TrimSpace(filter.PackageModelCatalogID) != "" || filter.PackageDurationDays > 0 ||
+	packageModelCatalogIDs := filter.PackageModelCatalogIDs
+	if len(packageModelCatalogIDs) == 0 && strings.TrimSpace(filter.PackageModelCatalogID) != "" {
+		packageModelCatalogIDs = []string{strings.TrimSpace(filter.PackageModelCatalogID)}
+	}
+	if strings.TrimSpace(filter.BillingMode) == apimarket.ServiceBillingModeFixedPackage || len(packageModelCatalogIDs) > 0 || filter.PackageDurationDays > 0 ||
 		strings.TrimSpace(filter.PackagePriceCNYMax) != "" || strings.TrimSpace(filter.PackageMultiplierMax) != "" {
 		where += `
 		  AND EXISTS (
@@ -189,8 +193,7 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 		if maximum := strings.TrimSpace(filter.PackagePriceCNYMax); maximum != "" {
 			where += ` AND package_row.price_cny <= ` + addArgument(maximum) + `::numeric`
 		}
-		if strings.TrimSpace(filter.PackageModelCatalogID) != "" || strings.TrimSpace(filter.PackageMultiplierMax) != "" {
-			where += `
+		where += `
               AND EXISTS (
                 SELECT 1
                 FROM api_service_package_models package_model
@@ -200,15 +203,14 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
                 WHERE package_model.api_service_package_id = package_row.id
                   AND package_model.api_service_id = package_row.api_service_id
                   AND service_model.enabled = true`
-			if modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID); modelCatalogID != "" {
-				where += ` AND service_model.model_catalog_id::text = ` + addArgument(modelCatalogID)
-			}
-			if maximum := strings.TrimSpace(filter.PackageMultiplierMax); maximum != "" {
-				where += ` AND service_model.merchant_multiplier <= ` + addArgument(maximum) + `::numeric`
-			}
-			where += `
-			  )`
+		if len(packageModelCatalogIDs) > 0 {
+			where += ` AND service_model.model_catalog_id::text = ANY(` + addArgument(packageModelCatalogIDs) + `::text[])`
 		}
+		if maximum := strings.TrimSpace(filter.PackageMultiplierMax); maximum != "" {
+			where += ` AND service_model.merchant_multiplier <= ` + addArgument(maximum) + `::numeric`
+		}
+		where += `
+			  )`
 		where += `
 		  )`
 	}
@@ -216,6 +218,10 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 	sortExpression := ""
 	var scalarValue func(apimarket.Service) string
 	switch sortMode {
+	case apimarket.PublicServiceSortRecommended, apimarket.PublicServiceSortReputationDesc,
+		apimarket.PublicServiceSortCompletedDesc, apimarket.PublicServiceSortResponseFast:
+		sortExpression = apiServiceSortExpression("api_services", sortMode)
+		scalarValue = func(item apimarket.Service) string { return item.PublicSortValue }
 	case apimarket.PublicServiceSortPriceAsc:
 		sortExpression = "api_services.declared_cny_per_usd_allowance"
 		scalarValue = func(item apimarket.Service) string { return item.DeclaredCNYPerUSDAllowance }
@@ -224,7 +230,7 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 		scalarValue = func(item apimarket.Service) string { return item.MinimumIntentCNY }
 	case apimarket.PublicServiceSortPackagePriceAsc:
 		durationPlaceholder := addArgument(filter.PackageDurationDays)
-		modelPlaceholder := addArgument(strings.TrimSpace(filter.PackageModelCatalogID))
+		modelPlaceholder := addArgument(packageModelCatalogIDs)
 		pricePlaceholder := addArgument(strings.TrimSpace(filter.PackagePriceCNYMax))
 		multiplierPlaceholder := addArgument(strings.TrimSpace(filter.PackageMultiplierMax))
 		sortExpression = `(SELECT MIN(sort_package.price_cny)
@@ -237,11 +243,13 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 		    AND EXISTS (
 		      SELECT 1
 		      FROM api_service_package_models sort_package_model
-		      JOIN api_service_models sort_service_model ON sort_service_model.id = sort_package_model.api_service_model_id
+		      JOIN api_service_models sort_service_model
+		        ON sort_service_model.id = sort_package_model.api_service_model_id
+		       AND sort_service_model.api_service_id = sort_package_model.api_service_id
 		      WHERE sort_package_model.api_service_package_id = sort_package.id
 		        AND sort_package_model.api_service_id = sort_package.api_service_id
 		        AND sort_service_model.enabled = true
-		        AND (` + modelPlaceholder + ` = '' OR sort_service_model.model_catalog_id::text = ` + modelPlaceholder + `)
+		        AND (cardinality(` + modelPlaceholder + `::text[]) = 0 OR sort_service_model.model_catalog_id::text = ANY(` + modelPlaceholder + `::text[]))
 		        AND (` + multiplierPlaceholder + ` = '' OR sort_service_model.merchant_multiplier <= NULLIF(` + multiplierPlaceholder + `, '')::numeric)
 		    )
 		)`
@@ -251,11 +259,22 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 }
 
 func minimumPackagePriceForFilter(service apimarket.Service, filter apimarket.PublicServiceFilter) string {
-	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	modelCatalogIDs := make(map[string]struct{}, len(filter.PackageModelCatalogIDs)+1)
+	for _, id := range append(append([]string(nil), filter.PackageModelCatalogIDs...), filter.PackageModelCatalogID) {
+		if id = strings.TrimSpace(id); id != "" {
+			modelCatalogIDs[id] = struct{}{}
+		}
+	}
 	maximumPrice, hasMaximumPrice := new(big.Rat).SetString(strings.TrimSpace(filter.PackagePriceCNYMax))
 	maximumMultiplier, hasMaximumMultiplier := new(big.Rat).SetString(strings.TrimSpace(filter.PackageMultiplierMax))
 	var minimum *big.Rat
 	minimumText := "0"
+	enabledModelIDs := make(map[string]struct{}, len(service.Models))
+	for _, model := range service.Models {
+		if model.Enabled {
+			enabledModelIDs[model.ID] = struct{}{}
+		}
+	}
 	for _, item := range service.Packages {
 		if !item.Enabled || item.StockAvailable <= 0 ||
 			(filter.PackageDurationDays > 0 && (item.DurationDays == nil || *item.DurationDays != filter.PackageDurationDays)) {
@@ -267,8 +286,13 @@ func minimumPackagePriceForFilter(service apimarket.Service, filter apimarket.Pu
 		}
 		matchesModel := false
 		for _, model := range item.Models {
-			if modelCatalogID != "" && model.ModelCatalogID != modelCatalogID {
+			if _, ok := enabledModelIDs[model.ServiceModelID]; !ok {
 				continue
+			}
+			if len(modelCatalogIDs) > 0 {
+				if _, ok := modelCatalogIDs[model.ModelCatalogID]; !ok {
+					continue
+				}
 			}
 			multiplier, ok := new(big.Rat).SetString(strings.TrimSpace(model.MerchantMultiplier))
 			if hasMaximumMultiplier && (!ok || multiplier.Cmp(maximumMultiplier) > 0) {
@@ -297,6 +321,46 @@ func (s *Store) GetPublicAPIService(ctx context.Context, serviceID string) (apim
 		return apimarket.Service{}, internalStoreError()
 	}
 	return service, nil
+}
+
+func (s *Store) ListPublicAPIPackageFilterAvailability(ctx context.Context) (apimarket.PublicPackageFilterAvailability, *domain.AppError) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT service_model.model_catalog_id::text, package_row.duration_days
+		FROM api_services
+		JOIN api_service_packages package_row ON package_row.api_service_id = api_services.id
+		JOIN api_service_package_models package_model
+		  ON package_model.api_service_id = package_row.api_service_id
+		 AND package_model.api_service_package_id = package_row.id
+		JOIN api_service_models service_model
+		  ON service_model.api_service_id = package_model.api_service_id
+		 AND service_model.id = package_model.api_service_model_id
+		WHERE `+publicAPIServiceOrderablePredicate("api_services")+`
+		  AND api_services.billing_mode = 'fixed_package'
+		  AND package_row.enabled = true
+		  AND package_row.stock_available > 0
+		  AND service_model.enabled = true
+		ORDER BY service_model.model_catalog_id::text, package_row.duration_days
+	`)
+	if err != nil {
+		return apimarket.PublicPackageFilterAvailability{}, internalStoreError()
+	}
+	defer rows.Close()
+	availability := apimarket.PublicPackageFilterAvailability{}
+	for rows.Next() {
+		var modelID string
+		var duration int
+		if err := rows.Scan(&modelID, &duration); err != nil {
+			return apimarket.PublicPackageFilterAvailability{}, internalStoreError()
+		}
+		availability.Facts = append(availability.Facts, apimarket.PublicPackageFilterAvailabilityFact{
+			ModelCatalogID: modelID,
+			DurationDays:   duration,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return apimarket.PublicPackageFilterAvailability{}, internalStoreError()
+	}
+	return availability, nil
 }
 
 func publicAPIServiceOrderablePredicate(alias string) string {
@@ -349,8 +413,14 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		      AND package_row.enabled = true
 		      AND package_row.stock_available > 0
 		      AND EXISTS (
-		        SELECT 1 FROM api_service_package_models package_model
-		        WHERE package_model.api_service_package_id = package_row.id
+		        SELECT 1
+		        FROM api_service_package_models package_model
+		        JOIN api_service_models service_model
+		          ON service_model.api_service_id = package_model.api_service_id
+		         AND service_model.id = package_model.api_service_model_id
+		        WHERE package_model.api_service_id = package_row.api_service_id
+		          AND package_model.api_service_package_id = package_row.id
+		          AND service_model.enabled = true
 		      )
 		  ))
 		  AND EXISTS (
@@ -716,9 +786,6 @@ func (s *Store) submitAPIServiceForReviewInTx(ctx context.Context, tx pgx.Tx, us
 	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
 		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
-		return apimarket.Service{}, appErr
-	}
 	if service.ReviewStatus != apimarket.ServiceReviewStatusDraft && service.ReviewStatus != apimarket.ServiceReviewStatusChangesRequested {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能提交审核。")
 	}
@@ -780,7 +847,7 @@ func (s *Store) updateAPIServicePublicationInTx(ctx context.Context, tx pgx.Tx, 
 		if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
 			return apimarket.Service{}, appErr
 		}
-		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, service.ID, now); appErr != nil {
 			return apimarket.Service{}, appErr
 		}
 		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
@@ -1222,7 +1289,11 @@ func (s *Store) listAPIServicesPage(
 			return domain.Page[apimarket.Service]{}, appErr
 		}
 	}
-	query := `SELECT ` + apiServiceColumns + ` FROM api_services `
+	selectColumns := apiServiceColumns
+	if sortExpression != "" {
+		selectColumns += ", " + sortExpression
+	}
+	query := `SELECT ` + selectColumns + ` FROM api_services `
 	whereClause = strings.TrimSpace(whereClause)
 	if whereClause != "" {
 		query += whereClause
@@ -1254,7 +1325,12 @@ func (s *Store) listAPIServicesPage(
 		return domain.Page[apimarket.Service]{}, internalStoreError()
 	}
 	defer rows.Close()
-	services, appErr := scanAPIServices(rows)
+	var services []apimarket.Service
+	if sortExpression != "" {
+		services, appErr = scanAPIServicesWithSortValue(rows)
+	} else {
+		services, appErr = scanAPIServices(rows)
+	}
 	if appErr != nil {
 		return domain.Page[apimarket.Service]{}, appErr
 	}
@@ -1290,14 +1366,15 @@ func (s *Store) getAPIService(ctx context.Context, q queryer, serviceID string, 
 }
 
 func (s *Store) getPublicAPIService(ctx context.Context, q queryer, serviceID string, forUpdate bool) (apimarket.Service, error) {
+	predicate := publicAPIServiceOrderablePredicate("api_services")
 	if forUpdate {
 		var id string
-		if err := q.QueryRow(ctx, `SELECT id::text FROM api_services WHERE id = $1 AND `+publicAPIServiceOrderablePredicate("api_services")+` FOR UPDATE`, serviceID).Scan(&id); err != nil {
+		if err := q.QueryRow(ctx, `SELECT id::text FROM api_services WHERE id = $1 AND `+predicate+` FOR UPDATE`, serviceID).Scan(&id); err != nil {
 			return apimarket.Service{}, err
 		}
 	}
 	var service apimarket.Service
-	err := scanAPIService(q.QueryRow(ctx, `SELECT `+apiServiceColumns+` FROM api_services WHERE id = $1 AND `+publicAPIServiceOrderablePredicate("api_services"), serviceID), &service)
+	err := scanAPIService(q.QueryRow(ctx, `SELECT `+apiServiceColumns+` FROM api_services WHERE id = $1 AND `+predicate, serviceID), &service)
 	if err != nil {
 		return apimarket.Service{}, err
 	}
@@ -1567,11 +1644,11 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, service.ID); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, service.ID, now); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
 
-	buyerMethod, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	buyerMethod, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1923,11 +2000,11 @@ func lockAPIServiceContacts(ctx context.Context, tx pgx.Tx, service apimarket.Se
 	if len(methodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
 		methodIDs = []string{service.OwnerContactMethodID}
 	}
-	if len(methodIDs) == 0 {
-		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "至少需要一种商户联系方式。")
+	if len(methodIDs) != 1 {
+		return contact.WechatRequiredError("ownerContactMethodIds", "API 服务必须使用当前账号唯一的微信联系方式。")
 	}
 	for _, methodID := range methodIDs {
-		if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant, detail); appErr != nil {
+		if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant, "ownerContactMethodIds", detail); appErr != nil {
 			return appErr
 		}
 	}
@@ -1963,9 +2040,12 @@ func lockAPIServiceOwnerContactSnapshots(ctx context.Context, tx pgx.Tx, service
 	if len(methodIDs) == 0 {
 		return nil, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", detail)
 	}
+	if len(methodIDs) != 1 {
+		return nil, contact.WechatRequiredError("ownerContactMethodIds", "API 服务必须使用当前账号唯一的微信联系方式。")
+	}
 	snapshots := make([]apiintent.OwnerContactSnapshot, 0, len(methodIDs))
 	for _, methodID := range methodIDs {
-		method, version, appErr := lockContactVersionForOwnerAndScope(ctx, tx, methodID, ownerUserID, contact.UsageScopeAPIMerchant, detail)
+		method, version, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, methodID, ownerUserID, contact.UsageScopeAPIMerchant, "ownerContactMethodIds", detail)
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -2412,7 +2492,7 @@ func applyAPIServiceAdminAction(service apimarket.Service, input apimarket.Servi
 
 func validateCreateAPIPurchaseIntentForStore(input apiintent.CreateIntentInput, service apimarket.Service) *domain.AppError {
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "提交购买意向必须选择联系方式。", "buyerContactMethodId", "required", "必须选择联系方式。")
+		return contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
 	}
 	if input.BuyerUserID == service.OwnerUserID {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "不能向自己的 API 服务提交购买意向。")
@@ -2680,8 +2760,29 @@ func scanAPIServices(rows pgx.Rows) ([]apimarket.Service, *domain.AppError) {
 	return services, nil
 }
 
+func scanAPIServicesWithSortValue(rows pgx.Rows) ([]apimarket.Service, *domain.AppError) {
+	services := []apimarket.Service{}
+	for rows.Next() {
+		var service apimarket.Service
+		if err := scanAPIServiceWithSortValue(rows, &service); err != nil {
+			return nil, internalStoreError()
+		}
+		services = append(services, service)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, internalStoreError()
+	}
+	return services, nil
+}
+
 func scanAPIService(row scanner, service *apimarket.Service) error {
 	return row.Scan(apiServiceScanDestinations(service)...)
+}
+
+func scanAPIServiceWithSortValue(row scanner, service *apimarket.Service) error {
+	destinations := apiServiceScanDestinations(service)
+	destinations = append(destinations, &service.PublicSortValue)
+	return row.Scan(destinations...)
 }
 
 func apiServiceScanDestinations(service *apimarket.Service) []any {

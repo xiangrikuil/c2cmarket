@@ -947,7 +947,7 @@ paths:
       tags: [Reviews]
       security: []
       summary: List verified public reviews for a user.
-      description: Returns published, non-removed reviews from completed carpool memberships and API orders. Sealed and reputation-excluded transaction reviews are never exposed.
+      description: Returns published, non-removed reviews from reviewable API orders. Sealed and reputation-excluded transaction reviews are never exposed; carpool applications and memberships do not produce reviews.
       parameters:
         - name: username
           in: path
@@ -1016,6 +1016,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AnnouncementList"
+  /api/v1/announcements/public-active:
+    get:
+      operationId: listPublicActiveAnnouncements
+      tags: [Announcements]
+      security: []
+      summary: List active all-user global announcements.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [global_bar, modal]
+      responses:
+        "200":
+          description: Public global announcements without receipt, operator, or targeted-user data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAnnouncementList"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/announcements/active:
     get:
       operationId: listActiveAnnouncements
@@ -1026,7 +1048,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [message_center, home_banner]
+            enum: [message_center, home_banner, global_bar, modal]
       responses:
         "200":
           description: Active published announcements, optionally filtered by channel.
@@ -1152,7 +1174,7 @@ paths:
       tags: [APIMarket]
       security: []
       summary: List orderable public API services.
-      description: Returns API services that are approved, online, clear, accepting orders, have a valid 3-15 minute payment window, and have at least one enabled payment option. Public service reads do not process payment, proxy upstream calls, expose payment QR codes, or store/deliver credentials.
+      description: Returns API services that are approved, online, clear, accepting orders, have a valid 3-15 minute payment window, and have at least one enabled payment option. Fixed-package services additionally require at least one enabled package with stock and an enabled referenced service model. Package model filters use OR semantics and run before cursor pagination. Public service reads do not process payment, proxy upstream calls, expose payment QR codes, or store/deliver credentials.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -1203,8 +1225,22 @@ paths:
         - name: packageModelCatalogId
           in: query
           required: false
+          deprecated: true
+          description: Legacy singular package-model filter. It is merged into packageModelCatalogIds when both forms are supplied.
           schema:
             type: string
+        - name: packageModelCatalogIds
+          in: query
+          required: false
+          description: Repeat this parameter to match any selected package model. Values are trimmed and deduplicated; zero values means all models.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 50
+            items:
+              type: string
+              minLength: 1
         - name: packageDurationDays
           in: query
           required: false
@@ -1230,7 +1266,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [updated_desc, price_asc, minimum_purchase_asc, package_price_asc]
+            enum: [updated_desc, recommended, reputation_desc, completed_desc, response_fast, price_asc, minimum_purchase_asc, package_price_asc]
             default: updated_desc
       responses:
         "200":
@@ -1239,6 +1275,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PublicAPIServiceList"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/api-services/filter-options:
+    get:
+      operationId: getPublicAPIPackageFilterOptions
+      tags: [APIMarket]
+      security: []
+      summary: Get currently purchasable fixed-package filter options.
+      description: Returns only effectively active model/provider catalog entries referenced by an enabled service model and at least one publicly orderable, enabled, in-stock fixed package. Models and durations backed only by disabled or sold-out inventory are excluded.
+      parameters:
+        - name: billingMode
+          in: query
+          required: true
+          schema:
+            type: string
+            const: fixed_package
+      responses:
+        "200":
+          description: Current model and duration choices for fixed-package discovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPIPackageFilterOptions"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/api-service-promotions:
     get:
       operationId: listPublicAPIServicePromotions
@@ -1269,6 +1330,7 @@ paths:
       tags: [APIMarket]
       security: []
       summary: Get one orderable public API service.
+      description: Returns only services that currently satisfy the same public orderability contract as marketplace discovery. Sold-out fixed-package services are not publicly visible.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
       responses:
@@ -1490,7 +1552,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [updated_desc, unit_price_asc, allowance_desc, delivery_asc]
+            enum: [updated_desc, recommended, reputation_desc, completed_desc, response_fast, unit_price_asc, allowance_desc, delivery_asc]
             default: updated_desc
         - name: slotKey
           in: query
@@ -2103,46 +2165,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
-  /api/v1/me/reviews/carpool-memberships/{membershipId}:
-    put:
-      operationId: submitCarpoolMembershipReview
-      tags: [Reviews]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: Retained compatibility route for a carpool buyer review.
-      description: Writes through the unified transaction review service. New clients use the generic transaction review route.
-      parameters:
-        - name: membershipId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SubmitReviewRequest"
-      responses:
-        "200":
-          description: Review center row after the submit/update.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReviewCenterRow"
-        "401":
-          $ref: "#/components/responses/Problem"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
   /api/v1/reports:
     post:
       operationId: createReport
@@ -2270,14 +2292,34 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
-  /api/v1/me/disputes/{id}/messages:
+  /api/v1/me/dispute-evidence/{id}/content:
+    get:
+      operationId: getMyDisputeEvidenceContent
+      tags: [Reports]
+      summary: Read private image evidence visible to the current participant.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Private evidence image bytes.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/seller-decision:
     post:
-      operationId: appendMyDisputeMessage
+      operationId: decideMyDisputeAsSeller
       tags: [Reports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Append an immutable credential-free plain-text message.
+      summary: Let the seller accept or reject the buyer's after-sales application once.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2286,7 +2328,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DisputeMessageRequest"
+              $ref: "#/components/schemas/DisputeSellerDecisionRequest"
       responses:
         "200":
           description: Updated dispute detail.
@@ -2298,14 +2340,14 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/settlement-proposals:
+  /api/v1/me/disputes/{id}/platform-intervention:
     post:
-      operationId: createMyDisputeSettlementProposal
+      operationId: requestMyDisputePlatformIntervention
       tags: [Reports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Propose a bilateral settlement; the creator counts as the first confirmation.
+      summary: Let the buyer request platform review after rejection, timeout, or disputed voluntary fulfillment.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2314,10 +2356,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DisputeSettlementProposalRequest"
+              $ref: "#/components/schemas/DisputePlatformInterventionRequest"
       responses:
         "200":
-          description: Updated dispute detail.
+          description: Updated dispute detail in platform review.
           content:
             application/json:
               schema:
@@ -2326,73 +2368,14 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/confirm:
+  /api/v1/me/disputes/{id}/withdraw:
     post:
-      operationId: confirmMyDisputeSettlementProposal
+      operationId: withdrawMyDispute
       tags: [Reports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Confirm the counterparty's pending proposal and close the dispute atomically.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - name: proposalId
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/EmptyRequest" }
-      responses:
-        "200":
-          description: Dispute closed after bilateral confirmation.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SelfDispute" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/reject:
-    post:
-      operationId: rejectMyDisputeSettlementProposal
-      tags: [Reports]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: Reject the counterparty's proposal without deciding that the original claim is invalid.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - name: proposalId
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/DisputeParticipantReasonRequest" }
-      responses:
-        "200":
-          description: Proposal rejected; dispute remains negotiating.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SelfDispute" }
-        "401": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
-        "422": { $ref: "#/components/responses/Problem" }
-  /api/v1/me/disputes/{id}/escalate:
-    post:
-      operationId: escalateMyDispute
-      tags: [Reports]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: End participant negotiation and request platform review.
+      summary: Let the applicant withdraw before seller acceptance or platform intervention.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2400,13 +2383,15 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/DisputeEscalationRequest" }
+            schema:
+              $ref: "#/components/schemas/DisputeParticipantReasonRequest"
       responses:
         "200":
-          description: Dispute moved to platform review.
+          description: Updated dispute detail.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SelfDispute" }
+              schema:
+                $ref: "#/components/schemas/SelfDispute"
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
@@ -2624,6 +2609,60 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/carpools/{id}/stop-recruiting:
+    post:
+      operationId: stopMyCarpoolRecruiting
+      tags: [Carpools]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Recruitment stopped without changing pending applications or active memberships.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarpoolListing"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/carpools/{id}/resume-recruiting:
+    post:
+      operationId: resumeMyCarpoolRecruiting
+      tags: [Carpools]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Recruitment resumed when governance is clear and seats are available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarpoolListing"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/carpool-applications:
     get:
       operationId: listMyCarpoolApplications
@@ -2687,17 +2726,17 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/me/carpool-applications/{id}/confirm-join:
+  /api/v1/me/carpool-applications/{id}/confirm-conditions:
     post:
-      operationId: confirmMyCarpoolApplicationJoin
+      operationId: confirmMyCarpoolApplicationConditions
       tags: [CarpoolApplications]
       security:
         - sessionCookie: []
           csrfToken: []
+      summary: Confirm the latest listing conditions for a pending application.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -2706,11 +2745,13 @@ paths:
               $ref: "#/components/schemas/EmptyRequest"
       responses:
         "200":
-          description: Buyer-side join confirmation recorded. When both sides confirm, membership becomes active.
+          description: Latest conditions frozen into the pending application.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolApplication"
+        "404":
+          $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
         "412":
@@ -2731,36 +2772,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolMembershipList"
-  /api/v1/me/carpool-memberships/{id}/confirm-complete:
-    post:
-      operationId: confirmMyCarpoolMembershipComplete
-      tags: [CarpoolMemberships]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Buyer-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolMembership"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/me/carpool-memberships/{id}/leave:
     post:
       operationId: leaveMyCarpoolMembership
@@ -2911,6 +2922,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: dispute
+          in: query
+          schema:
+            type: string
+            enum: [all, active, none, needs_action, waiting_counterparty, platform_review]
+          description: Filter by active-dispute state or by the current participant queue.
       responses:
         "200":
           description: Current user's API orders as buyer.
@@ -2918,6 +2935,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIOrderList"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/api-orders/{id}:
     get:
       operationId: getMyAPIOrder
@@ -3114,6 +3133,32 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/api-orders/{id}/dispute-evidence:
+    post:
+      operationId: uploadMyAPIOrderDisputeEvidence
+      tags: [APIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Upload private redacted image evidence before binding it to a dispute action.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/DisputeEvidenceUploadRequest"
+      responses:
+        "201":
+          description: Processed private evidence assets ready for one-time binding.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisputeEvidenceUploadResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
   /api/v1/me/api-orders/{id}/report-late-payment:
     post:
       operationId: reportMyAPIOrderLatePayment
@@ -3501,6 +3546,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AnnouncementReceipt"
+  /api/v1/me/announcements/{id}/acknowledge:
+    post:
+      operationId: acknowledgeAnnouncement
+      tags: [Announcements]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Durable acknowledgement for the current critical announcement revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnnouncementReceipt"
+        "409":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/carpool-applications:
     get:
       operationId: listOwnerCarpoolApplications
@@ -3553,7 +3622,7 @@ paths:
               $ref: "#/components/schemas/EmptyRequest"
       responses:
         "200":
-          description: Application accepted and a 30-minute contact window opened.
+          description: Application joined, active membership created, and lifecycle-bound contact access opened atomically.
           content:
             application/json:
               schema:
@@ -3592,66 +3661,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/owner/carpool-applications/{id}/withdraw-acceptance:
-    post:
-      operationId: withdrawCarpoolAcceptance
-      tags: [OwnerCarpoolApplications]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MembershipEndRequest"
-      responses:
-        "200":
-          description: Owner withdrew an accepted reservation before the application joined.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolApplication"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/owner/carpool-applications/{id}/confirm-join:
-    post:
-      operationId: confirmOwnerCarpoolApplicationJoin
-      tags: [OwnerCarpoolApplications]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Owner-side join confirmation recorded. When both sides confirm, membership becomes active.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolApplication"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/owner/carpool-memberships:
     get:
       operationId: listOwnerCarpoolMemberships
@@ -3666,36 +3675,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolMembershipList"
-  /api/v1/owner/carpool-memberships/{id}/confirm-complete:
-    post:
-      operationId: confirmOwnerCarpoolMembershipComplete
-      tags: [CarpoolMemberships]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Owner-side membership completion confirmation recorded. When both sides confirm, membership becomes completed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CarpoolMembership"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/owner/carpool-memberships/{id}/remove:
     post:
       operationId: removeOwnerCarpoolMembership
@@ -3723,6 +3702,38 @@ paths:
         "409":
           $ref: "#/components/responses/Problem"
         "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/carpool-memberships/{id}/note:
+    patch:
+      operationId: updateOwnerCarpoolMembershipNote
+      tags: [CarpoolMemberships]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CarpoolMembershipOwnerNoteRequest"
+      responses:
+        "200":
+          description: Updated private owner note.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarpoolMembership"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
@@ -4758,6 +4769,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: dispute
+          in: query
+          schema:
+            type: string
+            enum: [all, active, none, needs_action, waiting_counterparty, platform_review]
+          description: Filter by active-dispute state or by the seller's current queue.
       responses:
         "200":
           description: API orders for services owned by the current user.
@@ -4765,6 +4782,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIOrderList"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-orders/commerce-status:
+    get:
+      operationId: getSellerCommerceStatus
+      tags: [OwnerAPIOrders]
+      description: Returns the server-authoritative temporary commerce restriction derived from active API-order disputes. Formal user restrictions remain independent.
+      responses:
+        "200":
+          description: Current seller commerce status. Sensitive dispute relations are private and must not be cached.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SellerCommerceStatus"
+        "403":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/api-orders/{id}:
     get:
       operationId: getOwnerAPIOrder
@@ -4886,46 +4923,6 @@ paths:
       responses:
         "200":
           description: Seller submitted the one-time delivery credential.
-          headers:
-            Cache-Control:
-              schema:
-                type: string
-            ETag:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIOrder"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/owner/api-orders/{id}/dispute:
-    post:
-      operationId: openOwnerAPIOrderDispute
-      tags: [OwnerAPIOrders]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      description: Allows the API service owner to open the same admin dispute workflow available to the buyer. The order fulfillment status remains unchanged, and the platform does not process refunds, compensation, escrow, or payment.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/APIOrderDisputeRequest"
-      responses:
-        "200":
-          description: API order dispute case opened by the service owner and linked to the order.
           headers:
             Cache-Control:
               schema:
@@ -5401,7 +5398,7 @@ paths:
               $ref: "#/components/schemas/ReviewActionRequest"
       responses:
         "200":
-          description: Carpool listing paused.
+          description: Carpool listing removed from public visibility without changing recruitment state.
           content:
             application/json:
               schema:
@@ -5429,7 +5426,7 @@ paths:
               $ref: "#/components/schemas/ReviewActionRequest"
       responses:
         "200":
-          description: Carpool listing restored to active.
+          description: Carpool listing governance restored without changing recruitment state.
           content:
             application/json:
               schema:
@@ -6350,6 +6347,94 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/community-identities:
+    get:
+      operationId: listAdminCommunityIdentities
+      tags: [AdminUsers]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Administrator-only community identity records, including grant and revoke provenance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCommunityIdentityList"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: grantAdminCommunityIdentity
+      tags: [AdminUsers]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommunityIdentityGrantRequest"
+      responses:
+        "200":
+          description: Community identity granted atomically with its notification.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCommunityIdentity"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/community-identities/{identityType}/revoke:
+    post:
+      operationId: revokeAdminCommunityIdentity
+      tags: [AdminUsers]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - name: identityType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [FOUNDING_USER, BETA_CONTRIBUTOR]
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommunityIdentityRevokeRequest"
+      responses:
+        "200":
+          description: Community identity soft-revoked while retaining its history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCommunityIdentity"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/users/{id}/status:
     post:
       operationId: updateAdminUserStatus
@@ -6853,14 +6938,14 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/disputes/{id}/remedy/mark-overdue:
+  /api/v1/admin/disputes/{id}/remedy/confirm-lateness:
     post:
-      operationId: markDisputeRemedyOverdue
+      operationId: confirmDisputeRemedyLateness
       tags: [AdminReports]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Confirm after the remedy deadline that the responsible participant did not fulfill it.
+      summary: Confirm that a remedy claim was late without replacing its fulfillment progress.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -6872,7 +6957,36 @@ paths:
             schema: { $ref: "#/components/schemas/ReportActionRequest" }
       responses:
         "200":
-          description: Remedy marked overdue and dispute closed by an administrator.
+          description: Remedy lateness confirmed as an independent governance fact.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminReportMutation" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/disputes/{id}/remedy/excuse-lateness:
+    post:
+      operationId: excuseDisputeRemedyLateness
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Excuse a late remedy claim without replacing its fulfillment progress.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReportActionRequest" }
+      responses:
+        "200":
+          description: Remedy lateness excused as an independent governance fact.
           headers:
             ETag:
               schema: { type: string }
@@ -6995,6 +7109,59 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/dispute-evidence/{id}/content:
+    get:
+      operationId: getAdminDisputeEvidenceContent
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+      summary: Read private dispute evidence as an administrator.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Private evidence image bytes.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/dispute-evidence/{id}/quarantine:
+    post:
+      operationId: quarantineAdminDisputeEvidence
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Quarantine private evidence after explicit administrator review.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisputeEvidenceQuarantineRequest" }
+      responses:
+        "200":
+          description: Evidence quarantined and scheduled for bounded destruction.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisputeEvidenceQuarantineResult" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
   /api/v1/admin/users/{id}/reputation-restrictions:
     post:
       operationId: createUserReputationRestriction
@@ -8450,23 +8617,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContactMethod"
-  /api/v1/contact-methods/{id}/verify:
+  /api/v1/contact-methods/{id}/email-verification/start:
     post:
-      operationId: verifyContactMethod
+      operationId: startContactEmailVerification
       tags: [ContactMethods]
+      summary: Send an ownership code to the current transaction-contact email.
+      description: The challenge is independent from the account recovery email and is bound to the current immutable contact-method version.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Contact email verification challenge created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactEmailVerificationChallenge"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/contact-methods/{id}/email-verification/confirm:
+    post:
+      operationId: confirmContactEmailVerification
+      tags: [ContactMethods]
+      summary: Confirm ownership of the current transaction-contact email version.
       security:
         - sessionCookie: []
           csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmContactEmailVerificationRequest"
       responses:
         "200":
-          description: Contact method marked verified.
+          description: Contact method marked verified without changing the account email.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContactMethod"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/dev/contact-sessions:
     post:
       x-dev-only: true
@@ -8886,7 +9092,7 @@ components:
       required: true
       schema:
         type: string
-        enum: [carpool_membership, api_order]
+        enum: [api_order]
     ResourceId:
       name: id
       in: path
@@ -9090,12 +9296,15 @@ components:
             $ref: "#/components/schemas/Notification"
     NavigationBadgeRoleSummary:
       type: object
-      required: [carpoolActions, apiOrderActions]
+      required: [carpoolActions, apiOrderActions, apiOrderDisputes]
       properties:
         carpoolActions:
           type: integer
           minimum: 0
         apiOrderActions:
+          type: integer
+          minimum: 0
+        apiOrderDisputes:
           type: integer
           minimum: 0
     NavigationBadgeAdminSummary:
@@ -9122,7 +9331,7 @@ components:
           minimum: 0
     NavigationBadgeSummary:
       type: object
-      required: [generatedAt, notificationUnread, importantAnnouncementUnread, feedbackUnread, buyer, merchant, admin]
+      required: [generatedAt, notificationUnread, importantAnnouncementUnread, feedbackUnread, supportActionCount, buyer, merchant, admin]
       properties:
         generatedAt:
           type: string
@@ -9136,6 +9345,10 @@ components:
         feedbackUnread:
           type: integer
           minimum: 0
+        supportActionCount:
+          type: integer
+          minimum: 0
+          description: Current-user feedback tickets with an unread administrator reply or needs_user_info status, counted once per ticket, plus open moderation information requests assigned to the current user.
         buyer:
           $ref: "#/components/schemas/NavigationBadgeRoleSummary"
         merchant:
@@ -9150,7 +9363,18 @@ components:
       properties:
         type:
           type: string
-          enum: [all]
+          enum: [all, roles, specific_users]
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [buyer, merchant, admin]
+        userIds:
+          type: array
+          description: Administrator-only explicit recipient identifiers; omitted from user and public responses.
+          items:
+            type: string
+            format: uuid
     AnnouncementReceipt:
       type: object
       required: [announcementId, announcementVersion]
@@ -9169,6 +9393,9 @@ components:
         dismissedAt:
           type: string
           format: date-time
+        acknowledgedAt:
+          type: string
+          format: date-time
     Announcement:
       type: object
       required:
@@ -9184,6 +9411,7 @@ components:
         - audience
         - isPinned
         - isDismissible
+        - requiresAck
         - publishAt
         - contentUpdatedAt
         - version
@@ -9209,7 +9437,7 @@ components:
           enum: [platform, rules, maintenance, feature, risk, operation]
         level:
           type: string
-          enum: [normal, important]
+          enum: [normal, important, critical]
         status:
           type: string
           enum: [draft, scheduled, published, offline, expired, archived]
@@ -9217,12 +9445,14 @@ components:
           type: array
           items:
             type: string
-            enum: [message_center, home_banner]
+            enum: [message_center, home_banner, global_bar, modal]
         audience:
           $ref: "#/components/schemas/AnnouncementAudience"
         isPinned:
           type: boolean
         isDismissible:
+          type: boolean
+        requiresAck:
           type: boolean
         ctaLabel:
           type: string
@@ -9262,10 +9492,54 @@ components:
             $ref: "#/components/schemas/Announcement"
         nextCursor:
           type: [string, "null"]
+    PublicAnnouncement:
+      type: object
+      required: [id, slug, title, summary, contentMarkdown, category, level, channels, audience, isPinned, isDismissible, requiresAck, publishAt, contentUpdatedAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        contentMarkdown: { type: string }
+        category:
+          type: string
+          enum: [platform, rules, maintenance, feature, risk, operation]
+        level:
+          type: string
+          enum: [important, critical]
+        channels:
+          type: array
+          items:
+            type: string
+            enum: [message_center, home_banner, global_bar, modal]
+        audience:
+          type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [all]
+        isPinned: { type: boolean }
+        isDismissible: { type: boolean }
+        requiresAck: { type: boolean }
+        ctaLabel: { type: string }
+        ctaUrl: { type: string }
+        publishAt: { type: string, format: date-time }
+        expireAt: { type: string, format: date-time }
+        contentUpdatedAt: { type: string, format: date-time }
+        version: { type: integer }
+    PublicAnnouncementList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicAnnouncement"
     AnnouncementFormRequest:
       type: object
       additionalProperties: false
-      required: [title, summary, contentMarkdown, category, level, channels, isPinned, isDismissible, publishAt]
+      required: [title, summary, contentMarkdown, category, level, channels, audience, isPinned, isDismissible, requiresAck, publishAt]
       properties:
         title:
           type: string
@@ -9283,15 +9557,19 @@ components:
           enum: [platform, rules, maintenance, feature, risk, operation]
         level:
           type: string
-          enum: [normal, important]
+          enum: [normal, important, critical]
         channels:
           type: array
           items:
             type: string
-            enum: [message_center, home_banner]
+            enum: [message_center, home_banner, global_bar, modal]
+        audience:
+          $ref: "#/components/schemas/AnnouncementAudience"
         isPinned:
           type: boolean
         isDismissible:
+          type: boolean
+        requiresAck:
           type: boolean
         ctaLabel:
           type: string
@@ -9522,9 +9800,83 @@ components:
           type: string
         available:
           type: boolean
+    CommunityIdentity:
+      type: object
+      additionalProperties: false
+      required: [code, name, description, grantedAt]
+      properties:
+        code:
+          type: string
+          enum: [FOUNDING_USER, BETA_CONTRIBUTOR]
+        name:
+          type: string
+        description:
+          type: string
+        grantedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: [string, "null"]
+          format: date-time
+        source:
+          type: string
+          enum: [AUTO, ADMIN, BACKFILL]
+    CommunityIdentityGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [identityType, reason]
+      properties:
+        identityType:
+          type: string
+          enum: [BETA_CONTRIBUTOR]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    CommunityIdentityRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    AdminCommunityIdentity:
+      allOf:
+        - $ref: "#/components/schemas/CommunityIdentity"
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            source:
+              type: string
+            qualifiedAt:
+              type: [string, "null"]
+              format: date-time
+            grantedBy:
+              type: string
+              format: uuid
+            grantReason:
+              type: string
+            revokedBy:
+              type: string
+              format: uuid
+            revokeReason:
+              type: string
+    AdminCommunityIdentityList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminCommunityIdentity"
     MyProfile:
       type: object
-      required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, capabilities, linuxDoBinding, badges, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
+      required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, capabilities, linuxDoBinding, badges, communityIdentities, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
       properties:
         id:
           type: string
@@ -9573,6 +9925,10 @@ components:
           type: array
           items:
             type: string
+        communityIdentities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         restrictions:
           type: array
           items:
@@ -10502,6 +10858,7 @@ components:
         - linuxDoUsername
         - trustLevel
         - badges
+        - communityIdentities
         - accountStatus
         - createdAt
         - lastActiveAt
@@ -10531,6 +10888,10 @@ components:
           type: array
           items:
             type: string
+        communityIdentities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         accountStatus:
           type: string
         createdAt:
@@ -10882,13 +11243,16 @@ components:
     DevPersonaSessionResponse:
       type: object
       additionalProperties: false
-      required: [persona, user, csrfToken, expiresAt]
+      required: [persona, user, audience, csrfToken, expiresAt]
       properties:
         persona:
           type: string
           enum: [buyer, seller, admin]
         user:
           $ref: "#/components/schemas/User"
+        audience:
+          type: string
+          enum: [normal]
         csrfToken:
           type: string
         expiresAt:
@@ -12974,14 +13338,16 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
+          description: Enabled WeChat contact owned by the merchant. Retained as a compatibility alias for the single item in ownerContactMethodIds.
         ownerContactMethodIds:
           type: array
           minItems: 1
+          maxItems: 1
           uniqueItems: true
           items:
             type: string
             format: uuid
-          description: Ordered merchant contacts to freeze for each purchase intent. The first item is also returned through ownerContactMethodId for compatibility.
+          description: Exactly one enabled WeChat contact owned by the merchant. Its current version is frozen for each purchase intent.
         probeConnectionId:
           type: string
           format: uuid
@@ -13401,6 +13767,11 @@ components:
             - type: "null"
         sourceAuthorVerification:
           $ref: "#/components/schemas/SourceAuthorResourceSummary"
+        communityIdentities:
+          type: array
+          description: Public community identities for a public-profile merchant. Detail responses only; omitted for store aliases and list projections.
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         version:
           type: integer
         createdAt:
@@ -13467,13 +13838,16 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
-          description: Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
+          description: Owner/admin view only. Enabled WeChat contact frozen for new transactions; public clients must create purchase intents instead of reading contact values from service detail.
         ownerContactMethodIds:
           type: array
+          minItems: 1
+          maxItems: 1
+          uniqueItems: true
           items:
             type: string
             format: uuid
-          description: Owner/admin view only. Ordered contact-method identifiers; public service projections omit this field.
+          description: Owner/admin view only. Contains exactly the single enabled WeChat contact identifier; public service projections omit this field.
         probeConnectionId:
           type: string
           format: uuid
@@ -13783,6 +14157,40 @@ components:
             $ref: "#/components/schemas/PublicAPIService"
         nextCursor:
           type: [string, "null"]
+    PublicAPIPackageModelFilterOption:
+      type: object
+      additionalProperties: false
+      required: [id, modelKey, providerCode, providerCategory, providerName, providerSortOrder, sortOrder]
+      properties:
+        id:
+          type: string
+          format: uuid
+        modelKey:
+          type: string
+        providerCode:
+          type: string
+        providerCategory:
+          type: string
+        providerName:
+          type: string
+        providerSortOrder:
+          type: integer
+        sortOrder:
+          type: integer
+    PublicAPIPackageFilterOptions:
+      type: object
+      additionalProperties: false
+      required: [models, durations]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicAPIPackageModelFilterOption"
+        durations:
+          type: array
+          items:
+            type: integer
+            enum: [1, 3, 7, 30]
     APIServicePromotionPlacement:
       type: string
       enum: [api_market_top]
@@ -14440,6 +14848,7 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact. The current version is frozen for the quota order.
         selectedAccessMode:
           type: string
         paymentMethod:
@@ -14457,6 +14866,7 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact. The current version is frozen for the purchase intent.
         selectedAccessMode:
           type: string
           enum:
@@ -14857,6 +15267,78 @@ components:
           minLength: 1
           maxLength: 500
           description: Immutable credential-free initial message.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
+    SellerCommerceDispute:
+      type: object
+      additionalProperties: false
+      required: [disputeId, orderId, orderNo, apiServiceId, serviceTitle, status, nextActor, restrictionLevel, reasonCodes]
+      properties:
+        disputeId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        apiServiceId:
+          type: string
+          format: uuid
+        serviceTitle:
+          type: string
+        status:
+          type: string
+          enum: [negotiating, pending_seller_response, pending_applicant_decision, open, awaiting_fulfillment, fulfillment_confirmation]
+        nextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        restrictionLevel:
+          type: string
+          enum: [normal, service_limited, account_limited]
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            enum: [service_multiple_buyers, seller_response_overdue, account_multiple_buyers, remedy_fulfillment_overdue]
+    SellerCommerceStatus:
+      type: object
+      additionalProperties: false
+      required: [level, activeDisputeCount, activeBuyerCount, blockingDisputeCount, affectedServiceIds, reasonCodes, disputes]
+      properties:
+        level:
+          type: string
+          enum: [normal, service_limited, account_limited]
+        activeDisputeCount:
+          type: integer
+          minimum: 0
+        activeBuyerCount:
+          type: integer
+          minimum: 0
+        blockingDisputeCount:
+          type: integer
+          minimum: 0
+        affectedServiceIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            enum: [service_multiple_buyers, seller_response_overdue, account_multiple_buyers, remedy_fulfillment_overdue]
+        disputes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SellerCommerceDispute"
+        nextReleaseAt:
+          type: [string, "null"]
+          format: date-time
+          description: Earliest automatic buyer-side deadline among currently blocking disputes when one exists; null when release requires an explicit action.
     APIOrder:
       type: object
       additionalProperties: false
@@ -14871,6 +15353,10 @@ components:
         - sellerReputation
         - status
         - disputeStatus
+        - hasDisputeHistory
+        - disputeNeedsAction
+        - disputeResponseOverdue
+        - disputeAvailableActions
         - serviceTitleSnapshot
         - serviceVersionSnapshot
         - billingModeSnapshot
@@ -14883,6 +15369,7 @@ components:
         - paymentExpiresAt
         - merchantConfirmOverdue
         - deliveryOverdue
+        - commercialOutcome
         - canReportLatePayment
         - canOpenDispute
         - disputeEligibilityReason
@@ -14928,10 +15415,41 @@ components:
         disputeStatus:
           type: string
           description: Order projection of the linked dispute phase. The order fulfillment status remains independent.
-          enum: [none, negotiating, open, awaiting_fulfillment, fulfillment_confirmation, closed]
+          enum: [none, negotiating, pending_seller_response, pending_applicant_decision, open, awaiting_fulfillment, fulfillment_confirmation, closed]
         disputeCaseId:
           type: string
           format: uuid
+          description: Current active dispute only. Omitted after the case closes.
+        latestDisputeCaseId:
+          type: string
+          format: uuid
+          description: Latest historical dispute, including a closed case when there is no active dispute.
+        hasDisputeHistory:
+          type: boolean
+        disputeNextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        disputeDueAt:
+          type: [string, "null"]
+          format: date-time
+        disputeNeedsAction:
+          type: boolean
+          description: Server-derived viewer-specific pending action flag.
+        disputeResponseOverdue:
+          type: boolean
+          description: True when the seller's 24-hour response deadline has passed while a late seller decision remains possible.
+        disputeAvailableActions:
+          type: array
+          items:
+            type: string
+            enum: [seller_decision, request_platform_intervention, withdraw, claim_remedy, confirm_remedy, contest_remedy]
+        activeRemedyAction:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+          description: Current remedy projection only; it does not mean the action has been fulfilled.
+        activeRemedySource:
+          type: string
+          enum: [admin_decision, mutual_agreement, seller_acceptance]
         afterSalesExpiresAt:
           type: [string, "null"]
           format: date-time
@@ -15064,6 +15582,10 @@ components:
           format: date-time
         merchantConfirmOverdue:
           type: boolean
+        merchantConfirmOverdueAt:
+          type: [string, "null"]
+          format: date-time
+          description: Persisted lateness fact. It never cancels the paid order or releases inventory.
         paymentIssueReason:
           type: string
           enum: [not_received, amount_mismatch, remark_mismatch]
@@ -15080,6 +15602,14 @@ components:
           format: date-time
         deliveryOverdue:
           type: boolean
+        deliveryOverdueAt:
+          type: [string, "null"]
+          format: date-time
+          description: Persisted delivery lateness fact. It does not automatically refund, cancel, or sanction.
+        deliveryDueRemindedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Timestamp of the single pre-deadline delivery reminder. An overdue first maintenance run does not backfill it.
         deliveryNote:
           type: string
           description: Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
@@ -15093,6 +15623,20 @@ components:
         deliveryCredential:
           $ref: "#/components/schemas/APIOrderDeliveryCredential"
           description: Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses. After destruction it contains audit timestamps and no secret payload fields.
+        commercialOutcome:
+          type: string
+          enum: [pending, normal_fulfillment, continued_fulfillment, full_refund, partial_refund, cancelled_unpaid, closed_unverified]
+          description: Independent commercial result. It does not replace order fulfillment status.
+        commercialOutcomeUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        quotaValidityIssueAt:
+          type: [string, "null"]
+          format: date-time
+          description: First-delivery validity failure fact. No quota replacement, expiry extension, or inventory restoration occurs.
+        quotaValidityIssueReason:
+          type: string
+          enum: [delivery_insufficient]
         completionSource:
           type: string
           enum: [buyer_confirmed, auto_completed]
@@ -15569,7 +16113,7 @@ components:
     CreateCarpoolListingRequest:
       type: object
       additionalProperties: false
-      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, dailyQuotaAmount, weeklyQuotaAmount, followsOfficialQuotaReset, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, paymentMethodCode, buyerSeatCapacity, activeBuyerMembers]
+      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, dailySpendLimitUsd, weeklySpendLimitUsd, followsOfficialQuotaReset, openingChannelCode, paymentMethodCode, buyerSeatCapacity, offlineOccupiedSeats]
       properties:
         productPlanId:
           type: string
@@ -15577,7 +16121,7 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
-          description: Owner-selected contact method. The platform freezes its current version only when an application is accepted.
+          description: Owner's enabled WeChat contact. The platform freezes its current version only when an application is accepted.
         cycleTerm:
           $ref: "#/components/schemas/CarpoolCycleTermInput"
         title:
@@ -15592,8 +16136,8 @@ components:
           maxLength: 2000
         distributionMethod:
           type: string
-          enum: [sub2api, other]
-          description: Public listing distribution method. Describes whether the owner supports Sub2API-managed use or another off-platform arrangement.
+          enum: [sub2api, account_login, other]
+          description: Public non-sensitive distribution method. Account login describes an off-platform login arrangement; the platform never collects credentials.
         distributionMethodNote:
           type: string
           description: Public non-sensitive distribution note. Required when distributionMethod is other. Must not contain account credentials, panel URLs, passwords, keys, tokens, sessions, cookies, or owner credentials.
@@ -15619,22 +16163,23 @@ components:
           $ref: "#/components/schemas/DecimalString"
           pattern: '^1(?:\.0+)?$'
           description: System-fixed carpool multiplier. Clients must send 1; owners cannot edit it.
-        dailyQuotaAmount:
-          $ref: "#/components/schemas/DecimalString"
-          description: Owner-declared per-seat daily quota amount. It uses the selected product plan quota label and unit.
-        weeklyQuotaAmount:
-          $ref: "#/components/schemas/DecimalString"
-          description: Owner-declared per-seat weekly quota amount. Label and unit come from the selected product plan and are not accepted from the client.
+        dailySpendLimitUsd:
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]+)?$'
+          description: Per-member daily maximum spend in USD. Null means unlimited.
+        weeklySpendLimitUsd:
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]+)?$'
+          description: Per-member weekly maximum spend in USD. Null means unlimited.
         followsOfficialQuotaReset:
           type: boolean
           description: Whether the declared quota follows the official provider reset schedule.
         vpsRegion:
-          type: string
-          minLength: 1
+          type: [string, "null"]
           maxLength: 64
           description: Owner-declared VPS region free text. It is informational and is not a catalog filter.
         supportsMainlandChinaDirectConnection:
-          type: boolean
+          type: [boolean, "null"]
           description: Whether the owner declares that the access path supports direct connection from mainland China.
         openingChannelCode:
           type: string
@@ -15656,10 +16201,10 @@ components:
           type: integer
           minimum: 1
           description: Buyer seats only. Excludes the listing owner.
-        activeBuyerMembers:
+        offlineOccupiedSeats:
           type: integer
           minimum: 0
-          description: Active buyer members only. Excludes the listing owner.
+          description: Seats already occupied outside the platform. Platform memberships are derived and cannot be supplied by the owner.
         riskAcknowledgement:
           $ref: "#/components/schemas/RiskAcknowledgement"
     CarpoolCycleTermInput:
@@ -15736,8 +16281,8 @@ components:
         - regionName
         - priceMonthlyCny
         - serviceMultiplier
-        - dailyQuotaAmount
-        - weeklyQuotaAmount
+        - dailySpendLimitUsd
+        - weeklySpendLimitUsd
         - followsOfficialQuotaReset
         - vpsRegion
         - supportsMainlandChinaDirectConnection
@@ -15749,13 +16294,15 @@ components:
         - quotaUnit
         - quotaPeriod
         - buyerSeatCapacity
+        - offlineOccupiedSeats
         - activeBuyerMembers
-        - reservedSeats
         - availableSeats
         - applicationEligibility
         - sellerReputation
         - sourceAuthorVerification
         - status
+        - governanceStatus
+        - conditionsVersion
         - policyVersion
         - riskAckRequired
         - version
@@ -15774,6 +16321,7 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
+          description: Owner's enabled WeChat contact used for new applications.
         cycleTerm:
           $ref: "#/components/schemas/CarpoolCycleTerm"
         title:
@@ -15784,7 +16332,7 @@ components:
           type: string
         distributionMethod:
           type: string
-          enum: [sub2api, other]
+          enum: [sub2api, account_login, other]
         distributionMethodNote:
           type: string
         providesAdminAccount:
@@ -15799,11 +16347,12 @@ components:
           $ref: "#/components/schemas/DecimalString"
         serviceMultiplier:
           $ref: "#/components/schemas/DecimalString"
-        dailyQuotaAmount:
+        dailySpendLimitUsd:
           type: [string, "null"]
           pattern: '^[0-9]+(?:\.[0-9]+)?$'
-        weeklyQuotaAmount:
-          $ref: "#/components/schemas/DecimalString"
+        weeklySpendLimitUsd:
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]+)?$'
         followsOfficialQuotaReset:
           type: [boolean, "null"]
         vpsRegion:
@@ -15830,11 +16379,12 @@ components:
         buyerSeatCapacity:
           type: integer
           description: Buyer seats only. Excludes the listing owner.
+        offlineOccupiedSeats:
+          type: integer
+          description: Owner-declared seats already occupied outside the platform.
         activeBuyerMembers:
           type: integer
-          description: Active buyer members only. Excludes the listing owner.
-        reservedSeats:
-          type: integer
+          description: Active platform memberships, derived by the server.
         availableSeats:
           type: integer
         applicationEligibility:
@@ -15845,9 +16395,23 @@ components:
             - type: "null"
         sourceAuthorVerification:
           $ref: "#/components/schemas/SourceAuthorResourceSummary"
+        communityIdentities:
+          type: array
+          description: Public community identities for the owner. Detail responses only; omitted from list and transaction projections.
+          items:
+            $ref: "#/components/schemas/CommunityIdentity"
         status:
           type: string
-          enum: [draft, pending_review, changes_requested, active, paused, rejected, removed]
+          enum: [draft, active, stopped]
+        governanceStatus:
+          type: string
+          enum: [clear, removed]
+        recruitmentStopReason:
+          type: string
+          enum: ['', owner, full, migration]
+        conditionsVersion:
+          type: integer
+          minimum: 1
         reviewReason:
           type: [string, "null"]
         reviewedAt:
@@ -15941,6 +16505,8 @@ components:
         - note
         - completedAt
         - reviewDeadlineAt
+        - commercialOutcome
+        - reviewPaused
         - submittedAt
         - visibleAt
         - frozenAt
@@ -15952,13 +16518,13 @@ components:
           type: string
         transactionType:
           type: string
-          enum: [carpool_membership, api_order]
+          enum: [api_order]
         transactionId:
           type: string
           format: uuid
         sourceType:
           type: string
-          enum: [carpool_membership, api_order]
+          enum: [api_order]
         sourceId:
           type: string
           format: uuid
@@ -15979,7 +16545,7 @@ components:
           enum: [buyer, seller]
         status:
           type: string
-          enum: [reviewable, expired, sealed, published, removed]
+          enum: [reviewable, paused, expired, sealed, published, removed]
         visibility:
           type: string
           enum: [none, sealed, published, removed]
@@ -16012,6 +16578,11 @@ components:
         reviewDeadlineAt:
           type: string
           format: date-time
+        commercialOutcome:
+          type: string
+          enum: ["", normal_fulfillment, continued_fulfillment, full_refund, partial_refund, legacy_fulfillment]
+        reviewPaused:
+          type: boolean
         submittedAt:
           type: [string, "null"]
           format: date-time
@@ -16086,7 +16657,7 @@ components:
           maxLength: 500
     PublicReview:
       type: object
-      required: [id, username, date, serviceType, transactionType, reviewerRole, revieweeRole, rating, tags, note, verified]
+      required: [id, username, date, serviceType, transactionType, reviewerRole, revieweeRole, rating, tags, note, verified, commercialOutcome]
       properties:
         id:
           type: string
@@ -16100,7 +16671,7 @@ components:
           type: string
         transactionType:
           type: string
-          enum: [carpool_membership, api_order]
+          enum: [api_order]
         reviewerRole:
           type: string
           enum: [buyer, seller]
@@ -16119,6 +16690,9 @@ components:
           type: string
         verified:
           type: boolean
+        commercialOutcome:
+          type: string
+          enum: ["", normal_fulfillment, continued_fulfillment, full_refund, partial_refund, legacy_fulfillment]
     PublicReviewList:
       type: object
       required: [items]
@@ -16317,42 +16891,76 @@ components:
           minLength: 4
           maxLength: 1200
           description: Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
-    DisputeMessageRequest:
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
+    DisputeEvidenceAssetIds:
+      type: array
+      maxItems: 3
+      uniqueItems: true
+      items:
+        type: string
+        format: uuid
+      description: Private uploaded assets bound atomically to this action. Each asset may be bound only once.
+    DisputeEvidenceUploadRequest:
       type: object
       additionalProperties: false
-      required: [body]
+      required: [kind, redactionConfirmed, files]
       properties:
-        body:
+        kind:
           type: string
-          minLength: 1
-          maxLength: 2000
-          description: Immutable credential-free plain text.
-    DisputeSettlementProposalRequest:
+          enum: [payment_result, refund_result, api_error, quota_insufficient, expired_early, description_mismatch, other_redacted_fact]
+        redactionConfirmed:
+          type: boolean
+          description: Confirms that credentials and unrelated private data were removed before upload.
+        files:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            type: string
+            format: binary
+    DisputeEvidenceAsset:
+      type: object
+      required: [id, kind, mime, byteSize, width, height, createdAt, contentPath, version]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [payment_result, refund_result, api_error, quota_insufficient, expired_early, description_mismatch, other_redacted_fact]
+        mime:
+          type: string
+          enum: [image/jpeg, image/png]
+        byteSize: { type: integer, format: int64 }
+        width: { type: integer }
+        height: { type: integer }
+        createdAt: { type: string, format: date-time }
+        contentPath: { type: string }
+        version: { type: integer, format: int64 }
+    DisputeEvidenceReference:
+      allOf:
+        - $ref: "#/components/schemas/DisputeEvidenceAsset"
+        - type: object
+          required: [visibility, usage, sourceType, sourceId]
+          properties:
+            visibility:
+              type: string
+              enum: [participants_admin, submitter_admin, appellant_admin]
+            usage:
+              type: string
+              enum: [dispute_initial, platform_escalation, formal_response, message, info_supplement, remedy_claim, remedy_contest, appeal]
+            sourceType:
+              type: string
+              enum: [dispute_case, dispute_message, info_supplement, dispute_remedy, appeal]
+            sourceId: { type: string, format: uuid }
+    DisputeEvidenceUploadResponse:
       type: object
       additionalProperties: false
-      required: [resolution, terms]
+      required: [items]
       properties:
-        resolution:
-          type: string
-          enum: [full_refund, partial_refund, continue_fulfillment, other]
-        amountCny:
-          type: [string, "null"]
-          pattern: '^[0-9]+(?:\.[0-9]{1,2})?$'
-          description: Required only for partial_refund and must not exceed the API order amount.
-        terms:
-          type: string
-          minLength: 1
-          maxLength: 2000
-          description: Exact credential-free terms that the counterparty will confirm or reject.
-    DisputeParticipantReasonRequest:
-      type: object
-      additionalProperties: false
-      required: [reason]
-      properties:
-        reason:
-          type: string
-          maxLength: 500
-    DisputeEscalationRequest:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DisputeEvidenceAsset" }
+    DisputeEvidenceQuarantineRequest:
       type: object
       additionalProperties: false
       required: [reason]
@@ -16360,6 +16968,51 @@ components:
         reason:
           type: string
           minLength: 2
+          maxLength: 800
+    DisputeEvidenceQuarantineResult:
+      type: object
+      additionalProperties: false
+      required: [id, status, quarantinedExpiresAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [quarantined]
+        quarantinedExpiresAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+    DisputeSellerDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [decision, reason]
+      properties:
+        decision:
+          type: string
+          enum: [accepted, rejected]
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 2000
+          description: Immutable credential-free seller decision reason.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
+    DisputePlatformInterventionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 2000
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
+    DisputeParticipantReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
           maxLength: 500
     DisputeRemedyRequest:
       type: object
@@ -16395,6 +17048,8 @@ components:
           minLength: 2
           maxLength: 2000
           description: Credential-free declaration from the responsible participant; it does not close the dispute.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeRemedyConfirmRequest:
       type: object
       additionalProperties: false
@@ -16414,6 +17069,8 @@ components:
           minLength: 2
           maxLength: 2000
           description: Required credential-free explanation that returns the dispute to platform review.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     DisputeMessage:
       type: object
       additionalProperties: false
@@ -16426,7 +17083,7 @@ components:
     DisputeSettlementProposal:
       type: object
       additionalProperties: false
-      required: [id, proposedByUserId, resolution, terms, status, createdAt, updatedAt, version]
+      required: [id, proposedByUserId, resolution, terms, fulfillmentRequired, status, createdAt, updatedAt, version]
       properties:
         id: { type: string, format: uuid }
         proposedByUserId: { type: string, format: uuid }
@@ -16435,6 +17092,10 @@ components:
           enum: [full_refund, partial_refund, continue_fulfillment, other]
         amountCny: { $ref: "#/components/schemas/DecimalString" }
         terms: { type: string }
+        fulfillmentRequired: { type: boolean }
+        responsibleUserId: { type: string, format: uuid }
+        beneficiaryUserId: { type: string, format: uuid }
+        dueAt: { type: [string, "null"], format: date-time }
         status:
           type: string
           enum: [pending, accepted, rejected, superseded]
@@ -16442,13 +17103,16 @@ components:
         acceptedAt: { type: [string, "null"], format: date-time }
         rejectedByUserId: { type: string, format: uuid }
         rejectedAt: { type: [string, "null"], format: date-time }
+        supersededReason:
+          type: string
+          enum: [new_proposal, platform_escalation]
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer }
     DisputeRemedy:
       type: object
       additionalProperties: false
-      required: [id, action, currency, responsibleUserId, beneficiaryUserId, instructions, status, dueAt, createdAt, updatedAt, version]
+      required: [id, action, currency, responsibleUserId, beneficiaryUserId, instructions, status, dueAt, latenessStatus, claimedLate, source, createdAt, updatedAt, version]
       properties:
         id: { type: string, format: uuid }
         action:
@@ -16463,14 +17127,25 @@ components:
         instructions: { type: string }
         status:
           type: string
-          enum: [pending, claimed_fulfilled, confirmed, contested, confirmation_expired, overdue, cancelled]
+          enum: [pending, claimed_fulfilled, confirmed, contested, confirmation_expired, cancelled]
         dueAt: { type: string, format: date-time }
         claimedAt: { type: string, format: date-time }
         confirmationDueAt: { type: string, format: date-time }
         confirmedAt: { type: string, format: date-time }
         contestedAt: { type: string, format: date-time }
         confirmationExpiredAt: { type: string, format: date-time }
-        overdueAt: { type: string, format: date-time }
+        latenessStatus:
+          type: string
+          enum: [not_due, on_time, late_unreviewed, late_confirmed, late_excused]
+          description: Independent lateness fact. Only late_confirmed may support reputation or sanctions.
+        lateAt: { type: [string, "null"], format: date-time }
+        latenessDecidedAt: { type: [string, "null"], format: date-time }
+        latenessReason: { type: string }
+        claimedLate: { type: boolean }
+        source:
+          type: string
+          enum: [admin_decision, mutual_agreement, seller_acceptance]
+        settlementProposalId: { type: string, format: uuid }
         claimNote: { type: string }
         responseNote: { type: string }
         createdAt: { type: string, format: date-time }
@@ -16478,11 +17153,18 @@ components:
         version: { type: integer }
     DisputeCase:
       type: object
-      required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version]
+      required: [id, active, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, sellerResponseLate, responseOverdue, availableActions, createdAt, updatedAt, version]
       properties:
         id:
           type: string
           format: uuid
+        apiOrderId:
+          type: string
+          format: uuid
+          description: Canonical API order relation for API-order disputes.
+        active:
+          type: boolean
+          description: At most one active case may exist per API order; closed historical cases remain readable.
         reportId:
           type: string
           format: uuid
@@ -16521,7 +17203,7 @@ components:
           description: Admin response only.
         status:
           type: string
-          enum: [negotiating, open, waiting_info, resolved, closed]
+          enum: [pending_seller_response, pending_applicant_decision, voluntary_fulfillment, open, waiting_info, resolved, closed, withdrawn, self_resolved]
         issueCode:
           type: string
           enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
@@ -16556,6 +17238,78 @@ components:
         closedAt:
           type: [string, "null"]
           format: date-time
+        finalReason:
+          type: string
+          description: Frozen terminal reason used for appeal eligibility and audit.
+        appealExpiresAt:
+          type: [string, "null"]
+          format: date-time
+        adverselyAffectedUserIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: Frozen terminal snapshot. Appeal approval reverses only effects matching the appellant.
+        negotiationChannels:
+          type: array
+          items:
+            type: string
+            enum: [wechat, email, linux_do, in_site, other]
+        negotiationEndedConfirmed:
+          type: boolean
+        negotiationSummary:
+          type: string
+        requestedPlatformAction:
+          type: string
+        platformInterventionReason:
+          type: string
+          description: Immutable credential-free applicant reason for requesting platform intervention.
+        escalatedByUserId:
+          type: string
+          format: uuid
+        escalatedAt:
+          type: [string, "null"]
+          format: date-time
+        nextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        factSnapshotJson:
+          type: string
+          description: Admin-only immutable credential-free order fact snapshot.
+        applicantStatement:
+          type: string
+        respondentResponse:
+          type: string
+        respondedByUserId:
+          type: string
+          format: uuid
+        respondedAt:
+          type: [string, "null"]
+          format: date-time
+        sellerDecision:
+          type: string
+          enum: [accepted, rejected]
+        sellerDecisionReason:
+          type: string
+        sellerDecidedByUserId:
+          type: string
+          format: uuid
+        sellerDecidedAt:
+          type: [string, "null"]
+          format: date-time
+        sellerResponseLate:
+          type: boolean
+        responseOverdue:
+          type: boolean
+        applicantDecisionDueAt:
+          type: [string, "null"]
+          format: date-time
+        availableActions:
+          type: array
+          items:
+            type: string
+            enum: [seller_decision, request_platform_intervention, withdraw, claim_remedy, confirm_remedy, contest_remedy]
         canAppeal:
           type: boolean
           readOnly: true
@@ -16588,6 +17342,10 @@ components:
           readOnly: true
           description: Newest-first auditable API-order remedy history.
           items: { $ref: "#/components/schemas/DisputeRemedy" }
+        evidence:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeEvidenceReference" }
         createdAt:
           type: string
           format: date-time
@@ -16949,6 +17707,8 @@ components:
           minLength: 4
           maxLength: 1000
           description: Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
+        evidenceAssetIds:
+          $ref: "#/components/schemas/DisputeEvidenceAssetIds"
     Appeal:
       type: object
       required: [id, appellantUsername, appellantName, targetType, targetId, title, status, createdAt, updatedAt, version]
@@ -17001,6 +17761,10 @@ components:
           format: date-time
         version:
           type: integer
+        evidence:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeEvidenceReference" }
     AppealList:
       type: object
       required: [items]
@@ -17546,11 +18310,22 @@ components:
     SelfDispute:
       type: object
       additionalProperties: false
-      required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version, canAppeal, canSupplement]
+      required: [viewerUserId, id, active, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, negotiationEndedConfirmed, openedAt, sellerResponseLate, responseOverdue, availableActions, createdAt, updatedAt, version, canAppeal, canSupplement]
       properties:
+        viewerUserId:
+          type: string
+          format: uuid
+          description: Authoritative authenticated viewer identity for message and action attribution.
         id:
           type: string
           format: uuid
+        apiOrderId:
+          type: string
+          format: uuid
+          description: Canonical API order relation for API-order disputes.
+        active:
+          type: boolean
+          description: True only while this is the current active case for its API order.
         reportId:
           type: string
           format: uuid
@@ -17579,7 +18354,7 @@ components:
           description: Present on authorized detail and mutation responses for message attribution.
         status:
           type: string
-          enum: [negotiating, open, waiting_info, resolved, closed]
+          enum: [pending_seller_response, pending_applicant_decision, voluntary_fulfillment, open, waiting_info, resolved, closed, withdrawn, self_resolved]
         issueCode:
           type: string
           enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
@@ -17607,6 +18382,71 @@ components:
         closedAt:
           type: [string, "null"]
           format: date-time
+        finalReason:
+          type: string
+          description: Frozen terminal reason used for appeal eligibility and audit.
+        appealExpiresAt:
+          type: [string, "null"]
+          format: date-time
+        negotiationChannels:
+          type: array
+          items:
+            type: string
+            enum: [wechat, email, linux_do, in_site, other]
+        negotiationEndedConfirmed:
+          type: boolean
+        negotiationSummary:
+          type: string
+        requestedPlatformAction:
+          type: string
+        platformInterventionReason:
+          type: string
+          description: Immutable credential-free applicant reason for requesting platform intervention.
+        escalatedByUserId:
+          type: string
+          format: uuid
+        escalatedAt:
+          type: [string, "null"]
+          format: date-time
+        nextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        applicantStatement:
+          type: string
+        respondentResponse:
+          type: string
+        respondedByUserId:
+          type: string
+          format: uuid
+        respondedAt:
+          type: [string, "null"]
+          format: date-time
+        sellerDecision:
+          type: string
+          enum: [accepted, rejected]
+        sellerDecisionReason:
+          type: string
+        sellerDecidedByUserId:
+          type: string
+          format: uuid
+        sellerDecidedAt:
+          type: [string, "null"]
+          format: date-time
+        sellerResponseLate:
+          type: boolean
+        responseOverdue:
+          type: boolean
+        applicantDecisionDueAt:
+          type: [string, "null"]
+          format: date-time
+        availableActions:
+          type: array
+          items:
+            type: string
+            enum: [seller_decision, request_platform_intervention, withdraw, claim_remedy, confirm_remedy, contest_remedy]
         createdAt:
           type: string
           format: date-time
@@ -17638,6 +18478,10 @@ components:
           readOnly: true
           description: Newest-first API-order remedy history visible to both participants.
           items: { $ref: "#/components/schemas/DisputeRemedy" }
+        evidence:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeEvidenceReference" }
     SelfDisputeList:
       type: object
       additionalProperties: false
@@ -17863,12 +18707,63 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact. The current version is frozen when the application is accepted.
         riskAcknowledgement:
           $ref: "#/components/schemas/RiskAcknowledgement"
     EmptyRequest:
       type: object
       additionalProperties: false
       properties: {}
+    CarpoolListingConditionsSnapshot:
+      type: object
+      additionalProperties: false
+      required: [title, priceMonthlyCny, dailySpendLimitUsd, weeklySpendLimitUsd, followsOfficialQuotaReset, buyerSeatCapacity, offlineOccupiedSeats, regionCode, regionName, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, customOpeningChannel, paymentMethodCode, customPaymentMethod, distributionMethod, distributionMethodNote, providesAdminAccount, accessArrangement, policyVersion, riskNoticeCode]
+      properties:
+        title:
+          type: string
+        priceMonthlyCny:
+          $ref: "#/components/schemas/DecimalString"
+        dailySpendLimitUsd:
+          type: [string, "null"]
+        weeklySpendLimitUsd:
+          type: [string, "null"]
+        followsOfficialQuotaReset:
+          type: boolean
+        buyerSeatCapacity:
+          type: integer
+        offlineOccupiedSeats:
+          type: integer
+        regionCode:
+          type: string
+        regionName:
+          type: string
+        vpsRegion:
+          type: [string, "null"]
+        supportsMainlandChinaDirectConnection:
+          type: [boolean, "null"]
+        openingChannelCode:
+          type: string
+        customOpeningChannel:
+          type: string
+        paymentMethodCode:
+          type: string
+        customPaymentMethod:
+          type: string
+        distributionMethod:
+          type: string
+          enum: [sub2api, account_login, other]
+        distributionMethodNote:
+          type: string
+        providesAdminAccount:
+          type: boolean
+        accessArrangement:
+          type: string
+        cycleTerm:
+          $ref: "#/components/schemas/CarpoolCycleTermInput"
+        policyVersion:
+          type: integer
+        riskNoticeCode:
+          type: string
     CarpoolApplication:
       type: object
       required:
@@ -17883,6 +18778,10 @@ components:
         - listingTitleSnapshot
         - priceMonthlyCny
         - policyVersionSnapshot
+        - conditionsVersionSnapshot
+        - conditionsSnapshot
+        - acceptedConditionsVersion
+        - conditionsAcceptedAt
         - buyerReputation
         - version
         - createdAt
@@ -17906,9 +18805,10 @@ components:
         buyerContactMethodId:
           type: string
           format: uuid
+          description: Buyer's enabled WeChat contact selected for this application.
         status:
           type: string
-          enum: [pending_owner, accepted_reserved, joined, rejected, cancelled_by_buyer, expired]
+          enum: [pending_owner, joined, rejected, cancelled_by_buyer]
         seatCount:
           type: integer
           const: 1
@@ -17924,23 +18824,20 @@ components:
             - type: "null"
         riskNoticeCode:
           type: string
+        conditionsVersionSnapshot:
+          type: integer
+          minimum: 1
+        conditionsSnapshot:
+          $ref: "#/components/schemas/CarpoolListingConditionsSnapshot"
+        acceptedConditionsVersion:
+          type: integer
+          minimum: 1
+        conditionsAcceptedAt:
+          type: string
+          format: date-time
         contactSessionId:
           type: string
           format: uuid
-        reservationExpiresAt:
-          type: [string, "null"]
-          format: date-time
-          description: Absolute deadline for the seat reservation. Expired reservations do not consume capacity even before scheduler materialization.
-        joinConfirmationDeadline:
-          type: [string, "null"]
-          format: date-time
-          description: Deadline for buyer and owner to confirm the off-platform arrangement. This is separate from payment and does not imply platform guarantee.
-        buyerConfirmedAt:
-          type: [string, "null"]
-          format: date-time
-        ownerConfirmedAt:
-          type: [string, "null"]
-          format: date-time
         joinedAt:
           type: [string, "null"]
           format: date-time
@@ -17980,6 +18877,8 @@ components:
         - seatCount
         - priceMonthlyCny
         - policyVersionSnapshot
+        - conditionsVersionSnapshot
+        - conditionsSnapshot
         - joinedAt
         - version
         - createdAt
@@ -18008,7 +18907,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [active, completed, left, removed]
+          enum: [active, left, removed]
         seatCount:
           type: integer
           const: 1
@@ -18018,17 +18917,13 @@ components:
           type: integer
         riskNoticeCode:
           type: string
+        conditionsVersionSnapshot:
+          type: integer
+          minimum: 1
+        conditionsSnapshot:
+          $ref: "#/components/schemas/CarpoolListingConditionsSnapshot"
         joinedAt:
           type: string
-          format: date-time
-        buyerCompletedAt:
-          type: [string, "null"]
-          format: date-time
-        ownerCompletedAt:
-          type: [string, "null"]
-          format: date-time
-        completedAt:
-          type: [string, "null"]
           format: date-time
         endedAt:
           type: [string, "null"]
@@ -18038,6 +18933,9 @@ components:
         endedByUserId:
           type: string
           format: uuid
+        ownerNote:
+          type: string
+          maxLength: 500
         version:
           type: integer
         createdAt:
@@ -18046,6 +18944,14 @@ components:
         updatedAt:
           type: string
           format: date-time
+    CarpoolMembershipOwnerNoteRequest:
+      type: object
+      required: [note]
+      additionalProperties: false
+      properties:
+        note:
+          type: string
+          maxLength: 500
     CarpoolMembershipList:
       type: object
       required: [items]
@@ -18453,6 +19359,7 @@ components:
           uniqueItems: true
           items:
             $ref: "#/components/schemas/ContactUsageScope"
+          description: For WeChat, the server normalizes this field to all transaction scopes. Other contact types retain the submitted supported scopes.
         isDefault:
           type: boolean
         enabled:
@@ -18480,6 +19387,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ContactUsageScope"
+          description: WeChat always contains all transaction scopes after server normalization.
         isDefault:
           type: boolean
         enabled:
@@ -18497,6 +19405,35 @@ components:
     ContactUsageScope:
       type: string
       enum: [carpool_owner, api_merchant, buyer, dispute]
+    ContactEmailVerificationChallenge:
+      type: object
+      additionalProperties: false
+      required: [contactMethodId, contactMethodVersionId, email, expiresAt]
+      properties:
+        contactMethodId:
+          type: string
+          format: uuid
+        contactMethodVersionId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        expiresAt:
+          type: string
+          format: date-time
+        devCode:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Present only in development/test local automation responses.
+    ConfirmContactEmailVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
     ContactMethodList:
       type: object
       required: [items]
@@ -18550,7 +19487,7 @@ components:
           type: string
           format: uuid
         endsAt:
-          type: string
+          type: [string, "null"]
           format: date-time
         items:
           type: array

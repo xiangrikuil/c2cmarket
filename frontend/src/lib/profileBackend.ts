@@ -11,6 +11,7 @@ import type {
   PublicProfileCarpool,
   PublicProfileCompletion,
   PublicReviewRecord,
+  CommunityIdentity,
 } from '@/data/mock'
 import type {
   ContactMethodType,
@@ -66,6 +67,7 @@ type BackendProfile = {
     lastSyncedAt: string | null
   }
   badges: string[] | null
+  communityIdentities: CommunityIdentity[]
   restrictions: string[] | null
   usernameChangePolicy: {
     canChange: boolean
@@ -78,6 +80,14 @@ type BackendProfile = {
 }
 
 type BackendEmailVerificationChallenge = {
+  email: string
+  expiresAt: string
+  devCode?: string
+}
+
+export type BackendContactEmailVerificationChallenge = {
+  contactMethodId: string
+  contactMethodVersionId: string
   email: string
   expiresAt: string
   devCode?: string
@@ -112,6 +122,7 @@ export type BackendMerchantProfile = {
 
 type BackendPublicUserProfile = Omit<PublicUserProfile, 'badges' | 'privacy'> & {
   badges: string[]
+  communityIdentities: CommunityIdentity[]
   privacy: BackendPrivacy
 }
 
@@ -207,9 +218,13 @@ export async function backendSetDefaultContact(contactId: string): Promise<UserC
   }))
 }
 
-export async function backendVerifyContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/verify`, {}, {
-    idempotencyPrefix: 'profile-contact-verify',
+export async function backendStartContactEmailVerification(contactId: string): Promise<BackendContactEmailVerificationChallenge> {
+  return backendMutation<BackendContactEmailVerificationChallenge>(`/api/v1/contact-methods/${contactId}/email-verification/start`, {})
+}
+
+export async function backendConfirmContactEmailVerification(contactId: string, code: string): Promise<UserContactMethod> {
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/email-verification/confirm`, { code }, {
+    idempotencyPrefix: 'profile-contact-email-confirm',
   }))
 }
 
@@ -255,6 +270,7 @@ function mapPublicProfile(value: BackendPublicUserProfile): PublicUserProfile {
     ...value,
     accountStatus: value.accountStatus as PublicUserProfile['accountStatus'],
     badges: value.badges.map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
+    communityIdentities: value.communityIdentities ?? [],
     privacy: {
       showCreatedAt: value.privacy.showCreatedAt,
       showLastActiveAt: value.privacy.showLastActiveAt,
@@ -290,6 +306,7 @@ function mapProfile(value: BackendProfile): UserProfile {
       lastSyncedAt: value.linuxDoBinding.lastSyncedAt,
     },
     badges: (value.badges ?? []).map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
+    communityIdentities: value.communityIdentities ?? [],
     accountStatus: value.accountStatus as UserProfile['accountStatus'],
     permissions: value.permissions,
     capabilities: normalizeCapabilities(value.capabilities),

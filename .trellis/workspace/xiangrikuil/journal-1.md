@@ -1747,3 +1747,248 @@ Redesigned login and student registration, added student-claim password reset ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 57: 完成 API 订单售后合并
+
+**Date**: 2026-08-15
+**Task**: 完成 API 订单售后合并
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+完成 staging 基线上的 API 订单售后语义合并，覆盖纠纷历史、整改与申诉、商业结果、私有图片证据、平台介入、独立纠纷页及相关前端修复；全量代码测试与最终 PostgreSQL 18 隔离迁移门禁通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `966373e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 58: 简化 API 订单纠纷平台处理流程
+
+**Date**: 2026-08-15
+**Task**: 简化 API 订单纠纷平台处理流程
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+删除重复的站内协商写入，纠纷直接进入平台处理；新增一次正式答复、申请人撤回或线下解决、买卖订单纠纷投影与筛选，并完成 migration 107、全量测试和浏览器验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `348c977` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 59: API 订单退款申请式售后流程
+
+**Date**: 2026-08-16
+**Task**: API 订单退款申请式售后流程
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+将 API 订单纠纷改为买家申请、卖家 24 小时内同意或拒绝、买家按需申请平台介入的售后流程；增加自愿履行、并发保护、中立超时、migration 108、买卖订单待办和独立案件操作，并完成全量测试与桌面/移动端验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fbcfe33` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 59: 管理员售后处理记录时间线
+
+**Date**: 2026-08-16
+**Task**: 管理员售后处理记录时间线
+**Package**: frontend
+**Branch**: `codex/api-after-sales-selected`
+
+### Summary
+
+管理员纠纷详情按时间展示买家申请、卖家决定、平台介入、补件与整改记录，并按正式动作归组私有图片；旧流程记录保持独立只读。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56cb94c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 60: API 订单售后与纠纷合并并提交评审
+
+**Date**: 2026-08-16
+**Task**: API 订单售后与纠纷合并并提交评审
+**Package**: frontend
+**Branch**: `codex/api-order-after-sales`
+
+### Summary
+
+完成 stash 中 API 订单售后与纠纷能力的筛选合并、卖家先处理流程、管理员正式活动时间线与证据展示；完成本地全量验证，并创建以 staging 为目标的 Draft PR #39。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `966373e` | (see git log) |
+| `348c977` | (see git log) |
+| `fbcfe33` | (see git log) |
+| `56cb94c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 61: 修复 PR #39 CI 发布门禁
+
+**Date**: 2026-08-16
+**Task**: 修复 PR #39 CI 发布门禁
+**Package**: frontend
+**Branch**: `codex/api-order-after-sales`
+
+### Summary
+
+升级存在漏洞的 Go 图像与 AWS S3 依赖，修正 PostgreSQL 生命周期测试的纠纷终态夹具，并验证所有 PR 检查通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7e35f46` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 62: 公告分级强触达与回执闭环
+
+**Date**: 2026-08-16
+**Task**: 公告分级强触达与回执闭环
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+完成 critical 公告全站触达、强制确认、受众快照与回执闭环，补齐管理端配置、迁移、OpenAPI、测试和浏览器验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54a8cf0` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 63: Consolidate workspace navigation
+
+**Date**: 2026-08-16
+**Task**: Consolidate workspace navigation
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+Consolidated message, reputation, and support workspace entries; added authoritative support badges; preserved deep links and announcement delivery; passed full automated and responsive browser verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `59c89c4` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 64: API 市场卡片身份、模型与图标修复
+
+**Date**: 2026-08-16
+**Task**: API 市场卡片身份、模型与图标修复
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+修复免费服务商户头像透传，按模型目录新鲜度排序商户声明模型，增加最多两项加可访问 Tooltip，并统一三类 API 卡片白色近满版产品图标。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bfdffae` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 65: 拼车一次性撮合与完整车源条件
+
+**Date**: 2026-08-17
+**Task**: 拼车一次性撮合与完整车源条件
+**Package**: frontend
+**Branch**: `codex/carpool-lightweight-matching`
+
+### Summary
+
+移除拼车预留、双边确认、完成与评价链路；车主接受即创建有效成员和成员期联系；新增条件版本/快照与显式招募控制；统一 USD 日周最大花费额度并保留官方重置；完成全量测试、真实 PostgreSQL smoke 和规范同步。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `667f213` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 66: 完善 API 市场排序筛选
+
+**Date**: 2026-08-17
+**Task**: 完善 API 市场排序筛选
+**Package**: frontend
+**Branch**: `staging`
+
+### Summary
+
+完成 API 市场三种视图的综合推荐、信誉度、近 30 天完成单数和响应速度排序；统一 OpenAPI、前后端 Mock/真实请求和 PostgreSQL keyset 分页；补充隔离数据库分页测试、前端回归测试、代码规范和验证记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `10a37bf` | (see git log) |
+
+### Status
+
+[OK] **Completed**

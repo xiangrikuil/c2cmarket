@@ -1,176 +1,157 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Check, Clock3, Gavel, Handshake, MessageSquareText, Scale, Send, X } from 'lucide-vue-next'
+import { Check, Clock3, FileText, Gavel, History, Scale, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import DisputeEvidenceGallery from '@/components/api-order/DisputeEvidenceGallery.vue'
+import DisputeEvidencePicker from '@/components/api-order/DisputeEvidencePicker.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  apiOrderDisputeIssueLabels,
-  apiOrderDisputeRemedyStatusLabels,
-  apiOrderDisputeResolutionLabels,
-  type ApiOrderDisputeResolution,
-} from '@/lib/apiOrderDispute'
+import { apiOrderDisputeIssueLabels, apiOrderDisputeRemedyLatenessLabels, apiOrderDisputeRemedyStatusLabels, apiOrderDisputeResolutionLabels } from '@/lib/apiOrderDispute'
 import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
+import type { DisputeEvidenceAsset } from '@/lib/disputeEvidenceBackend'
 import {
-  useAppendDisputeMessageMutation,
   useClaimDisputeRemedyMutation,
-  useConfirmDisputeSettlementProposalMutation,
   useConfirmDisputeRemedyMutation,
   useContestDisputeRemedyMutation,
-  useCreateDisputeSettlementProposalMutation,
-  useEscalateDisputeMutation,
   useMyDisputeQuery,
-  useRejectDisputeSettlementProposalMutation,
+  useRequestDisputePlatformInterventionMutation,
+  useSellerDisputeDecisionMutation,
+  useSubmitInfoSupplementMutation,
+  useWithdrawDisputeMutation,
 } from '@/queries/useReportQueries'
 
-const props = defineProps<{
-  disputeId: string
-  viewerUserId: string
-}>()
-
+const props = defineProps<{ disputeId: string }>()
 const disputeId = computed(() => props.disputeId)
 const disputeQuery = useMyDisputeQuery(disputeId)
-const dispute = computed(() => disputeQuery.data.value ?? null)
-const messageBody = ref('')
-const proposalResolution = ref<ApiOrderDisputeResolution>('full_refund')
-const proposalResolutionLabels = Object.fromEntries(
-  Object.entries(apiOrderDisputeResolutionLabels).filter(([value]) => value !== 'continue_fulfillment'),
-)
-const proposalAmount = ref('')
-const proposalTerms = ref('')
-const rejectReason = ref('')
-const escalationReason = ref('')
-const remedyClaimNote = ref('')
-const remedyConfirmationNote = ref('')
-const remedyContestReason = ref('')
+const dispute = computed(() => disputeQuery.data.value)
+const viewerUserId = computed(() => dispute.value?.viewerUserId ?? '')
+const orderId = computed(() => dispute.value?.apiOrderId ?? '')
+const currentRemedy = computed(() => dispute.value?.remedies?.[0] ?? null)
+const historicalMessages = computed(() => dispute.value?.messages ?? [])
+const historicalProposals = computed(() => dispute.value?.settlementProposals ?? [])
 
-const appendMessageMutation = useAppendDisputeMessageMutation()
-const createProposalMutation = useCreateDisputeSettlementProposalMutation()
-const confirmProposalMutation = useConfirmDisputeSettlementProposalMutation()
-const rejectProposalMutation = useRejectDisputeSettlementProposalMutation()
-const escalateMutation = useEscalateDisputeMutation()
+const sellerDecision = ref<'accepted' | 'rejected'>('accepted')
+const sellerDecisionReason = ref('')
+const sellerDecisionEvidence = ref<DisputeEvidenceAsset[]>([])
+const interventionReason = ref('')
+const interventionEvidence = ref<DisputeEvidenceAsset[]>([])
+const withdrawReason = ref('')
+const supplementBody = ref('')
+const supplementEvidence = ref<DisputeEvidenceAsset[]>([])
+const remedyNote = ref('')
+const remedyEvidence = ref<DisputeEvidenceAsset[]>([])
+const remedyResponse = ref('')
+const remedyContestEvidence = ref<DisputeEvidenceAsset[]>([])
+const confirmRemedyDialogOpen = ref(false)
+
+const sellerDecisionMutation = useSellerDisputeDecisionMutation()
+const platformInterventionMutation = useRequestDisputePlatformInterventionMutation()
+const withdrawMutation = useWithdrawDisputeMutation()
+const supplementMutation = useSubmitInfoSupplementMutation()
 const claimRemedyMutation = useClaimDisputeRemedyMutation()
 const confirmRemedyMutation = useConfirmDisputeRemedyMutation()
 const contestRemedyMutation = useContestDisputeRemedyMutation()
 
-const pendingProposal = computed(() => dispute.value?.settlementProposals?.find(item => item.status === 'pending') ?? null)
-const proposalHistory = computed(() => dispute.value?.settlementProposals?.filter(item => item.status !== 'pending') ?? [])
-const currentRemedy = computed(() => dispute.value?.remedies?.[0] ?? null)
-const remedyHistory = computed(() => dispute.value?.remedies?.slice(1) ?? [])
-const isRemedyResponsible = computed(() => currentRemedy.value?.responsibleUserId === props.viewerUserId)
-const isRemedyBeneficiary = computed(() => currentRemedy.value?.beneficiaryUserId === props.viewerUserId)
-const canClaimRemedy = computed(() => currentRemedy.value?.status === 'pending' && isRemedyResponsible.value)
-const canRespondToRemedy = computed(() => currentRemedy.value?.status === 'claimed_fulfilled' && isRemedyBeneficiary.value)
-const canNegotiate = computed(() => dispute.value?.status === 'negotiating')
-const canMessage = computed(() => ['negotiating', 'open', 'waiting_info'].includes(dispute.value?.status ?? ''))
-const pendingFromMe = computed(() => pendingProposal.value?.proposedByUserId === props.viewerUserId)
-const mutationBusy = computed(() => appendMessageMutation.isPending.value
-  || createProposalMutation.isPending.value
-  || confirmProposalMutation.isPending.value
-  || rejectProposalMutation.isPending.value
-  || escalateMutation.isPending.value
-  || claimRemedyMutation.isPending.value
-  || confirmRemedyMutation.isPending.value
-  || contestRemedyMutation.isPending.value)
+const availableActions = computed(() => new Set(dispute.value?.availableActions ?? []))
+const canSellerDecision = computed(() => availableActions.value.has('seller_decision'))
+const canRequestPlatformIntervention = computed(() => availableActions.value.has('request_platform_intervention'))
+const canWithdraw = computed(() => availableActions.value.has('withdraw'))
+const canClaimRemedy = computed(() => availableActions.value.has('claim_remedy'))
+const canConfirmRemedy = computed(() => availableActions.value.has('confirm_remedy'))
+const canContestRemedy = computed(() => availableActions.value.has('contest_remedy'))
+const isVoluntaryRemedy = computed(() => currentRemedy.value?.source === 'seller_acceptance')
+const viewerIsSeller = computed(() => Boolean(viewerUserId.value && viewerUserId.value === dispute.value?.counterpartyUserId))
+const sellerWaitingForBuyer = computed(() => viewerIsSeller.value && dispute.value?.nextActor === 'counterparty' && currentRemedy.value?.status === 'claimed_fulfilled')
+const buyerConfirmationRequired = computed(() => !viewerIsSeller.value && (canConfirmRemedy.value || canContestRemedy.value))
+const mutationBusy = computed(() => [sellerDecisionMutation, platformInterventionMutation, withdrawMutation, supplementMutation, claimRemedyMutation, confirmRemedyMutation, contestRemedyMutation]
+  .some(item => item.isPending.value))
 
-function senderLabel(senderUserId: string) {
-  return senderUserId === props.viewerUserId ? '我' : '对方'
-}
-
-function proposalStatusLabel(status: string) {
-  return ({
-    pending: '待对方确认',
-    accepted: '双方已确认',
-    rejected: '已拒绝',
-    superseded: '已被新方案替代',
-  } as Record<string, string>)[status] ?? status
-}
-
-function participantRoleLabel(userId: string) {
-  return userId === props.viewerUserId ? '我' : '对方'
-}
+const nextActorLabel = computed(() => ({
+  applicant: '等待买家决定是否申请平台介入',
+  respondent: '等待卖家处理售后申请',
+  admin: '等待平台审核',
+  responsible_party: isVoluntaryRemedy.value ? '等待卖家履行已同意的申请' : '等待责任方履行平台整改',
+  counterparty: isVoluntaryRemedy.value ? '等待买家确认卖家处理结果' : '等待对方确认整改结果',
+  none: '当前无需操作',
+}[dispute.value?.nextActor ?? 'none']))
+const viewerStatusLabel = computed(() => {
+  if (sellerWaitingForBuyer.value) return '已完成当前处理，无需操作'
+  if (buyerConfirmationRequired.value) return '请确认卖家处理结果'
+  return nextActorLabel.value
+})
 
 function mutationError(error: unknown, fallback: string) {
   toast.error(error instanceof Error ? error.message : fallback)
 }
 
-async function appendMessage() {
-  if (!messageBody.value.trim()) return
+async function submitSellerDecision() {
+  if (sellerDecisionReason.value.trim().length < 2) return
   try {
-    await appendMessageMutation.mutateAsync({ disputeId: props.disputeId, body: messageBody.value.trim() })
-    messageBody.value = ''
-  } catch (error) {
-    mutationError(error, '留言提交失败。')
-  }
-}
-
-async function createProposal() {
-  if (!proposalTerms.value.trim()) return
-  try {
-    await createProposalMutation.mutateAsync({
+    await sellerDecisionMutation.mutateAsync({
       disputeId: props.disputeId,
-      input: {
-        resolution: proposalResolution.value,
-        amountCny: proposalResolution.value === 'partial_refund' ? proposalAmount.value.trim() : null,
-        terms: proposalTerms.value.trim(),
-      },
+      decision: sellerDecision.value,
+      reason: sellerDecisionReason.value.trim(),
+      evidenceAssetIds: sellerDecisionEvidence.value.map(item => item.id),
     })
-    proposalAmount.value = ''
-    proposalTerms.value = ''
-    toast.success('协商方案已提交。')
+    sellerDecisionReason.value = ''
+    sellerDecisionEvidence.value = []
+    toast.success(sellerDecision.value === 'accepted' ? '已同意申请，请按要求完成处理。' : '已拒绝申请，等待买家决定。')
   } catch (error) {
-    mutationError(error, '协商方案提交失败。')
+    mutationError(error, '卖家处理结果提交失败。')
   }
 }
 
-async function confirmProposal() {
-  if (!pendingProposal.value) return
+async function requestPlatformIntervention() {
+  if (interventionReason.value.trim().length < 2) return
   try {
-    await confirmProposalMutation.mutateAsync({ disputeId: props.disputeId, proposalId: pendingProposal.value.id })
-    toast.success('双方已确认方案，纠纷已结案。')
-  } catch (error) {
-    mutationError(error, '方案确认失败。')
-  }
-}
-
-async function rejectProposal() {
-  if (!pendingProposal.value) return
-  try {
-    await rejectProposalMutation.mutateAsync({
+    await platformInterventionMutation.mutateAsync({
       disputeId: props.disputeId,
-      proposalId: pendingProposal.value.id,
-      reason: rejectReason.value.trim(),
+      reason: interventionReason.value.trim(),
+      evidenceAssetIds: interventionEvidence.value.map(item => item.id),
     })
-    rejectReason.value = ''
-    toast.success('已拒绝当前方案，纠纷继续协商。')
-  } catch (error) {
-    mutationError(error, '方案拒绝失败。')
-  }
-}
-
-async function escalate() {
-  if (!escalationReason.value.trim()) return
-  try {
-    await escalateMutation.mutateAsync({ disputeId: props.disputeId, reason: escalationReason.value.trim() })
-    escalationReason.value = ''
+    interventionReason.value = ''
+    interventionEvidence.value = []
     toast.success('已申请平台介入。')
   } catch (error) {
     mutationError(error, '平台介入申请失败。')
   }
 }
 
-async function claimRemedy() {
-  if (!remedyClaimNote.value.trim()) return
+async function withdraw() {
   try {
-    await claimRemedyMutation.mutateAsync({ disputeId: props.disputeId, note: remedyClaimNote.value.trim() })
-    remedyClaimNote.value = ''
-    toast.success('履行声明已提交，等待对方确认。')
+    await withdrawMutation.mutateAsync({ disputeId: props.disputeId, reason: withdrawReason.value.trim() })
+    withdrawReason.value = ''
+    toast.success('售后申请已撤回。')
+  } catch (error) {
+    mutationError(error, '撤回申请失败。')
+  }
+}
+
+async function submitSupplement() {
+  if (!dispute.value?.openInfoRequestId || supplementBody.value.trim().length < 4) return
+  try {
+    await supplementMutation.mutateAsync({ entityType: 'dispute', entityId: dispute.value.id, openInfoRequestId: dispute.value.openInfoRequestId, body: supplementBody.value.trim(), evidenceAssetIds: supplementEvidence.value.map(item => item.id) })
+    supplementBody.value = ''
+    supplementEvidence.value = []
+    await disputeQuery.refetch()
+    toast.success('补充材料已提交。')
+  } catch (error) {
+    mutationError(error, '补充材料提交失败。')
+  }
+}
+
+async function claimRemedy() {
+  if (remedyNote.value.trim().length < 2) return
+  try {
+    await claimRemedyMutation.mutateAsync({ disputeId: props.disputeId, note: remedyNote.value.trim(), evidenceAssetIds: remedyEvidence.value.map(item => item.id) })
+    remedyNote.value = ''
+    remedyEvidence.value = []
+    toast.success('履行声明已提交。')
   } catch (error) {
     mutationError(error, '履行声明提交失败。')
   }
@@ -178,222 +159,120 @@ async function claimRemedy() {
 
 async function confirmRemedy() {
   try {
-    await confirmRemedyMutation.mutateAsync({ disputeId: props.disputeId, reason: remedyConfirmationNote.value.trim() })
-    remedyConfirmationNote.value = ''
-    toast.success('已确认整改履行完成，纠纷已结案。')
+    await confirmRemedyMutation.mutateAsync({ disputeId: props.disputeId, reason: remedyResponse.value.trim() })
+    remedyResponse.value = ''
+    confirmRemedyDialogOpen.value = false
+    toast.success(isVoluntaryRemedy.value ? '已确认卖家完成处理。' : '已确认整改完成。')
   } catch (error) {
     mutationError(error, '整改确认失败。')
   }
 }
 
+function openConfirmRemedyDialog() {
+  confirmRemedyDialogOpen.value = true
+}
+
 async function contestRemedy() {
-  if (remedyContestReason.value.trim().length < 2) return
+  if (remedyResponse.value.trim().length < 2) return
   try {
-    await contestRemedyMutation.mutateAsync({ disputeId: props.disputeId, reason: remedyContestReason.value.trim() })
-    remedyContestReason.value = ''
-    toast.success('已反馈未收到或未履行，纠纷重新进入平台审核。')
+    await contestRemedyMutation.mutateAsync({ disputeId: props.disputeId, reason: remedyResponse.value.trim(), evidenceAssetIds: remedyContestEvidence.value.map(item => item.id) })
+    remedyResponse.value = ''
+    remedyContestEvidence.value = []
+    toast.success('已提交平台复核。')
   } catch (error) {
-    mutationError(error, '平台复核申请失败。')
+    mutationError(error, '平台复核提交失败。')
   }
 }
 </script>
 
 <template>
-  <section class="border-y border-border py-6" aria-labelledby="api-order-dispute-title">
-    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h2 id="api-order-dispute-title" class="flex items-center gap-2 text-base font-semibold">
-          <Scale class="h-4 w-4 text-warning" />订单纠纷
-        </h2>
-        <p class="mt-1 text-sm text-muted-foreground">{{ dispute?.targetLabel }}</p>
-      </div>
+  <section class="py-6" :class="buyerConfirmationRequired ? 'pb-28 sm:pb-6' : ''" aria-labelledby="api-order-dispute-title">
+    <div class="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
+      <div><h2 id="api-order-dispute-title" class="flex items-center gap-2 text-base font-semibold"><Scale class="h-4 w-4 text-warning" />订单售后申请</h2><p class="mt-1 text-sm text-muted-foreground">{{ dispute?.targetLabel }}</p></div>
       <Badge v-if="dispute" variant="status">{{ getDisputeCaseStatusLabel(dispute.status) }}</Badge>
     </div>
 
     <SkeletonBlock v-if="disputeQuery.isPending.value" :lines="6" />
-    <Alert v-else-if="disputeQuery.error.value" variant="destructive">
-      <AlertTitle>纠纷详情读取失败</AlertTitle>
-      <AlertDescription class="flex items-center justify-between gap-3">
-        <span>{{ disputeQuery.error.value instanceof Error ? disputeQuery.error.value.message : '请稍后重试。' }}</span>
-        <Button size="sm" variant="outline" @click="disputeQuery.refetch()">重试</Button>
-      </AlertDescription>
-    </Alert>
+    <Alert v-else-if="disputeQuery.error.value" variant="destructive"><AlertTitle>纠纷详情读取失败</AlertTitle><AlertDescription>{{ disputeQuery.error.value instanceof Error ? disputeQuery.error.value.message : '请稍后重试。' }}</AlertDescription></Alert>
 
     <template v-else-if="dispute">
-      <dl class="grid gap-x-6 gap-y-4 border-b border-border pb-5 sm:grid-cols-3">
-        <div>
-          <dt class="text-xs text-muted-foreground">问题类型</dt>
-          <dd class="mt-1 text-sm font-medium">{{ dispute.issueCode ? apiOrderDisputeIssueLabels[dispute.issueCode] : '历史纠纷' }}</dd>
-        </div>
-        <div>
-          <dt class="text-xs text-muted-foreground">当前诉求</dt>
-          <dd class="mt-1 text-sm font-medium">{{ dispute.requestedResolution ? apiOrderDisputeResolutionLabels[dispute.requestedResolution] : '未结构化记录' }}</dd>
-        </div>
-        <div>
-          <dt class="text-xs text-muted-foreground">诉求金额</dt>
-          <dd class="mt-1 text-sm font-medium">{{ dispute.requestedAmountCny ? `¥${dispute.requestedAmountCny}` : '不涉及' }}</dd>
-        </div>
+      <Alert class="mb-5" :class="buyerConfirmationRequired ? 'border-warning/50 bg-warning/10' : sellerWaitingForBuyer ? 'border-success/35 bg-success/5' : 'border-border'"><Scale class="h-4 w-4" :class="buyerConfirmationRequired ? 'text-warning' : sellerWaitingForBuyer ? 'text-success' : 'text-muted-foreground'" /><AlertTitle>{{ viewerStatusLabel }}</AlertTitle><AlertDescription><span>{{ dispute.publicResult }}</span><span v-if="dispute.dueAt">，截止 <LocalTime :value="dispute.dueAt" /></span><span v-if="dispute.responseOverdue">。卖家响应已超时，买家现在可以申请平台介入；平台介入前卖家仍可处理。</span></AlertDescription></Alert>
+      <dl class="grid gap-4 border-b border-border pb-5 sm:grid-cols-3">
+        <div><dt class="text-xs text-muted-foreground">问题类型</dt><dd class="mt-1 text-sm font-medium">{{ dispute.issueCode ? apiOrderDisputeIssueLabels[dispute.issueCode] : '历史案件' }}</dd></div>
+        <div><dt class="text-xs text-muted-foreground">申请诉求</dt><dd class="mt-1 text-sm font-medium">{{ dispute.requestedResolution ? apiOrderDisputeResolutionLabels[dispute.requestedResolution] : '未结构化记录' }}</dd></div>
+        <div><dt class="text-xs text-muted-foreground">申请时间</dt><dd class="mt-1 text-sm font-medium"><LocalTime :value="dispute.openedAt" /></dd></div>
       </dl>
 
+      <section class="border-b border-border py-5"><h3 class="text-sm font-semibold">申请人材料</h3><p class="mt-3 whitespace-pre-wrap break-words text-sm leading-6">{{ dispute.applicantStatement || dispute.publicSummary }}</p></section>
+
+      <section class="border-b border-border py-5">
+        <h3 class="text-sm font-semibold">卖家处理结果</h3>
+        <div v-if="dispute.sellerDecidedAt" class="mt-3 border-l-2 border-border pl-4">
+          <p class="text-sm font-medium">{{ dispute.sellerDecision === 'accepted' ? '卖家同意申请' : '卖家拒绝申请' }}<span v-if="dispute.sellerResponseLate" class="ml-2 text-xs text-warning">逾期响应</span></p>
+          <p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ dispute.sellerDecisionReason }}</p>
+          <p class="mt-2 text-xs text-muted-foreground">提交于 <LocalTime :value="dispute.sellerDecidedAt" />，处理结果不可修改</p>
+        </div>
+        <div v-else-if="canSellerDecision" class="mt-4 space-y-3">
+          <div class="grid grid-cols-2 gap-2" role="group" aria-label="卖家处理结果">
+            <Button :variant="sellerDecision === 'accepted' ? 'default' : 'outline'" class="w-full" @click="sellerDecision = 'accepted'"><Check class="h-4 w-4" />同意申请</Button>
+            <Button :variant="sellerDecision === 'rejected' ? 'destructive' : 'outline'" class="w-full" @click="sellerDecision = 'rejected'"><X class="h-4 w-4" />拒绝申请</Button>
+          </div>
+          <Textarea v-model="sellerDecisionReason" class="min-h-28" maxlength="2000" :placeholder="sellerDecision === 'accepted' ? '说明你将如何退款或继续履约。' : '说明拒绝理由，买家可据此决定是否申请平台介入。'" />
+          <DisputeEvidencePicker v-if="orderId" v-model="sellerDecisionEvidence" :order-id="orderId" />
+          <Button :disabled="sellerDecisionReason.trim().length < 2 || mutationBusy" @click="submitSellerDecision">提交处理结果</Button>
+          <p class="text-xs text-muted-foreground">只能提交一次。图片最多 3 张，请勿填写 API Key、密码等敏感信息。</p>
+        </div>
+        <p v-else class="mt-3 text-sm text-muted-foreground">等待卖家处理。</p>
+      </section>
+
+      <section v-if="dispute.respondedAt" class="border-b border-border py-5"><h3 class="text-sm font-semibold">旧流程正式答复</h3><div class="mt-3 border-l-2 border-border pl-4"><p class="whitespace-pre-wrap break-words text-sm leading-6">{{ dispute.respondentResponse }}</p><p class="mt-2 text-xs text-muted-foreground">提交于 <LocalTime :value="dispute.respondedAt" />，仅保留历史记录</p></div></section>
+
+      <section v-if="dispute.evidence?.length" class="border-b border-border py-5"><h3 class="mb-4 flex items-center gap-2 text-sm font-semibold"><FileText class="h-4 w-4" />案件图片材料</h3><DisputeEvidenceGallery :items="dispute.evidence" /></section>
+
+      <section v-if="dispute.canSupplement && dispute.openInfoRequestId" class="border-b border-border py-5"><h3 class="text-sm font-semibold">平台定向补件</h3><p class="mt-1 text-xs text-muted-foreground">只需回答平台当前要求，不会开启双方站内协商。</p><Textarea v-model="supplementBody" class="mt-3 min-h-28" maxlength="1200" placeholder="补充脱敏事实说明。" /><DisputeEvidencePicker v-if="orderId" v-model="supplementEvidence" :order-id="orderId" visibility="submitter_admin" /><Button class="mt-3" :disabled="supplementBody.trim().length < 4 || mutationBusy" @click="submitSupplement">提交补件</Button></section>
+
+      <section v-if="canRequestPlatformIntervention" class="border-b border-border py-5"><h3 class="text-sm font-semibold">申请平台介入</h3><p class="mt-1 text-xs text-muted-foreground">适用于卖家拒绝、响应超时，或卖家声明已处理但买家仍有异议。提交后由平台审核，卖家不能再修改原处理结果。</p><Textarea v-model="interventionReason" class="mt-3 min-h-24" maxlength="2000" placeholder="说明仍未解决的事实和希望平台核对的内容。" /><DisputeEvidencePicker v-if="orderId" v-model="interventionEvidence" :order-id="orderId" /><Button class="mt-3" variant="outline" :disabled="interventionReason.trim().length < 2 || mutationBusy" @click="requestPlatformIntervention"><Scale class="h-4 w-4" />申请平台介入</Button></section>
+
       <section v-if="currentRemedy" class="border-b border-border py-5">
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h3 class="flex items-center gap-2 text-sm font-semibold"><Gavel class="h-4 w-4" />平台裁决与整改</h3>
-          <Badge variant="status">{{ apiOrderDisputeRemedyStatusLabels[currentRemedy.status] }}</Badge>
+        <div class="flex flex-wrap items-center justify-between gap-2"><h3 class="flex items-center gap-2 text-sm font-semibold"><Gavel class="h-4 w-4" />{{ isVoluntaryRemedy ? '卖家主动处理' : '平台裁决与整改' }}</h3><Badge variant="status">{{ apiOrderDisputeRemedyStatusLabels[currentRemedy.status] }}</Badge></div>
+        <dl class="mt-4 grid gap-4 sm:grid-cols-3"><div><dt class="text-xs text-muted-foreground">处理动作</dt><dd class="mt-1 text-sm font-medium">{{ apiOrderDisputeResolutionLabels[currentRemedy.action] }}</dd></div><div><dt class="text-xs text-muted-foreground">履行截止</dt><dd class="mt-1 text-sm font-medium"><LocalTime :value="currentRemedy.dueAt" /></dd></div><div v-if="!isVoluntaryRemedy"><dt class="text-xs text-muted-foreground">迟到记录</dt><dd class="mt-1 text-sm font-medium">{{ apiOrderDisputeRemedyLatenessLabels[currentRemedy.latenessStatus] }}</dd></div></dl>
+        <p class="mt-4 whitespace-pre-wrap border-l-2 border-warning pl-4 text-sm leading-6">{{ currentRemedy.instructions }}</p>
+        <div v-if="canClaimRemedy" class="mt-4 space-y-3"><Textarea v-model="remedyNote" class="min-h-24" maxlength="2000" placeholder="说明已经如何履行整改。" /><DisputeEvidencePicker v-if="orderId" v-model="remedyEvidence" :order-id="orderId" /><Button :disabled="remedyNote.trim().length < 2 || mutationBusy" @click="claimRemedy"><Check class="h-4 w-4" />声明已履行</Button></div>
+        <Alert v-if="sellerWaitingForBuyer" class="mt-4 border-success/35 bg-success/5"><Check class="h-4 w-4 text-success" /><AlertTitle>已完成当前处理，无需操作</AlertTitle><AlertDescription>案件正在等待买家确认，你可以继续处理其他订单；本订单在买家确认或确认窗口结束前保持冻结。</AlertDescription></Alert>
+        <div v-else-if="canConfirmRemedy || canContestRemedy" class="mt-4 space-y-3">
+          <Alert class="border-warning/40 bg-warning/10"><Clock3 class="h-4 w-4 text-warning" /><AlertTitle>请核对你的实际收款或履约结果</AlertTitle><AlertDescription>卖家已提交处理说明或凭证，但平台未核验站外退款是否到账。请以你的实际收款记录和服务状态为准。</AlertDescription></Alert>
+          <Textarea v-model="remedyResponse" class="min-h-20" maxlength="2000" :placeholder="isVoluntaryRemedy ? '确认卖家已经完成处理，可选填说明。' : '填写确认说明，或说明仍未收到/未完成。'" />
+          <DisputeEvidencePicker v-if="orderId && canContestRemedy" v-model="remedyContestEvidence" :order-id="orderId" />
+          <div class="hidden flex-wrap gap-2 sm:flex"><Button v-if="canConfirmRemedy" :disabled="mutationBusy" @click="openConfirmRemedyDialog"><Check class="h-4 w-4" />确认完成</Button><Button v-if="canContestRemedy" variant="outline" :disabled="remedyResponse.trim().length < 2 || mutationBusy" @click="contestRemedy"><X class="h-4 w-4" />申请复核</Button></div>
         </div>
-        <dl class="grid gap-x-6 gap-y-4 sm:grid-cols-3">
-          <div>
-            <dt class="text-xs text-muted-foreground">整改动作</dt>
-            <dd class="mt-1 text-sm font-medium">
-              {{ apiOrderDisputeResolutionLabels[currentRemedy.action] }}<span v-if="currentRemedy.amountCny"> · ¥{{ currentRemedy.amountCny }}</span>
-            </dd>
-          </div>
-          <div>
-            <dt class="text-xs text-muted-foreground">责任方</dt>
-            <dd class="mt-1 text-sm font-medium">{{ participantRoleLabel(currentRemedy.responsibleUserId) }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs text-muted-foreground">履行期限</dt>
-            <dd class="mt-1 flex items-center gap-1.5 text-sm font-medium"><Clock3 class="h-3.5 w-3.5" /><LocalTime :value="currentRemedy.dueAt" /></dd>
-          </div>
-        </dl>
-        <div class="mt-4 border-l-2 border-warning pl-4">
-          <p class="text-xs text-muted-foreground">整改要求</p>
-          <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.instructions }}</p>
-        </div>
-        <div v-if="currentRemedy.claimNote" class="mt-4 border-l-2 border-border pl-4">
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>责任方履行声明</span>
-            <LocalTime v-if="currentRemedy.claimedAt" :value="currentRemedy.claimedAt" />
-          </div>
-          <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.claimNote }}</p>
-          <p v-if="currentRemedy.confirmationDueAt && currentRemedy.status === 'claimed_fulfilled'" class="mt-2 text-xs text-muted-foreground">
-            对方反馈截止：<LocalTime :value="currentRemedy.confirmationDueAt" />
-          </p>
-        </div>
-        <div v-if="currentRemedy.responseNote" class="mt-4 border-l-2 border-border pl-4">
-          <p class="text-xs text-muted-foreground">结果记录</p>
-          <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.responseNote }}</p>
-        </div>
-        <Alert v-if="currentRemedy.status === 'confirmation_expired'" class="mt-4">
-          <AlertTitle>确认期已结束</AlertTitle>
-          <AlertDescription>对方未在期限内反馈，流程已中性结案；平台未核验退款到账或履约事实。</AlertDescription>
-        </Alert>
-
-        <div v-if="canClaimRemedy" class="mt-5 space-y-3">
-          <Textarea v-model="remedyClaimNote" class="min-h-20" maxlength="2000" placeholder="说明已如何完成退款或继续履约，请勿填写 API Key、密码等敏感信息。" />
-          <Button :disabled="remedyClaimNote.trim().length < 2 || mutationBusy" @click="claimRemedy">
-            <Check class="h-4 w-4" />声明已履行
-          </Button>
-        </div>
-        <div v-else-if="canRespondToRemedy" class="mt-5 space-y-3">
-          <Textarea v-model="remedyConfirmationNote" class="min-h-16" maxlength="500" placeholder="确认说明（选填）" />
-          <Button :disabled="mutationBusy" @click="confirmRemedy"><Check class="h-4 w-4" />确认已收到或已完成</Button>
-          <div class="border-t border-border pt-4">
-            <Textarea v-model="remedyContestReason" class="min-h-20" maxlength="2000" placeholder="如未收到退款或履约未完成，请说明事实并申请平台复核。" />
-            <Button class="mt-3" variant="outline" :disabled="remedyContestReason.trim().length < 2 || mutationBusy" @click="contestRemedy">
-              <X class="h-4 w-4" />未收到或未完成
-            </Button>
-          </div>
-        </div>
-
-        <div v-if="remedyHistory.length" class="mt-5 border-t border-border pt-4">
-          <h4 class="text-xs font-medium text-muted-foreground">历史整改</h4>
-          <div class="mt-3 space-y-4">
-            <article v-for="remedy in remedyHistory" :key="remedy.id" class="border-l-2 border-border pl-4">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <span class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[remedy.action] }}<span v-if="remedy.amountCny"> · ¥{{ remedy.amountCny }}</span></span>
-                <Badge variant="secondary">{{ apiOrderDisputeRemedyStatusLabels[remedy.status] }}</Badge>
-              </div>
-              <p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ remedy.instructions }}</p>
-              <div class="mt-2 text-xs text-muted-foreground"><LocalTime :value="remedy.updatedAt" /></div>
-            </article>
-          </div>
-        </div>
+        <p v-if="currentRemedy.claimNote" class="mt-4 text-sm leading-6">履行声明：{{ currentRemedy.claimNote }}</p>
       </section>
 
-      <section class="border-b border-border py-5">
-        <h3 class="mb-4 flex items-center gap-2 text-sm font-semibold"><MessageSquareText class="h-4 w-4" />沟通记录</h3>
-        <div v-if="dispute.messages?.length" class="space-y-4">
-          <article v-for="message in dispute.messages" :key="message.id" class="border-l-2 border-border pl-4">
-            <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>{{ senderLabel(message.senderUserId) }}</span>
-              <LocalTime :value="message.createdAt" />
-            </div>
-            <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ message.body }}</p>
-          </article>
-        </div>
-        <p v-else class="text-sm text-muted-foreground">暂无沟通记录。</p>
+      <section v-if="historicalMessages.length || historicalProposals.length" class="border-b border-border py-5"><h3 class="flex items-center gap-2 text-sm font-semibold"><History class="h-4 w-4" />旧流程历史记录</h3><p class="mt-1 text-xs text-muted-foreground">这些记录来自旧版站内协商流程，仅供查看，不能继续留言或处理方案。</p><div class="mt-4 space-y-3"><article v-for="message in historicalMessages" :key="message.id" class="border-l-2 border-border pl-4"><p class="whitespace-pre-wrap text-sm leading-6">{{ message.body }}</p><p class="mt-1 text-xs text-muted-foreground"><LocalTime :value="message.createdAt" /></p></article><article v-for="proposal in historicalProposals" :key="proposal.id" class="border-l-2 border-border pl-4"><p class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[proposal.resolution] }} · {{ proposal.status }}</p><p class="mt-1 whitespace-pre-wrap text-sm leading-6">{{ proposal.terms }}</p></article></div></section>
 
-        <div v-if="canMessage" class="mt-5 flex items-end gap-2">
-          <Textarea v-model="messageBody" class="min-h-20 flex-1" maxlength="2000" placeholder="补充事实或处理进展，请勿填写 API Key、密码等敏感信息。" />
-          <Button size="icon" :disabled="!messageBody.trim() || mutationBusy" title="发送留言" @click="appendMessage">
-            <Send class="h-4 w-4" />
-          </Button>
-        </div>
-      </section>
+      <section v-if="canWithdraw" class="pt-5"><h3 class="text-sm font-semibold">撤回售后申请</h3><p class="mt-1 text-xs text-muted-foreground">只有申请人可以撤回。卖家同意申请或平台开始处理后不能撤回。</p><Textarea v-model="withdrawReason" class="mt-3 min-h-20" maxlength="500" placeholder="撤回原因（选填）" /><Button class="mt-3" variant="outline" :disabled="mutationBusy" @click="withdraw">撤回申请</Button></section>
 
-      <section class="border-b border-border py-5">
-        <h3 class="mb-4 flex items-center gap-2 text-sm font-semibold"><Handshake class="h-4 w-4" />协商方案</h3>
-        <div v-if="pendingProposal" class="border-l-2 border-warning pl-4">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <span class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[pendingProposal.resolution] }}<span v-if="pendingProposal.amountCny"> · ¥{{ pendingProposal.amountCny }}</span></span>
-            <Badge variant="secondary">{{ proposalStatusLabel(pendingProposal.status) }}</Badge>
-          </div>
-          <p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ pendingProposal.terms }}</p>
-          <p v-if="pendingFromMe" class="mt-3 text-xs text-muted-foreground">等待对方确认或拒绝。</p>
-          <div v-else-if="canNegotiate" class="mt-4 space-y-3">
-            <Textarea v-model="rejectReason" class="min-h-16" maxlength="500" placeholder="拒绝说明（选填）" />
-            <div class="flex flex-wrap gap-2">
-              <Button :disabled="mutationBusy" @click="confirmProposal"><Check class="h-4 w-4" />确认方案并结案</Button>
-              <Button variant="outline" :disabled="mutationBusy" @click="rejectProposal"><X class="h-4 w-4" />拒绝方案</Button>
-            </div>
-          </div>
-        </div>
-        <p v-else class="text-sm text-muted-foreground">暂无待确认方案。</p>
+      <Alert v-if="dispute.status === 'withdrawn' || dispute.status === 'self_resolved' || dispute.status === 'closed'" class="mt-5"><Clock3 class="h-4 w-4" /><AlertTitle>{{ getDisputeCaseStatusLabel(dispute.status) }}</AlertTitle><AlertDescription>{{ dispute.publicResult }}</AlertDescription></Alert>
 
-        <div v-if="proposalHistory.length" class="mt-5 border-t border-border pt-4">
-          <h4 class="text-xs font-medium text-muted-foreground">历史方案</h4>
-          <div class="mt-3 space-y-4">
-            <article v-for="proposal in proposalHistory" :key="proposal.id" class="border-l-2 border-border pl-4">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <span class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[proposal.resolution] }}<span v-if="proposal.amountCny"> · ¥{{ proposal.amountCny }}</span></span>
-                <Badge variant="secondary">{{ proposalStatusLabel(proposal.status) }}</Badge>
-              </div>
-              <p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ proposal.terms }}</p>
-              <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>{{ senderLabel(proposal.proposedByUserId) }}提出</span>
-                <LocalTime :value="proposal.updatedAt" />
-              </div>
-            </article>
-          </div>
+      <div v-if="buyerConfirmationRequired" class="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/96 px-4 py-3 shadow-lg backdrop-blur sm:hidden">
+        <div class="mx-auto flex max-w-md gap-2">
+          <Button v-if="canConfirmRemedy" class="flex-1" :disabled="mutationBusy" @click="openConfirmRemedyDialog"><Check class="h-4 w-4" />确认完成</Button>
+          <Button v-if="canContestRemedy" class="flex-1" variant="outline" :disabled="remedyResponse.trim().length < 2 || mutationBusy" @click="contestRemedy"><X class="h-4 w-4" />申请复核</Button>
         </div>
+      </div>
 
-        <div v-if="canNegotiate" class="mt-5 grid gap-3 sm:grid-cols-[180px_1fr]">
-          <Select v-model="proposalResolution">
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="(label, value) in proposalResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input v-if="proposalResolution === 'partial_refund'" v-model="proposalAmount" inputmode="decimal" placeholder="退款金额（元）" />
-          <Textarea v-model="proposalTerms" class="min-h-20 sm:col-span-2" maxlength="2000" placeholder="填写需要双方共同确认的完整处理方案。" />
-          <div class="sm:col-span-2">
-            <Button variant="outline" :disabled="!proposalTerms.trim() || (proposalResolution === 'partial_refund' && !proposalAmount.trim()) || mutationBusy" @click="createProposal">
-              <Handshake class="h-4 w-4" />提交协商方案
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="canNegotiate" class="pt-5">
-        <h3 class="text-sm font-semibold">申请平台介入</h3>
-        <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
-          <Textarea v-model="escalationReason" class="min-h-20 flex-1" maxlength="500" placeholder="说明双方未能达成一致的事项。" />
-          <Button variant="destructive" :disabled="escalationReason.trim().length < 2 || mutationBusy" @click="escalate">
-            <Scale class="h-4 w-4" />申请平台审核
-          </Button>
-        </div>
-      </section>
+      <Dialog v-model:open="confirmRemedyDialogOpen">
+        <DialogContent class="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>确认处理已经完成？</DialogTitle>
+            <DialogDescription>确认后，本次纠纷将结束且不能再通过当前案件申请复核。平台未核验站外退款是否到账，请先核对你的实际收款记录或服务状态。</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" :disabled="mutationBusy" @click="confirmRemedyDialogOpen = false">返回核对</Button>
+            <Button :disabled="mutationBusy" @click="confirmRemedy"><Check class="h-4 w-4" />确认已经完成</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </template>
   </section>
 </template>

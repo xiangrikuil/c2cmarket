@@ -10,22 +10,18 @@ import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
 import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
-import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
 import FlaskConical from 'lucide-vue-next/dist/esm/icons/flask-conical.js'
 import Home from 'lucide-vue-next/dist/esm/icons/house.js'
 import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
 import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
-import Megaphone from 'lucide-vue-next/dist/esm/icons/megaphone.js'
 import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
 import MessageSquarePlus from 'lucide-vue-next/dist/esm/icons/message-square-plus.js'
 import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
-import Palette from 'lucide-vue-next/dist/esm/icons/palette.js'
 import PanelLeftClose from 'lucide-vue-next/dist/esm/icons/panel-left-close.js'
 import PanelLeftOpen from 'lucide-vue-next/dist/esm/icons/panel-left-open.js'
 import Search from 'lucide-vue-next/dist/esm/icons/search.js'
 import ShieldCheck from 'lucide-vue-next/dist/esm/icons/shield-check.js'
 import ShoppingBag from 'lucide-vue-next/dist/esm/icons/shopping-bag.js'
-import Siren from 'lucide-vue-next/dist/esm/icons/siren.js'
 import Star from 'lucide-vue-next/dist/esm/icons/star.js'
 import Upload from 'lucide-vue-next/dist/esm/icons/upload.js'
 import UserCog from 'lucide-vue-next/dist/esm/icons/user-cog.js'
@@ -35,27 +31,28 @@ import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+import { useMyContactMethodsQuery, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
-import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { loginRoute } from '@/lib/authNavigation'
-import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
+import { apiMarketPath, apiMarketViewFromPath } from '@/lib/apiMarketRoutes'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
+import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
+import { prioritizeTransactionTodos } from '@/lib/notificationUi'
 import { logoutCurrentSession } from '@/lib/sessionActions'
+import type { WorkspaceNavKey } from '@/router'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,23 +61,26 @@ const menuOpen = ref(false)
 const logoutLoading = ref(false)
 const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
-const activeTheme = ref(getInitialAppTheme())
 const { data: myProfile, isPending: profilePending } = useMyProfileQuery(import.meta.client)
 const isAuthenticated = computed(() => Boolean(myProfile.value))
+const authenticatedUserId = computed(() => myProfile.value?.id ?? '')
+const contactMethodsQuery = useMyContactMethodsQuery(isAuthenticated, authenticatedUserId)
+const wechatOnboardingOpen = ref(false)
 const authResolved = computed(() => import.meta.client && !profilePending.value)
 const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
 const { data: notifications } = useNotifications(isAuthenticated)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
-const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
 const merchantApiActionCount = computed(() => navigationBadges.value?.merchant.apiOrderActions ?? 0)
+const merchantApiDisputeCount = computed(() => navigationBadges.value?.merchant.apiOrderDisputes ?? 0)
 const buyerCarpoolActionCount = computed(() => navigationBadges.value?.buyer.carpoolActions ?? 0)
 const ownerCarpoolActionCount = computed(() => navigationBadges.value?.merchant.carpoolActions ?? 0)
 const unreadBusinessCount = computed(() => navigationBadges.value?.notificationUnread ?? 0)
 const importantAnnouncementUnreadCount = computed(() => navigationBadges.value?.importantAnnouncementUnread ?? 0)
-const feedbackMenuUnreadCount = computed(() => navigationBadges.value?.feedbackUnread ?? 0)
+const messageCenterCount = computed(() => unreadBusinessCount.value + importantAnnouncementUnreadCount.value)
+const supportActionCount = computed(() => navigationBadges.value?.supportActionCount ?? 0)
 const currentUsername = computed(() => myProfile.value?.username ?? '')
 const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProfile.value?.username ?? '未登录')
 const currentAvatarURL = computed(() => myProfile.value?.avatarUrl ?? '')
@@ -90,16 +90,47 @@ const canPublishApiService = computed(() => hasCapability(myProfile.value, CAPAB
 const canManageApiProbe = computed(() => hasCapability(myProfile.value, CAPABILITY.apiProbeManage))
 const canViewAdminNav = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
 const canPublishAnything = computed(() => canPublishCarpool.value || canPublishApiService.value)
-const announcementCenterTo = '/my/notifications?tab=announcements'
-const accountSettingsPaths = ['/my/profile', '/my/contacts', '/my/account'] as const
 const currentLoginTo = computed(() => loginRoute(route.fullPath))
 const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
+
+function wechatOnboardingStorageKey(userId: string) {
+  return `c2cmarket.wechat-onboarding-dismissed.v1:${userId}`
+}
+
+function wechatOnboardingDismissed(userId: string) {
+  try {
+    return window.sessionStorage.getItem(wechatOnboardingStorageKey(userId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function dismissWechatOnboarding() {
+  const userId = myProfile.value?.id
+  if (userId) {
+    try {
+      window.sessionStorage.setItem(wechatOnboardingStorageKey(userId), '1')
+    } catch {
+      // Browsing remains available when session storage is unavailable.
+    }
+  }
+  wechatOnboardingOpen.value = false
+}
+
+function updateWechatOnboardingOpen(open: boolean) {
+  if (!open) dismissWechatOnboarding()
+}
+
+async function configureWechat() {
+  dismissWechatOnboarding()
+  await router.push('/my/contacts')
+}
 const apiMarketNavItems = [
-  { label: '限量额度包', view: 'limited' },
-  { label: '短期流量包', view: 'packages' },
-  { label: '自选额度', view: 'free' },
+  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited', path: apiMarketPath('limited') } as const] : []),
+  { label: '短期流量包', view: 'packages', path: apiMarketPath('packages') },
+  { label: '自选额度', view: 'free', path: apiMarketPath('free') },
 ] as const
 const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value, [
   CAPABILITY.carpoolPublish,
@@ -109,71 +140,66 @@ const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value
 
 type NavigationGroup = {
   title: string
-  items: Array<{ label: string, to: string, count: number | null, icon: Component }>
+  items: Array<{ key: string, label: string, to: string, count: number | null, icon: Component, tone?: 'default' | 'danger', workspaceNavKey?: WorkspaceNavKey }>
 }
 
 const navGroups = computed(() => {
   const browseGroup = {
     title: '发现市场',
     items: [
-      { label: '首页', to: '/', count: null, icon: Home },
-      { label: '订阅拼车', to: '/carpools', count: null, icon: CarFront },
-      { label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
-      { label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
+      { key: 'home', label: '首页', to: '/', count: null, icon: Home },
+      { key: 'carpools', label: '订阅拼车', to: '/carpools', count: null, icon: CarFront },
+      { key: 'api-market', label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
+      { key: 'official-prices', label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
     ],
   }
   const publishGroup = {
     title: '发布入口',
     items: [
-      ...(canPublishCarpool.value ? [{ label: '发布车源', to: '/carpools/new', count: null, icon: CarFront }] : []),
-      ...(canPublishApiService.value ? [{ label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch }] : []),
+      ...(canPublishCarpool.value ? [{ key: 'publish-carpool', label: '发布车源', to: '/carpools/new', count: null, icon: CarFront }] : []),
+      ...(canPublishApiService.value ? [{ key: 'publish-api-service', label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch }] : []),
     ],
   }
   const userGroup = {
     title: '我的交易',
     items: [
-      { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: CarFront },
-      { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
-      { label: '收藏', to: '/my/favorites', count: null, icon: Star },
-      { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
-      { label: '平台公告', to: announcementCenterTo, count: importantAnnouncementUnreadCount.value, icon: Megaphone },
+      { key: 'my-rides', label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: CarFront },
+      { key: 'my-api-orders', label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
+      { key: 'favorites', label: '收藏', to: '/my/favorites', count: null, icon: Star },
+      { key: 'message-center', label: '消息中心', to: '/my/notifications', count: messageCenterCount.value, icon: Bell, workspaceNavKey: 'message-center' as const },
     ],
   }
   const merchantGroup = {
     title: '经营中心',
     items: [
       ...(canPublishCarpool.value ? [
-        { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
-        { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+        { key: 'carpool-management', label: '拼车管理', to: '/my/carpools', count: ownerCarpoolActionCount.value, icon: CarFront },
       ] : []),
       ...(canPublishApiService.value ? [
-        { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-        { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+        { key: 'my-api-services', label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
+        { key: 'merchant-api-orders', label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch, tone: merchantApiDisputeCount.value > 0 ? 'danger' as const : 'default' as const },
       ] : []),
-      ...(canManageApiProbe.value ? [{ label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable }] : []),
+      ...(canManageApiProbe.value ? [{ key: 'api-probe-connections', label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable }] : []),
     ],
   }
   const toolsGroup = {
     title: '工具',
     items: [
-      { label: 'API 模型测试', to: '/tools/api-model-tester', count: null, icon: FlaskConical },
+      { key: 'api-model-tester', label: 'API 模型测试', to: '/tools/api-model-tester', count: null, icon: FlaskConical },
     ],
   }
   const accountGroup = {
     title: '账户',
     items: [
-      { label: '个人中心', to: '/my', count: null, icon: UserRound },
-      { label: canPublishApiService.value ? '联系与收款' : '联系方式', to: '/my/contacts', count: null, icon: MessageSquarePlus },
-      { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
-      ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
-      { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
-      { label: '举报与申诉', to: '/my/reports', count: null, icon: Siren },
-      { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
+      { key: 'personal-center', label: '个人中心', to: '/my', count: null, icon: UserRound, workspaceNavKey: 'personal-center' as const },
+      { key: 'account-settings', label: '账户设置', to: '/my/profile', count: null, icon: MessageSquarePlus, workspaceNavKey: 'account-settings' as const },
+      { key: 'reputation-rights', label: '信誉与权益', to: '/my/reputation', count: null, icon: BadgeCheck, workspaceNavKey: 'reputation-rights' as const },
+      { key: 'support-center', label: '支持中心', to: '/my/reports', count: supportActionCount.value, icon: CircleHelp, workspaceNavKey: 'support-center' as const },
     ],
   }
   const adminEntryGroup = {
     title: '管理',
-    items: [{ label: '进入管理台', to: '/admin', count: navigationBadges.value?.admin?.total ?? null, icon: UserCog }],
+    items: [{ key: 'admin', label: '进入管理台', to: '/admin', count: navigationBadges.value?.admin?.total ?? null, icon: UserCog }],
   }
 
   if (!isAuthenticated.value) return [browseGroup]
@@ -188,38 +214,37 @@ const navGroups = computed(() => {
   return groups
 })
 
-const topNotifications = computed(() => (notifications.value ?? []).slice(0, 4))
+const topNotifications = computed(() => prioritizeTransactionTodos(notifications.value ?? []).slice(0, 4))
 
 const activeNavItem = computed(() => {
   return navGroups.value
     .flatMap(group => group.items)
-    .filter(item => matchesRoute(item.to))
+    .filter(item => matchesRoute(item))
     .sort((a, b) => b.to.length - a.to.length)[0]
 })
 
 const currentTitle = computed(() => {
-  if (route.path === '/api-market') {
-    const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
-    return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '限量额度包'}`
+  if (route.meta.apiMarketView) {
+    const currentView = apiMarketViewFromPath(route.path)
+    return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '自选额度'}`
   }
   return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
 })
 
-function isActive(to: string) {
-  return activeNavItem.value?.to === to
+function isActive(key: string) {
+  return activeNavItem.value?.key === key
 }
 
-function matchesRoute(to: string) {
+function matchesRoute(item: NavigationGroup['items'][number]) {
+  const { to, workspaceNavKey } = item
+  if (workspaceNavKey) return route.meta.workspaceNavKey === workspaceNavKey
   if (to === '/') return route.path === '/'
-  if (to === '/my/profile') return accountSettingsPaths.includes(route.path as typeof accountSettingsPaths[number])
-  if (to === announcementCenterTo) return route.path === '/my/notifications' && route.query.tab === 'announcements'
-  if (to === '/my/notifications') return route.path === to && route.query.tab !== 'announcements'
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
 function isApiMarketViewActive(view: typeof apiMarketNavItems[number]['view']) {
-  if (route.path !== '/api-market') return false
-  const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
+  if (!route.meta.apiMarketView) return false
+  const currentView = apiMarketViewFromPath(route.path)
   return currentView === view
 }
 
@@ -228,6 +253,20 @@ watch(
   () => {
     menuOpen.value = false
   },
+)
+
+watch(
+  [isAuthenticated, contactMethodsQuery.isSuccess, contactMethodsQuery.data],
+  ([authenticated, contactsResolved, methods]) => {
+    const userId = myProfile.value?.id
+    if (!authenticated || !contactsResolved || !userId) {
+      wechatOnboardingOpen.value = false
+      return
+    }
+    const hasWechat = (methods ?? []).some(method => method.enabled && method.type === 'wechat')
+    wechatOnboardingOpen.value = !hasWechat && !wechatOnboardingDismissed(userId)
+  },
+  { immediate: true },
 )
 
 watch(
@@ -267,12 +306,6 @@ async function logout() {
   }
 }
 
-function setActiveTheme(theme: unknown) {
-  if (typeof theme !== 'string' || !isAppTheme(theme)) return
-  activeTheme.value = theme
-  applyAppTheme(theme)
-}
-
 function closeMenu() {
   menuOpen.value = false
 }
@@ -290,7 +323,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
     class="min-h-screen bg-background lg:grid"
     :style="{ gridTemplateColumns: sidebarCollapsed ? '64px minmax(0, 1fr)' : '208px minmax(0, 1fr)' }"
   >
-    <aside class="sticky top-0 hidden h-screen overflow-hidden border-r border-sidebar-border bg-sidebar/95 text-sidebar-foreground backdrop-blur transition-[width] duration-200 lg:flex lg:flex-col">
+    <aside class="sticky top-[var(--global-announcement-height,0rem)] hidden h-[calc(100vh-var(--global-announcement-height,0rem))] overflow-hidden border-r border-sidebar-border bg-sidebar/95 text-sidebar-foreground backdrop-blur transition-[width] duration-200 lg:flex lg:flex-col">
       <RouterLink
         to="/"
         class="flex h-[60px] items-center border-b border-sidebar-border font-semibold tracking-tight"
@@ -311,12 +344,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             <span v-else>{{ group.title }}</span>
           </h2>
           <div class="mt-2 grid gap-1">
-            <div v-for="item in group.items" :key="item.to">
+            <div v-for="item in group.items" :key="item.key">
               <RouterLink
                 :to="item.to"
                 class="flex h-9 items-center rounded-md text-[14px] font-semibold text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 :title="sidebarCollapsed ? item.label : undefined"
-                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
+                :class="isActive(item.key) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
               >
                 <span
                   class="flex min-w-0 items-center"
@@ -325,16 +358,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                   <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                   <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
                 </span>
-                <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
+                <Badge v-if="item.count && !sidebarCollapsed" :variant="item.tone === 'danger' ? 'destructive' : 'secondary'" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
               </RouterLink>
               <div
-                v-if="item.to === '/api-market' && matchesRoute('/api-market') && !sidebarCollapsed"
+                v-if="item.to === '/api-market' && matchesRoute(item) && !sidebarCollapsed"
                 class="ml-5 mt-1 grid gap-0.5 border-l border-sidebar-border pl-3"
               >
                 <RouterLink
                   v-for="child in apiMarketNavItems"
                   :key="child.view"
-                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  :to="child.path"
                   class="flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                 >
@@ -395,24 +428,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         <section v-for="group in navGroups" :key="group.title">
           <h2 class="px-2 text-xs font-medium text-muted-foreground">{{ group.title }}</h2>
           <div class="mt-2 grid gap-1">
-            <div v-for="item in group.items" :key="item.to">
+            <div v-for="item in group.items" :key="item.key">
               <RouterLink
                 :to="item.to"
                 class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                :class="isActive(item.key) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                 @click="closeMenu"
               >
                 <span class="flex min-w-0 items-center gap-2">
                   <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                   <span class="truncate">{{ item.label }}</span>
                 </span>
-                <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
+                <Badge v-if="item.count" :variant="item.tone === 'danger' ? 'destructive' : 'secondary'">{{ formatBadgeCount(item.count) }}</Badge>
               </RouterLink>
               <div v-if="item.to === '/api-market'" class="ml-6 mt-1 grid gap-0.5 border-l border-border pl-3">
                 <RouterLink
                   v-for="child in apiMarketNavItems"
                   :key="child.view"
-                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  :to="child.path"
                   class="rounded-md px-3 py-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                   @click="closeMenu"
@@ -444,7 +477,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
     </div>
 
     <div class="min-w-0">
-      <header class="sticky top-0 z-50 border-b border-border bg-card/88 backdrop-blur">
+      <header class="sticky top-[var(--global-announcement-height,0rem)] z-50 border-b border-border bg-card/88 backdrop-blur">
         <div class="flex h-[60px] items-center gap-4 px-4 sm:px-5 lg:px-5">
           <Button variant="ghost" size="icon" class="lg:hidden" aria-label="打开导航菜单" @click="menuOpen = true">
             <Menu class="h-4 w-4" />
@@ -471,23 +504,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
           </div>
           <div class="flex-1" />
           <DevPersonaSwitcher :current-username="currentUsername" />
-          <DropdownMenu v-if="appThemes.length > 1">
-            <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="icon" aria-label="切换主题">
-                <Palette class="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" class="w-44">
-              <DropdownMenuLabel>主题</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuRadioGroup :model-value="activeTheme" @update:model-value="setActiveTheme">
-                <DropdownMenuRadioItem v-for="theme in appThemes" :key="theme.value" :value="theme.value">
-                  <span class="h-3 w-3 rounded-full border border-border" :style="{ background: theme.swatch }"></span>
-                  <span>{{ theme.label }}</span>
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
           <DropdownMenu v-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" class="relative text-muted-foreground" aria-label="打开通知">
@@ -589,20 +605,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
-                <RouterLink to="/my/feedback" class="flex items-center justify-between gap-3">
-                  <span class="flex min-w-0 items-center gap-2">
-                    <CircleHelp class="h-4 w-4 shrink-0" />
-                    <span>问题反馈</span>
-                  </span>
-                  <span
-                    v-if="feedbackMenuUnreadCount"
-                    class="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground"
-                  >
-                    {{ formatBadgeCount(feedbackMenuUnreadCount) }}
-                  </span>
-                </RouterLink>
-              </DropdownMenuItem>
-              <DropdownMenuItem as-child>
                 <RouterLink :to="{ path: '/login', query: { returnTo: route.fullPath } }" class="flex items-center gap-2">
                   <LogIn class="h-4 w-4" />登录 / 绑定
                 </RouterLink>
@@ -619,10 +621,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
 
       <main
         class="w-full px-4 py-5 sm:px-5 lg:px-5"
-        :class="route.path === '/api-market' ? 'bg-white' : ''"
+        :class="route.path.startsWith('/api-market') ? 'bg-white' : ''"
       >
         <slot />
       </main>
     </div>
   </div>
+
+  <Dialog :open="wechatOnboardingOpen" @update:open="updateWechatOnboardingOpen">
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>配置微信联系方式</DialogTitle>
+        <DialogDescription>拼车和 API 额度交易使用微信联系。配置后会自动用于所有交易角色，但不代表平台已验证该微信号。</DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="gap-2 sm:gap-0">
+        <Button type="button" variant="outline" @click="dismissWechatOnboarding">稍后填写</Button>
+        <Button type="button" @click="configureWechat">
+          <MessageSquarePlus class="h-4 w-4" />去配置微信
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

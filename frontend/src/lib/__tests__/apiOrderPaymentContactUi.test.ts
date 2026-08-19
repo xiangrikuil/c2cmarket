@@ -3,8 +3,11 @@ import { readFileSync } from 'node:fs'
 import { afterEach, describe, test, vi } from 'vitest'
 
 const merchantListSource = readFileSync(new URL('../../pages/MerchantApiOrdersPage.vue', import.meta.url), 'utf8')
+const buyerListSource = readFileSync(new URL('../../pages/MyApiOrdersPage.vue', import.meta.url), 'utf8')
 const orderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
 const disputePanelSource = readFileSync(new URL('../../components/api-order/ApiOrderDisputePanel.vue', import.meta.url), 'utf8')
+const disputePageSource = readFileSync(new URL('../../pages/MyApiOrderDisputePage.vue', import.meta.url), 'utf8')
+const routerSource = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
 const orderContactCardSource = readFileSync(new URL('../../components/profile/OrderContactCard.vue', import.meta.url), 'utf8')
 const paymentMethodCardSource = readFileSync(new URL('../../components/contact-payment/PaymentMethodCard.vue', import.meta.url), 'utf8')
 const paymentSettingsEditorSource = readFileSync(new URL('../../components/contact-payment/ApiPaymentSettingsEditor.vue', import.meta.url), 'utf8')
@@ -35,7 +38,7 @@ describe('卖家 API 订单详情入口与核款区', () => {
   test('所有订单行可进入详情，待确认收款同时保留查看和确认动作', () => {
     assert.match(merchantListSource, /<tr[^>]*tabindex="0"[^>]*@click="openOrder\(\$event, item\.id\)"[^>]*@keydown\.enter="openOrder\(\$event, item\.id\)"/)
     assert.match(merchantListSource, /<RouterLink :to="`\/merchant\/api-orders\/\$\{item\.id\}`">[\s\S]*?查看详情/)
-    assert.match(merchantListSource, /<Button v-if="item\.status === 'payment_submitted'"[\s\S]*?确认已收款/)
+    assert.match(merchantListSource, /<Button v-if="item\.status === 'payment_submitted' && !hasActiveDispute\(item\)"[\s\S]*?确认已收款/)
     assert.match(merchantListSource, /event\.target instanceof Element && event\.target\.closest\('a,button'\)/)
   })
 
@@ -152,6 +155,8 @@ describe('付款联系与平台兜底文案', () => {
     assert.match(compactTemplate, /复制微信/)
     assert.doesNotMatch(compactTemplate, /我已联系对方|无效|无法联系|疑似冒充|举报/)
     assert.match(orderDetailSource, /:snapshot="merchantContactSnapshot"[\s\S]*?title="付款有疑问？直接联系商户"[\s\S]*?compact[\s\S]*?:show-contacted-action="false"[\s\S]*?:show-issue-actions="false"/)
+    assert.doesNotMatch(orderDetailSource, /微信或 linux\.do 私信/)
+    assert.match(orderDetailSource, /通过订单内微信联系/)
   })
 
   test('收款说明只引导脱敏核对，不重复填写付款软件或昵称', () => {
@@ -161,23 +166,43 @@ describe('付款联系与平台兜底文案', () => {
     assert.match(paymentSettingsEditorSource, /收款核对说明不能包含 API Key、token、密码、Session、Cookie、付款码或面板凭据/)
   })
 
-  test('纠纷先进入结构化双方协商，平台审核是后续独立动作', () => {
+  test('订单详情只保留售后入口，独立页面承载卖家处理和平台介入', () => {
     assert.match(orderDetailSource, /v-model="disputeIssueCode"/)
     assert.match(orderDetailSource, /v-model="disputeRequestedResolution"/)
     assert.match(orderDetailSource, /v-if="disputeRequestedResolution === 'partial_refund'"/)
-    assert.match(orderDetailSource, /提交后进入双方协商；任一方可在无法达成一致时申请平台审核。/)
-    assert.match(orderDetailSource, /发起后先由双方协商；无法达成一致时再申请平台审核。/)
+    assert.match(orderDetailSource, /提交后卖家有 24 小时同意或拒绝/)
+    assert.match(orderDetailSource, /由卖家先同意或拒绝；拒绝或超时后，买家可申请平台介入/)
 
-    assert.match(disputePanelSource, /pendingFromMe/)
-    assert.match(disputePanelSource, /等待对方确认或拒绝。/)
-    assert.match(disputePanelSource, /确认方案并结案/)
-    assert.match(disputePanelSource, /拒绝方案/)
-    assert.match(disputePanelSource, /已拒绝当前方案，纠纷继续协商。/)
-    assert.match(disputePanelSource, /proposalHistory/)
-    assert.match(disputePanelSource, /历史方案/)
-    assert.match(disputePanelSource, /双方已确认/)
-    assert.match(disputePanelSource, /申请平台审核/)
+    assert.match(disputePanelSource, /卖家处理结果/)
+    assert.match(disputePanelSource, /同意申请/)
+    assert.match(disputePanelSource, /拒绝申请/)
+    assert.match(disputePanelSource, /availableActions/)
+    assert.match(disputePanelSource, /平台定向补件/)
+    assert.match(disputePanelSource, /撤回申请/)
+    assert.match(disputePanelSource, /申请平台介入/)
+    assert.doesNotMatch(disputePanelSource, /确认线下解决|selfResolve/)
+    assert.match(disputePanelSource, /旧流程历史记录/)
+    assert.match(disputePanelSource, /仅供查看，不能继续留言或处理方案/)
+    assert.match(orderDetailSource, /进入纠纷处理/)
+    assert.match(orderDetailSource, /`\/my\/disputes\/\$\{disputePanelId\}`/)
+    assert.doesNotMatch(orderDetailSource, /<ApiOrderDisputePanel/)
+    assert.match(routerSource, /path: '\/my\/disputes\/:id'/)
+    assert.match(disputePageSource, /<ApiOrderDisputePanel :dispute-id="disputeId" \/>/)
+    assert.doesNotMatch(disputePanelSource, /结束协商并申请平台介入|const canMessage|pendingFromMe/)
     assert.doesNotMatch(disputePanelSource, /诉求不成立|关闭纠纷|单方面关闭/)
     assert.doesNotMatch(orderDetailSource, /即时客服|实时客服|立即处理/)
+  })
+
+  test('买卖订单列表展示纠纷第二状态、待办和案件入口', () => {
+    for (const source of [buyerListSource, merchantListSource]) {
+      assert.match(source, /disputeCaseId/)
+      assert.match(source, /disputeNeedsAction/)
+      assert.match(source, /disputeActionLabel/)
+      assert.match(source, /disputeDueAt/)
+      assert.match(source, /`\/my\/disputes\/\$\{item\.disputeCaseId\}/)
+    }
+    assert.match(merchantListSource, /已完成当前处理，无需操作/)
+    assert.match(merchantListSource, /等待买家决定/)
+    assert.match(merchantListSource, /平台处理中/)
   })
 })

@@ -3,6 +3,7 @@ package profile
 import (
 	"time"
 
+	"c2c-market/backend/internal/module/communityidentity"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
@@ -48,6 +49,7 @@ type UserProfile struct {
 	Restrictions         []string
 	UsernameCanChange    bool
 	UsernameNextChangeAt *time.Time
+	CommunityIdentities  []communityidentity.Identity
 }
 
 type UpdateUserProfileInput struct {
@@ -93,21 +95,22 @@ type PublicStats struct {
 }
 
 type PublicUserProfile struct {
-	ID              string
-	Username        string
-	DisplayName     string
-	Bio             string
-	AvatarURL       string
-	AvatarText      string
-	LinuxDoBound    bool
-	LinuxDoUsername string
-	TrustLevel      *int
-	AccountStatus   string
-	CreatedAt       *time.Time
-	LastActiveAt    *time.Time
-	Privacy         PrivacySettings
-	Stats           PublicStats
-	Badges          []string
+	ID                  string
+	Username            string
+	DisplayName         string
+	Bio                 string
+	AvatarURL           string
+	AvatarText          string
+	LinuxDoBound        bool
+	LinuxDoUsername     string
+	TrustLevel          *int
+	AccountStatus       string
+	CreatedAt           *time.Time
+	LastActiveAt        *time.Time
+	Privacy             PrivacySettings
+	Stats               PublicStats
+	Badges              []string
+	CommunityIdentities []communityidentity.PublicIdentity
 }
 
 type PublicProfileCarpool struct {

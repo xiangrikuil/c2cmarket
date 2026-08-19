@@ -178,6 +178,9 @@ func TestPostgresDevPersonaSessionReadinessAndIdempotency(t *testing.T) {
 		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode %s persona response: %v", persona, err)
 		}
+		if payload.Audience != auth.SessionAudienceNormal {
+			t.Fatalf("prepare %s audience=%q, want %q", persona, payload.Audience, auth.SessionAudienceNormal)
+		}
 		return payload
 	}
 
@@ -413,7 +416,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-api-owner-"+suffix)
 	adminSession := createSession(t, server, "pg-api-admin-"+suffix, true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Owner "+suffix, "@pg_api_owner_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Owner WeChat "+suffix, "pg_api_owner_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-create-"+suffix)
 	if service.ReviewStatus != app.APIServiceReviewStatusDraft || service.Version != 1 {
@@ -539,7 +542,7 @@ func TestPostgresAPIServiceIntegrityConstraints(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createSession(t, server, "pg-api-integrity-owner-"+suffix, false)
 	otherSession := createSession(t, server, "pg-api-integrity-other-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Integrity Owner "+suffix, "@pg_api_integrity_owner_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Integrity Owner WeChat "+suffix, "pg_api_integrity_owner_"+suffix)
 	otherContact := createContactMethod(t, server, otherSession, "telegram", "PG API Integrity Other "+suffix, "@pg_api_integrity_other_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-integrity-create-"+suffix)
@@ -590,18 +593,14 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "pg-api-intent-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-api-intent-buyer-"+suffix, false)
 	adminSession := createSession(t, server, "pg-api-intent-admin-"+suffix, true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Intent Owner "+suffix, "@pg_api_intent_owner_"+suffix)
-	ownerWechat := createContactMethod(t, server, ownerSession, "wechat", "PG API Intent WeChat "+suffix, "pg_api_intent_wechat_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Intent Buyer "+suffix, "@pg_api_intent_buyer_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Intent Owner WeChat "+suffix, "pg_api_intent_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG API Intent Buyer WeChat "+suffix, "pg_api_intent_buyer_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
 	servicePayload := apiServicePayloadWithProbeConnection(apiServicePayload(ownerContact.ID, "1.0000"), service.ProbeConnectionID)
-	servicePayload = strings.Replace(servicePayload,
-		`"ownerContactMethodId":"`+ownerContact.ID+`"`,
-		`"ownerContactMethodId":"`+ownerContact.ID+`","ownerContactMethodIds":["`+ownerContact.ID+`","`+ownerWechat.ID+`"]`, 1)
 	service = updateAPIService(t, server, ownerSession, service.ID, service.Version, servicePayload, "pg-api-intent-service-contacts-"+suffix)
-	if len(service.OwnerContactMethodIDs) != 2 || service.OwnerContactMethodIDs[0] != ownerContact.ID || service.OwnerContactMethodIDs[1] != ownerWechat.ID {
-		t.Fatalf("expected ordered owner contact selection, got %+v", service.OwnerContactMethodIDs)
+	if len(service.OwnerContactMethodIDs) != 1 || service.OwnerContactMethodIDs[0] != ownerContact.ID {
+		t.Fatalf("expected sole WeChat owner contact selection, got %+v", service.OwnerContactMethodIDs)
 	}
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-service-publish-"+suffix)
@@ -620,35 +619,35 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 		first.PricingSnapshot == "" {
 		t.Fatalf("unexpected postgres API purchase intent: %+v", first)
 	}
-	if first.MerchantContact == nil || first.MerchantContact.Value != "@pg_api_intent_owner_"+suffix {
+	if first.MerchantContact == nil || first.MerchantContact.Value != "pg_api_intent_owner_"+suffix {
 		t.Fatalf("expected merchant contact in postgres API intent create: %+v", first.MerchantContact)
 	}
-	if len(first.MerchantContacts) != 2 || first.MerchantContacts[0].Value != "@pg_api_intent_owner_"+suffix || first.MerchantContacts[1].Value != "pg_api_intent_wechat_"+suffix {
-		t.Fatalf("expected ordered frozen merchant contacts in postgres API intent create: %+v", first.MerchantContacts)
+	if len(first.MerchantContacts) != 1 || first.MerchantContacts[0].Value != "pg_api_intent_owner_"+suffix {
+		t.Fatalf("expected sole frozen WeChat merchant contact in postgres API intent create: %+v", first.MerchantContacts)
 	}
-	if first.SelectedAccessMode != "buyer_dedicated_sub_key" || first.OwnerUserID != "" || first.OwnerContactMethodID != "" || first.MerchantContact.Type != "telegram" {
+	if first.SelectedAccessMode != "buyer_dedicated_sub_key" || first.OwnerUserID != "" || first.OwnerContactMethodID != "" || first.MerchantContact.Type != "wechat" {
 		t.Fatalf("postgres create response leaked owner identity or missed frozen access/contact data: %+v", first)
 	}
 	if first.BuyerContact != nil {
 		t.Fatalf("create response must not include buyer contact: %+v", first.BuyerContact)
 	}
 	assertAPIPurchaseIntentSideEffects(t, databaseURL, first.ID, 1)
-	assertAPIPurchaseIntentIdempotencyCache(t, databaseURL, buyerSession.userID, published.ID, first.ID, "create", "pg-api-intent-create-"+suffix, app.APIPurchaseIntentStatusOpen, "@pg_api_intent_owner_"+suffix)
+	assertAPIPurchaseIntentIdempotencyCache(t, databaseURL, buyerSession.userID, published.ID, first.ID, "create", "pg-api-intent-create-"+suffix, app.APIPurchaseIntentStatusOpen, "pg_api_intent_owner_"+suffix)
 
 	buyerDetail := getAPIPurchaseIntent(t, server, buyerSession, "me", first.ID)
-	if buyerDetail.ID != first.ID || buyerDetail.MerchantContact == nil || buyerDetail.MerchantContact.Value != "@pg_api_intent_owner_"+suffix || len(buyerDetail.MerchantContacts) != 2 {
+	if buyerDetail.ID != first.ID || buyerDetail.MerchantContact == nil || buyerDetail.MerchantContact.Value != "pg_api_intent_owner_"+suffix || len(buyerDetail.MerchantContacts) != 1 {
 		t.Fatalf("unexpected buyer API purchase intent detail: %+v", buyerDetail)
 	}
 	ownerDetail := getAPIPurchaseIntent(t, server, ownerSession, "owner", first.ID)
-	if ownerDetail.ID != first.ID || ownerDetail.BuyerContactMethodID != buyerContact.ID || ownerDetail.OwnerContactMethodID != "" || ownerDetail.BuyerContact == nil || ownerDetail.BuyerContact.Value != "@pg_api_intent_buyer_"+suffix {
+	if ownerDetail.ID != first.ID || ownerDetail.BuyerContactMethodID != buyerContact.ID || ownerDetail.OwnerContactMethodID != "" || ownerDetail.BuyerContact == nil || ownerDetail.BuyerContact.Value != "pg_api_intent_buyer_"+suffix {
 		t.Fatalf("unexpected owner API purchase intent detail: %+v", ownerDetail)
 	}
 	assertAPIPurchaseIntentContactAccessLogs(t, databaseURL, first.ID, 1, 1)
 	if _, err := poolExec(databaseURL, `
 		UPDATE contact_methods
 		SET label = label || ' changed after intent'
-		WHERE id IN ($1, $2, $3)
-	`, ownerContact.ID, ownerWechat.ID, buyerContact.ID); err != nil {
+		WHERE id IN ($1, $2)
+	`, ownerContact.ID, buyerContact.ID); err != nil {
 		t.Fatalf("mutate contact labels after API intent: %v", err)
 	}
 	labelReplay := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-"+suffix)
@@ -657,8 +656,8 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	if labelReplay.MerchantContact.Label != first.MerchantContact.Label || labelBuyerDetail.MerchantContact.Label != first.MerchantContact.Label {
 		t.Fatalf("merchant contact label drifted after mutable method edit: create=%+v replay=%+v detail=%+v", first.MerchantContact, labelReplay.MerchantContact, labelBuyerDetail.MerchantContact)
 	}
-	if len(labelBuyerDetail.MerchantContacts) != 2 || labelBuyerDetail.MerchantContacts[1].Label != first.MerchantContacts[1].Label {
-		t.Fatalf("secondary merchant contact label drifted after mutable method edit: create=%+v detail=%+v", first.MerchantContacts, labelBuyerDetail.MerchantContacts)
+	if len(labelBuyerDetail.MerchantContacts) != 1 || labelBuyerDetail.MerchantContacts[0].Label != first.MerchantContacts[0].Label {
+		t.Fatalf("merchant contact collection label drifted after mutable method edit: create=%+v detail=%+v", first.MerchantContacts, labelBuyerDetail.MerchantContacts)
 	}
 	if labelOwnerDetail.BuyerContact.Label != ownerDetail.BuyerContact.Label {
 		t.Fatalf("buyer contact label drifted after mutable method edit: before=%+v after=%+v", ownerDetail.BuyerContact, labelOwnerDetail.BuyerContact)
@@ -713,8 +712,8 @@ func TestPostgresAPIOrderReleasesPurchaseIntent(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-api-order-release-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-api-order-release-buyer-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Order Release Owner "+suffix, "@pg_api_order_release_owner_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Order Release Buyer "+suffix, "@pg_api_order_release_buyer_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Order Release Owner WeChat "+suffix, "pg_api_order_release_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG API Order Release Buyer WeChat "+suffix, "pg_api_order_release_buyer_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-order-release-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-order-release-service-submit-"+suffix)
@@ -794,9 +793,9 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "pg-api-intent-integrity-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-api-intent-integrity-buyer-"+suffix, false)
 	otherSession := createSession(t, server, "pg-api-intent-integrity-other-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Intent Integrity Owner "+suffix, "@pg_api_intent_integrity_owner_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Intent Integrity Buyer "+suffix, "@pg_api_intent_integrity_buyer_"+suffix)
-	otherContact := createContactMethod(t, server, otherSession, "telegram", "PG API Intent Integrity Other "+suffix, "@pg_api_intent_integrity_other_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Intent Integrity Owner WeChat "+suffix, "pg_api_intent_integrity_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG API Intent Integrity Buyer WeChat "+suffix, "pg_api_intent_integrity_buyer_"+suffix)
+	otherContact := createContactMethod(t, server, otherSession, "wechat", "PG API Intent Integrity Other WeChat "+suffix, "pg_api_intent_integrity_other_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-integrity-service-create-"+suffix)
 	pausedIntent := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+service.ID+"/purchase-intents", apiPurchaseIntentPayload(buyerContact.ID))
@@ -827,7 +826,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 	if wrongContactResponse.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected wrong buyer contact validation error, got %d body %s", wrongContactResponse.Code, wrongContactResponse.Body.String())
 	}
-	assertProblemCode(t, wrongContactResponse, "CONTACT_METHOD_NOT_OWNED")
+	assertProblemCode(t, wrongContactResponse, "CONTACT_METHOD_REQUIRED")
 
 	tooHigh := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+published.ID+"/purchase-intents", strings.Replace(apiPurchaseIntentPayload(buyerContact.ID), `"requestedUsdAllowance":"20.000000"`, `"requestedUsdAllowance":"21.000000"`, 1))
 	addAuth(tooHigh, buyerSession, "pg-api-intent-too-high-"+suffix)
@@ -864,7 +863,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 	assertPostgresConstraintError(t, err, "API purchase intent owner method/version mismatch must be rejected")
 
 	secondOwnerSession := createLinuxDoSession(t, server, "pg-api-intent-integrity-owner-two-"+suffix)
-	secondOwnerContact := createContactMethod(t, server, secondOwnerSession, "telegram", "PG API Intent Integrity Owner Two "+suffix, "@pg_api_intent_integrity_owner_two_"+suffix)
+	secondOwnerContact := createContactMethod(t, server, secondOwnerSession, "wechat", "PG API Intent Integrity Owner Two WeChat "+suffix, "pg_api_intent_integrity_owner_two_"+suffix)
 	secondService := createPostgresAPIService(t, databaseURL, server, secondOwnerSession, secondOwnerContact.ID, "pg-api-intent-integrity-second-service-create-"+suffix)
 	secondSubmitted := ownerAPIServiceAction(t, server, secondOwnerSession, secondService.ID, "submit-review", secondService.Version, "pg-api-intent-integrity-second-submit-"+suffix)
 	secondPublished := ownerAPIServiceAction(t, server, secondOwnerSession, secondSubmitted.ID, "publish", secondSubmitted.Version, "pg-api-intent-integrity-second-publish-"+suffix)
@@ -1104,7 +1103,7 @@ func TestPostgresContactIntegrityConstraints(t *testing.T) {
 	assertPostgresConstraintError(t, err, "non-positive contact window must be rejected")
 }
 
-func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
+func TestPostgresCarpoolMembershipUniquenessConstraint(t *testing.T) {
 	databaseURL := os.Getenv("C2C_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("C2C_TEST_DATABASE_URL is not set")
@@ -1122,9 +1121,8 @@ func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-member-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-member-buyer-"+suffix, false)
-	otherSession := createSession(t, server, "pg-member-other-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Member Owner "+suffix, "@pg_member_owner_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG Member Buyer "+suffix, "@pg_member_buyer_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG Member Owner WeChat "+suffix, "pg_member_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG Member Buyer WeChat "+suffix, "pg_member_buyer_"+suffix)
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-member-create-"+suffix)
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "pg-member-submit-"+suffix)
@@ -1135,37 +1133,20 @@ func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
 	defer pool.Close()
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO carpool_join_confirmations (
-			carpool_application_id, actor_user_id, actor_role, confirmed_at, request_id
-		)
-		VALUES ($1, $2, 'buyer', now(), 'wrong-buyer')
-	`, accepted.ID, otherSession.userID)
-	assertPostgresConstraintError(t, err, "wrong buyer join confirmation actor must be rejected")
-
-	_, err = pool.Exec(ctx, `
 		INSERT INTO carpool_memberships (
 			carpool_listing_id, carpool_application_id, buyer_user_id, owner_user_id,
 			product_plan_id, status, seat_count, price_monthly_cny_snapshot,
-			policy_version_snapshot, risk_notice_code_snapshot, joined_at
+			policy_version_snapshot, risk_notice_code_snapshot,
+			conditions_version_snapshot, conditions_snapshot, joined_at
 		)
 		SELECT carpool_listing_id, id, buyer_user_id, owner_user_id,
 		       product_plan_id, 'active', seat_count, price_monthly_cny_snapshot,
-		       policy_version_snapshot, risk_notice_code_snapshot, now()
+		       policy_version_snapshot, risk_notice_code_snapshot,
+		       conditions_version_snapshot, conditions_snapshot, now()
 		FROM carpool_applications
 		WHERE id = $1
 	`, accepted.ID)
-	assertPostgresConstraintError(t, err, "membership before joined application must be rejected")
-
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "pg-member-buyer-confirm-"+suffix)
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "pg-member-owner-confirm-"+suffix)
-	membership := firstCarpoolMembership(t, server, ownerSession, "owner", joined.ID)
-	_, err = pool.Exec(ctx, `
-		INSERT INTO carpool_completion_confirmations (
-			carpool_membership_id, actor_user_id, actor_role, confirmed_at, request_id
-		)
-		VALUES ($1, $2, 'buyer', now(), 'wrong-completion-buyer')
-	`, membership.ID, otherSession.userID)
-	assertPostgresConstraintError(t, err, "wrong buyer completion confirmation actor must be rejected")
+	assertPostgresConstraintError(t, err, "duplicate membership for one application must be rejected")
 }
 
 func TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent(t *testing.T) {
@@ -1217,8 +1198,59 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-carpool-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-carpool-buyer-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Owner Carpool TG "+suffix, "@pg_owner_carpool_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG Buyer Carpool TG "+suffix, "@pg_buyer_carpool_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG Owner Carpool WeChat "+suffix, "pg_owner_carpool_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG Buyer Carpool WeChat "+suffix, "pg_buyer_carpool_"+suffix)
+
+	unlimitedBody := carpoolPayloadWithRiskAck(ownerContact.ID)
+	unlimitedBody = strings.Replace(unlimitedBody, `"distributionMethod":"sub2api"`, `"distributionMethod":"account_login"`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"dailySpendLimitUsd":"50.00"`, `"dailySpendLimitUsd":null`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"weeklySpendLimitUsd":"200.00"`, `"weeklySpendLimitUsd":null`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"vpsRegion":"香港"`, `"vpsRegion":null`, 1)
+	unlimitedBody = strings.Replace(unlimitedBody, `"supportsMainlandChinaDirectConnection":true`, `"supportsMainlandChinaDirectConnection":null`, 1)
+	unlimitedRequest := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", unlimitedBody)
+	addAuth(unlimitedRequest, ownerSession, "pg-carpool-unlimited-"+suffix)
+	unlimitedResponse := httptest.NewRecorder()
+	server.ServeHTTP(unlimitedResponse, unlimitedRequest)
+	if unlimitedResponse.Code != http.StatusCreated {
+		t.Fatalf("postgres unlimited carpool status %d body %s", unlimitedResponse.Code, unlimitedResponse.Body.String())
+	}
+	var unlimitedListing createdCarpool
+	if err := json.NewDecoder(unlimitedResponse.Body).Decode(&unlimitedListing); err != nil {
+		t.Fatalf("decode postgres unlimited carpool: %v", err)
+	}
+	if unlimitedListing.DistributionMethod != "account_login" || unlimitedListing.ProvidesAdminAccount || unlimitedListing.DailyQuotaAmount != nil || unlimitedListing.WeeklyQuotaAmount != nil || unlimitedListing.VPSRegion != nil || unlimitedListing.SupportsMainlandChinaDirectConnection != nil {
+		t.Fatalf("unexpected postgres unlimited carpool response: %+v", unlimitedListing)
+	}
+	unlimitedRead := httptest.NewRequest(http.MethodGet, "/api/v1/carpools/"+unlimitedListing.ID, nil)
+	unlimitedReadResponse := httptest.NewRecorder()
+	server.ServeHTTP(unlimitedReadResponse, unlimitedRead)
+	if unlimitedReadResponse.Code != http.StatusOK {
+		t.Fatalf("read postgres unlimited carpool status %d body %s", unlimitedReadResponse.Code, unlimitedReadResponse.Body.String())
+	}
+	var persistedUnlimitedListing createdCarpool
+	if err := json.NewDecoder(unlimitedReadResponse.Body).Decode(&persistedUnlimitedListing); err != nil {
+		t.Fatalf("decode persisted postgres unlimited carpool: %v", err)
+	}
+	if persistedUnlimitedListing.DistributionMethod != "account_login" || persistedUnlimitedListing.ProvidesAdminAccount || persistedUnlimitedListing.DailyQuotaAmount != nil || persistedUnlimitedListing.WeeklyQuotaAmount != nil || persistedUnlimitedListing.VPSRegion != nil || persistedUnlimitedListing.SupportsMainlandChinaDirectConnection != nil {
+		t.Fatalf("unexpected persisted postgres unlimited carpool: %+v", persistedUnlimitedListing)
+	}
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+	var storedDistributionMethod string
+	var storedProvidesAdminAccount bool
+	var storedDailyUnlimited, storedWeeklyUnlimited, storedVPSUndeclared, storedDirectUndeclared bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT distribution_method, provides_admin_account,
+		       daily_spend_limit_usd IS NULL, weekly_spend_limit_usd IS NULL,
+		       vps_region IS NULL, supports_mainland_china_direct_connection IS NULL
+		FROM carpool_listings
+		WHERE id = $1
+	`, unlimitedListing.ID).Scan(&storedDistributionMethod, &storedProvidesAdminAccount, &storedDailyUnlimited, &storedWeeklyUnlimited, &storedVPSUndeclared, &storedDirectUndeclared); err != nil {
+		t.Fatalf("inspect persisted unlimited carpool: %v", err)
+	}
+	if storedDistributionMethod != "account_login" || storedProvidesAdminAccount || !storedDailyUnlimited || !storedWeeklyUnlimited || !storedVPSUndeclared || !storedDirectUndeclared {
+		t.Fatalf("unexpected persisted unlimited carpool columns: distribution=%s admin=%t daily_null=%t weekly_null=%t vps_null=%t direct_null=%t", storedDistributionMethod, storedProvidesAdminAccount, storedDailyUnlimited, storedWeeklyUnlimited, storedVPSUndeclared, storedDirectUndeclared)
+	}
 
 	studentUsername := "pgstudent" + strings.ReplaceAll(suffix, ".", "")
 	student := createStudentSession(t, server, studentUsername)
@@ -1238,7 +1270,7 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	if published.Status != app.CarpoolListingStatusActive || published.AvailableSeats != 1 {
 		t.Fatalf("expected one available seat after publish, got %+v", published)
 	}
-	if published.ServiceMultiplier != "1.0000" || published.DailyQuotaAmount == nil || *published.DailyQuotaAmount != "50.00" || published.WeeklyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
+	if published.ServiceMultiplier != "1.0000" || published.DailyQuotaAmount == nil || *published.DailyQuotaAmount != "50.00" || published.WeeklyQuotaAmount == nil || *published.WeeklyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
 		t.Fatalf("expected postgres multiplier and quota fields after publish, got %+v", published)
 	}
 	if published.RegionCode != "other" || published.RegionName != "印度区" {
@@ -1263,34 +1295,22 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	assertCarpoolApplicationCreatedOwnerNotification(t, databaseURL, application.ID, ownerSession.userID, 1)
 	first := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "pg-carpool-accept-"+suffix)
 	second := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "pg-carpool-accept-"+suffix)
-	if first.ContactSessionID == "" || first.ContactSessionID != second.ContactSessionID {
+	if first.Status != app.CarpoolApplicationStatusJoined || first.JoinedAt == nil || first.ContactSessionID == "" || first.ContactSessionID != second.ContactSessionID {
 		t.Fatalf("expected idempotent contact session, got %+v and %+v", first, second)
 	}
 	assertCarpoolApplicationSideEffects(t, databaseURL, application.ID, first.ContactSessionID, 1)
 	assertCarpoolAcceptIdempotencyCache(t, databaseURL, ownerSession.userID, application.ID, "pg-carpool-accept-"+suffix, first.ContactSessionID)
 
 	adminSession := createSession(t, server, "pg-carpool-admin-"+suffix, true)
-	reviewListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-legacy-review-create-"+suffix)
-	forcedPendingVersion := forceCarpoolPendingReview(t, databaseURL, reviewListing.ID)
-	changesRequested := reviewCarpool(t, server, adminSession, reviewListing.ID, "request-changes", forcedPendingVersion, "pg-carpool-request-changes-"+suffix)
-	if changesRequested.Status != app.CarpoolListingStatusChangesRequested {
-		t.Fatalf("unexpected legacy changes-requested listing: %+v", changesRequested)
+	governanceListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-governance-create-"+suffix)
+	governancePublished := submitCarpoolReview(t, server, ownerSession, governanceListing.ID, governanceListing.Version, "pg-carpool-governance-publish-"+suffix)
+	paused := reviewCarpool(t, server, adminSession, governancePublished.ID, "pause", governancePublished.Version, "pg-carpool-pause-"+suffix)
+	if paused.Status != app.CarpoolListingStatusActive || paused.GovernanceStatus != "removed" {
+		t.Fatalf("postgres governance removal changed recruitment state: %+v", paused)
 	}
-	republished := submitCarpoolReview(t, server, ownerSession, changesRequested.ID, changesRequested.Version, "pg-carpool-republish-"+suffix)
-	if republished.Status != app.CarpoolListingStatusActive {
-		t.Fatalf("unexpected republished listing: %+v", republished)
-	}
-	rejectedListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-legacy-reject-create-"+suffix)
-	rejectedPendingVersion := forceCarpoolPendingReview(t, databaseURL, rejectedListing.ID)
-	rejected := reviewCarpool(t, server, adminSession, rejectedListing.ID, "reject", rejectedPendingVersion, "pg-carpool-reject-"+suffix)
-	if rejected.Status != app.CarpoolListingStatusRejected {
-		t.Fatalf("unexpected legacy rejected listing: %+v", rejected)
-	}
-	approvedListing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-legacy-approve-create-"+suffix)
-	approvedPendingVersion := forceCarpoolPendingReview(t, databaseURL, approvedListing.ID)
-	approvedLegacy := reviewCarpool(t, server, adminSession, approvedListing.ID, "approve", approvedPendingVersion, "pg-carpool-approve-legacy-"+suffix)
-	if approvedLegacy.Status != app.CarpoolListingStatusActive {
-		t.Fatalf("unexpected legacy approved listing: %+v", approvedLegacy)
+	restored := reviewCarpool(t, server, adminSession, paused.ID, "restore", paused.Version, "pg-carpool-restore-"+suffix)
+	if restored.Status != app.CarpoolListingStatusActive || restored.GovernanceStatus != "clear" {
+		t.Fatalf("postgres governance restore changed recruitment state: %+v", restored)
 	}
 
 	readContact := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+first.ContactSessionID+"/contacts", nil)
@@ -1303,37 +1323,19 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	if got := readResponse.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("expected no-store, got %q", got)
 	}
-	if !strings.Contains(readResponse.Body.String(), "@pg_owner_carpool_"+suffix) {
+	if !strings.Contains(readResponse.Body.String(), "pg_owner_carpool_"+suffix) {
 		t.Fatalf("expected owner contact in accepted carpool contact response")
 	}
-
-	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", first.ID, first.Version, "pg-carpool-buyer-confirm-"+suffix)
-	if buyerConfirmed.Status != app.CarpoolApplicationStatusAcceptedReserved || buyerConfirmed.BuyerConfirmedAt == nil {
-		t.Fatalf("unexpected postgres buyer-confirmed application: %+v", buyerConfirmed)
-	}
-	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", first.ID, buyerConfirmed.Version, "pg-carpool-owner-confirm-"+suffix)
-	if joined.Status != app.CarpoolApplicationStatusJoined || joined.JoinedAt == nil || joined.ReservationExpiresAt != nil {
-		t.Fatalf("unexpected postgres joined application: %+v", joined)
-	}
-	assertCarpoolJoinSideEffects(t, databaseURL, application.ID, buyerSession.userID, ownerSession.userID, 1)
-	assertCarpoolJoinIdempotencyCache(t, databaseURL, buyerSession.userID, application.ID, "pg-carpool-buyer-confirm-"+suffix, app.CarpoolApplicationStatusAcceptedReserved)
-	assertCarpoolJoinIdempotencyCache(t, databaseURL, ownerSession.userID, application.ID, "pg-carpool-owner-confirm-"+suffix, app.CarpoolApplicationStatusJoined)
 
 	membership := firstCarpoolMembership(t, server, ownerSession, "owner", application.ID)
 	if membership.Status != app.CarpoolMembershipStatusActive {
 		t.Fatalf("unexpected postgres active membership: %+v", membership)
 	}
-	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "pg-carpool-buyer-complete-"+suffix)
-	if buyerCompleted.Status != app.CarpoolMembershipStatusActive || buyerCompleted.BuyerCompletedAt == nil {
-		t.Fatalf("unexpected postgres buyer-completed membership: %+v", buyerCompleted)
+	left := endCarpoolMembership(t, server, buyerSession, "me", "leave", membership.ID, membership.Version, "pg-carpool-buyer-leave-"+suffix)
+	if left.Status != app.CarpoolMembershipStatusLeft || left.EndedAt == nil {
+		t.Fatalf("unexpected postgres left membership: %+v", left)
 	}
-	ownerCompleted := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "pg-carpool-owner-complete-"+suffix)
-	if ownerCompleted.Status != app.CarpoolMembershipStatusCompleted || ownerCompleted.CompletedAt == nil || ownerCompleted.EndedAt == nil {
-		t.Fatalf("unexpected postgres completed membership: %+v", ownerCompleted)
-	}
-	assertCarpoolMembershipCompletionSideEffects(t, databaseURL, membership.ID, buyerSession.userID, ownerSession.userID, 1)
-	assertCarpoolMembershipIdempotencyCache(t, databaseURL, buyerSession.userID, membership.ID, "pg-carpool-buyer-complete-"+suffix, app.CarpoolMembershipStatusActive)
-	assertCarpoolMembershipIdempotencyCache(t, databaseURL, ownerSession.userID, membership.ID, "pg-carpool-owner-complete-"+suffix, app.CarpoolMembershipStatusCompleted)
+	assertContactSessionConflict(t, server, buyerSession, first.ContactSessionID)
 }
 
 func storeAccessLogCount(t *testing.T, store *postgres.Store, sessionID string) int {
@@ -1621,28 +1623,6 @@ func forceAPIServicePendingReview(t *testing.T, databaseURL, serviceID string) i
 	`, serviceID).Scan(&version)
 	if err != nil {
 		t.Fatalf("force API service pending review: %v", err)
-	}
-	return version
-}
-
-func forceCarpoolPendingReview(t *testing.T, databaseURL, listingID string) int64 {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-	var version int64
-	err := pool.QueryRow(context.Background(), `
-		UPDATE carpool_listings
-		SET status = 'pending_review',
-		    reviewed_by_admin_id = NULL,
-		    reviewed_at = NULL,
-		    review_reason = NULL,
-		    updated_at = now(),
-		    version = version + 1
-		WHERE id = $1
-		RETURNING version
-	`, listingID).Scan(&version)
-	if err != nil {
-		t.Fatalf("force carpool pending review: %v", err)
 	}
 	return version
 }
@@ -1975,9 +1955,8 @@ func assertCarpoolApplicationSideEffects(t *testing.T, databaseURL, applicationI
 			FROM carpool_applications
 			WHERE id = $1
 			  AND contact_session_id = $2
-			  AND status = 'accepted_reserved'
-			  AND reservation_expires_at IS NOT NULL
-			  AND reservation_expires_at > decided_at
+			  AND status = 'joined'
+			  AND joined_at IS NOT NULL
 		`,
 		"application_session_participants": `
 			SELECT count(*)::int
@@ -1991,7 +1970,7 @@ func assertCarpoolApplicationSideEffects(t *testing.T, databaseURL, applicationI
 		"contact_session": `
 			SELECT count(*)::int
 			FROM contact_sessions
-			WHERE id = $1 AND status = 'open' AND ends_at > opens_at
+			WHERE id = $1 AND status = 'open' AND ends_at IS NULL
 		`,
 		"contact_items": `
 			SELECT count(*)::int
@@ -2003,14 +1982,14 @@ func assertCarpoolApplicationSideEffects(t *testing.T, databaseURL, applicationI
 			FROM domain_events
 			WHERE aggregate_type = 'carpool_application'
 			  AND aggregate_id = $1
-			  AND event_type = 'carpool_application.accepted'
+			  AND event_type = 'carpool_application.joined'
 		`,
 		"notifications": `
 			SELECT count(*)::int
 			FROM notifications
 			WHERE target_type = 'carpool_application'
 			  AND target_id = $1
-			  AND type = 'carpool_application.accepted'
+			  AND type = 'carpool_application.joined'
 		`,
 	}
 	for name, query := range checks {
@@ -2123,179 +2102,5 @@ func assertCarpoolApplicationCreatedOwnerNotification(t *testing.T, databaseURL,
 	expectedURL := "/merchant/carpool-applications/" + applicationID
 	if want > 0 && targetURL != expectedURL {
 		t.Fatalf("expected owner notification target URL %q, got %q", expectedURL, targetURL)
-	}
-}
-
-func assertCarpoolJoinSideEffects(t *testing.T, databaseURL, applicationID, buyerUserID, ownerUserID string, want int) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	checks := map[string]string{
-		"buyer_confirmation": `
-			SELECT count(*)::int
-			FROM carpool_join_confirmations
-			WHERE carpool_application_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'buyer'
-		`,
-		"owner_confirmation": `
-			SELECT count(*)::int
-			FROM carpool_join_confirmations
-			WHERE carpool_application_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'owner'
-		`,
-		"membership": `
-			SELECT count(*)::int
-			FROM carpool_memberships membership
-			JOIN carpool_applications application ON application.id = membership.carpool_application_id
-			JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
-			WHERE application.id = $1
-			  AND application.status = 'joined'
-			  AND application.joined_at IS NOT NULL
-			  AND membership.status = 'active'
-			  AND membership.joined_at = application.joined_at
-			  AND listing.active_buyer_members >= 1
-		`,
-		"joined_event": `
-			SELECT count(*)::int
-			FROM domain_events
-			WHERE aggregate_type = 'carpool_application'
-			  AND aggregate_id = $1
-			  AND event_type = 'carpool_application.joined'
-		`,
-	}
-	for name, query := range checks {
-		var count int
-		var err error
-		switch name {
-		case "buyer_confirmation":
-			err = pool.QueryRow(context.Background(), query, applicationID, buyerUserID).Scan(&count)
-		case "owner_confirmation":
-			err = pool.QueryRow(context.Background(), query, applicationID, ownerUserID).Scan(&count)
-		default:
-			err = pool.QueryRow(context.Background(), query, applicationID).Scan(&count)
-		}
-		if err != nil {
-			t.Fatalf("count %s side effects: %v", name, err)
-		}
-		if count != want {
-			t.Fatalf("expected %d %s side effects, got %d", want, name, count)
-		}
-	}
-}
-
-func assertCarpoolJoinIdempotencyCache(t *testing.T, databaseURL, userID, applicationID, key, expectedStatus string) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	routeKey := "POST /api/v1/me/carpool-applications/{id}/confirm-join:" + applicationID
-	if expectedStatus == app.CarpoolApplicationStatusJoined {
-		routeKey = "POST /api/v1/owner/carpool-applications/{id}/confirm-join:" + applicationID
-	}
-	var status string
-	var resourceType string
-	var resourceID string
-	var bodyText string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT status, resource_type, resource_id::text, response_body_json::text
-		FROM idempotency_keys
-		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-	`, userID, routeKey, key).Scan(&status, &resourceType, &resourceID, &bodyText); err != nil {
-		t.Fatalf("query carpool join idempotency cache: %v", err)
-	}
-	if status != "completed" || resourceType != "carpool_application" || resourceID != applicationID {
-		t.Fatalf("unexpected carpool join idempotency cache: status=%s resource=%s %s", status, resourceType, resourceID)
-	}
-	if !strings.Contains(bodyText, expectedStatus) {
-		t.Fatalf("cached carpool join response does not include status %s: %s", expectedStatus, bodyText)
-	}
-}
-
-func assertCarpoolMembershipCompletionSideEffects(t *testing.T, databaseURL, membershipID, buyerUserID, ownerUserID string, want int) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	checks := map[string]string{
-		"buyer_completion": `
-			SELECT count(*)::int
-			FROM carpool_completion_confirmations
-			WHERE carpool_membership_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'buyer'
-		`,
-		"owner_completion": `
-			SELECT count(*)::int
-			FROM carpool_completion_confirmations
-			WHERE carpool_membership_id = $1
-			  AND actor_user_id = $2
-			  AND actor_role = 'owner'
-		`,
-		"membership_completed": `
-			SELECT count(*)::int
-			FROM carpool_memberships membership
-			JOIN carpool_listings listing ON listing.id = membership.carpool_listing_id
-			WHERE membership.id = $1
-			  AND membership.status = 'completed'
-			  AND membership.ended_at IS NOT NULL
-			  AND membership.ended_reason <> ''
-			  AND listing.active_buyer_members = 0
-		`,
-		"completed_event": `
-			SELECT count(*)::int
-			FROM domain_events
-			WHERE aggregate_type = 'carpool_membership'
-			  AND aggregate_id = $1
-			  AND event_type = 'carpool_membership.completed'
-		`,
-	}
-	for name, query := range checks {
-		var count int
-		var err error
-		switch name {
-		case "buyer_completion":
-			err = pool.QueryRow(context.Background(), query, membershipID, buyerUserID).Scan(&count)
-		case "owner_completion":
-			err = pool.QueryRow(context.Background(), query, membershipID, ownerUserID).Scan(&count)
-		default:
-			err = pool.QueryRow(context.Background(), query, membershipID).Scan(&count)
-		}
-		if err != nil {
-			t.Fatalf("count %s side effects: %v", name, err)
-		}
-		if count != want {
-			t.Fatalf("expected %d %s side effects, got %d", want, name, count)
-		}
-	}
-}
-
-func assertCarpoolMembershipIdempotencyCache(t *testing.T, databaseURL, userID, membershipID, key, expectedStatus string) {
-	t.Helper()
-	pool := openTestPool(t, databaseURL)
-	defer pool.Close()
-
-	routeKey := "POST /api/v1/me/carpool-memberships/{id}/confirm-complete:" + membershipID
-	if expectedStatus == app.CarpoolMembershipStatusCompleted {
-		routeKey = "POST /api/v1/owner/carpool-memberships/{id}/confirm-complete:" + membershipID
-	}
-	var status string
-	var resourceType string
-	var resourceID string
-	var bodyText string
-	if err := pool.QueryRow(context.Background(), `
-		SELECT status, resource_type, resource_id::text, response_body_json::text
-		FROM idempotency_keys
-		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-	`, userID, routeKey, key).Scan(&status, &resourceType, &resourceID, &bodyText); err != nil {
-		t.Fatalf("query carpool membership idempotency cache: %v", err)
-	}
-	if status != "completed" || resourceType != "carpool_membership" || resourceID != membershipID {
-		t.Fatalf("unexpected carpool membership idempotency cache: status=%s resource=%s %s", status, resourceType, resourceID)
-	}
-	if !strings.Contains(bodyText, expectedStatus) {
-		t.Fatalf("cached carpool membership response does not include status %s: %s", expectedStatus, bodyText)
 	}
 }

@@ -60,15 +60,13 @@ In real backend mode, product catalog state belongs to `GET /api/v1/product-cate
 
 ### 1. Scope / Trigger
 
-- Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, or password state.
-- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force linux.do-bound users to complete recoverable login settings before authenticated workspace or transaction actions. Public marketplace discovery remains browseable. Unbound development or bootstrap accounts cannot configure a backup password and must not be blocked by that inapplicable requirement.
+- Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, required WeChat contact state, or backup-password state.
+- The first public registration/login path is linux.do OAuth. Authenticated workspace and transaction actions require a verified recovery email, while public marketplace discovery remains browseable. WeChat onboarding shares the same account-setup dialog. A backup password remains available to linux.do-bound users but is optional and must never become a global navigation gate.
 
 ### 2. Signatures
 
 ```ts
-type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified' | 'passwordConfigured'> & {
-  linuxDoBinding: Pick<UserProfile['linuxDoBinding'], 'bound'>
-}
+type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified'>
 
 const ACCOUNT_RECOVERY_PATH = '/my/account'
 
@@ -77,17 +75,23 @@ function accountRecoveryRequirements(profile: AccountRecoveryProfile): AccountRe
 function isAccountRecoveryAllowedPath(path: string): boolean
 function shouldRedirectToAccountRecovery(path: string, authAccess: unknown): boolean
 function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
+function wechatOnboardingRoute(returnTo: unknown): RouteLocationRaw
+function wechatOnboardingReturnTo(value: unknown): string
 ```
 
 ### 3. Contracts
 
-- The source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified`, `UserProfile.passwordConfigured`, and `UserProfile.linuxDoBinding.bound`.
+- The recovery-gate source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified`. The unified dialog also reads the contacts query for an enabled, non-empty WeChat contact; `UserProfile.passwordConfigured` and `UserProfile.linuxDoBinding.bound` only control the optional backup-password action.
 - Do not store an additional "onboarding complete" flag in Pinia, localStorage, sessionStorage, or route meta.
 - Incomplete logged-in accounts are redirected only from routes whose `meta.auth` is `user` or `admin`. Public market lists and details remain browseable so account recovery does not block discovery.
 - The path allowlist prevents loops and preserves setup/explanation routes such as `/my/account`, login/mock, announcement details, and public profiles even when they carry authenticated shell metadata.
 - Redirects may preserve an internal `returnTo`, but `returnTo` must be same-origin path-only and must not point back to an allowed/setup page.
-- `/my/account` requires a verified email for every account. It requires and renders the backup-password step only when `linuxDoBinding.bound=true`; unbound accounts must not see a password action, password step, or recovery redirect caused only by `passwordConfigured=false`.
+- `/my/account` requires a verified email for every account. `passwordConfigured=false` must not cause a recovery redirect, including for linux.do-bound accounts. The unified required dialog offers the backup-password form after its required WeChat and email steps, but the form has a visible skip action and remains excluded from completion. An explicit account-page password action may also open it independently. Unbound accounts must not see either password form.
 - The gate is frontend-enforced. If backend API blocking is required later, create a separate backend policy task instead of hiding that decision in frontend code.
+- Student registration success and OAuth `authOutcome=registered` enter `/my/account?onboarding=wechat` with a normalized internal `returnTo`. Ordinary login keeps its original return behavior.
+- The unified required dialog reads the contacts query before opening, marks an existing WeChat complete, and starts at email when WeChat is already bound. For linux.do-bound accounts without a password it then shows four steps: WeChat, verified email, optional backup password, and completion. The password step provides `暂不设置`; skipping advances to completion and must not reopen the dialog solely because `passwordConfigured=false`. An explicit password action retains its focused password/completion view.
+- WeChat onboarding state lives only in the route query. Once WeChat and email are complete, return to the normalized original target or `/my`; targets that point back to `/my/account?onboarding=wechat` collapse to `/my` to prevent loops.
+- The durable WeChat completion source is the contacts query: an enabled WeChat with a non-empty value. Do not persist a separate onboarding-complete browser flag.
 
 ### 4. Validation & Error Matrix
 
@@ -95,27 +99,35 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 | --- | --- |
 | Incomplete account opens public `/carpools`, `/api-market/:id`, or `/official-prices/:id` | Keep the public route visible; do not redirect. |
 | Incomplete account opens authenticated `/carpools/new`, `/my/api-orders`, or `/admin` | Redirect to `/my/account` with an internal `returnTo`. |
-| Email is verified and the account is unbound | No password step or redirect caused by `passwordConfigured=false`. |
-| Email is verified and a linux.do-bound account has a password | No redirect; original route remains usable. |
+| Email is verified and `passwordConfigured=false` | No recovery redirect, regardless of linux.do binding; password remains an optional account-page action. |
+| Existing enabled WeChat loads before the dialog opens | Mark WeChat complete and open the verified-email step without asking for the WeChat value again. |
+| WeChat is missing | Open the WeChat step first; after save, advance to email or completion according to the profile state. |
+| Required WeChat and email are complete on a linux.do account without a password | Show the password inputs with `暂不设置`; either save or skip advances to completion. |
+| User skips the optional password | Do not reopen or redirect solely because `passwordConfigured=false`. |
 | Incomplete account opens `/my/account` | No redirect loop; recovery tasks render. |
 | Incomplete account opens `/u/:username` or `/announcements/:slug` | No redirect. |
 | `returnTo` is external, protocol-relative, blank, or points to setup/allowed path | Drop it and do not render a continue action. |
+| Student registration succeeds | Open WeChat onboarding and preserve a safe original target. |
+| OAuth registration succeeds with incomplete setup | Open the unified `/my/account` dialog, complete missing WeChat/email items, then resume the original target. |
+| WeChat onboarding receives an external or self-referential `returnTo` | Use `/my`; never leave the origin or loop back into onboarding. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `AppShell.vue` passes `route.path` and `route.meta.auth` to the shared redirect helper, keeps `/api-market/:id` public, and redirects incomplete accounts from `/api-market/new` to `/my/account`.
+- Good: `AppShell.vue` gates only on verified email, while `MyCenterPage.vue` combines that profile fact with the contacts query to skip an existing WeChat and keeps backup password optional.
 - Base: login page still uses linux.do OAuth and password-login recovery copy; it does not become a public password registration page.
-- Bad: each page independently checks `profile.emailVerified`, or the shell redirects every route without consulting `route.meta.auth`.
+- Bad: each page independently checks `profile.emailVerified`, the shell treats `passwordConfigured=false` as incomplete, or the dialog asks for a WeChat value already present in the contacts query.
 
 ### 6. Tests Required
 
 - Unit tests for completion, outstanding requirements, allowed paths, auth-meta redirect decisions, and return target sanitization.
+- Unit/source-contract tests for student and OAuth registration routing, `/my/account` WeChat onboarding target sanitization, existing-WeChat skip, optional-password non-blocking behavior, binding-success continuation, and ordinary-login non-regression.
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
 - Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Browser smoke when available:
   - incomplete account opens an authenticated publish/transaction route and reaches `/my/account`;
   - public market list and detail routes are not redirected;
-  - completing email plus password setup allows continuing to the original route.
+  - existing WeChat opens directly on email, completing email reveals the optional password inputs, and `暂不设置` allows continuing without another prompt;
+  - missing WeChat opens first, saves once, and then advances without a second contact form.
 
 ### 7. Wrong vs Correct
 
@@ -131,6 +143,64 @@ if (!profile.emailVerified) router.push('/my/account')
 if (!isAccountRecoveryComplete(profile) && shouldRedirectToAccountRecovery(route.path, route.meta.auth)) {
   router.replace({ path: ACCOUNT_RECOVERY_PATH, query: { returnTo: route.fullPath } })
 }
+```
+
+## Scenario: Password Login Handoff State
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching `LoginPanel.vue`, `LoginPage.vue`, password-login success handling, or authenticated return navigation.
+
+### 2. Signatures
+
+```ts
+emit('authenticated', session: BackendSession): void
+routeAuthenticatedSession(session: BackendSession): Promise<void>
+const loginRedirecting = ref(false)
+```
+
+### 3. Contracts
+
+- `LoginPanel.vue` owns validation and the password-login request. Its submit button shows the request-pending state.
+- A successful password request emits the session without clearing the password field first. Vue component events do not await an async parent listener, so clearing first exposes an empty form while navigation is still pending.
+- `LoginPage.vue` sets `loginRedirecting=true` synchronously before its first navigation `await` and replaces the complete form with a stable `登录成功 / 正在进入 C2CMarket...` state.
+- Do not add an artificial minimum delay. Fast navigation may unmount the transition immediately; slow navigation must never reveal the reset form.
+- If password-login navigation throws, restore the form and show a visible navigation error. Student registration keeps its existing completion/onboarding flow.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Password request is pending | Keep the form mounted, disable actions, and show the button spinner. |
+| Password request succeeds | Replace the form with the redirecting state before route navigation settles. |
+| Route navigation is slow | Keep the redirecting state visible; do not clear or flash the password input. |
+| Route navigation throws | Restore the form and show `登录已完成，但页面跳转失败，请重试。` |
+| Password request fails | Keep the existing field/server error flow; do not enter the redirecting state. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: the authenticated event immediately activates the page-owned redirecting state, then navigates to the normalized `returnTo`.
+- Base: a fast local navigation unmounts the login page before the transition is noticeable.
+- Bad: the child clears `password.value` and resets its pending state while the parent is still awaiting `router.push()`.
+
+### 6. Tests Required
+
+- Source contract: password login does not clear `password.value` before emitting the authenticated session.
+- Source contract: the page activates `loginRedirecting` before awaiting the return navigation and renders an `aria-live`, `aria-busy` transition.
+- Regression: navigation failure restores the form with a visible error.
+- Run focused authentication tests, full Vitest, typecheck, real-mode production build, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: the empty form can render before the parent finishes navigation.
+password.value = ''
+emit('authenticated', session)
+
+// Correct: keep the masked value until unmount; the parent owns route progress.
+emit('authenticated', session)
+loginRedirecting.value = true
+await router.push(returnTo.value)
 ```
 
 ## Scenario: Development API Mode And Account Recovery Persistence
@@ -183,6 +253,20 @@ NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:8080
   during config loading and must not select Mock.
 - Mock is available only through `dev:mock`. Its state is demo data and is not
   a persistence acceptance environment.
+- Within one Mock browser session, successful account recovery mutations must
+  survive profile refetches and route navigation for the same development
+  identity. Identity projection may refresh names, capabilities, and provider
+  binding facts, but must not overwrite a verified email or configured backup
+  password with seed defaults. A full Mock reload may still restore seed state.
+- Built-in buyer/seller/admin development personas are readiness fixtures. The
+  backend persona service idempotently prepares a verified email and backup
+  password for every persona, plus enabled linux.do and WeChat contacts for
+  non-admin personas. They should not be blocked by account setup during
+  ordinary feature QA.
+- A real linux.do OAuth account used against the development backend remains a
+  real persisted identity. Development mode may expose the one-time email code
+  in the verification response and prefill it in the dialog, but must not mark
+  the provider email verified merely because the server is in development.
 - Do not add `localStorage`, `sessionStorage`, or Pinia persistence for
   `email`, `emailVerified`, `emailVerifiedAt`, or `passwordConfigured` in real
   mode. Refresh must read those fields from `GET /api/v1/me/profile`.
@@ -195,8 +279,11 @@ NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:8080
 | `NUXT_PUBLIC_API_MODE` is missing or unknown | Nuxt config and runtime config initialization fail with an explicit mode error |
 | Default `dev` starts | Runtime payload contains `apiMode:"real"` and listens on `5173` |
 | `dev:mock` starts | Runtime payload contains `apiMode:"mock"` and does not claim database persistence |
+| Mock email/password mutation is followed by `getMyProfile()` | Return the completed recovery fields for the same development identity; do not reopen onboarding during route navigation |
 | Backend on `8080` is unavailable in real mode | API request fails visibly; no Mock record is returned |
-| Email/password setup completes in real mode | PostgreSQL-backed profile returns `emailVerified=true` and `passwordConfigured=true` after refetch and frontend restart |
+| Built-in development persona login | Backend prepares verified email and password; non-admin personas also have enabled linux.do and WeChat contacts |
+| Real linux.do OAuth account in development has an unverified email | Keep `emailVerified=false`; sending a code returns a development code that the dialog may prefill |
+| Email setup completes in real mode | PostgreSQL-backed profile returns `emailVerified=true` after refetch and frontend restart; password state is independent and optional |
 
 ### 5. Good / Base / Bad Cases
 
@@ -220,8 +307,11 @@ NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:8080
   fields.
 - Runtime smoke: read the Nuxt payload for both start commands and assert
   `apiMode`; in real mode, proxy `/readyz` and confirm database readiness.
-- Database smoke: complete account recovery through a linux.do-bound fake OAuth
-  user, restart the frontend, and read the completed profile again.
+- Backend unit/integration test: prepare each development persona twice and
+  assert verified email/password readiness plus idempotent non-admin WeChat.
+- Database smoke: complete email recovery through a linux.do-bound fake OAuth
+  user, restart the frontend, and read the completed profile again without
+  requiring a backup password.
 - Run full Vitest, Nuxt typecheck, real-mode production build, relevant backend
   tests, source-package test, and `git diff --check`.
 
@@ -582,6 +672,7 @@ type NavigationBadgeSummary = {
   notificationUnread: number
   importantAnnouncementUnread: number
   feedbackUnread: number
+  supportActionCount: number
   buyer: { carpoolActions: number; apiOrderActions: number }
   merchant: { carpoolActions: number; apiOrderActions: number }
   admin: null | {
@@ -605,8 +696,9 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 - `AppShell.vue` mounts one `useEventSource` connection only when real-backend mode and an authenticated profile are present. Mock mode must not construct `EventSource`. Fatal `CLOSED` streams retry indefinitely with a bounded delay and reopen immediately when the browser returns online.
 - SSE events are invalidations only. They invalidate navigation badges, notifications, announcements, feedback, API orders/intents, carpool applications/details/contacts, and administrator query families; components never increment counts from an event.
 - `useNavigationBadges` refetches every 15 seconds only while visible and also refetches on mount, focus, and reconnect. When SSE is not open, the realtime composable performs the same broad 15-second reconciliation and reconciles immediately on visibility/network recovery.
-- AppShell reads buyer, merchant, feedback, notification, announcement, and administrator counts from `NavigationBadgeSummary`; it must not keep full order/application lists mounted only to count them.
-- Bell badge is `notificationUnread` only. Important-announcement unread count belongs on the platform-announcement entry. Opening the bell only opens its dropdown; `查看全部通知` is a separate link.
+- AppShell reads buyer, merchant, support, notification, announcement, and administrator counts from `NavigationBadgeSummary`; it must not keep full order/application lists mounted only to count them.
+- The `消息中心` sidebar badge is `notificationUnread + importantAnnouncementUnread`; ordinary announcements never increase it. The header bell remains the business-notification surface, and opening it only opens its dropdown; `查看全部通知` is a separate link.
+- The `支持中心` sidebar badge uses the authoritative `supportActionCount`. The frontend must not add `feedbackUnread` again or count complete report/appeal history locally.
 - Mark-notification-read/read-all, announcement receipt, feedback, API-order, and carpool workflow mutations invalidate `navigation-badges` in addition to their normal query families. Direct page-level facade mutations follow the same rule, so the current actor never waits for fallback polling. Badge counts are never adjusted heuristically.
 - The strict envelope decoder may reject invalid payloads in tests, but the EventSource serializer boundary converts malformed/unsupported server events to `null`; bad data must not become an uncaught browser exception or mutate cache state.
 - Real backend failures remain visible; do not return mock badge data from `backendNavigationBadges()` on failure. Mock summary is derived from current mock stores and the same actionable-state semantics.
@@ -623,6 +715,10 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 | Unknown/malformed realtime envelope | Do not mutate cached counts; REST polling remains authoritative |
 | EventSource enters terminal `CLOSED` | Reconnect after 3 seconds indefinitely; an `online` event may reopen immediately |
 | `admin=null` | Do not render administrator badge values |
+| Ordinary announcement is unread | Keep the message-center badge unchanged |
+| Important or critical announcement is unread and matches the user audience | Include it in `importantAnnouncementUnread` and therefore the message-center badge |
+| Feedback ticket has an unread administrator reply or `needs_user_info` | Include that ticket once in `supportActionCount`, even when both are true |
+| Assigned moderation information request is open | Add it to `supportActionCount` |
 | Count is zero / above 99 | Hide zero; display `99+` above 99 |
 
 ### 5. Good/Base/Bad Cases
@@ -637,6 +733,7 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 - Envelope parser rejects unsupported version/topic and accepts `all-live`.
 - All-live invalidation list covers summary, notification, order, carpool, feedback, announcement, and admin prefixes.
 - Source/integration tests assert no hard-coded admin counts, undefined admin queues stay unbadged, bell has a separate full-center link, and AppShell no longer mounts full lists for counts.
+- Navigation tests assert the message-center badge sums business unread plus important/critical announcement unread, while support uses `supportActionCount` directly.
 - Mutation tests assert notification/order/feedback/announcement success invalidates `navigation-badges`.
 - Full Vitest, Nuxt typecheck, and real-mode Nuxt production build.
 
@@ -803,7 +900,7 @@ All real-backend business lists follow the same ownership rule: the browser may 
 ### 1. Scope / Trigger
 
 - Trigger: changes to API market service/offer lists, cursor adapters, market
-  filters or tabs, SSR prefetch, or the infinite-scroll sentinel.
+  filters or canonical child routes, SSR prefetch, or the infinite-scroll sentinel.
 
 ### 2. Signatures
 
@@ -813,6 +910,14 @@ type CursorPage<T> = { items: T[]; nextCursor?: string }
 useInfiniteApiServices(filters, enabled, scope)
 useInfiniteApiQuotaOffers(filters, enabled)
 flattenUniqueCursorPages(pages)
+
+canonical routes:
+  /api-market/limited
+  /api-market/packages
+  /api-market/free
+
+package URL state:
+  ?model=<catalog-id-1>&model=<catalog-id-2>&duration=7&sort=updated_desc
 ```
 
 ### 3. Contracts
@@ -820,14 +925,13 @@ flattenUniqueCursorPages(pages)
 - Infinite queries request 20 rows per page, pass `nextCursor` back unchanged,
   and stop when it is absent. Query keys contain every server filter plus the
   market-view scope when two tabs share one endpoint.
-- Hidden market views keep their query disabled. Filter, slot, or view changes
+- Hidden market views keep their query disabled. Filter, slot, or child-route changes
   create a new cursor chain from the first page rather than reusing stale data.
-- API package/free tabs send the billing mode to the backend. Once a package
-  model and duration are selected, both values are server filters; limited
-  quota search and system-slot exclusion are also server filters. Components
-  may defensively project returned DTOs, but must not use current-page array
-  filtering as the source of visible matching results.
-- Flattened pages are deduplicated by business ID; a later copy replaces the
+- `/api-market?view=limited|packages|free` redirects deterministically to the matching child route while preserving only mode-valid filters. Static child routes are registered before `/api-market/:id`.
+- API package/free child routes send the billing mode to the backend. Package model state normalizes scalar or repeated `model` query values to a stable deduplicated array; zero values means all models. The array, optional duration, price, multiplier, and sort all belong in the query key and backend request. The backend applies OR-model and all other package conditions before pagination.
+- Filter options are a separate server query and remove stale model IDs or unsupported durations from URL state after loading. An explicit supported sort remains authoritative when selection eligibility changes.
+- Components may defensively project returned DTOs, but must not use current-page array filtering as the source of visible matching results.
+- Flattened service pages are deduplicated by service ID; the package projection then emits one row per package ID, so sibling packages belonging to one service remain distinct. A later copy replaces the
   stale record without changing the first-seen card position.
 - Each visible product source owns one sentinel. Intersection loads the next
   page only when it exists and no load/error is active. A next-page error keeps
@@ -845,10 +949,12 @@ flattenUniqueCursorPages(pages)
 | First page has no cursor | Render rows/empty state and `已加载全部`; no extra request |
 | Sentinel enters the 400px preload margin | Fetch one next page |
 | Next page fails | Preserve loaded cards and show `重试加载` |
-| Search/filter/view/slot changes | New query key and first-page cursor; matching is applied before backend pagination |
+| Search/filter/child-route/slot changes | New query key and first-page cursor; matching is applied before backend pagination |
 | Adjacent pages repeat an ID | Render one card using the later record |
 | Hidden tab | No background page requests |
-| SSR route uses `view=free` | Prefetch service page only, not limited offers |
+| SSR route is `/api-market/free` or `/api-market/packages` | Prefetch service page only; package route also prefetches filter options |
+| Package URL has repeated models | Preserve stable order, deduplicate IDs, send repeated `packageModelCatalogIds` |
+| Exact model/duration plus explicit `sort=updated_desc` | Keep update-time ordering; do not auto-switch to recommendation |
 
 ### 5. Good / Base / Bad Cases
 
@@ -862,7 +968,8 @@ flattenUniqueCursorPages(pages)
 
 - Cursor adapter serialization and null/blank cursor normalization.
 - Mock paging, page-boundary deduplication, and repeated-cursor rejection.
-- Query-key, enabled-state, visible-view SSR prefetch, and four-sentinel source
+- Repeated-model serialization, OR filtering before cursor pagination, package-ID projection, and stale-option cleanup.
+- Canonical route, legacy redirect, query-key, enabled-state, visible-view SSR prefetch, and four-sentinel source
   regressions.
 - Full Vitest, Nuxt typecheck, real-mode production build, and browser checks
   for incremental loading, retry, tab isolation, and horizontal overflow.

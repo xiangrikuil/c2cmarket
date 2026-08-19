@@ -24,7 +24,10 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 }
 
 func NewIntentWithOwnerContacts(input CreateIntentInput, service apimarket.Service, buyerContact contact.ContactMethod, buyerVersion contact.ContactMethodVersion, ownerContacts []OwnerContactSnapshot, now time.Time) (Intent, *domain.AppError) {
-	if len(ownerContacts) == 0 {
+	if buyerContact.Type != contact.MethodTypeWechat || strings.TrimSpace(buyerVersion.ID) == "" {
+		return Intent{}, contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
+	}
+	if len(ownerContacts) != 1 || ownerContacts[0].Type != contact.MethodTypeWechat || strings.TrimSpace(ownerContacts[0].ContactMethodVersionID) == "" {
 		return Intent{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 	}
 	primaryOwnerContact := ownerContacts[0]

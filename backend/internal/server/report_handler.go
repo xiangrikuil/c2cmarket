@@ -8,6 +8,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/evidence"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/report"
 
@@ -25,12 +26,13 @@ type createReportRequest struct {
 }
 
 type createAppealRequest struct {
-	ReportID   string `json:"reportId"`
-	DisputeID  string `json:"disputeId"`
-	TargetType string `json:"targetType"`
-	TargetID   string `json:"targetId"`
-	Title      string `json:"title"`
-	Statement  string `json:"statement"`
+	ReportID         string   `json:"reportId"`
+	DisputeID        string   `json:"disputeId"`
+	TargetType       string   `json:"targetType"`
+	TargetID         string   `json:"targetId"`
+	Title            string   `json:"title"`
+	Statement        string   `json:"statement"`
+	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
 }
 
 type reportActionRequest struct {
@@ -51,26 +53,30 @@ type disputeRemedyRequest struct {
 }
 
 type infoSupplementRequest struct {
-	OpenInfoRequestID string `json:"openInfoRequestId"`
-	Body              string `json:"body"`
+	OpenInfoRequestID string   `json:"openInfoRequestId"`
+	Body              string   `json:"body"`
+	EvidenceAssetIDs  []string `json:"evidenceAssetIds"`
 }
 
-type disputeMessageRequest struct {
-	Body string `json:"body"`
+type disputeFormalResponseRequest struct {
+	Body             string   `json:"body"`
+	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
 }
 
-type disputeSettlementProposalRequest struct {
-	Resolution string `json:"resolution"`
-	AmountCNY  string `json:"amountCny"`
-	Terms      string `json:"terms"`
+type disputeSellerDecisionRequest struct {
+	Decision         string   `json:"decision"`
+	Reason           string   `json:"reason"`
+	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
 }
 
 type disputeParticipantReasonRequest struct {
-	Reason string `json:"reason"`
+	Reason           string   `json:"reason"`
+	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
 }
 
 type disputeRemedyClaimRequest struct {
-	Note string `json:"note"`
+	Note             string   `json:"note"`
+	EvidenceAssetIDs []string `json:"evidenceAssetIds"`
 }
 
 type infoSupplementResponse struct {
@@ -112,43 +118,72 @@ type reportResponse struct {
 }
 
 type disputeResponse struct {
-	ID                   string                       `json:"id"`
-	ReportID             string                       `json:"reportId,omitempty"`
-	TargetType           string                       `json:"targetType"`
-	TargetID             string                       `json:"targetId"`
-	TargetLabel          string                       `json:"targetLabel"`
-	PrimaryUserID        string                       `json:"primaryUserId,omitempty"`
-	PrimaryUsername      string                       `json:"primaryUsername"`
-	PrimaryDisplayName   string                       `json:"primaryDisplayName"`
-	CounterpartyUserID   string                       `json:"counterpartyUserId,omitempty"`
-	CounterpartyUsername string                       `json:"counterpartyUsername"`
-	CounterpartyName     string                       `json:"counterpartyName"`
-	SubjectUserID        string                       `json:"subjectUserId,omitempty"`
-	SubjectUsername      string                       `json:"subjectUsername,omitempty"`
-	SubjectName          string                       `json:"subjectName,omitempty"`
-	Status               string                       `json:"status"`
-	IssueCode            string                       `json:"issueCode,omitempty"`
-	RequestedResolution  string                       `json:"requestedResolution,omitempty"`
-	RequestedAmountCNY   string                       `json:"requestedAmountCny,omitempty"`
-	IssueOccurredAt      *string                      `json:"issueOccurredAt,omitempty"`
-	PublicSummary        string                       `json:"publicSummary"`
-	PublicResultCode     string                       `json:"publicResultCode"`
-	PublicResult         string                       `json:"publicResult"`
-	AdminReason          string                       `json:"adminReason,omitempty"`
-	OpenedByAdminID      string                       `json:"openedByAdminId,omitempty"`
-	OpenedAt             string                       `json:"openedAt"`
-	ResolvedAt           *string                      `json:"resolvedAt,omitempty"`
-	ClosedAt             *string                      `json:"closedAt,omitempty"`
-	CreatedAt            string                       `json:"createdAt"`
-	UpdatedAt            string                       `json:"updatedAt"`
-	Version              int64                        `json:"version"`
-	CanAppeal            *bool                        `json:"canAppeal,omitempty"`
-	CanSupplement        *bool                        `json:"canSupplement,omitempty"`
-	OpenInfoRequestID    string                       `json:"openInfoRequestId,omitempty"`
-	Supplements          []infoSupplementResponse     `json:"supplements,omitempty"`
-	Messages             []disputeMessageResponse     `json:"messages,omitempty"`
-	SettlementProposals  []settlementProposalResponse `json:"settlementProposals,omitempty"`
-	Remedies             []disputeRemedyResponse      `json:"remedies,omitempty"`
+	ViewerUserID               string                       `json:"viewerUserId,omitempty"`
+	ID                         string                       `json:"id"`
+	APIOrderID                 string                       `json:"apiOrderId,omitempty"`
+	Active                     bool                         `json:"active"`
+	ReportID                   string                       `json:"reportId,omitempty"`
+	TargetType                 string                       `json:"targetType"`
+	TargetID                   string                       `json:"targetId"`
+	TargetLabel                string                       `json:"targetLabel"`
+	PrimaryUserID              string                       `json:"primaryUserId,omitempty"`
+	PrimaryUsername            string                       `json:"primaryUsername"`
+	PrimaryDisplayName         string                       `json:"primaryDisplayName"`
+	CounterpartyUserID         string                       `json:"counterpartyUserId,omitempty"`
+	CounterpartyUsername       string                       `json:"counterpartyUsername"`
+	CounterpartyName           string                       `json:"counterpartyName"`
+	SubjectUserID              string                       `json:"subjectUserId,omitempty"`
+	SubjectUsername            string                       `json:"subjectUsername,omitempty"`
+	SubjectName                string                       `json:"subjectName,omitempty"`
+	Status                     string                       `json:"status"`
+	IssueCode                  string                       `json:"issueCode,omitempty"`
+	RequestedResolution        string                       `json:"requestedResolution,omitempty"`
+	RequestedAmountCNY         string                       `json:"requestedAmountCny,omitempty"`
+	IssueOccurredAt            *string                      `json:"issueOccurredAt,omitempty"`
+	PublicSummary              string                       `json:"publicSummary"`
+	PublicResultCode           string                       `json:"publicResultCode"`
+	PublicResult               string                       `json:"publicResult"`
+	AdminReason                string                       `json:"adminReason,omitempty"`
+	OpenedByAdminID            string                       `json:"openedByAdminId,omitempty"`
+	OpenedAt                   string                       `json:"openedAt"`
+	ResolvedAt                 *string                      `json:"resolvedAt,omitempty"`
+	ClosedAt                   *string                      `json:"closedAt,omitempty"`
+	FinalReason                string                       `json:"finalReason,omitempty"`
+	AppealExpiresAt            *string                      `json:"appealExpiresAt,omitempty"`
+	AdverselyAffectedIDs       []string                     `json:"adverselyAffectedUserIds,omitempty"`
+	NegotiationChannels        []string                     `json:"negotiationChannels,omitempty"`
+	NegotiationEndedConfirmed  bool                         `json:"negotiationEndedConfirmed"`
+	NegotiationSummary         string                       `json:"negotiationSummary,omitempty"`
+	RequestedPlatformAction    string                       `json:"requestedPlatformAction,omitempty"`
+	PlatformInterventionReason string                       `json:"platformInterventionReason,omitempty"`
+	EscalatedByUserID          string                       `json:"escalatedByUserId,omitempty"`
+	EscalatedAt                *string                      `json:"escalatedAt,omitempty"`
+	NextActor                  string                       `json:"nextActor"`
+	DueAt                      *string                      `json:"dueAt,omitempty"`
+	FactSnapshotJSON           string                       `json:"factSnapshotJson,omitempty"`
+	ApplicantStatement         string                       `json:"applicantStatement,omitempty"`
+	RespondentResponse         string                       `json:"respondentResponse,omitempty"`
+	RespondedByUserID          string                       `json:"respondedByUserId,omitempty"`
+	RespondedAt                *string                      `json:"respondedAt,omitempty"`
+	SellerDecision             string                       `json:"sellerDecision,omitempty"`
+	SellerDecisionReason       string                       `json:"sellerDecisionReason,omitempty"`
+	SellerDecidedByUserID      string                       `json:"sellerDecidedByUserId,omitempty"`
+	SellerDecidedAt            *string                      `json:"sellerDecidedAt,omitempty"`
+	SellerResponseLate         bool                         `json:"sellerResponseLate"`
+	ResponseOverdue            bool                         `json:"responseOverdue"`
+	ApplicantDecisionDueAt     *string                      `json:"applicantDecisionDueAt,omitempty"`
+	AvailableActions           []string                     `json:"availableActions"`
+	CreatedAt                  string                       `json:"createdAt"`
+	UpdatedAt                  string                       `json:"updatedAt"`
+	Version                    int64                        `json:"version"`
+	CanAppeal                  *bool                        `json:"canAppeal,omitempty"`
+	CanSupplement              *bool                        `json:"canSupplement,omitempty"`
+	OpenInfoRequestID          string                       `json:"openInfoRequestId,omitempty"`
+	Supplements                []infoSupplementResponse     `json:"supplements,omitempty"`
+	Messages                   []disputeMessageResponse     `json:"messages,omitempty"`
+	SettlementProposals        []settlementProposalResponse `json:"settlementProposals,omitempty"`
+	Remedies                   []disputeRemedyResponse      `json:"remedies,omitempty"`
+	Evidence                   []evidenceReferenceResponse  `json:"evidence,omitempty"`
 }
 
 type disputeMessageResponse struct {
@@ -159,19 +194,24 @@ type disputeMessageResponse struct {
 }
 
 type settlementProposalResponse struct {
-	ID               string  `json:"id"`
-	ProposedByUserID string  `json:"proposedByUserId"`
-	Resolution       string  `json:"resolution"`
-	AmountCNY        string  `json:"amountCny,omitempty"`
-	Terms            string  `json:"terms"`
-	Status           string  `json:"status"`
-	AcceptedByUserID string  `json:"acceptedByUserId,omitempty"`
-	AcceptedAt       *string `json:"acceptedAt,omitempty"`
-	RejectedByUserID string  `json:"rejectedByUserId,omitempty"`
-	RejectedAt       *string `json:"rejectedAt,omitempty"`
-	CreatedAt        string  `json:"createdAt"`
-	UpdatedAt        string  `json:"updatedAt"`
-	Version          int64   `json:"version"`
+	ID                  string  `json:"id"`
+	ProposedByUserID    string  `json:"proposedByUserId"`
+	Resolution          string  `json:"resolution"`
+	AmountCNY           string  `json:"amountCny,omitempty"`
+	Terms               string  `json:"terms"`
+	FulfillmentRequired bool    `json:"fulfillmentRequired"`
+	ResponsibleUserID   string  `json:"responsibleUserId,omitempty"`
+	BeneficiaryUserID   string  `json:"beneficiaryUserId,omitempty"`
+	DueAt               *string `json:"dueAt,omitempty"`
+	Status              string  `json:"status"`
+	AcceptedByUserID    string  `json:"acceptedByUserId,omitempty"`
+	AcceptedAt          *string `json:"acceptedAt,omitempty"`
+	RejectedByUserID    string  `json:"rejectedByUserId,omitempty"`
+	RejectedAt          *string `json:"rejectedAt,omitempty"`
+	SupersededReason    string  `json:"supersededReason,omitempty"`
+	CreatedAt           string  `json:"createdAt"`
+	UpdatedAt           string  `json:"updatedAt"`
+	Version             int64   `json:"version"`
 }
 
 type disputeRemedyResponse struct {
@@ -189,7 +229,13 @@ type disputeRemedyResponse struct {
 	ConfirmedAt           *string `json:"confirmedAt,omitempty"`
 	ContestedAt           *string `json:"contestedAt,omitempty"`
 	ConfirmationExpiredAt *string `json:"confirmationExpiredAt,omitempty"`
-	OverdueAt             *string `json:"overdueAt,omitempty"`
+	LatenessStatus        string  `json:"latenessStatus"`
+	LateAt                *string `json:"lateAt,omitempty"`
+	LatenessDecidedAt     *string `json:"latenessDecidedAt,omitempty"`
+	LatenessReason        string  `json:"latenessReason,omitempty"`
+	ClaimedLate           bool    `json:"claimedLate"`
+	Source                string  `json:"source"`
+	SettlementProposalID  string  `json:"settlementProposalId,omitempty"`
 	ClaimNote             string  `json:"claimNote,omitempty"`
 	ResponseNote          string  `json:"responseNote,omitempty"`
 	CreatedAt             string  `json:"createdAt"`
@@ -198,23 +244,40 @@ type disputeRemedyResponse struct {
 }
 
 type appealResponse struct {
-	ID                string  `json:"id"`
-	AppellantUserID   string  `json:"appellantUserId,omitempty"`
-	AppellantUsername string  `json:"appellantUsername"`
-	AppellantName     string  `json:"appellantName"`
-	ReportID          string  `json:"reportId,omitempty"`
-	DisputeID         string  `json:"disputeId,omitempty"`
-	TargetType        string  `json:"targetType"`
-	TargetID          string  `json:"targetId"`
-	Title             string  `json:"title"`
-	Statement         string  `json:"statement,omitempty"`
-	Status            string  `json:"status"`
-	AdminReason       string  `json:"adminReason,omitempty"`
-	HandledByAdminID  string  `json:"handledByAdminId,omitempty"`
-	HandledAt         *string `json:"handledAt,omitempty"`
-	CreatedAt         string  `json:"createdAt"`
-	UpdatedAt         string  `json:"updatedAt"`
-	Version           int64   `json:"version"`
+	ID                string                      `json:"id"`
+	AppellantUserID   string                      `json:"appellantUserId,omitempty"`
+	AppellantUsername string                      `json:"appellantUsername"`
+	AppellantName     string                      `json:"appellantName"`
+	ReportID          string                      `json:"reportId,omitempty"`
+	DisputeID         string                      `json:"disputeId,omitempty"`
+	TargetType        string                      `json:"targetType"`
+	TargetID          string                      `json:"targetId"`
+	Title             string                      `json:"title"`
+	Statement         string                      `json:"statement,omitempty"`
+	Status            string                      `json:"status"`
+	AdminReason       string                      `json:"adminReason,omitempty"`
+	HandledByAdminID  string                      `json:"handledByAdminId,omitempty"`
+	HandledAt         *string                     `json:"handledAt,omitempty"`
+	CreatedAt         string                      `json:"createdAt"`
+	UpdatedAt         string                      `json:"updatedAt"`
+	Version           int64                       `json:"version"`
+	Evidence          []evidenceReferenceResponse `json:"evidence,omitempty"`
+}
+
+type evidenceReferenceResponse struct {
+	ID          string `json:"id"`
+	Version     int64  `json:"version"`
+	Kind        string `json:"kind"`
+	MIME        string `json:"mime"`
+	ByteSize    int64  `json:"byteSize"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	CreatedAt   string `json:"createdAt"`
+	ContentPath string `json:"contentPath"`
+	Visibility  string `json:"visibility"`
+	Usage       string `json:"usage"`
+	SourceType  string `json:"sourceType"`
+	SourceID    string `json:"sourceId"`
 }
 
 type publicDisputeResponse struct {
@@ -307,7 +370,7 @@ func (s *Server) handleSubmitInfoSupplement(w http.ResponseWriter, r *http.Reque
 	entityID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/me/" + entityType + "s/{id}/supplements:" + entityID
 	completion, appErr := s.disputeContinuity.SubmitInfoSupplementForActorWithIdempotency(r.Context(), actor, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body), report.SupplementInput{
-		EntityType: entityType, EntityID: entityID, InfoRequestID: req.OpenInfoRequestID, Body: req.Body, RequestID: requestIDFrom(r),
+		EntityType: entityType, EntityID: entityID, InfoRequestID: req.OpenInfoRequestID, Body: req.Body, RequestID: requestIDFrom(r), EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 	}, supplementCompletionBuilder(actor.UserID))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -358,10 +421,11 @@ func (s *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
 		report.CreateAppealInput{
-			ReportID:  req.ReportID,
-			DisputeID: req.DisputeID,
-			Title:     req.Title,
-			Statement: req.Statement,
+			ReportID:         req.ReportID,
+			DisputeID:        req.DisputeID,
+			Title:            req.Title,
+			Statement:        req.Statement,
+			EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 		},
 		appealCompletionBuilder(http.StatusCreated, false),
 	)
@@ -402,60 +466,24 @@ func (s *Server) handleMyDispute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toMyDisputeDetailResponse(item, actor.UserID))
 }
 
-func (s *Server) handleAppendDisputeMessage(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSellerDisputeDecision(w http.ResponseWriter, r *http.Request) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	body, req, appErr := decodeStrictJSON[disputeMessageRequest](r)
+	body, req, appErr := decodeStrictJSON[disputeSellerDecisionRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action: report.DisputeMessageActionAppend,
-		Body:   req.Body,
+		Action: report.DisputeActionSellerDecision, Decision: req.Decision, Reason: req.Reason,
+		EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 	})
 }
 
-func (s *Server) handleCreateDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
-	actor, appErr := s.requireBusinessActor(r, true, true)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	body, req, appErr := decodeStrictJSON[disputeSettlementProposalRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:     report.DisputeMessageActionPropose,
-		Resolution: req.Resolution,
-		AmountCNY:  req.AmountCNY,
-		Terms:      req.Terms,
-	})
-}
-
-func (s *Server) handleConfirmDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
-	actor, appErr := s.requireBusinessActor(r, true, true)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	body, _, appErr := decodeStrictJSON[emptyRequest](r)
-	if appErr != nil {
-		writeProblem(w, r, appErr)
-		return
-	}
-	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:     report.DisputeMessageActionConfirm,
-		ProposalID: chi.URLParam(r, "proposalId"),
-	})
-}
-
-func (s *Server) handleRejectDisputeSettlementProposal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRequestDisputePlatformIntervention(w http.ResponseWriter, r *http.Request) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -467,13 +495,16 @@ func (s *Server) handleRejectDisputeSettlementProposal(w http.ResponseWriter, r 
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action:     report.DisputeMessageActionReject,
-		ProposalID: chi.URLParam(r, "proposalId"),
-		Reason:     req.Reason,
+		Action: report.DisputeActionRequestPlatformIntervention, Reason: req.Reason,
+		EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 	})
 }
 
-func (s *Server) handleEscalateDispute(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWithdrawDispute(w http.ResponseWriter, r *http.Request) {
+	s.handleFinishDisputeByApplicant(w, r, report.DisputeActionWithdraw)
+}
+
+func (s *Server) handleFinishDisputeByApplicant(w http.ResponseWriter, r *http.Request, action string) {
 	actor, appErr := s.requireBusinessActor(r, true, true)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -485,8 +516,7 @@ func (s *Server) handleEscalateDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action: report.DisputeMessageActionEscalate,
-		Reason: req.Reason,
+		Action: action, Reason: req.Reason,
 	})
 }
 
@@ -502,8 +532,9 @@ func (s *Server) handleClaimDisputeRemedy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action: report.DisputeRemedyActionClaim,
-		Note:   req.Note,
+		Action:           report.DisputeRemedyActionClaim,
+		Note:             req.Note,
+		EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 	})
 }
 
@@ -536,8 +567,9 @@ func (s *Server) handleContestDisputeRemedy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.handleDisputeParticipantAction(w, r, actor, body, report.DisputeParticipantActionInput{
-		Action: report.DisputeRemedyActionContest,
-		Reason: req.Reason,
+		Action:           report.DisputeRemedyActionContest,
+		Reason:           req.Reason,
+		EvidenceAssetIDs: append([]string(nil), req.EvidenceAssetIDs...),
 	})
 }
 
@@ -547,7 +579,7 @@ func (s *Server) handleDisputeParticipantAction(w http.ResponseWriter, r *http.R
 	routeKey := r.Method + " /api/v1/me/disputes/{id}/" + input.Action
 	completion, appErr := s.disputeContinuity.DisputeParticipantActionForActorWithIdempotency(
 		r.Context(), actor, routeKey, r.Header.Get("Idempotency-Key"),
-		requestHash(r.Method, routeKey+":"+input.DisputeID+":"+input.ProposalID, body),
+		requestHash(r.Method, routeKey+":"+input.DisputeID, body),
 		input, disputeParticipantCompletionBuilder(actor.UserID),
 	)
 	if appErr != nil {
@@ -714,8 +746,12 @@ func (s *Server) handleCloseDispute(w http.ResponseWriter, r *http.Request) {
 	s.handleAdminDisputeAction(w, r, "close")
 }
 
-func (s *Server) handleMarkDisputeRemedyOverdue(w http.ResponseWriter, r *http.Request) {
-	s.handleAdminDisputeAction(w, r, "mark_overdue")
+func (s *Server) handleConfirmDisputeRemedyLateness(w http.ResponseWriter, r *http.Request) {
+	s.handleAdminDisputeAction(w, r, "confirm_lateness")
+}
+
+func (s *Server) handleExcuseDisputeRemedyLateness(w http.ResponseWriter, r *http.Request) {
+	s.handleAdminDisputeAction(w, r, "excuse_lateness")
 }
 
 func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request, action string) {
@@ -1027,10 +1063,15 @@ func toMyDisputeResponses(items []report.DisputeCase, userID string) []disputeRe
 
 func toMyDisputeResponse(item report.DisputeCase, userID string) disputeResponse {
 	response := toDisputeResponse(item, false)
+	response.ViewerUserID = userID
+	response.Evidence = toEvidenceReferenceResponses(filterEvidenceForUser(item.Evidence, userID), false)
 	canAppeal := report.CanAppealDispute(item, userID)
 	response.CanAppeal = &canAppeal
 	canSupplement := item.Status == report.DisputeStatusWaitingInfo && item.InfoRequestedFromID == userID && item.OpenInfoRequestID != ""
 	response.CanSupplement = &canSupplement
+	now := time.Now()
+	response.ResponseOverdue = item.Status == report.DisputeStatusPendingSellerResponse && item.DueAt != nil && !now.Before(*item.DueAt)
+	response.AvailableActions = report.AvailableDisputeActions(item, userID, now)
 	if canSupplement {
 		response.OpenInfoRequestID = item.OpenInfoRequestID
 	}
@@ -1046,34 +1087,61 @@ func toMyDisputeDetailResponse(item report.DisputeCase, userID string) disputeRe
 
 func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeResponse {
 	response := disputeResponse{
-		ID:                   item.ID,
-		ReportID:             item.ReportID,
-		TargetType:           item.TargetType,
-		TargetID:             item.TargetID,
-		TargetLabel:          item.TargetLabel,
-		PrimaryUsername:      item.PrimaryUsername,
-		PrimaryDisplayName:   item.PrimaryDisplayName,
-		CounterpartyUsername: item.CounterpartyUsername,
-		CounterpartyName:     item.CounterpartyName,
-		Status:               item.Status,
-		IssueCode:            item.IssueCode,
-		RequestedResolution:  item.RequestedResolution,
-		RequestedAmountCNY:   item.RequestedAmountCNY,
-		IssueOccurredAt:      formatOptionalTime(item.IssueOccurredAt),
-		PublicSummary:        item.PublicSummary,
-		PublicResultCode:     item.PublicResultCode,
-		PublicResult:         item.PublicResult,
-		OpenedAt:             item.OpenedAt.UTC().Format(time.RFC3339),
-		ResolvedAt:           formatOptionalTime(item.ResolvedAt),
-		ClosedAt:             formatOptionalTime(item.ClosedAt),
-		CreatedAt:            item.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:            item.UpdatedAt.UTC().Format(time.RFC3339),
-		Version:              item.Version,
-		Messages:             toDisputeMessageResponses(item.Messages),
-		SettlementProposals:  toSettlementProposalResponses(item.SettlementProposals),
-		Remedies:             toDisputeRemedyResponses(item.Remedies),
+		ID:                         item.ID,
+		APIOrderID:                 item.APIOrderID,
+		Active:                     item.Active,
+		ReportID:                   item.ReportID,
+		TargetType:                 item.TargetType,
+		TargetID:                   item.TargetID,
+		TargetLabel:                item.TargetLabel,
+		PrimaryUsername:            item.PrimaryUsername,
+		PrimaryDisplayName:         item.PrimaryDisplayName,
+		CounterpartyUsername:       item.CounterpartyUsername,
+		CounterpartyName:           item.CounterpartyName,
+		Status:                     item.Status,
+		IssueCode:                  item.IssueCode,
+		RequestedResolution:        item.RequestedResolution,
+		RequestedAmountCNY:         item.RequestedAmountCNY,
+		IssueOccurredAt:            formatOptionalTime(item.IssueOccurredAt),
+		PublicSummary:              item.PublicSummary,
+		PublicResultCode:           item.PublicResultCode,
+		PublicResult:               item.PublicResult,
+		OpenedAt:                   item.OpenedAt.UTC().Format(time.RFC3339),
+		ResolvedAt:                 formatOptionalTime(item.ResolvedAt),
+		ClosedAt:                   formatOptionalTime(item.ClosedAt),
+		FinalReason:                item.FinalReason,
+		AppealExpiresAt:            formatOptionalTime(item.AppealExpiresAt),
+		AdverselyAffectedIDs:       append([]string(nil), item.AdverselyAffectedIDs...),
+		NegotiationChannels:        append([]string(nil), item.NegotiationChannels...),
+		NegotiationEndedConfirmed:  item.NegotiationEndedConfirmed,
+		NegotiationSummary:         item.NegotiationSummary,
+		RequestedPlatformAction:    item.RequestedPlatformAction,
+		PlatformInterventionReason: item.PlatformInterventionReason,
+		EscalatedByUserID:          item.EscalatedByUserID,
+		EscalatedAt:                formatOptionalTime(item.EscalatedAt),
+		NextActor:                  item.NextActor,
+		DueAt:                      formatOptionalTime(item.DueAt),
+		ApplicantStatement:         item.ApplicantStatement,
+		RespondentResponse:         item.RespondentResponse,
+		RespondedByUserID:          item.RespondedByUserID,
+		RespondedAt:                formatOptionalTime(item.RespondedAt),
+		SellerDecision:             item.SellerDecision,
+		SellerDecisionReason:       item.SellerDecisionReason,
+		SellerDecidedByUserID:      item.SellerDecidedByUserID,
+		SellerDecidedAt:            formatOptionalTime(item.SellerDecidedAt),
+		SellerResponseLate:         item.SellerResponseLate,
+		ApplicantDecisionDueAt:     formatOptionalTime(item.ApplicantDecisionDueAt),
+		AvailableActions:           []string{},
+		CreatedAt:                  item.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:                  item.UpdatedAt.UTC().Format(time.RFC3339),
+		Version:                    item.Version,
+		Messages:                   toDisputeMessageResponses(item.Messages),
+		SettlementProposals:        toSettlementProposalResponses(item.SettlementProposals),
+		Remedies:                   toDisputeRemedyResponses(item.Remedies),
+		Evidence:                   toEvidenceReferenceResponses(item.Evidence, includeAdmin),
 	}
 	if includeAdmin {
+		response.FactSnapshotJSON = item.FactSnapshotJSON
 		response.PrimaryUserID = item.PrimaryUserID
 		response.CounterpartyUserID = item.CounterpartyUserID
 		response.SubjectUserID = item.SubjectUserID
@@ -1108,10 +1176,12 @@ func toSettlementProposalResponses(items []report.SettlementProposal) []settleme
 	for _, item := range items {
 		result = append(result, settlementProposalResponse{
 			ID: item.ID, ProposedByUserID: item.ProposedByUserID, Resolution: item.Resolution,
-			AmountCNY: item.AmountCNY, Terms: item.Terms, Status: item.Status,
+			AmountCNY: item.AmountCNY, Terms: item.Terms, FulfillmentRequired: item.FulfillmentRequired,
+			ResponsibleUserID: item.ResponsibleUserID, BeneficiaryUserID: item.BeneficiaryUserID, DueAt: formatOptionalTime(item.DueAt), Status: item.Status,
 			AcceptedByUserID: item.AcceptedByUserID, AcceptedAt: formatOptionalTime(item.AcceptedAt),
 			RejectedByUserID: item.RejectedByUserID, RejectedAt: formatOptionalTime(item.RejectedAt),
-			CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
+			SupersededReason: item.SupersededReason,
+			CreatedAt:        item.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
 			Version: item.Version,
 		})
 	}
@@ -1130,7 +1200,10 @@ func toDisputeRemedyResponses(items []report.DisputeRemedy) []disputeRemedyRespo
 			Instructions: item.Instructions, Status: item.Status, DueAt: item.DueAt.UTC().Format(time.RFC3339),
 			ClaimedAt: formatOptionalTime(item.ClaimedAt), ConfirmationDueAt: formatOptionalTime(item.ConfirmationDueAt),
 			ConfirmedAt: formatOptionalTime(item.ConfirmedAt), ContestedAt: formatOptionalTime(item.ContestedAt),
-			ConfirmationExpiredAt: formatOptionalTime(item.ConfirmationExpiredAt), OverdueAt: formatOptionalTime(item.OverdueAt),
+			ConfirmationExpiredAt: formatOptionalTime(item.ConfirmationExpiredAt),
+			LatenessStatus:        item.LatenessStatus, LateAt: formatOptionalTime(item.LateAt),
+			LatenessDecidedAt: formatOptionalTime(item.LatenessDecidedAt), LatenessReason: item.LatenessReason,
+			ClaimedLate: item.ClaimedLate, Source: item.Source, SettlementProposalID: item.SettlementProposalID,
 			ClaimNote: item.ClaimNote, ResponseNote: item.ResponseNote,
 			CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339), Version: item.Version,
 		})
@@ -1180,14 +1253,46 @@ func toAppealResponse(item report.Appeal, includeAdmin bool) appealResponse {
 		CreatedAt:         item.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:         item.UpdatedAt.UTC().Format(time.RFC3339),
 		Version:           item.Version,
+		Evidence:          toEvidenceReferenceResponses(filterEvidenceForUser(item.Evidence, item.AppellantUserID), false),
 	}
 	if includeAdmin {
 		response.AppellantUserID = item.AppellantUserID
 		response.Statement = item.Statement
 		response.AdminReason = item.AdminReason
 		response.HandledByAdminID = item.HandledByAdminID
+		response.Evidence = toEvidenceReferenceResponses(item.Evidence, true)
 	}
 	return response
+}
+
+func filterEvidenceForUser(items []evidence.Reference, userID string) []evidence.Reference {
+	result := make([]evidence.Reference, 0, len(items))
+	for _, item := range items {
+		if item.Visibility == evidence.VisibilityParticipantsAdmin || item.UploaderUserID == userID {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func toEvidenceReferenceResponses(items []evidence.Reference, admin bool) []evidenceReferenceResponse {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]evidenceReferenceResponse, 0, len(items))
+	for _, item := range items {
+		contentPath := item.ContentPath
+		if admin {
+			contentPath = "/api/v1/admin/dispute-evidence/" + item.ID + "/content"
+		}
+		result = append(result, evidenceReferenceResponse{
+			ID: item.ID, Version: item.Version, Kind: item.Kind, MIME: item.MIME, ByteSize: item.ByteSize,
+			Width: item.Width, Height: item.Height, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339),
+			ContentPath: contentPath, Visibility: item.Visibility, Usage: item.Usage,
+			SourceType: item.SourceType, SourceID: item.SourceID,
+		})
+	}
+	return result
 }
 
 func toPublicDisputeResponses(items []report.PublicDispute) []publicDisputeResponse {
