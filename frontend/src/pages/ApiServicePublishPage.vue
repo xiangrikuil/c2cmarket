@@ -184,7 +184,7 @@ const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, i
 const selectedModels = computed(() => selectedCatalogItems(form, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
 const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
-  contact.enabled && contact.usageScopes.includes('api_merchant')
+  contact.enabled && contact.type === 'wechat' && contact.usageScopes.includes('api_merchant')
 )))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === form.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
@@ -243,12 +243,7 @@ syncHiddenPublishFields()
 watch(profileMerchantDisplayName, () => syncMerchantDisplayNameSnapshot(), { immediate: true })
 
 watch(availableOwnerContacts, contacts => {
-  const availableIds = new Set(contacts.map(contact => contact.id))
-  form.ownerContactMethodIds = form.ownerContactMethodIds.filter(id => availableIds.has(id))
-  if (form.ownerContactMethodIds.length || !contacts.length) return
-  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
-  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
-  form.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
+  form.ownerContactMethodIds = contacts[0] ? [contacts[0].id] : []
 }, { immediate: true })
 
 watch([catalog, () => form.providerCategory], () => {
@@ -382,7 +377,7 @@ function collectValidationErrors() {
   const next: FieldErrors<Field> = {}
   const merchantDisplayName = form.merchantDisplayName.trim()
   if (!['public_profile', 'store_alias'].includes(form.merchantIdentityMode)) next.merchantIdentity = '请选择对外展示身份。'
-	if (!form.ownerContactMethodIds.length) next.ownerContactMethods = '请至少选择一种订单联系方式。'
+  if (form.ownerContactMethodIds.length !== 1) next.ownerContactMethods = '请先在个人中心配置微信联系方式。'
   if (form.merchantIdentityMode === 'store_alias') {
     if (!merchantDisplayName) next.merchantDisplayName = profileLoading.value ? '正在读取个人资料显示名称。' : '请先到个人中心设置显示名称。'
     else if (displayNameLength(merchantDisplayName) > 32) next.merchantDisplayName = '商家展示名最多 32 个字符，请到个人中心调整。'

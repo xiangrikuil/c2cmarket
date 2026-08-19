@@ -1137,7 +1137,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>报告付款核对问题</DialogTitle>
-          <DialogDescription>请先通过订单内微信或 linux.do 私信联系买家核对；仍需补充时再选择明确原因。订单将保留当前锁定额度。</DialogDescription>
+          <DialogDescription>请先通过订单内微信联系买家核对；仍需补充时再选择明确原因。订单将保留当前锁定额度。</DialogDescription>
         </DialogHeader>
         <RadioGroup v-model="paymentIssueReason" class="gap-3">
           <div
@@ -1224,7 +1224,7 @@ onBeforeUnmount(() => {
             <Alert variant="destructive">
               <ShieldAlert />
               <AlertTitle>请确认尚未付款</AlertTitle>
-              <AlertDescription>如果已经付款，请不要取消订单。你可以通过微信或 linux.do 私信联系商户，也可以发起售后申请，由卖家先处理。</AlertDescription>
+              <AlertDescription>如果已经付款，请不要取消订单。你可以通过订单内微信联系商户，也可以发起售后申请，由卖家先处理。</AlertDescription>
             </Alert>
 
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">

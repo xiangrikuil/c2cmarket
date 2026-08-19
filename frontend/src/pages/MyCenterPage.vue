@@ -69,12 +69,12 @@ import { backendErrorMessage, reauthenticatePassword, startLinuxDoLink } from '@
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
 import { wechatOnboardingReturnTo } from '@/lib/authNavigation'
 import {
-  buildContactMethodPayload,
+  ALL_CONTACT_USAGE_SCOPES,
   CONTACT_USAGE_SCOPE_OPTIONS,
+  buildContactMethodPayload,
   contactUsageScopeOptionsForCapabilities,
   initialContactUsageScopes,
   sameContactUsageScopes,
-  WECHAT_USAGE_SCOPES,
 } from '@/lib/contactUsageScopes'
 
 const route = useRoute()
@@ -877,7 +877,7 @@ function saveWechatContact() {
     type: 'wechat',
     label: '微信',
     displayValue,
-    usageScopes: WECHAT_USAGE_SCOPES,
+    usageScopes: ALL_CONTACT_USAGE_SCOPES,
     current,
   })
   const mutationOptions = {
@@ -1577,12 +1577,12 @@ function goToLogin() {
 
         <ContactMethodCard
           title="微信"
-          description="微信为必填联系方式，保存后可修改但不可解除，系统自动用于全部交易场景。"
-          :status-label="wechatBound ? '已填写' : '未填写'"
+          description="微信为必填联系方式，保存后可修改但不可解除；平台不做外部验证。"
+          :status-label="wechatBound ? '已配置' : '未配置'"
           :status-variant="wechatBound ? 'verified' : 'secondary'"
           :dirty="wechatContactDirty"
           :is-default="wechatContact?.isDefault"
-          :current-summary="wechatContact ? `当前：${wechatContact.maskedValue}` : ''"
+          :current-summary="wechatContact ? `当前：${wechatContact.maskedValue} · 自动用于拼车和 API 交易` : ''"
         >
           <template #icon><MessageCircle class="h-5 w-5" /></template>
           <template v-if="wechatContact" #actions>
@@ -1611,6 +1611,7 @@ function goToLogin() {
               <Save class="h-4 w-4" />保存微信
             </Button>
           </div>
+          <p class="mt-3 text-xs leading-5 text-muted-foreground">微信配置后自动用于拼车和 API 交易，不代表平台已验证该微信号。</p>
         </ContactMethodCard>
 
         <ContactMethodCard
@@ -1745,6 +1746,16 @@ function goToLogin() {
             <div class="space-y-2">
               <span class="block text-muted-foreground">系统铭牌</span>
               <div class="flex flex-wrap gap-2"><Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge></div>
+            </div>
+            <div class="space-y-2">
+              <span class="block text-muted-foreground">社区身份</span>
+              <div v-if="profile.communityIdentities.length" class="flex flex-wrap gap-2">
+                <Badge v-for="identity in profile.communityIdentities" :key="`${identity.code}-${identity.grantedAt}`" variant="outline">
+                  {{ identity.name }}<span v-if="identity.revokedAt" class="ml-1 text-muted-foreground">（已撤销）</span>
+                </Badge>
+              </div>
+              <span v-else class="text-muted-foreground">暂无</span>
+              <p class="text-xs leading-5 text-muted-foreground">社区身份只记录参与经历，不代表交易信用认证、平台担保或服务能力评价。</p>
             </div>
           </div>
         </div>

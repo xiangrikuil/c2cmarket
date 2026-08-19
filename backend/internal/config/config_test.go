@@ -63,6 +63,32 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	if cfg.Sentry.Enabled || cfg.Sentry.Environment != EnvDevelopment || cfg.Sentry.TracesSampleRate != 0.1 {
 		t.Fatalf("unexpected Sentry defaults: %+v", cfg.Sentry)
 	}
+	expectedCutoff, _ := time.Parse(time.RFC3339, defaultCommunityIdentityFoundingCutoffAt)
+	if !cfg.CommunityIdentityFoundingCutoffAt.Equal(expectedCutoff) {
+		t.Fatalf("unexpected community identity cutoff: %s", cfg.CommunityIdentityFoundingCutoffAt)
+	}
+}
+
+func TestLoadParsesCommunityIdentityCutoff(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("COMMUNITY_FOUNDING_USER_CUTOFF_AT", "2026-08-31T23:59:59+08:00")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load community identity cutoff: %v", err)
+	}
+	expected, _ := time.Parse(time.RFC3339, "2026-08-31T23:59:59+08:00")
+	if !cfg.CommunityIdentityFoundingCutoffAt.Equal(expected) {
+		t.Fatalf("unexpected community identity cutoff: %s", cfg.CommunityIdentityFoundingCutoffAt)
+	}
+}
+
+func TestLoadRejectsInvalidCommunityIdentityCutoff(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("COMMUNITY_FOUNDING_USER_CUTOFF_AT", "not-a-time")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "COMMUNITY_FOUNDING_USER_CUTOFF_AT") {
+		t.Fatalf("expected invalid community identity cutoff error, got %v", err)
+	}
 }
 
 func TestLoadParsesSentryConfig(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
+	"c2c-market/backend/internal/module/communityidentity"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/devpersona"
 	"c2c-market/backend/internal/module/evidence"
@@ -132,6 +133,13 @@ type AdminUserService interface {
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
+type CommunityIdentityService interface {
+	PublicCommunityIdentities(ctx context.Context, userID string) ([]communityidentity.PublicIdentity, *domain.AppError)
+	AdminCommunityIdentities(ctx context.Context, user auth.User, targetUserID string) ([]communityidentity.Identity, *domain.AppError)
+	GrantCommunityIdentityWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input communityidentity.GrantAdminInput, buildCompletion func(communityidentity.Identity) (idempotency.Completion, *domain.AppError)) (idempotency.Completion, *domain.AppError)
+	RevokeCommunityIdentityWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input communityidentity.RevokeInput, buildCompletion func(communityidentity.Identity) (idempotency.Completion, *domain.AppError)) (idempotency.Completion, *domain.AppError)
+}
+
 type OperationAuditService interface {
 	AdminOperationAuditLogs(ctx context.Context, user auth.User, filter operationaudit.Filter) (domain.Page[operationaudit.Entry], *domain.AppError)
 }
@@ -172,6 +180,7 @@ type CarpoolContinuityService interface {
 	CarpoolApplicationForActor(ctx context.Context, actor auth.BusinessActor, applicationID, participantRole string) (carpool.Application, *domain.AppError)
 	CarpoolMembershipsForActor(ctx context.Context, actor auth.BusinessActor, participantRole string) ([]carpool.Membership, *domain.AppError)
 	EndCarpoolMembershipForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateCarpoolMembershipOwnerNoteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input carpool.UpdateMembershipOwnerNoteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
 type DisputeContinuityService interface {
@@ -343,6 +352,7 @@ type Service interface {
 	UpdateAPIServiceProbeConnection(ctx context.Context, user auth.User, input apimarket.UpdateProbeConnectionInput) (apimarket.Service, *domain.AppError)
 	UpdateAPIServiceProbeConnectionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apimarket.UpdateProbeConnectionInput, buildCompletion apimarket.ServiceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
+	PublicAPIPackageFilterOptions(ctx context.Context, billingMode string) (apimarket.PublicPackageFilterOptions, *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
 	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	OwnerAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
@@ -526,6 +536,7 @@ type ApplicationService interface {
 	APIQuotaService
 	APIPaymentSettingsService
 	AdminUserService
+	CommunityIdentityService
 	OperationAuditService
 	APIPromotionService
 	GrowthService
@@ -547,6 +558,7 @@ type Server struct {
 	adminAPIHealth     AdminAPIHealthService
 	apiModelTester     APIModelTesterService
 	adminUsers         AdminUserService
+	communityIdentity  CommunityIdentityService
 	operationAudit     OperationAuditService
 	apiPromotions      APIPromotionService
 	growth             GrowthService
@@ -614,6 +626,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		adminAPIHealth:     option.AdminAPIHealth,
 		apiModelTester:     apiModelTester,
 		adminUsers:         service,
+		communityIdentity:  service,
 		operationAudit:     service,
 		apiPromotions:      service,
 		growth:             service,

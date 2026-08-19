@@ -266,7 +266,7 @@ func TestAPIOrderRestrictionGatesPrecedeOrderSideEffects(t *testing.T) {
 		"func (s *Store) CreateAPIQuotaOrderWithIdempotency",
 		"func getAPIQuotaOrderContext",
 		"ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, orderContext.APIServiceID, now)",
-		"lockContactVersionForOwner",
+		"lockWechatContactVersionForOwnerAndScope",
 		"claimAPIQuotaRoundAndAllocation",
 		"FROM api_quota_inventory_units",
 		"INSERT INTO api_purchase_intents",

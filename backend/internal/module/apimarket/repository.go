@@ -15,6 +15,7 @@ type Repository interface {
 	CreateAPIService(ctx context.Context, service Service, requestID string) *domain.AppError
 	CreateAPIServiceWithIdempotency(ctx context.Context, entry idempotency.Entry, service Service, requestID string, now time.Time, buildCompletion ServiceCompletionBuilder) (Service, idempotency.Completion, *domain.AppError)
 	ListPublicAPIServices(ctx context.Context, filter PublicServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError)
+	ListPublicAPIPackageFilterAvailability(ctx context.Context) (PublicPackageFilterAvailability, *domain.AppError)
 	GetPublicAPIService(ctx context.Context, serviceID string) (Service, *domain.AppError)
 	ListAPIServicesByOwner(ctx context.Context, ownerUserID string, filter OwnerServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError)
 	GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (Service, *domain.AppError)

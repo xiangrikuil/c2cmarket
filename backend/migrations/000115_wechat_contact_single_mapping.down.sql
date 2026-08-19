@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS ux_contact_methods_one_enabled_wechat;

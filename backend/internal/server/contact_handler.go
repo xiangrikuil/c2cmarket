@@ -52,7 +52,7 @@ func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if strings.TrimSpace(req.Type) != "wechat" {
+	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
 		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
 			writeProblem(w, r, appErr)
 			return
@@ -112,7 +112,7 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if strings.TrimSpace(req.Type) != "wechat" {
+	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
 		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
 			writeProblem(w, r, appErr)
 			return

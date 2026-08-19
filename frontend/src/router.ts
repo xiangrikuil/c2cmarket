@@ -1,6 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { CAPABILITY, type Capability } from './lib/capabilities'
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from './lib/featureFlags'
+import { apiMarketPath, apiMarketQueryForView, apiMarketViewFromQuery } from './lib/apiMarketRoutes'
 
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
@@ -16,6 +17,7 @@ const ApiServicePublishPage = () => import('@/pages/ApiServicePublishPage.vue')
 const SearchPage = () => import('@/pages/SearchPage.vue')
 const MyCenterPage = () => import('@/pages/MyCenterPage.vue')
 const MyCarpoolsPage = () => import('@/pages/MyCarpoolsPage.vue')
+const CarpoolMembershipManagementPage = () => import('@/pages/CarpoolMembershipManagementPage.vue')
 const MyRidesPage = () => import('@/pages/MyRidesPage.vue')
 const CarpoolApplicationDetailPage = () => import('@/pages/CarpoolApplicationDetailPage.vue')
 const MyApiOrdersPage = () => import('@/pages/MyApiOrdersPage.vue')
@@ -28,7 +30,6 @@ const ApiOrderDeliveryContentPage = () => import('@/pages/ApiOrderDeliveryConten
 const MyApiOrderDisputePage = () => import('@/pages/MyApiOrderDisputePage.vue')
 const LegacyApiIntentRedirectPage = () => import('@/pages/LegacyApiIntentRedirectPage.vue')
 const MerchantApiOrdersPage = () => import('@/pages/MerchantApiOrdersPage.vue')
-const MerchantCarpoolApplicationsPage = () => import('@/pages/MerchantCarpoolApplicationsPage.vue')
 const MyFavoritesPage = () => import('@/pages/MyFavoritesPage.vue')
 const MyReviewsPage = () => import('@/pages/MyReviewsPage.vue')
 const MyReputationPage = () => import('@/pages/MyReputationPage.vue')
@@ -74,8 +75,22 @@ const apiQuotaRushPublishRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLE
   : {
       path: '/api-market/quota/new',
       name: 'api-quota-rush-new',
-      redirect: { path: '/api-market', query: { view: 'free' } },
+      redirect: { path: '/api-market/free' },
       meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish),
+    }
+
+const apiMarketLimitedRoute: RouteRecordRaw = LIMITED_API_QUOTA_OFFERS_ENABLED
+  ? {
+      path: '/api-market/limited',
+      name: 'api-market-limited',
+      component: ApiMarketPage,
+      meta: { apiMarketView: 'limited' },
+    }
+  : {
+      path: '/api-market/limited',
+      name: 'api-market-limited',
+      redirect: to => ({ path: '/api-market/free', query: apiMarketQueryForView(to.query, 'free') }),
+      meta: { apiMarketView: 'limited' },
     }
 
 export type WorkspaceNavKey =
@@ -113,7 +128,17 @@ export const routes: RouteRecordRaw[] = [
     { path: '/carpools/detail', redirect: '/carpools/c1' },
     { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
-    { path: '/api-market', name: 'api-market', component: ApiMarketPage },
+    {
+      path: '/api-market',
+      name: 'api-market',
+      redirect: to => {
+        const view = apiMarketViewFromQuery(to.query.view)
+        return { path: apiMarketPath(view), query: apiMarketQueryForView(to.query, view) }
+      },
+    },
+    apiMarketLimitedRoute,
+    { path: '/api-market/packages', name: 'api-market-packages', component: ApiMarketPage, meta: { apiMarketView: 'packages' } },
+    { path: '/api-market/free', name: 'api-market-free', component: ApiMarketPage, meta: { apiMarketView: 'free' } },
     apiQuotaRushPublishRoute,
     { path: '/api-market/detail', redirect: '/api-market/a1' },
     { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
@@ -124,6 +149,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
     { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: workspaceUserAuthMeta('account-settings') },
     { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
+    { path: '/my/carpools/:id/manage', name: 'my-carpool-management', component: CarpoolMembershipManagementPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/carpools/:id/edit', name: 'my-carpool-edit', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage, meta: userAuthMeta },
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
@@ -136,7 +162,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/api-probe-connections', name: 'my-api-probe-connections', component: MyApiProbeConnectionsPage, meta: capabilityAuthMeta(CAPABILITY.apiProbeManage) },
     { path: '/tools/api-model-tester', name: 'api-model-tester', component: ApiModelTesterPage, meta: userAuthMeta },
     { path: '/api-intents/:id', name: 'legacy-api-intent-detail', component: LegacyApiIntentRedirectPage, meta: userAuthMeta },
-    { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', component: MerchantCarpoolApplicationsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
+    { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', redirect: { path: '/my/carpools', query: { view: 'applications' } }, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/merchant/carpool-applications/:id', name: 'merchant-carpool-application-detail', component: CarpoolApplicationDetailPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/merchant/api-orders', name: 'merchant-api-orders', component: MerchantApiOrdersPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/merchant/api-orders/:id', name: 'merchant-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },

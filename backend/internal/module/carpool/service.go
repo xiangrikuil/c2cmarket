@@ -98,8 +98,8 @@ func (s *Service) CreateListing(ctx context.Context, user auth.User, input Creat
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -146,10 +146,10 @@ func (s *Service) CreateListingWithIdempotency(ctx context.Context, user auth.Us
 		return Listing{}, idempotency.Completion{}, false, appErr
 	}
 	s.mu.Lock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Listing{}, idempotency.Completion{}, false, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+		return Listing{}, idempotency.Completion{}, false, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -246,8 +246,8 @@ func (s *Service) PublishListing(ctx context.Context, user auth.User, input Publ
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -300,10 +300,10 @@ func (s *Service) PublishListingWithIdempotency(ctx context.Context, user auth.U
 		return Listing{}, idempotency.Completion{}, false, appErr
 	}
 	s.mu.Lock()
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Listing{}, idempotency.Completion{}, false, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+		return Listing{}, idempotency.Completion{}, false, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -343,8 +343,8 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	if input.BuyerSeatCapacity < listing.ActiveBuyerMembers+input.OfflineOccupiedSeats {
 		return Listing{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSeatUnavailable, "Seat unavailable", "买家总名额不能小于线下已占名额与平台有效成员数之和。", "buyerSeatCapacity", "below_occupied", "总名额不能小于已占名额。")
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(input.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 
 	previousConditions := NewListingConditionsSnapshot(listing)
@@ -562,8 +562,8 @@ func (s *Service) SubmitListingForReview(ctx context.Context, user auth.User, in
 	if err := validatePlanPublishAllowed(plan); err != nil {
 		return Listing{}, err
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "恢复或发布拼车前必须先配置微信联系方式。")
 	}
 	now := s.now()
 	listing.Status = ListingStatusActive
@@ -894,8 +894,8 @@ func (s *Service) CreateApplication(ctx context.Context, user auth.User, input C
 	if err := validateCreateApplicationInput(input, listing, plan); err != nil {
 		return Application{}, err
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
-		return Application{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
+		return Application{}, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
 	now := s.now()
 	application := newApplication(input, listing, now)
@@ -982,10 +982,10 @@ func (s *Service) CreateApplicationWithIdempotency(ctx context.Context, user aut
 		s.idempotency.Cancel(ctx, entry)
 		return Application{}, idempotency.Completion{}, false, appErr
 	}
-	if _, _, ok := s.contact.VersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
+	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Application{}, idempotency.Completion{}, false, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+		return Application{}, idempotency.Completion{}, false, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
 	application := newApplication(input, listing, now)
 	completion, appErr := buildCompletion(application)
@@ -1542,6 +1542,63 @@ func (s *Service) EndMembershipWithIdempotency(ctx context.Context, userID, rout
 	return completion, nil
 }
 
+func (s *Service) UpdateMembershipOwnerNoteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input UpdateMembershipOwnerNoteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.OwnerUserID = actor.UserID
+	input.OwnerAudience = actor.Audience
+	input.GovernanceActionID = actor.GovernanceActionID
+	input.GovernanceVersion = actor.GovernanceVersion
+	input.RestrictionEffectiveAt = actor.RestrictionEffectiveAt
+	return s.UpdateMembershipOwnerNoteWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) UpdateMembershipOwnerNoteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input UpdateMembershipOwnerNoteInput, buildCompletion MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	key = strings.TrimSpace(key)
+	if err := idempotency.ValidateKey(key); err != nil {
+		return idempotency.Completion{}, err
+	}
+	if buildCompletion == nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+	}
+	input.OwnerUserID = userID
+	input.Note = strings.TrimSpace(input.Note)
+	if err := validateMembershipOwnerNoteInput(input); err != nil {
+		return idempotency.Completion{}, err
+	}
+
+	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateCarpoolMembershipOwnerNoteWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+
+	membership, appErr := s.updateMembershipOwnerNoteInMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(membership)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
 func (s *Service) productPlan(ctx context.Context, planID string) (catalog.ProductPlan, *domain.AppError) {
 	if s.catalog == nil {
 		return catalog.ProductPlan{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "产品目录服务不可用。")
@@ -1640,13 +1697,13 @@ func (s *Service) acceptApplicationInMemory(input AcceptApplicationInput) (Appli
 	if listing.Status != ListingStatusActive || listing.GovernanceStatus != "clear" {
 		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源不可接受申请。")
 	}
-	buyerMethod, buyerVersion, ok := s.contact.VersionForOwnerAndScope(application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer)
+	buyerMethod, buyerVersion, ok := s.contact.WechatVersionForOwnerAndScope(application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer)
 	if !ok || !buyerMethod.Enabled {
-		return Application{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+		return Application{}, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
-	ownerMethod, ownerVersion, ok := s.contact.VersionForOwnerAndScope(listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner)
+	ownerMethod, ownerVersion, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner)
 	if !ok || !ownerMethod.Enabled {
-		return Application{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+		return Application{}, contact.WechatRequiredError("ownerContactMethodId", "车主必须先配置微信联系方式。")
 	}
 	now := s.now()
 	session := contact.ContactSession{
@@ -1764,12 +1821,30 @@ func (s *Service) endMembershipInMemory(input EndMembershipInput) (Membership, *
 	return membership, nil
 }
 
+func (s *Service) updateMembershipOwnerNoteInMemory(input UpdateMembershipOwnerNoteInput) (Membership, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	membership, ok := s.memberships[input.MembershipID]
+	if !ok || membership.OwnerUserID != input.OwnerUserID {
+		return Membership{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool membership not found", "成员关系不存在。")
+	}
+	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
+		return Membership{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	membership.OwnerNote = input.Note
+	membership.UpdatedAt = s.now()
+	membership.Version++
+	s.memberships[membership.ID] = membership
+	return membership, nil
+}
+
 func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPlan) *domain.AppError {
 	if strings.TrimSpace(input.ProductPlanID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeProductPlanResolutionRequired, "Product plan required", "必须选择产品套餐。", "productPlanId", "required", "必须选择产品套餐。")
 	}
 	if strings.TrimSpace(input.OwnerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布车源必须选择车主联系方式。", "ownerContactMethodId", "required", "必须选择车主联系方式。")
+		return contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
 	}
 	if err := validatePlanPublishAllowed(plan); err != nil {
 		return err
@@ -1920,7 +1995,7 @@ func validateCreateApplicationInput(input CreateApplicationInput, listing Listin
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Cannot apply to own carpool", "不能申请自己的车源。")
 	}
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "申请上车必须选择联系方式。", "buyerContactMethodId", "required", "必须选择联系方式。")
+		return contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	}
 	if listing.AvailableSeats <= 0 {
 		return domain.NewError(http.StatusConflict, domain.CodeSeatUnavailable, "Seat unavailable", "当前车源没有可申请名额。")
@@ -1969,9 +2044,6 @@ func validateEndMembershipInput(input EndMembershipInput) *domain.AppError {
 	if strings.TrimSpace(input.MembershipID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership required", "必须提供成员关系。", "membershipId", "required", "必须提供成员关系。")
 	}
-	if strings.TrimSpace(input.Reason) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "必须填写结束原因。", "reason", "required", "必须填写结束原因。")
-	}
 	if input.ActorRole == JoinActorBuyer && input.TargetStatus == MembershipStatusLeft {
 		return nil
 	}
@@ -1979,6 +2051,16 @@ func validateEndMembershipInput(input EndMembershipInput) *domain.AppError {
 		return nil
 	}
 	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership action invalid", "成员关系操作不正确。", "targetStatus", "invalid", "成员关系操作不正确。")
+}
+
+func validateMembershipOwnerNoteInput(input UpdateMembershipOwnerNoteInput) *domain.AppError {
+	if strings.TrimSpace(input.MembershipID) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Membership required", "必须提供成员关系。", "membershipId", "required", "必须提供成员关系。")
+	}
+	if utf8.RuneCountInString(input.Note) > 500 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Owner note too long", "车主备注不能超过 500 个字符。", "note", "too_long", "车主备注不能超过 500 个字符。")
+	}
+	return nil
 }
 
 func validateRiskAcknowledgement(ack *RiskAcknowledgement, plan catalog.ProductPlan) *domain.AppError {

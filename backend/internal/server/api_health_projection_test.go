@@ -76,7 +76,7 @@ func TestOwnerAPIServiceListHealthSummariesFailOpenInOneBatch(t *testing.T) {
 		ServerOptions{EnableDevAuth: true, APIHealth: health},
 	)
 	ownerSession := createLinuxDoSession(t, server, "api-health-owner-list")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Health Owner", "@api_health_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Health Owner WeChat", "api_health_owner")
 	first := createAPIService(t, server, ownerSession, ownerContact.ID, "api-health-owner-list-first")
 	second := createAPIService(t, server, ownerSession, ownerContact.ID, "api-health-owner-list-second")
 

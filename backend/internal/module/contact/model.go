@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	MethodTypeWechat       = "wechat"
 	UsageScopeCarpoolOwner = "carpool_owner"
 	UsageScopeAPIMerchant  = "api_merchant"
 	UsageScopeBuyer        = "buyer"

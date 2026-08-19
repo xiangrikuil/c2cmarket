@@ -75,6 +75,7 @@ import {
   type CarpoolProductCatalogItem,
   type ContactMethodType,
   type ContactUsageScope,
+  type CommunityIdentity,
   type CreateContactReportRequest,
   type OpeningChannelOption,
   type OrderContactSnapshot,
@@ -113,7 +114,7 @@ export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
-import { WECHAT_USAGE_SCOPES } from '@/lib/contactUsageScopes'
+import { ALL_CONTACT_USAGE_SCOPES } from '@/lib/contactUsageScopes'
 export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -161,6 +162,7 @@ import {
   backendMyCarpoolApplications,
   backendMyCarpoolApplicationsPage,
   backendOwnerRemoveCarpool,
+  backendUpdateCarpoolMembershipOwnerNote,
   backendRejectCarpoolApplication,
   backendRunAdminCarpoolAction,
   backendSubmitCarpool,
@@ -179,6 +181,7 @@ import {
   backendAdminAPIOrderRows,
   backendAdminAPIOrderRowsPage,
   backendAPIServiceById,
+  backendAPIPackageFilterOptions,
   backendAPIServices,
   backendAPIServicesPage,
   backendAdminAPIServiceRows,
@@ -948,7 +951,13 @@ export type BackendResourceMeta = {
 }
 
 export type CarpoolWithMeta = Carpool & BackendResourceMeta & { seatSummary?: CarpoolSeatSummary, offlineOccupiedSeats?: number, recruitmentStopReason?: string }
-export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta & { conditionsOutdated?: boolean, acceptedConditionsVersion?: number, conditionsVersionSnapshot?: number }
+export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMeta & {
+  conditionsOutdated?: boolean
+  acceptedConditionsVersion?: number
+  conditionsVersionSnapshot?: number
+  backendMembershipJoinedAt?: string
+  ownerNote?: string
+}
 export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
@@ -1015,6 +1024,8 @@ const apiQuotaRoundStorageKey = 'c2cmarket.apiQuotaRounds.v1'
 const apiQuotaCredentialSummaryStorageKey = 'c2cmarket.apiQuotaCredentialSummaries.v1'
 const carpoolApplicationStorageKey = 'c2cmarket.carpoolApplications.v1'
 const carpoolApplicationEventStorageKey = 'c2cmarket.carpoolApplicationEvents.v1'
+const carpoolContactSnapshotStorageKey = 'c2cmarket.carpoolContactSnapshots.v1'
+const carpoolOwnerNoteStorageKey = 'c2cmarket.carpoolOwnerNotes.v1'
 const adminAuditLogStorageKey = 'c2cmarket.adminAuditLogs.v1'
 const officialPriceStorageKey = 'c2cmarket.officialPrices.v1'
 const carpoolStorageKey = 'c2cmarket.carpools.v1'
@@ -1041,6 +1052,8 @@ let apiQuotaRoundStore = readSessionStore<ApiQuotaRound[]>(apiQuotaRoundStorageK
 let apiQuotaCredentialSummaryStore = readSessionStore<ApiQuotaCredentialSummary[]>(apiQuotaCredentialSummaryStorageKey, apiQuotaCredentialSummaries)
 let carpoolApplicationStore = readSessionStore(carpoolApplicationStorageKey, carpoolApplications)
 let carpoolApplicationEventStore = readSessionStore(carpoolApplicationEventStorageKey, carpoolApplicationEvents)
+let carpoolContactSnapshotStore = readSessionStore(carpoolContactSnapshotStorageKey, orderContactSnapshots)
+let carpoolOwnerNoteStore = readSessionStore<Record<string, string>>(carpoolOwnerNoteStorageKey, {})
 let adminAuditLogStore = readSessionStore(adminAuditLogStorageKey, adminAuditLogs)
 let officialPriceStore = readSessionStore<OfficialPrice[]>(officialPriceStorageKey, officialPrices)
 let carpoolStore = normalizeCarpoolStore(readSessionStore<Carpool[]>(carpoolStorageKey, carpools))
@@ -1057,6 +1070,34 @@ let myContactMethodStore = clone(myContactMethods)
 let contactMethodVersionSequence = 0
 const contactMethodVersionStore = new Map(myContactMethodStore.map(item => [item.id, nextContactMethodVersionToken(item.id)]))
 const contactEmailVerificationStore = new Map<string, { email: string, code: string, expiresAt: string, contactMethodVersionId: string, attemptCount: number }>()
+
+function enabledMockWechatContact(): UserContactMethod {
+  const contact = myContactMethodStore.find(item => item.enabled && item.type === 'wechat')
+  if (!contact) throw new Error('请先在个人中心配置微信联系方式。')
+  return contact
+}
+
+function mockWechatContactChannel(): ApiContactChannel {
+  const contact = enabledMockWechatContact()
+  return { type: 'wechat', label: contact.label || '微信', value: contact.displayValue }
+}
+
+function mockWechatContactSnapshotItem(contact: UserContactMethod, usageScope: ContactUsageScope): OrderContactSnapshotItem {
+  return {
+    type: 'wechat',
+    label: contact.label || '微信',
+    maskedValue: contact.maskedValue,
+    displayValue: contact.displayValue,
+    verified: false,
+    usageScope,
+  }
+}
+
+function mockMerchantWechatContactChannels(channels: ApiContactChannel[]): ApiContactChannel[] {
+  const contact = channels.find(channel => channel.type === 'wechat')
+  if (!contact) throw new Error('商户尚未配置可用的微信联系方式。')
+  return [{ ...contact }]
+}
 
 function nextContactMethodVersionToken(contactId: string) {
   contactMethodVersionSequence += 1
@@ -1415,6 +1456,8 @@ function persistCarpoolApplicationStores() {
   if (typeof window === 'undefined') return
   window.sessionStorage.setItem(carpoolApplicationStorageKey, JSON.stringify(carpoolApplicationStore))
   window.sessionStorage.setItem(carpoolApplicationEventStorageKey, JSON.stringify(carpoolApplicationEventStore))
+  window.sessionStorage.setItem(carpoolContactSnapshotStorageKey, JSON.stringify(carpoolContactSnapshotStore))
+  window.sessionStorage.setItem(carpoolOwnerNoteStorageKey, JSON.stringify(carpoolOwnerNoteStore))
 }
 
 function persistAdminStores() {
@@ -2294,8 +2337,23 @@ export type ApiServiceFilters = {
   packagePriceCnyMax?: number
   packageMultiplierMax?: number
   billingMode?: ApiBillingMode
-  packageModelCatalogId?: string
+  packageModelCatalogIds?: string[]
   packageDurationDays?: number
+}
+
+export type ApiPackageFilterModel = {
+  id: string
+  modelKey: string
+  providerCode: string
+  providerCategory: string
+  providerName: string
+  providerSortOrder: number
+  sortOrder: number
+}
+
+export type ApiPackageFilterOptions = {
+  models: ApiPackageFilterModel[]
+  durations: number[]
 }
 
 export type MinimumPurchaseFilter = 'all' | 'lte_20' | 'between_21_50' | 'gt_50'
@@ -2474,6 +2532,26 @@ function filterCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
     if (sort === 'default_owner') return defaultCarpoolSortForRole('owner')(a, b)
     if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt)
     return compareTimeDesc(a.updatedAt, b.updatedAt)
+  })
+}
+
+function mockOwnerCarpoolApplicationMetadata(rows: CarpoolApplication[]): CarpoolApplicationWithMeta[] {
+  return rows.map(item => {
+    const membershipStatus = item.status === 'active'
+      ? 'active'
+      : item.status === 'cancelled_by_buyer'
+        ? 'left'
+        : item.status === 'cancelled_by_owner'
+          ? 'removed'
+          : undefined
+    return {
+      ...item,
+      backendMembershipId: membershipStatus ? `mock-membership-${item.id}` : undefined,
+      backendMembershipJoinedAt: membershipStatus ? item.startedAt ?? undefined : undefined,
+      backendStatus: membershipStatus ?? item.status,
+      backendVersion: membershipStatus ? 1 : undefined,
+      ownerNote: membershipStatus ? carpoolOwnerNoteStore[item.id] ?? '' : undefined,
+    }
   })
 }
 
@@ -2766,10 +2844,11 @@ export async function getModelCatalog() {
 
 function filterApiServices(filters: ApiServiceFilters = {}) {
   const keyword = filters.search?.trim().toLowerCase()
+  const packageModelCatalogIds = new Set(filters.packageModelCatalogIds ?? [])
   const packagePrice = (item: ApiService) => Math.min(...(item.packages ?? [])
     .filter(packageItem => packageItem.enabled && packageItem.stockAvailable > 0)
     .filter(packageItem => !filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
-    .filter(packageItem => !filters.packageModelCatalogId || packageItem.models.some(model => model.modelCatalogId === filters.packageModelCatalogId))
+    .filter(packageItem => packageModelCatalogIds.size === 0 || packageItem.models.some(model => packageModelCatalogIds.has(model.modelCatalogId)))
     .map(packageItem => packageItem.priceCny))
   return apiServiceStore
     .filter(item => {
@@ -2793,12 +2872,12 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         ))
         && (filters.maxCnyPerUsd === undefined || Number(item.cnyPerUsdAllowance) <= filters.maxCnyPerUsd)
         && (!filters.billingMode || item.billingMode === filters.billingMode)
-        && ((!filters.packageModelCatalogId && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
+        && ((filters.billingMode !== 'fixed_package' && packageModelCatalogIds.size === 0 && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
           return packageItem.enabled
             && packageItem.stockAvailable > 0
             && (!filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
             && (filters.packagePriceCnyMax === undefined || packageItem.priceCny <= filters.packagePriceCnyMax)
-            && packageItem.models.some(model => (!filters.packageModelCatalogId || model.modelCatalogId === filters.packageModelCatalogId)
+            && packageItem.models.some(model => (packageModelCatalogIds.size === 0 || packageModelCatalogIds.has(model.modelCatalogId))
               && (filters.packageMultiplierMax === undefined || model.merchantMultiplier <= filters.packageMultiplierMax))
         }))
     })
@@ -2895,6 +2974,43 @@ export async function getApiServicesPage(filters: ApiServiceFilters = {}, page: 
   if (shouldUseRealBackend()) return backendAPIServicesPage(filters, page)
   await wait()
   return clone(paginateCursorItems(filterApiServices(filters), page))
+}
+
+function packageProviderSortOrder(code: string) {
+  return ({ openai: 10, xai: 20, anthropic: 30, google: 40 } as Record<string, number>)[code.toLowerCase()] ?? 100
+}
+
+export async function getApiPackageFilterOptions(): Promise<ApiPackageFilterOptions> {
+  if (shouldUseRealBackend()) return backendAPIPackageFilterOptions()
+  await wait()
+  const catalog = getMockPublicAPIModels()
+  const catalogById = new Map(catalog.map(model => [model.id, model]))
+  const modelIds = new Set<string>()
+  const durations = new Set<number>()
+  for (const service of apiServiceStore) {
+    if (service.billingMode !== 'fixed_package' || !isApiServicePubliclyOrderable(service)) continue
+    const enabledModelIds = new Set(service.modelPriceRows.map(model => model.modelId))
+    for (const item of service.packages ?? []) {
+      if (!item.enabled || item.stockAvailable <= 0) continue
+      const availableModels = item.models.filter(model => enabledModelIds.has(model.modelCatalogId) && catalogById.has(model.modelCatalogId))
+      if (!availableModels.length) continue
+      availableModels.forEach(model => modelIds.add(model.modelCatalogId))
+      durations.add(item.durationDays)
+    }
+  }
+  const models = catalog
+    .filter(model => model.active && model.providerActive !== false && modelIds.has(model.id))
+    .map(model => ({
+      id: model.id,
+      modelKey: model.name,
+      providerCode: model.providerCode ?? model.provider,
+      providerCategory: model.providerCategory ?? model.provider,
+      providerName: model.providerName ?? model.provider,
+      providerSortOrder: packageProviderSortOrder(model.providerCode ?? model.provider),
+      sortOrder: model.sortOrder ?? 0,
+    }))
+    .sort((left, right) => left.providerSortOrder - right.providerSortOrder || left.sortOrder - right.sortOrder || left.modelKey.localeCompare(right.modelKey))
+  return { models: clone(models), durations: [...durations].sort((left, right) => left - right) }
 }
 
 export async function getSub2ApiMarketServices(filters: Sub2ApiMarketFilters = {}) {
@@ -3719,6 +3835,9 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
   await wait()
   if (payload.type === 'linuxdo') throw new Error('linux.do 联系方式来自绑定账号，不能手动伪造')
   if (!payload.displayValue.trim()) throw new Error('联系方式内容不能为空')
+  if (payload.type === 'wechat' && payload.enabled && myContactMethodStore.some(item => item.enabled && item.type === 'wechat')) {
+    throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
+  }
   const createdAt = nowText()
   const wechat = payload.type === 'wechat'
   const contact: UserContactMethod = {
@@ -3728,7 +3847,7 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: wechat ? [...WECHAT_USAGE_SCOPES] : [...payload.usageScopes],
+    usageScopes: wechat ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
     enabled: wechat ? true : payload.enabled,
     verified: false,
@@ -3752,6 +3871,9 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
   if (current.type === 'wechat' && payload.type !== 'wechat') throw new Error('微信是必填联系方式，不能转换为其他类型')
   if (current.type === 'wechat' && !payload.enabled) throw new Error('微信是必填联系方式，不能停用')
   const nextType = current.type === 'linuxdo' ? 'linuxdo' : payload.type
+  if (nextType === 'wechat' && payload.enabled && myContactMethodStore.some(item => item.id !== contactId && item.enabled && item.type === 'wechat')) {
+    throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
+  }
   const currentVersionValue = nextType === 'email' ? current.displayValue.trim().toLowerCase() : current.displayValue.trim()
   const nextVersionValue = nextType === 'email' ? payload.displayValue.trim().toLowerCase() : payload.displayValue.trim()
   const valueChanged = current.type !== nextType || currentVersionValue !== nextVersionValue
@@ -3761,7 +3883,7 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(current.type === 'linuxdo' ? 'linuxdo' : payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: nextType === 'wechat' ? [...WECHAT_USAGE_SCOPES] : [...payload.usageScopes],
+    usageScopes: nextType === 'wechat' ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
     enabled: nextType === 'wechat' ? true : payload.enabled,
     verified: valueChanged ? false : current.verified,
@@ -3929,7 +4051,7 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
   if (shouldUseRealBackend()) return backendCarpoolApplicationContacts(applicationId)
   await wait()
   const application = carpoolApplicationStore.find(item => item.id === applicationId)
-  const snapshot = orderContactSnapshots.find(item => item.orderType === 'carpool_application' && item.orderId === applicationId)
+  const snapshot = carpoolContactSnapshotStore.find(item => item.orderType === 'carpool_application' && item.orderId === applicationId)
   if (!application) throw new Error(`Carpool application not found: ${applicationId}`)
   const canView = carpoolContactVisibleStatuses.includes(application.status)
   if (!canView) {
@@ -3946,19 +4068,7 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
     })
   }
   if (snapshot) return clone(contactSnapshotForVisibility(snapshot, canView, null, null))
-  return clone({
-    id: `contact-snapshot-${applicationId}`,
-    orderType: 'carpool_application',
-    orderId: applicationId,
-    sellerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: linuxDoProfileSummaryUrl(application.ownerUsername) },
-    ],
-    buyerContacts: [],
-    contactWindowEndsAt: null,
-    canView: true,
-    unavailableReason: null,
-    createdAt: application.updatedAt,
-  })
+  throw new Error('拼车联系方式快照不存在，请刷新后重试。')
 }
 
 export async function createContactReport(payload: CreateContactReportRequest) {
@@ -4869,6 +4979,7 @@ export async function submitOfficialPriceLead(payload: Record<string, unknown>) 
 export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   if (shouldUseRealBackend()) return backendSubmitCarpool(payload)
   await wait()
+  enabledMockWechatContact()
   const product = carpoolProductCatalog.find(item => item.id === payload.productId)
   const region = carpoolRegions.find(item => item.code === payload.regionCode)
   const regionName = payload.customRegionName?.trim() || region?.displayName || '其他'
@@ -4945,12 +5056,10 @@ export async function submitApiService(payload: Record<string, unknown>) {
 	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
 		? payload.ownerContactMethodIds.map(value => String(value).trim()).filter(Boolean)
 		: []
-	if (new Set(ownerContactMethodIds).size !== ownerContactMethodIds.length) {
-		throw new Error('订单联系方式不能重复选择。')
-	}
+	if (ownerContactMethodIds.length !== 1) throw new Error('API 服务只能使用当前账号唯一的微信联系方式。')
 	const ownerContacts = ownerContactMethodIds.map(id => myContactMethodStore.find(contact => contact.id === id))
-	if (!ownerContactMethodIds.length || ownerContacts.some(contact => !contact || !contact.enabled || !contact.usageScopes.includes('api_merchant'))) {
-		throw new Error('请先在个人中心添加并选择至少一种可用的 API 订单联系方式。')
+	if (ownerContacts.some(contact => !contact || !contact.enabled || contact.type !== 'wechat' || !contact.usageScopes.includes('api_merchant'))) {
+		throw new Error('请先在个人中心配置微信联系方式。')
 	}
   const probeConnectionId = stringValue(payload.probeConnectionId, '')
   const probeConnection = (await getOwnerAPIProbeConnections()).find(connection => connection.id === probeConnectionId)
@@ -5577,7 +5686,7 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     .filter(isCarpoolBuyerActionRequired)
     .length
   const merchantCarpoolActions = carpoolApplicationStore.filter(item => item.ownerUserId === currentOwnerId)
-    .filter(isCarpoolOwnerActionRequired)
+    .filter(item => item.status === 'pending_owner')
     .length
   const currentUserFeedback = feedbackTicketStore
     .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
@@ -5884,12 +5993,12 @@ export async function getMyCarpoolApplicationsPage(filters: CarpoolApplicationFi
 export async function getMerchantCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplications(filters)
   await wait()
-  return clone(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }))
+  return clone(mockOwnerCarpoolApplicationMetadata(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' })))
 }
 
 export async function getMerchantCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplicationsPage(filters, page)
-  return paginateCursorItems(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }), page)
+  return paginateCursorItems(mockOwnerCarpoolApplicationMetadata(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' })), page)
 }
 
 export async function getCarpoolApplicationById(id: string): Promise<CarpoolApplicationWithMeta | null> {
@@ -5907,6 +6016,7 @@ export async function getCarpoolApplicationEvents(id: string) {
 export async function createCarpoolApplication(carpoolId: string, payload: { rulesAccepted: boolean }) {
   if (shouldUseRealBackend()) return backendCreateCarpoolApplication(carpoolId, payload)
   await wait()
+  const buyerContact = enabledMockWechatContact()
   if (!payload.rulesAccepted) throw new Error('请先确认已阅读车源规则和车主承诺说明')
   const carpool = carpoolStore.find(item => item.id === carpoolId)
   if (!carpool) throw new Error(`Carpool not found: ${carpoolId}`)
@@ -5939,6 +6049,17 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
     updatedAt: createdAt,
   }
   carpoolApplicationStore.unshift(application)
+  carpoolContactSnapshotStore.unshift({
+    id: `contact-snapshot-${id}`,
+    orderType: 'carpool_application',
+    orderId: id,
+    sellerContacts: [],
+    buyerContacts: [mockWechatContactSnapshotItem(buyerContact, 'buyer')],
+    contactWindowEndsAt: null,
+    canView: false,
+    unavailableReason: '车主确认上车并建立有效成员关系后才展示联系方式。',
+    createdAt,
+  })
   appendCarpoolApplicationEvent({
     applicationId: id,
     actorId: currentBuyerId,
@@ -5959,16 +6080,22 @@ export async function createCarpoolIntent(carpool: Carpool) {
 export async function acceptCarpoolApplication(id: string) {
   if (shouldUseRealBackend()) return backendAcceptCarpoolApplication(id)
   await wait()
+  const ownerContact = enabledMockWechatContact()
   return updateCarpoolApplication(id, application => {
     if (application.status !== 'pending_owner') throw new Error('只有待车主处理的申请可以接受')
     const carpool = carpoolStore.find(item => item.id === application.carpoolId)
     if (!carpool) throw new Error(`Carpool not found: ${application.carpoolId}`)
+    const contactSnapshot = carpoolContactSnapshotStore.find(item => item.orderType === 'carpool_application' && item.orderId === id)
+    if (!contactSnapshot) throw new Error('拼车联系方式快照不存在，请刷新后重试。')
     const seatSummary = getCarpoolSeatSummary(carpool)
     if (seatSummary.availableSeats < application.seatsRequested) throw new Error('可申请名额不足，无法确认上车')
     const fromStatus = application.status
 			application.status = 'active'
 			application.startedAt = nowText()
 		carpool.currentConfirmedMembers += application.seatsRequested
+    contactSnapshot.sellerContacts = [mockWechatContactSnapshotItem(ownerContact, 'carpool_owner')]
+    contactSnapshot.canView = true
+    contactSnapshot.unavailableReason = null
     appendCarpoolApplicationEvent({
       applicationId: id,
       actorId: application.ownerUserId,
@@ -6094,6 +6221,21 @@ export async function removeCarpoolMember(id: string, reason: string) {
   })
 }
 
+export async function updateCarpoolMembershipOwnerNote(application: Pick<CarpoolApplicationWithMeta, 'id' | 'backendMembershipId' | 'backendVersion'>, note: string) {
+  const normalizedNote = note.trim()
+  if (Array.from(normalizedNote).length > 500) throw new Error('车主备注不能超过 500 个字符。')
+  if (shouldUseRealBackend()) {
+    if (!application.backendMembershipId || application.backendVersion === undefined) throw new Error('成员版本暂不可用，请刷新后重试。')
+    return backendUpdateCarpoolMembershipOwnerNote(application.backendMembershipId, normalizedNote, application.backendVersion)
+  }
+  await wait()
+  const current = findCarpoolApplication(application.id)
+  if (!['active', 'cancelled_by_buyer', 'cancelled_by_owner'].includes(current.status)) throw new Error('只有已加入过的成员可以记录备注。')
+  carpoolOwnerNoteStore[current.id] = normalizedNote
+  persistCarpoolApplicationStores()
+  return mockOwnerCarpoolApplicationMetadata([current])[0]!
+}
+
 export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
   if (shouldUseRealBackend()) return backendCreateAPIPurchaseIntent(payload)
   await wait()
@@ -6147,8 +6289,8 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
       requiresFirstLoginPasswordReset: payload.deliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
       note: '购买意向已提交，商户联系方式和收款确认资料已向买家展示，商户可查看买家选择的联系方式',
     },
-    contactChannels: service.contactChannels,
-    buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],
+    contactChannels: mockMerchantWechatContactChannels(service.contactChannels),
+    buyerContactChannels: [mockWechatContactChannel()],
     merchantResponseDeadline: service.online ? minutesFromNow(service.expectedResponseMinutes) : undefined,
     createdAt,
     updatedAt: createdAt,
@@ -6256,9 +6398,9 @@ function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
 }
 
 function mockBuyerContactChannels(intent: ApiPurchaseIntent): ApiContactChannel[] {
-  return intent.buyerContactChannels?.length
-    ? intent.buyerContactChannels
-    : [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }]
+  const contact = intent.buyerContactChannels?.find(channel => channel.type === 'wechat')
+  if (!contact) throw new Error('买家微信联系方式快照不存在，请重新创建订单。')
+  return [{ ...contact }]
 }
 
 export async function createApiOrderFromIntent(intentId: string, paymentMethod: ApiPaymentOption['paymentMethod']) {
@@ -6314,7 +6456,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     requestedUsdAllowance: intent.purchasedCredit,
     requestedUsdAllowanceDecimal: intent.purchasedCreditDecimal || normalizeDecimalTrimmed(String(intent.purchasedCredit), 6),
     quotaUsagePolicySnapshot: clone(intent.quotaUsagePolicySnapshot),
-    merchantContactChannels: clone(intent.contactChannels),
+    merchantContactChannels: clone(mockMerchantWechatContactChannels(intent.contactChannels)),
     buyerContactChannels: clone(mockBuyerContactChannels(intent)),
     viewerRole: 'buyer',
     createdAt,
@@ -6383,8 +6525,8 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       requiresFirstLoginPasswordReset: selectedDeliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
       note: '限量额度包已直接生成订单。',
     },
-    contactChannels: clone(service.contactChannels),
-    buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],
+    contactChannels: clone(mockMerchantWechatContactChannels(service.contactChannels)),
+    buyerContactChannels: [mockWechatContactChannel()],
     createdAt,
     updatedAt: createdAt,
   }
@@ -6447,7 +6589,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       deliveryEtaMinutes: offer.deliveryEtaMinutes,
       deliveryMode: offer.deliveryMode,
     },
-    merchantContactChannels: clone(service.contactChannels),
+    merchantContactChannels: clone(mockMerchantWechatContactChannels(service.contactChannels)),
     buyerContactChannels: clone(mockBuyerContactChannels(intent)),
     viewerRole: 'buyer',
     createdAt,
@@ -7090,6 +7232,7 @@ export type {
   CarpoolSeatSummary,
   ContactMethodType,
   ContactUsageScope,
+  CommunityIdentity,
   CreateContactReportRequest,
   CreateManualInterventionReportRequest,
   ModelPriceRow,

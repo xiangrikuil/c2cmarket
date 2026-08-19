@@ -19,6 +19,7 @@ import (
 	authmodule "c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
+	communityidentitymodule "c2c-market/backend/internal/module/communityidentity"
 	contactmodule "c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/devpersona"
 	"c2c-market/backend/internal/module/favorite"
@@ -128,10 +129,12 @@ type Service struct {
 	promotionRewards   *promotionreward.Service
 	operationAudit     *operationaudit.Service
 	accountGovernance  *accountgovernance.Service
+	communityIdentity  *communityidentitymodule.Service
 }
 
 type ServiceOptions struct {
-	EmailVerificationPepper string
+	EmailVerificationPepper           string
+	CommunityIdentityFoundingCutoffAt time.Time
 }
 
 func NewService() *Service {
@@ -180,6 +183,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 		}),
 		growthService:     growth.NewService(repositories.Growth, now),
 		accountGovernance: accountgovernance.NewService(repositories.AccountGovernance, now),
+		communityIdentity: communityidentitymodule.NewService(repositories.CommunityIdentity, idempotencyService, now, options.CommunityIdentityFoundingCutoffAt),
 		promotionRewards:  promotionreward.NewService(repositories.PromotionReward, idempotencyService, now),
 		profileService: profile.NewServiceWithOptions(repositories.Profile, now, emailSender, profile.ServiceOptions{
 			EmailVerificationPepper: options.EmailVerificationPepper,
@@ -262,12 +266,18 @@ func (s *Service) PrepareDevPersonaSession(ctx context.Context, persona string) 
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
 	user, session, appErr := s.authService.LoginWithOAuthProfile(ctx, profile)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
+	if appErr == nil && user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound {
+		s.tryGrantFounding(ctx, user, user.LinuxDoBinding.BoundAt)
+	}
 	return user, session, appErr
 }
 
 func (s *Service) AuthenticateWithOAuthProfile(ctx context.Context, profile OAuthProfile) (authmodule.AuthenticationResult, *domain.AppError) {
 	result, appErr := s.authService.AuthenticateWithOAuthProfile(ctx, profile)
 	s.recordAuthenticatedActivity(ctx, result.User, appErr)
+	if appErr == nil && result.User.LinuxDoBinding != nil && result.User.LinuxDoBinding.Bound {
+		s.tryGrantFounding(ctx, result.User, result.User.LinuxDoBinding.BoundAt)
+	}
 	return result, appErr
 }
 
@@ -360,7 +370,11 @@ func (s *Service) StartLinuxDoLink(ctx context.Context, sessionID string) (strin
 }
 
 func (s *Service) CompleteLinuxDoLink(ctx context.Context, sessionID, state string, profile authmodule.OAuthProfile) (User, Session, *domain.AppError) {
-	return s.authService.CompleteLinuxDoLink(ctx, sessionID, state, profile)
+	user, session, appErr := s.authService.CompleteLinuxDoLink(ctx, sessionID, state, profile)
+	if appErr == nil && user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound {
+		s.tryGrantFounding(ctx, user, user.LinuxDoBinding.BoundAt)
+	}
+	return user, session, appErr
 }
 
 func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (BootstrapAdminResult, *domain.AppError) {
@@ -374,6 +388,11 @@ func (s *Service) StartEmailRegistration(ctx context.Context, input EmailRegistr
 func (s *Service) ConfirmEmailRegistration(ctx context.Context, input EmailRegistrationConfirmInput) (User, Session, *domain.AppError) {
 	user, session, appErr := s.authService.ConfirmEmailRegistration(ctx, input)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
+	if appErr == nil {
+		if value, profileErr := s.profileService.MyProfile(ctx, user); profileErr == nil {
+			s.tryGrantFounding(ctx, user, dereferenceTime(value.EmailVerifiedAt))
+		}
+	}
 	return user, session, appErr
 }
 
@@ -710,6 +729,10 @@ func (s *Service) PublicAPIServices(ctx context.Context, filter apimarket.Public
 		return domain.Page[APIService]{}, appErr
 	}
 	return domain.Page[APIService]{Items: items, NextCursor: services.NextCursor}, nil
+}
+
+func (s *Service) PublicAPIPackageFilterOptions(ctx context.Context, billingMode string) (apimarket.PublicPackageFilterOptions, *domain.AppError) {
+	return s.apiMarket.PublicPackageFilterOptions(ctx, billingMode)
 }
 
 func (s *Service) PublicAPIService(ctx context.Context, serviceID string) (APIService, *domain.AppError) {
@@ -1936,6 +1959,15 @@ func (s *Service) EndCarpoolMembershipForActorWithIdempotency(ctx context.Contex
 	return s.carpoolService.EndMembershipForActorWithIdempotency(ctx, actor, routeKey, key, requestHash, input, buildCompletion)
 }
 
+func (s *Service) UpdateCarpoolMembershipOwnerNoteForActorWithIdempotency(ctx context.Context, actor authmodule.BusinessActor, routeKey, key, requestHash string, input UpdateCarpoolMembershipOwnerNoteInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if actor.Audience == authmodule.SessionAudienceNormal {
+		if appErr := authmodule.RequireProjectedCapability(actor.Capabilities, authmodule.CapabilityCarpoolPublish); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+	}
+	return s.carpoolService.UpdateMembershipOwnerNoteForActorWithIdempotency(ctx, actor, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) MyCarpoolMembershipsByUserID(ctx context.Context, userID string) ([]CarpoolMembership, *domain.AppError) {
 	return s.carpoolService.MyMemberships(ctx, User{ID: userID})
 }
@@ -1960,8 +1992,10 @@ func (s *Service) CreateContactMethod(ctx context.Context, input ContactMethodIn
 	if strings.TrimSpace(input.Type) == "linuxdo" {
 		return ContactMethod{}, identityManagedContactError()
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, input.UsageScopes); appErr != nil {
-		return ContactMethod{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, input.UsageScopes); appErr != nil {
+			return ContactMethod{}, appErr
+		}
 	}
 	return s.contactService.CreateMethod(ctx, input)
 }
@@ -1971,8 +2005,10 @@ func (s *Service) CreateContactMethodWithIdempotency(ctx context.Context, user U
 	if strings.TrimSpace(input.Type) == "linuxdo" {
 		return IdempotencyCompletion{}, identityManagedContactError()
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, input.UsageScopes); appErr != nil {
-		return IdempotencyCompletion{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, input.UsageScopes); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
 	}
 	_, completion, _, appErr := s.contactService.CreateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 	return completion, appErr
@@ -2012,8 +2048,10 @@ func (s *Service) UpdateContactMethod(ctx context.Context, input contactmodule.U
 			}
 		}
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, effectiveScopes); appErr != nil {
-		return ContactMethod{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, effectiveScopes); appErr != nil {
+			return ContactMethod{}, appErr
+		}
 	}
 	return s.contactService.UpdateMethod(ctx, input)
 }
@@ -2040,8 +2078,10 @@ func (s *Service) UpdateContactMethodWithIdempotency(ctx context.Context, user U
 			}
 		}
 	}
-	if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, effectiveScopes); appErr != nil {
-		return IdempotencyCompletion{}, appErr
+	if input.Type != contactmodule.MethodTypeWechat {
+		if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, effectiveScopes); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
 	}
 	_, completion, _, appErr := s.contactService.UpdateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 	return completion, appErr
@@ -2158,6 +2198,11 @@ func (s *Service) MyProfile(ctx context.Context, user User) (UserProfile, *domai
 		return UserProfile{}, appErr
 	}
 	profile.PasswordConfigured = passwordConfigured
+	identities, appErr := s.communityIdentity.ListForUser(ctx, user.ID, true)
+	if appErr != nil {
+		return UserProfile{}, appErr
+	}
+	profile.CommunityIdentities = identities
 	return profile, nil
 }
 
@@ -2179,6 +2224,12 @@ func (s *Service) ConfirmEmailVerification(ctx context.Context, user User, input
 		return UserProfile{}, appErr
 	}
 	profile.PasswordConfigured = passwordConfigured
+	s.tryGrantFounding(ctx, user, dereferenceTime(profile.EmailVerifiedAt))
+	identities, appErr := s.communityIdentity.ListForUser(ctx, user.ID, true)
+	if appErr != nil {
+		return UserProfile{}, appErr
+	}
+	profile.CommunityIdentities = identities
 	return profile, nil
 }
 
@@ -2187,6 +2238,11 @@ func (s *Service) PublicUserProfile(ctx context.Context, username string) (Publi
 	if appErr != nil {
 		return PublicUserProfile{}, appErr
 	}
+	identities, appErr := s.communityIdentity.PublicForUser(ctx, publicProfile.ID)
+	if appErr != nil {
+		return PublicUserProfile{}, appErr
+	}
+	publicProfile.CommunityIdentities = identities
 	factsByUser, appErr := s.reputationService.AggregateFacts(ctx, []string{publicProfile.ID})
 	if appErr != nil {
 		return PublicUserProfile{}, appErr
@@ -2958,4 +3014,47 @@ func (s *Service) AdminRevokeUserRestrictionWithIdempotency(ctx context.Context,
 
 func (s *Service) CheckReputationActionAllowed(ctx context.Context, userID, role, action string) *domain.AppError {
 	return s.reputationService.CheckActionAllowed(ctx, userID, role, action)
+}
+
+func (s *Service) tryGrantFounding(ctx context.Context, user User, qualifiedAt time.Time) {
+	if s == nil || s.communityIdentity == nil || qualifiedAt.IsZero() {
+		return
+	}
+	if _, _, appErr := s.communityIdentity.GrantFoundingForUser(ctx, user, qualifiedAt); appErr != nil {
+		log.Printf("community identity founding grant failed user_id=%s code=%s", user.ID, appErr.Code)
+	}
+}
+
+func dereferenceTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
+}
+
+func (s *Service) CommunityIdentities(ctx context.Context, userID string, includeRevoked bool) ([]communityidentitymodule.Identity, *domain.AppError) {
+	return s.communityIdentity.ListForUser(ctx, userID, includeRevoked)
+}
+
+func (s *Service) PublicCommunityIdentities(ctx context.Context, userID string) ([]communityidentitymodule.PublicIdentity, *domain.AppError) {
+	return s.communityIdentity.PublicForUser(ctx, userID)
+}
+
+func (s *Service) AdminCommunityIdentities(ctx context.Context, user User, targetUserID string) ([]communityidentitymodule.Identity, *domain.AppError) {
+	if !user.IsAdmin {
+		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "只有管理员可以查看社区身份管理记录。")
+	}
+	return s.CommunityIdentities(ctx, targetUserID, true)
+}
+
+func (s *Service) GrantCommunityIdentityWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input communityidentitymodule.GrantAdminInput, buildCompletion func(communityidentitymodule.Identity) (IdempotencyCompletion, *domain.AppError)) (IdempotencyCompletion, *domain.AppError) {
+	return s.communityIdentity.GrantAdminWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) RevokeCommunityIdentityWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input communityidentitymodule.RevokeInput, buildCompletion func(communityidentitymodule.Identity) (IdempotencyCompletion, *domain.AppError)) (IdempotencyCompletion, *domain.AppError) {
+	return s.communityIdentity.RevokeWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) BackfillCommunityIdentities(ctx context.Context) (int, *domain.AppError) {
+	return s.communityIdentity.BackfillFounding(ctx)
 }

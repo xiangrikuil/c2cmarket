@@ -50,6 +50,9 @@ func createContactMethodInTx(ctx context.Context, tx pgx.Tx, input contact.Conta
 		VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10)
 	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, false, method.Enabled, method.CreatedAt, method.UpdatedAt, method.Version)
 	if err != nil {
+		if isUniqueViolationOnConstraint(err, "ux_contact_methods_one_enabled_wechat") {
+			return contact.DuplicateEnabledWechatError()
+		}
 		return internalStoreError()
 	}
 	_, err = tx.Exec(ctx, `
@@ -284,6 +287,9 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, method.CurrentVersionID, method.IsDefault,
 		method.Enabled, method.VerifiedAt, method.UpdatedAt, method.Version)
 	if err != nil {
+		if isUniqueViolationOnConstraint(err, "ux_contact_methods_one_enabled_wechat") {
+			return contact.ContactMethod{}, contact.DuplicateEnabledWechatError()
+		}
 		return contact.ContactMethod{}, internalStoreError()
 	}
 	eventType := "contact_method.updated"
@@ -934,6 +940,18 @@ func lockContactVersionForOwner(ctx context.Context, q queryer, methodID, ownerI
 }
 
 func lockContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredScope, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
+	return lockContactVersionForOwnerTypeAndScope(ctx, q, methodID, ownerID, "", requiredScope, detail)
+}
+
+func lockWechatContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredScope, field, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
+	method, version, appErr := lockContactVersionForOwnerTypeAndScope(ctx, q, methodID, ownerID, contact.MethodTypeWechat, requiredScope, detail)
+	if appErr != nil && appErr.Code == domain.CodeContactMethodNotOwned {
+		return contact.ContactMethod{}, contact.ContactMethodVersion{}, contact.WechatRequiredError(field, detail)
+	}
+	return method, version, appErr
+}
+
+func lockContactVersionForOwnerTypeAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredType, requiredScope, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
 	var method contact.ContactMethod
 	var version contact.ContactMethodVersion
 	err := q.QueryRow(ctx, `
@@ -951,9 +969,10 @@ func lockContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID
 		  AND m.current_version_id IS NOT NULL
 		  AND v.retired_at IS NULL
 		  AND v.destroyed_at IS NULL
-		  AND ($3 = '' OR $3 = ANY(m.usage_scopes))
+		  AND ($3 = '' OR m.type = $3)
+		  AND ($4 = '' OR $4 = ANY(m.usage_scopes))
 		FOR UPDATE
-	`, methodID, ownerID, strings.TrimSpace(requiredScope)).Scan(
+	`, methodID, ownerID, strings.TrimSpace(requiredType), strings.TrimSpace(requiredScope)).Scan(
 		&method.ID,
 		&method.UserID,
 		&method.Type,

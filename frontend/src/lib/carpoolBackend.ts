@@ -6,6 +6,7 @@ import type {
   CarpoolApplicationFilters,
   CarpoolProductCatalogItem,
   CarpoolWithMeta,
+  CommunityIdentity,
   ContactMethodType,
   OrderContactSnapshot,
   OrderContactSnapshotItem,
@@ -16,7 +17,7 @@ import type {
   OwnerCarpoolView,
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
-import { backendBoundLinuxDoContactMethod } from '@/lib/apiMarketBackend'
+import { backendEnabledWechatContactMethod } from '@/lib/apiMarketBackend'
 import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@/data/mock'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
@@ -86,6 +87,7 @@ type BackendCarpoolListing = {
     expiresAt?: string
   }
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   priceMonthlyCny: string
   serviceMultiplier: string
   dailySpendLimitUsd?: string | null
@@ -193,6 +195,7 @@ type BackendCarpoolMembership = {
   endedAt?: string
   endedReason?: string
   endedByUserId?: string
+  ownerNote?: string
   version: number
   createdAt: string
   updatedAt: string
@@ -409,6 +412,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     ownerUserId: listing.ownerUserId,
     trustLevel: null,
     sellerReputation: mapBackendReputationSummary(listing.sellerReputation),
+    communityIdentities: listing.communityIdentities ?? [],
     ownerType: '个人车主',
     warranty: '车主承诺',
     openingMethod: openingMethodFromAccessMode(plan.accessMode),
@@ -636,6 +640,8 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
     backendContactSessionId: application.contactSessionId,
     backendMembershipId: membership?.id,
     backendStatus: membership?.status ?? application.status,
+    backendMembershipJoinedAt: membership?.joinedAt,
+    ownerNote: perspective === 'owner' ? membership?.ownerNote : undefined,
     conditionsOutdated: Boolean(listing?.conditionsVersion && application.acceptedConditionsVersion !== listing.conditionsVersion),
     acceptedConditionsVersion: application.acceptedConditionsVersion,
     conditionsVersionSnapshot: application.conditionsVersionSnapshot,
@@ -842,7 +848,7 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
 export async function backendSubmitCarpool(payload: SaveCarpoolDraftPayload) {
   await ensureBackendSession('owner', false)
   const plan = await productPlan(payload.productId)
-	const ownerContact = await backendBoundLinuxDoContactMethod()
+	const ownerContact = await backendEnabledWechatContactMethod()
   const publish = payload.status === 'reviewing'
   const listing = await backendMutation<BackendCarpoolListing>(publish ? '/api/v1/carpools/publish' : '/api/v1/carpools', toListingRequest(payload, ownerContact.id, plan), {
     idempotencyPrefix: publish ? 'carpool-publish' : 'carpool-listing',
@@ -854,14 +860,15 @@ export async function backendUpdateOwnerCarpool(
 	id: string,
 	payload: SaveCarpoolDraftPayload,
 	version: number,
-	ownerContactMethodId: string,
+	_ownerContactMethodId: string,
 	submitForReview: boolean,
 ) {
 	await ensureBackendSession('owner', false)
 	const plan = await productPlan(payload.productId)
+	const ownerContact = await backendEnabledWechatContactMethod()
 	let listing = await backendMutation<BackendCarpoolListing>(
 		`/api/v1/carpools/${encodeURIComponent(id)}`,
-		toListingRequest(payload, ownerContactMethodId, plan),
+		toListingRequest(payload, ownerContact.id, plan),
 		{ method: 'PATCH', ifMatch: version, idempotencyPrefix: 'carpool-update' },
 	)
 	if (submitForReview) {
@@ -880,7 +887,7 @@ export async function backendCreateCarpoolApplication(carpoolId: string, payload
   const listing = await backendRequest<BackendCarpoolListing>(`/api/v1/carpools/${carpoolId}`)
   backendCarpoolListings.set(listing.id, listing)
   const plan = await productPlan(listing.productPlanId)
-	const buyerContact = await backendBoundLinuxDoContactMethod()
+	const buyerContact = await backendEnabledWechatContactMethod()
   const response = await backendMutation<BackendCarpoolApplication>(`/api/v1/carpools/${carpoolId}/applications`, {
     buyerContactMethodId: buyerContact.id,
     riskAcknowledgement: riskAcknowledgement(plan, listing.riskNoticeCode, listing.policyVersion, true),
@@ -976,6 +983,17 @@ export async function backendOwnerRemoveCarpool(applicationId: string, reason: s
   })
   backendMembershipsByApplicationOwner.set(response.carpoolApplicationId, response)
   return mapApplication(await ownerApplication(applicationId), 'owner')
+}
+
+export async function backendUpdateCarpoolMembershipOwnerNote(membershipId: string, note: string, version: number) {
+  await ensureBackendSession('owner', false)
+  const response = await backendMutation<BackendCarpoolMembership>(`/api/v1/owner/carpool-memberships/${membershipId}/note`, { note }, {
+    method: 'PATCH',
+    idempotencyPrefix: 'carpool-owner-note',
+    ifMatch: version,
+  })
+  backendMembershipsByApplicationOwner.set(response.carpoolApplicationId, response)
+  return mapApplication(await ownerApplication(response.carpoolApplicationId), 'owner')
 }
 
 function carpoolStatusLabel(listing: BackendCarpoolListing) {

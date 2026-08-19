@@ -204,6 +204,7 @@ function seedAPIModelProviders(): AdminApiModelProvider[] {
     { id: '00000000-0000-0000-0000-000000000c01', providerCategory: 'gpt', code: 'openai', displayName: 'OpenAI', coreKey: 'gpt', ...mockLifecycle(now, true), sortOrder: 10, createdAt: now, updatedAt: now },
     { id: '00000000-0000-0000-0000-000000000c02', providerCategory: 'claude', code: 'anthropic', displayName: 'Anthropic', coreKey: 'claude', ...mockLifecycle(now, true), sortOrder: 20, createdAt: now, updatedAt: now },
     { id: '00000000-0000-0000-0000-000000000c06', providerCategory: 'grok', code: 'xai', displayName: 'xAI', coreKey: 'grok', ...mockLifecycle(now, true), sortOrder: 30, createdAt: now, updatedAt: now },
+    { id: '00000000-0000-0000-0000-000000000c03', providerCategory: 'gemini', code: 'google', displayName: 'Google', ...mockLifecycle(now, true), sortOrder: 40, createdAt: now, updatedAt: now },
   ])
 }
 
@@ -212,7 +213,9 @@ function seedAdminAPIModels(providers: AdminApiModelProvider[]): AdminApiModel[]
   const seeds = [
     { id: '00000000-0000-0000-0000-000000000a01', providerCode: 'openai', coreKey: 'gpt' as const, modelKey: 'gpt-4.1', sortOrder: 10, inputPricePerMillion: '2.000000', cachedInputPricePerMillion: '0.500000', outputPricePerMillion: '8.000000' },
     { id: '00000000-0000-0000-0000-000000000a02', providerCode: 'openai', coreKey: undefined, modelKey: 'gpt-4.1-mini', sortOrder: 20, inputPricePerMillion: '0.400000', cachedInputPricePerMillion: '0.100000', outputPricePerMillion: '1.600000' },
+    { id: 'gpt-5-5', providerCode: 'openai', coreKey: undefined, modelKey: 'gpt-5.5', sortOrder: 30, inputPricePerMillion: '1.750000', cachedInputPricePerMillion: '0.175000', outputPricePerMillion: '14.000000' },
     { id: '00000000-0000-0000-0000-000000000a31', providerCode: 'xai', coreKey: 'grok' as const, modelKey: 'grok-4', sortOrder: 310 },
+    { id: 'gemini-flash', providerCode: 'google', coreKey: undefined, modelKey: 'gemini-flash', sortOrder: 410, inputPricePerMillion: '0.100000', cachedInputPricePerMillion: '0.025000', outputPricePerMillion: '0.400000' },
   ]
   return sortAdminAPIModels(seeds.map((seed) => {
     const provider = providerByCode(seed.providerCode, providers)
@@ -632,6 +635,10 @@ function toPublicModel(item: AdminApiModel): ModelCatalogItem {
   return {
     id: item.id,
     provider: publicProvider(item),
+    providerCode: item.providerCode,
+    providerCategory: item.providerCategory,
+    providerName: item.provider,
+    providerActive: item.providerActive,
     name: item.modelKey,
     capabilities: item.capabilities.filter(isPublicCapability),
     officialInputPricePerMillion: priceToNumber(item.inputPricePerMillion),

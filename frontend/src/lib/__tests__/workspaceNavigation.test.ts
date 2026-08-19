@@ -24,8 +24,9 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain("label: '消息中心', to: '/my/notifications'")
 
     expect(appShellSource).toContain("title: '经营中心'")
-    expect(appShellSource).toContain("label: '我的车源', to: '/my/carpools'")
-    expect(appShellSource).toContain("label: '上车申请', to: '/merchant/carpool-applications'")
+    expect(appShellSource).toContain("label: '拼车管理', to: '/my/carpools'")
+    expect(appShellSource).not.toContain("label: '我的车源', to: '/my/carpools'")
+    expect(appShellSource).not.toContain("label: '上车申请', to: '/merchant/carpool-applications'")
     expect(appShellSource).toContain("label: '我的 API 服务', to: '/my/api-services'")
     expect(appShellSource).toContain("label: 'API 销售订单', to: '/merchant/api-orders'")
     expect(appShellSource).toContain("title: '账户'")
@@ -43,6 +44,8 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain('if (canViewMerchantWorkspace.value) groups.push(merchantGroup)')
     expect(appShellSource).toContain('if (canViewAdminNav.value) groups.push(adminEntryGroup)')
     expect(appShellSource).toContain("...(canManageApiProbe.value ? [{ key: 'api-probe-connections', label: '探针连接'")
+    expect(routerSource).toContain("path: '/my/carpools/:id/manage'")
+    expect(routerSource).toContain("redirect: { path: '/my/carpools', query: { view: 'applications' } }")
   })
 
   it('在导航、页面和详情返回入口明确区分 API 买卖角色', () => {

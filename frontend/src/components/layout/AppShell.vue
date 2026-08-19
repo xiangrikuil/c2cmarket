@@ -31,6 +31,7 @@ import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,13 +40,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+import { useMyContactMethodsQuery, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { loginRoute } from '@/lib/authNavigation'
-import { apiMarketViewFromQuery } from '@/lib/apiQuotaOfferUi'
+import { apiMarketPath, apiMarketViewFromPath } from '@/lib/apiMarketRoutes'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
@@ -62,6 +63,9 @@ const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
 const { data: myProfile, isPending: profilePending } = useMyProfileQuery(import.meta.client)
 const isAuthenticated = computed(() => Boolean(myProfile.value))
+const authenticatedUserId = computed(() => myProfile.value?.id ?? '')
+const contactMethodsQuery = useMyContactMethodsQuery(isAuthenticated, authenticatedUserId)
+const wechatOnboardingOpen = ref(false)
 const authResolved = computed(() => import.meta.client && !profilePending.value)
 const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
 const { data: notifications } = useNotifications(isAuthenticated)
@@ -90,10 +94,43 @@ const currentLoginTo = computed(() => loginRoute(route.fullPath))
 const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
+
+function wechatOnboardingStorageKey(userId: string) {
+  return `c2cmarket.wechat-onboarding-dismissed.v1:${userId}`
+}
+
+function wechatOnboardingDismissed(userId: string) {
+  try {
+    return window.sessionStorage.getItem(wechatOnboardingStorageKey(userId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function dismissWechatOnboarding() {
+  const userId = myProfile.value?.id
+  if (userId) {
+    try {
+      window.sessionStorage.setItem(wechatOnboardingStorageKey(userId), '1')
+    } catch {
+      // Browsing remains available when session storage is unavailable.
+    }
+  }
+  wechatOnboardingOpen.value = false
+}
+
+function updateWechatOnboardingOpen(open: boolean) {
+  if (!open) dismissWechatOnboarding()
+}
+
+async function configureWechat() {
+  dismissWechatOnboarding()
+  await router.push('/my/contacts')
+}
 const apiMarketNavItems = [
-  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited' } as const] : []),
-  { label: '短期流量包', view: 'packages' },
-  { label: '自选额度', view: 'free' },
+  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited', path: apiMarketPath('limited') } as const] : []),
+  { label: '短期流量包', view: 'packages', path: apiMarketPath('packages') },
+  { label: '自选额度', view: 'free', path: apiMarketPath('free') },
 ] as const
 const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value, [
   CAPABILITY.carpoolPublish,
@@ -136,8 +173,7 @@ const navGroups = computed(() => {
     title: '经营中心',
     items: [
       ...(canPublishCarpool.value ? [
-        { key: 'my-carpools', label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
-        { key: 'merchant-carpool-applications', label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+        { key: 'carpool-management', label: '拼车管理', to: '/my/carpools', count: ownerCarpoolActionCount.value, icon: CarFront },
       ] : []),
       ...(canPublishApiService.value ? [
         { key: 'my-api-services', label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
@@ -188,8 +224,8 @@ const activeNavItem = computed(() => {
 })
 
 const currentTitle = computed(() => {
-  if (route.path === '/api-market') {
-    const currentView = apiMarketViewFromQuery(route.query.view)
+  if (route.meta.apiMarketView) {
+    const currentView = apiMarketViewFromPath(route.path)
     return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '自选额度'}`
   }
   return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
@@ -207,8 +243,8 @@ function matchesRoute(item: NavigationGroup['items'][number]) {
 }
 
 function isApiMarketViewActive(view: typeof apiMarketNavItems[number]['view']) {
-  if (route.path !== '/api-market') return false
-  const currentView = apiMarketViewFromQuery(route.query.view)
+  if (!route.meta.apiMarketView) return false
+  const currentView = apiMarketViewFromPath(route.path)
   return currentView === view
 }
 
@@ -217,6 +253,20 @@ watch(
   () => {
     menuOpen.value = false
   },
+)
+
+watch(
+  [isAuthenticated, contactMethodsQuery.isSuccess, contactMethodsQuery.data],
+  ([authenticated, contactsResolved, methods]) => {
+    const userId = myProfile.value?.id
+    if (!authenticated || !contactsResolved || !userId) {
+      wechatOnboardingOpen.value = false
+      return
+    }
+    const hasWechat = (methods ?? []).some(method => method.enabled && method.type === 'wechat')
+    wechatOnboardingOpen.value = !hasWechat && !wechatOnboardingDismissed(userId)
+  },
+  { immediate: true },
 )
 
 watch(
@@ -317,7 +367,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 <RouterLink
                   v-for="child in apiMarketNavItems"
                   :key="child.view"
-                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  :to="child.path"
                   class="flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                 >
@@ -395,7 +445,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 <RouterLink
                   v-for="child in apiMarketNavItems"
                   :key="child.view"
-                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  :to="child.path"
                   class="rounded-md px-3 py-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                   @click="closeMenu"
@@ -571,10 +621,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
 
       <main
         class="w-full px-4 py-5 sm:px-5 lg:px-5"
-        :class="route.path === '/api-market' ? 'bg-white' : ''"
+        :class="route.path.startsWith('/api-market') ? 'bg-white' : ''"
       >
         <slot />
       </main>
     </div>
   </div>
+
+  <Dialog :open="wechatOnboardingOpen" @update:open="updateWechatOnboardingOpen">
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>配置微信联系方式</DialogTitle>
+        <DialogDescription>拼车和 API 额度交易使用微信联系。配置后会自动用于所有交易角色，但不代表平台已验证该微信号。</DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="gap-2 sm:gap-0">
+        <Button type="button" variant="outline" @click="dismissWechatOnboarding">稍后填写</Button>
+        <Button type="button" @click="configureWechat">
+          <MessageSquarePlus class="h-4 w-4" />去配置微信
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

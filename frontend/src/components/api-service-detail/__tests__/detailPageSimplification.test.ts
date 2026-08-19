@@ -82,3 +82,11 @@ test('formats visible backend timestamps as Beijing time', () => {
   assert.match(prices, /formatBeijingDateTime\(service\.officialPricingUpdatedAt\)/)
   assert.doesNotMatch(prices, /最终由双方站外确认/)
 })
+
+test('does not render a buyer-only sold-out detail fallback', () => {
+  const page = pageSource('ApiServiceDetailPage')
+  const panel = componentSource('ApiPurchasePanel')
+
+  assert.doesNotMatch(page, /packageSoldOut|package_sold_out|短期流量包已售罄/)
+  assert.doesNotMatch(panel, /packageSoldOut|所有套餐已售罄|暂时售罄/)
+})

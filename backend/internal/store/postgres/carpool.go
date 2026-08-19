@@ -67,7 +67,7 @@ func createCarpoolListingMutationInTx(ctx context.Context, tx pgx.Tx, listing ca
 	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, listing.OwnerUserID); appErr != nil {
 		return appErr
 	}
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "发布拼车前必须先配置微信联系方式。"); appErr != nil {
 		return appErr
 	}
 	if validatePublish {
@@ -473,7 +473,7 @@ func (s *Store) updateCarpoolListingInTx(ctx context.Context, tx pgx.Tx, input c
 		return carpool.Listing{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSeatUnavailable, "Seat unavailable", "买家总名额不能小于线下已占名额与平台有效成员数之和。", "buyerSeatCapacity", "below_occupied", "总名额不能小于已占名额。")
 	}
 	previousConditions := carpool.NewListingConditionsSnapshot(listing)
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "发布拼车前必须先配置微信联系方式。"); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
 	var planPolicyVersion int64
@@ -812,7 +812,7 @@ func (s *Store) submitCarpoolListingForReviewInTx(ctx context.Context, tx pgx.Tx
 	if appErr := ensureCarpoolPlanAllowedForPublish(ctx, tx, listing.ProductPlanID); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, listing.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "恢复或发布拼车前必须先配置微信联系方式。"); appErr != nil {
 		return carpool.Listing{}, appErr
 	}
 	listing.Status = carpool.ListingStatusActive
@@ -942,7 +942,7 @@ func createCarpoolApplicationMutationInTx(ctx context.Context, tx pgx.Tx, applic
 	if appErr := ensureActiveBusinessUsersInTx(ctx, tx, application.BuyerUserID, application.OwnerUserID); appErr != nil {
 		return appErr
 	}
-	if _, _, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。"); appErr != nil {
+	if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "申请拼车前必须先配置微信联系方式。"); appErr != nil {
 		return appErr
 	}
 	var listingStatus, governanceStatus, lockedPlanID, planStatus, categoryStatus string
@@ -1578,6 +1578,66 @@ func (s *Store) EndCarpoolMembershipWithIdempotency(ctx context.Context, entry i
 	return membership, completion, nil
 }
 
+func (s *Store) UpdateCarpoolMembershipOwnerNoteWithIdempotency(ctx context.Context, entry idempotency.Entry, input carpool.UpdateMembershipOwnerNoteInput, now time.Time, buildCompletion carpool.MembershipCompletionBuilder) (carpool.Membership, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return carpool.Membership{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return carpool.Membership{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return carpool.Membership{}, idempotency.Completion{}, appErr
+	}
+	if input.OwnerAudience == auth.SessionAudienceRestrictedBusiness {
+		if appErr := lockAccountGovernanceUser(ctx, tx, input.OwnerUserID); appErr != nil {
+			return carpool.Membership{}, idempotency.Completion{}, appErr
+		}
+	}
+	membership, err := s.getCarpoolMembership(ctx, tx, input.MembershipID, true)
+	if errors.Is(err, pgx.ErrNoRows) || membership.OwnerUserID != input.OwnerUserID {
+		return carpool.Membership{}, idempotency.Completion{}, carpoolRelationshipNotFound()
+	}
+	if err != nil {
+		return carpool.Membership{}, idempotency.Completion{}, internalStoreError()
+	}
+	if input.OwnerAudience == auth.SessionAudienceRestrictedBusiness {
+		actor := auth.BusinessActor{UserID: input.OwnerUserID, Audience: input.OwnerAudience, GovernanceActionID: input.GovernanceActionID, GovernanceVersion: input.GovernanceVersion, RestrictionEffectiveAt: input.RestrictionEffectiveAt}
+		if appErr := authorizeRestrictedCarpoolInTx(ctx, tx, actor, carpool.JoinActorOwner, "carpool_membership", membership.ID, membership.BuyerUserID, membership.OwnerUserID, membership.CreatedAt); appErr != nil {
+			return carpool.Membership{}, idempotency.Completion{}, appErr
+		}
+	} else if input.OwnerAudience != "" && input.OwnerAudience != auth.SessionAudienceNormal {
+		return carpool.Membership{}, idempotency.Completion{}, carpoolRelationshipNotFound()
+	}
+	if input.ExpectedVersion > 0 && membership.Version != input.ExpectedVersion {
+		return carpool.Membership{}, idempotency.Completion{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	membership.OwnerNote = strings.TrimSpace(input.Note)
+	membership.UpdatedAt = now
+	membership.Version++
+	if _, err := tx.Exec(ctx, `
+		UPDATE carpool_memberships
+		SET owner_note = $2, updated_at = $3, version = $4
+		WHERE id = $1
+	`, membership.ID, membership.OwnerNote, now, membership.Version); err != nil {
+		return carpool.Membership{}, idempotency.Completion{}, internalStoreError()
+	}
+	completion, appErr := buildCompletion(membership)
+	if appErr != nil {
+		return carpool.Membership{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return carpool.Membership{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return carpool.Membership{}, idempotency.Completion{}, internalStoreError()
+	}
+	return membership, completion, nil
+}
+
 const carpoolAvailableSeatsExpression = `GREATEST(buyer_seat_capacity - offline_occupied_seats - active_buyer_members, 0)`
 
 const carpoolListingColumns = `
@@ -1676,7 +1736,7 @@ const carpoolMembershipColumns = `
 	owner_user_id::text, product_plan_id::text, status, seat_count,
 	price_monthly_cny_snapshot::text, policy_version_snapshot, COALESCE(risk_notice_code_snapshot, ''),
 	conditions_version_snapshot, conditions_snapshot, joined_at,
-	ended_at, ended_reason, COALESCE(ended_by_user_id::text, ''),
+	ended_at, ended_reason, COALESCE(ended_by_user_id::text, ''), COALESCE(owner_note, ''),
 	created_at, updated_at, version
 `
 
@@ -1868,6 +1928,7 @@ func scanCarpoolMembership(row scanner, membership *carpool.Membership) error {
 		&membership.EndedAt,
 		&membership.EndedReason,
 		&membership.EndedByUserID,
+		&membership.OwnerNote,
 		&membership.CreatedAt,
 		&membership.UpdatedAt,
 		&membership.Version,
@@ -2001,11 +2062,11 @@ func (s *Store) acceptCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, inp
 		return carpool.Application{}, domain.NewError(http.StatusConflict, domain.CodeVersionConflict, "Conditions changed", "车源条件已更新，需要买家先确认最新条件。")
 	}
 
-	_, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	_, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
 	if appErr != nil {
 		return carpool.Application{}, appErr
 	}
-	_, ownerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、不属于当前用户或未允许拼车用途。")
+	_, ownerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner, "ownerContactMethodId", "车主必须先配置微信联系方式。")
 	if appErr != nil {
 		return carpool.Application{}, appErr
 	}
@@ -2055,14 +2116,14 @@ func (s *Store) acceptCarpoolApplicationInTx(ctx context.Context, tx pgx.Tx, inp
 			carpool_listing_id, carpool_application_id, cycle_term_id,
 			buyer_user_id, owner_user_id, product_plan_id, status, seat_count,
 			price_monthly_cny_snapshot, policy_version_snapshot, risk_notice_code_snapshot,
-			conditions_version_snapshot, conditions_snapshot, joined_at,
-			created_at, updated_at, version
+				conditions_version_snapshot, conditions_snapshot, joined_at,
+				owner_note, created_at, updated_at, version
 		) VALUES (
 			$1, $2, NULLIF($3, '')::uuid,
 			$4, $5, $6, 'active', $7,
 			$8, $9, $10,
-			$11, $12::jsonb, $13,
-			$13, $13, 1
+				$11, $12::jsonb, $13,
+				'', $13, $13, 1
 		)
 	`, application.CarpoolListingID, application.ID, cycleTermID(listing),
 		application.BuyerUserID, application.OwnerUserID, application.ProductPlanID, application.SeatCount,

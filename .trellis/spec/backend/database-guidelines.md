@@ -87,7 +87,7 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - Report, dispute, and appeal admin actions must increment `version`, set handler fields, append `dispute_events`, write sanitized `moderation_audit_logs`, and complete idempotency in the same transaction.
 - Public dispute list/profile stats must read only from `dispute_cases` and return sanitized `public_summary`, `public_result_code`, and `public_result` projections. Do not join raw report descriptions, appeal statements, admin reasons, reporter IDs, admin IDs, contact values, evidence, or internal notes into public responses.
 - Reports/disputes/appeals must not create payment rows, refund rows, compensation rows, escrow rows, guarantee rows, fulfillment rows, contact sessions, credential snapshots, external tickets, emails, webhooks, or automatic penalty rows. The only file-upload exception is bounded private image evidence for API-order dispute actions; its asset, binding, authorization, quarantine, and cleanup rules are defined in `api-order-disputes.md`.
-- Notifications live in `notifications` and are a site inbox over durable business events. Inbox reads must filter by `user_id`, sort by `created_at DESC`, derive unread state from `read_at IS NULL`, and update only the current user's rows for single-read and read-all actions. Do not add external push, email, SMS, webhook, ticket, contact-value, payment, escrow, fulfillment, or credential-delivery side effects to notification reads.
+- Notifications live in `notifications` and are a site inbox over durable business events. When `source_event_id` is populated, it must reference the actual `domain_events.id`; the notified resource ID belongs in `target_id` and must never be reused as a synthetic event reference. Inbox reads must filter by `user_id`, sort by `created_at DESC`, derive unread state from `read_at IS NULL`, and update only the current user's rows for single-read and read-all actions. Do not add external push, email, SMS, webhook, ticket, contact-value, payment, escrow, fulfillment, or credential-delivery side effects to notification reads.
 - Search is read-only and aggregates existing public rows with the same predicates as public list endpoints. It may use `ILIKE` over public-safe fields, but must not query or return encrypted contact values, contact method IDs, admin internals, store-alias owner usernames, report raw text, or credential-looking data. Store-alias API service search may match and display public merchant display names only.
 - Search indexes may use PostgreSQL `pg_trgm` with GIN trigram indexes on public-safe expression fields. Runtime search SQL should use predicates with expressions equivalent to the migration indexes, and `scripts/explain-search.sql` documents the local EXPLAIN workflow for checking index eligibility. These indexes are performance support only and must not broaden search visibility predicates or add a separate search table without a documented task.
 
@@ -196,7 +196,7 @@ backend/migrations/000064_contact_cipher_aad.{up,down}.sql
 backend/migrations/000065_remove_demands.{up,down}.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.{up,down}.sql
 backend/migrations/000067_api_account_payment_settings.{up,down}.sql
-database.ExpectedMigrationVersion = 113 (current repository target)
+database.ExpectedMigrationVersion = 116 (current repository target)
 ```
 
 Standard execution remains:
@@ -267,7 +267,7 @@ Correct:
 ```text
 backend/migrations/000066_api_service_multiplier_reconciliation.up.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.down.sql
-database.ExpectedMigrationVersion = 113 (current repository target)
+database.ExpectedMigrationVersion = 116 (current repository target)
 api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHECK (merchant_multiplier > 0)
 ```
 
@@ -326,7 +326,7 @@ DROP CONSTRAINT ck_api_service_models_sub2api_multiplier;
 ```text
 backend/migrations/000067_api_account_payment_settings.up.sql
 backend/migrations/000067_api_account_payment_settings.down.sql
-database.ExpectedMigrationVersion = 113 (current repository target)
+database.ExpectedMigrationVersion = 116 (current repository target)
 
 api_payment_account_options:
   PRIMARY KEY (user_id, payment_method)

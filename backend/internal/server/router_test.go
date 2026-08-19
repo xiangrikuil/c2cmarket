@@ -23,7 +23,6 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
-	"c2c-market/backend/internal/module/contact"
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/platform/modelsdev"
 
@@ -452,11 +451,11 @@ func TestPublicResourceIDsAreUUIDs(t *testing.T) {
 	record := createAdminOfficialPriceRecord(t, server, adminSession, "uuid-record", "799.00", "0.12210000")
 	assertUUID(t, record.ID, "price record id")
 
-	contact := createContactMethod(t, server, buyerSession, "telegram", "UUID TG", "@uuid")
+	contact := createContactMethod(t, server, buyerSession, "wechat", "UUID TG", "@uuid")
 	assertUUID(t, contact.ID, "contact method id")
 
 	sellerSession := createSession(t, server, "seller", false)
-	sellerContact := createContactMethod(t, server, sellerSession, "telegram", "Seller UUID TG", "@seller_uuid")
+	sellerContact := createContactMethod(t, server, sellerSession, "wechat", "Seller UUID TG", "@seller_uuid")
 	request := newJSONRequest(http.MethodPost, "/api/v1/dev/contact-sessions", `{
 		"sellerUsername":"seller",
 		"buyerContactMethodId":"`+contact.ID+`",
@@ -1162,7 +1161,7 @@ func TestInactiveAPIModelCannotBeUsedForAPIServiceCreateOrUpdate(t *testing.T) {
 	server := newTestServer(time.Now())
 	adminSession := createSession(t, server, "admin-api-model-inactive", true)
 	ownerSession := createLinuxDoSession(t, server, "api-model-inactive-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Inactive API Owner TG", "@inactive_api_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Inactive API Owner TG", "@inactive_api_owner")
 	model := createAdminAPIModel(t, server, adminSession, "inactive-service-model", "inactive-model-create")
 
 	deactivateRequest := catalogDeprecateRequest("/api/v1/admin/api-models/"+model.ID, model.Version)
@@ -1449,8 +1448,8 @@ func TestContactSessionReadAndExpiry(t *testing.T) {
 	buyerSession := createSession(t, server, "buyer", false)
 	sellerSession := createSession(t, server, "seller", false)
 
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Buyer TG", "@buyer")
-	sellerContact := createContactMethod(t, server, sellerSession, "telegram", "Seller TG", "@seller")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Buyer TG", "@buyer")
+	sellerContact := createContactMethod(t, server, sellerSession, "wechat", "Seller TG", "@seller")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/dev/contact-sessions", `{
 		"sellerUsername":"seller",
@@ -1501,8 +1500,8 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "seller")
 	buyerSession := createSession(t, server, "buyer", false)
 	adminSession := createSession(t, server, "admin", true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Owner Carpool TG", "@owner_carpool")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Buyer Carpool TG", "@buyer_carpool")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Owner Carpool TG", "@owner_carpool")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Buyer Carpool TG", "@buyer_carpool")
 
 	withoutAck := newJSONRequest(http.MethodPost, "/api/v1/carpools", carpoolPayload(ownerContact.ID))
 	addAuth(withoutAck, ownerSession, "carpool-no-risk")
@@ -1647,7 +1646,7 @@ func TestMyCarpoolViewsAndOwnerDetail(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "owner-listing-view")
 	otherSession := createLinuxDoSession(t, server, "other-listing-view")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Owner Listing View", "@owner_listing_view")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Owner Listing View", "@owner_listing_view")
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "owner-listing-view-create")
 
 	needsEdit := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=needs_edit&limit=1", nil)
@@ -1699,8 +1698,8 @@ func TestCarpoolMembershipDoesNotEnterReviewCenter(t *testing.T) {
 	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
 	ownerSession := createLinuxDoSession(t, server, "review-route-owner")
 	buyerSession := createSession(t, server, "review-route-buyer", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Review Owner TG", "@review_route_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Review Buyer TG", "@review_route_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Review Owner TG", "@review_route_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Review Buyer TG", "@review_route_buyer")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "review-route-carpool-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "review-route-carpool-publish")
@@ -1719,9 +1718,9 @@ func TestCarpoolApplicationCancellationLifecycle(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "cancel-owner")
 	pendingBuyer := createSession(t, server, "cancel-buyer-pending", false)
 	reservedBuyer := createSession(t, server, "cancel-buyer-reserved", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Cancel Owner TG", "@cancel_owner")
-	pendingBuyerContact := createContactMethod(t, server, pendingBuyer, "telegram", "Cancel Buyer Pending TG", "@cancel_pending")
-	reservedBuyerContact := createContactMethod(t, server, reservedBuyer, "telegram", "Cancel Buyer Reserved TG", "@cancel_reserved")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Cancel Owner TG", "@cancel_owner")
+	pendingBuyerContact := createContactMethod(t, server, pendingBuyer, "wechat", "Cancel Buyer Pending TG", "@cancel_pending")
+	reservedBuyerContact := createContactMethod(t, server, reservedBuyer, "wechat", "Cancel Buyer Reserved TG", "@cancel_reserved")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "cancel-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "cancel-submit")
@@ -1748,7 +1747,7 @@ func TestCarpoolApplicationCancellationLifecycle(t *testing.T) {
 func TestCarpoolDirectPublishCreatesActiveListing(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "direct-publish-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Direct Publish TG", "@direct_publish_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Direct Publish TG", "@direct_publish_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", carpoolPayloadWithRiskAck(ownerContact.ID))
 	addAuth(request, ownerSession, "carpool-direct-publish")
@@ -1773,7 +1772,7 @@ func TestCarpoolDirectPublishCreatesActiveListing(t *testing.T) {
 func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "distribution-note-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Distribution Note TG", "@distribution_note_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Distribution Note TG", "@distribution_note_owner")
 
 	body := strings.Replace(carpoolPayloadWithRiskAck(ownerContact.ID), `"distributionMethod":"sub2api"`, `"distributionMethod":"other"`, 1)
 	body = strings.Replace(body, `"distributionMethodNote":"Sub2API 托管管理，具体方式站外确认。",`, `"distributionMethodNote":"",`, 1)
@@ -1790,7 +1789,7 @@ func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
 func TestCarpoolAccountLoginAcceptsUnlimitedSpendAndOptionalNetworkDetails(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "account-login-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Account Login TG", "@account_login_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Account Login TG", "@account_login_owner")
 
 	body := carpoolPayloadWithRiskAck(ownerContact.ID)
 	body = strings.Replace(body, `"distributionMethod":"sub2api"`, `"distributionMethod":"account_login"`, 1)
@@ -1827,7 +1826,7 @@ func TestCarpoolAccountLoginAcceptsUnlimitedSpendAndOptionalNetworkDetails(t *te
 func TestCarpoolSpendLimitsAllowIndependentUnlimitedValuesAndRejectInvalidAmounts(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "spend-limit-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Spend Limit TG", "@spend_limit_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Spend Limit TG", "@spend_limit_owner")
 
 	tests := []struct {
 		name           string
@@ -1866,7 +1865,7 @@ func TestCarpoolSpendLimitsAllowIndependentUnlimitedValuesAndRejectInvalidAmount
 func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createStudentSession(t, server, "direct-publish-student")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Direct Publish TG", "@direct_student_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Student Direct Publish TG", "@direct_student_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", carpoolPayloadWithRiskAck(ownerContact.ID))
 	addAuth(request, ownerSession, "carpool-direct-publish-student")
@@ -1893,7 +1892,7 @@ func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testin
 func TestCarpoolPublishRequiresLinuxDoBinding(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createStudentSession(t, server, "carpool-student-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Student Owner TG", "@student_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Student Owner TG", "@student_owner")
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools", carpoolPayloadWithRiskAck(ownerContact.ID))
 	addAuth(request, ownerSession, "carpool-student-create")
@@ -1910,9 +1909,9 @@ func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "member-owner")
 	buyerSession := createSession(t, server, "member-buyer", false)
 	secondBuyerSession := createSession(t, server, "member-buyer-two", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Member Owner TG", "@member_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Member Buyer TG", "@member_buyer")
-	secondBuyerContact := createContactMethod(t, server, secondBuyerSession, "telegram", "Member Buyer Two TG", "@member_buyer_two")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Member Owner TG", "@member_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Member Buyer TG", "@member_buyer")
+	secondBuyerContact := createContactMethod(t, server, secondBuyerSession, "wechat", "Member Buyer Two TG", "@member_buyer_two")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "member-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "member-submit")
@@ -1951,10 +1950,77 @@ func TestCarpoolMembershipLeaveAndOwnerRemove(t *testing.T) {
 	assertContactSessionConflict(t, server, secondBuyerSession, secondAccepted.ContactSessionID)
 }
 
+func TestCarpoolMembershipOwnerNoteIsPrivateAndRemovalReasonOptional(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "owner-note-owner")
+	buyerSession := createSession(t, server, "owner-note-buyer", false)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Owner Note TG", "@owner_note")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Owner Note Buyer TG", "@owner_note_buyer")
+
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "owner-note-create")
+	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "owner-note-submit")
+	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "owner-note-apply")
+	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "owner-note-accept")
+	ownerMembership := firstCarpoolMembership(t, server, ownerSession, "owner", accepted.ID)
+
+	noteRequest := newJSONRequest(http.MethodPatch, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/note", `{"note":"车主私有备注"}`)
+	addAuth(noteRequest, ownerSession, "owner-note-write")
+	noteRequest.Header.Set("If-Match", `"`+strconv.FormatInt(ownerMembership.Version, 10)+`"`)
+	noteResponse := httptest.NewRecorder()
+	server.ServeHTTP(noteResponse, noteRequest)
+	if noteResponse.Code != http.StatusOK || !strings.Contains(noteResponse.Body.String(), `"ownerNote":"车主私有备注"`) {
+		t.Fatalf("owner note update should return the private note, got %d body %s", noteResponse.Code, noteResponse.Body.String())
+	}
+	var notedMembership createdCarpoolMembership
+	if err := json.NewDecoder(noteResponse.Body).Decode(&notedMembership); err != nil {
+		t.Fatalf("decode noted membership: %v", err)
+	}
+	if notedMembership.Version != ownerMembership.Version+1 {
+		t.Fatalf("expected owner note version increment, got %d from %d", notedMembership.Version, ownerMembership.Version)
+	}
+
+	buyerMembershipsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpool-memberships", nil)
+	addCookie(buyerMembershipsRequest, buyerSession.cookie)
+	buyerMembershipsResponse := httptest.NewRecorder()
+	server.ServeHTTP(buyerMembershipsResponse, buyerMembershipsRequest)
+	if buyerMembershipsResponse.Code != http.StatusOK || strings.Contains(buyerMembershipsResponse.Body.String(), "ownerNote") {
+		t.Fatalf("buyer membership response must omit owner note, got %d body %s", buyerMembershipsResponse.Code, buyerMembershipsResponse.Body.String())
+	}
+
+	clearRequest := newJSONRequest(http.MethodPatch, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/note", `{"note":""}`)
+	addAuth(clearRequest, ownerSession, "owner-note-clear")
+	clearRequest.Header.Set("If-Match", `"`+strconv.FormatInt(notedMembership.Version, 10)+`"`)
+	clearResponse := httptest.NewRecorder()
+	server.ServeHTTP(clearResponse, clearRequest)
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("clear owner note status %d body %s", clearResponse.Code, clearResponse.Body.String())
+	}
+	var clearedMembership createdCarpoolMembership
+	if err := json.NewDecoder(clearResponse.Body).Decode(&clearedMembership); err != nil {
+		t.Fatalf("decode cleared membership: %v", err)
+	}
+
+	removeRequest := newJSONRequest(http.MethodPost, "/api/v1/owner/carpool-memberships/"+ownerMembership.ID+"/remove", `{}`)
+	addAuth(removeRequest, ownerSession, "owner-note-remove")
+	removeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(clearedMembership.Version, 10)+`"`)
+	removeResponse := httptest.NewRecorder()
+	server.ServeHTTP(removeResponse, removeRequest)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("owner remove without reason status %d body %s", removeResponse.Code, removeResponse.Body.String())
+	}
+	var removedMembership createdCarpoolMembership
+	if err := json.NewDecoder(removeResponse.Body).Decode(&removedMembership); err != nil {
+		t.Fatalf("decode removed membership: %v", err)
+	}
+	if removedMembership.Status != app.CarpoolMembershipStatusRemoved || removedMembership.EndedReason != "" {
+		t.Fatalf("expected optional removal reason to remain empty, got %+v", removedMembership)
+	}
+}
+
 func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Owner TG", "@api_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Owner TG", "@api_owner")
 
 	customMultiplier := createAPIServiceWithPayload(t, server, ownerSession, apiServicePayload(ownerContact.ID, "1.2000"), "api-service-custom-multiplier")
 	if len(customMultiplier.Models) != 1 || customMultiplier.Models[0].MerchantMultiplier != "1.2000" {
@@ -1987,7 +2053,7 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	}
 
 	studentSession := createStudentSession(t, server, "api-student-owner")
-	studentContact := createContactMethod(t, server, studentSession, "telegram", "API Student Owner TG", "@api_student_owner")
+	studentContact := createContactMethod(t, server, studentSession, "wechat", "API Student Owner TG", "@api_student_owner")
 	studentCreate := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", apiServicePayload(studentContact.ID, "1.0000"))
 	addAuth(studentCreate, studentSession, "api-service-student-create")
 	studentResponse := httptest.NewRecorder()
@@ -2078,7 +2144,7 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 func TestOwnerAPIServicesSalesViewAndOwnerOnlySummary(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-sales-view-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Sales View TG", "@api_sales_view")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Sales View TG", "@api_sales_view")
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-sales-view-create")
 
 	defaultRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services", nil)
@@ -2182,8 +2248,8 @@ func TestAPIPurchaseIntentCreateContactAndLifecycleFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "api-intent-owner")
 	buyerSession := createSession(t, server, "api-intent-buyer", false)
 	adminSession := createSession(t, server, "api-intent-admin", true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Intent Owner TG", "@api_intent_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Intent Buyer TG", "@api_intent_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Intent Owner TG", "@api_intent_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "API Intent Buyer TG", "@api_intent_buyer")
 
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-intent-service-create")
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-intent-service-submit")
@@ -2242,8 +2308,8 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "api-order-owner")
 	buyerSession := createStudentSession(t, server, "api-order-buyer")
 	adminSession := createSession(t, server, "api-order-admin", true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Order Owner TG", "@api_order_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Order Buyer TG", "@api_order_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Order Owner TG", "@api_order_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "API Order Buyer TG", "@api_order_buyer")
 
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-order-service-create")
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-order-service-submit")
@@ -2487,7 +2553,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	assertProblemCode(t, blockedIntentResponse, domain.CodeActiveAPIOrderDispute)
 
 	merchantOwnerSession := createLinuxDoSession(t, server, "api-order-merchant-dispute-owner")
-	merchantOwnerContact := createContactMethod(t, server, merchantOwnerSession, "telegram", "Merchant Dispute Owner TG", "@merchant_dispute_owner")
+	merchantOwnerContact := createContactMethod(t, server, merchantOwnerSession, "wechat", "Merchant Dispute Owner TG", "@merchant_dispute_owner")
 	merchantService := createAPIService(t, server, merchantOwnerSession, merchantOwnerContact.ID, "api-order-merchant-dispute-service-create")
 	merchantSubmitted := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantService.ID, "submit-review", merchantService.Version, "api-order-merchant-dispute-service-submit")
 	merchantPublished := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantSubmitted.ID, "publish", merchantSubmitted.Version, "api-order-merchant-dispute-service-publish")
@@ -2798,7 +2864,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 func TestCarpoolEligibilityReturnsCapabilityReasonForStudent(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "eligibility-owner")
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Eligibility Owner TG", "@eligibility_owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Eligibility Owner TG", "@eligibility_owner")
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "eligibility-listing-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "eligibility-listing-publish")
 	studentSession := createStudentSession(t, server, "eligibility-student")
@@ -2846,8 +2912,8 @@ func TestConcurrentAPIOrderCreateForSameIntentReturnsStableConflict(t *testing.T
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-order-race-owner")
 	buyerSession := createSession(t, server, "api-order-race-buyer", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Race Owner TG", "@api_order_race_owner")
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "API Race Buyer TG", "@api_order_race_buyer")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "API Race Owner TG", "@api_order_race_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "API Race Buyer TG", "@api_order_race_buyer")
 
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-order-race-service-create")
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-order-race-service-submit")
@@ -2920,9 +2986,9 @@ func TestCarpoolAcceptRejectsWhenNoSeatAvailable(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "seat-owner")
 	firstBuyer := createSession(t, server, "seat-buyer-one", false)
 	secondBuyer := createSession(t, server, "seat-buyer-two", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Seat Owner TG", "@seat_owner")
-	firstBuyerContact := createContactMethod(t, server, firstBuyer, "telegram", "Seat Buyer One TG", "@seat_buyer_one")
-	secondBuyerContact := createContactMethod(t, server, secondBuyer, "telegram", "Seat Buyer Two TG", "@seat_buyer_two")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Seat Owner TG", "@seat_owner")
+	firstBuyerContact := createContactMethod(t, server, firstBuyer, "wechat", "Seat Buyer One TG", "@seat_buyer_one")
+	secondBuyerContact := createContactMethod(t, server, secondBuyer, "wechat", "Seat Buyer Two TG", "@seat_buyer_two")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "seat-carpool-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "seat-carpool-submit-review")
@@ -2948,9 +3014,9 @@ func TestFullCarpoolDoesNotReopenWithoutOwnerAction(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "expiry-owner")
 	firstBuyer := createSession(t, server, "expiry-buyer-one", false)
 	secondBuyer := createSession(t, server, "expiry-buyer-two", false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Expiry Owner TG", "@expiry_owner")
-	firstBuyerContact := createContactMethod(t, server, firstBuyer, "telegram", "Expiry Buyer One TG", "@expiry_buyer_one")
-	secondBuyerContact := createContactMethod(t, server, secondBuyer, "telegram", "Expiry Buyer Two TG", "@expiry_buyer_two")
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "Expiry Owner TG", "@expiry_owner")
+	firstBuyerContact := createContactMethod(t, server, firstBuyer, "wechat", "Expiry Buyer One TG", "@expiry_buyer_one")
+	secondBuyerContact := createContactMethod(t, server, secondBuyer, "wechat", "Expiry Buyer Two TG", "@expiry_buyer_two")
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "expiry-carpool-create")
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "expiry-carpool-submit-review")
@@ -3130,6 +3196,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 
 	first := createContactMethod(t, server, session, "telegram", "Profile TG", "@profile_owner")
 	second := createContactMethod(t, server, session, "email", "Profile Email", "profile@example.com")
+	transactionContact := createContactMethod(t, server, session, "wechat", "Profile WeChat", "profile-owner-wechat")
 
 	listContacts := httptest.NewRequest(http.MethodGet, "/api/v1/me/contact-methods", nil)
 	addCookie(listContacts, session.cookie)
@@ -3138,8 +3205,8 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if listContactsResponse.Code != http.StatusOK {
 		t.Fatalf("list contacts status %d body %s", listContactsResponse.Code, listContactsResponse.Body.String())
 	}
-	if !strings.Contains(listContactsResponse.Body.String(), first.ID) || !strings.Contains(listContactsResponse.Body.String(), second.ID) {
-		t.Fatalf("expected both contacts in list, got %s", listContactsResponse.Body.String())
+	if !strings.Contains(listContactsResponse.Body.String(), first.ID) || !strings.Contains(listContactsResponse.Body.String(), second.ID) || !strings.Contains(listContactsResponse.Body.String(), transactionContact.ID) {
+		t.Fatalf("expected all contacts in list, got %s", listContactsResponse.Body.String())
 	}
 
 	updateContact := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+second.ID, `{
@@ -3261,7 +3328,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		}
 	}
 
-	apiService := createAPIServiceWithPayload(t, server, session, strings.Replace(apiServicePayload(second.ID, "1.0000"), `"merchantIdentityMode":"public_profile"`, `"merchantProfileId":"`+merchant.ID+`","merchantIdentityMode":"store_alias"`, 1), "profile-store-api-service")
+	apiService := createAPIServiceWithPayload(t, server, session, strings.Replace(apiServicePayload(transactionContact.ID, "1.0000"), `"merchantIdentityMode":"public_profile"`, `"merchantProfileId":"`+merchant.ID+`","merchantIdentityMode":"store_alias"`, 1), "profile-store-api-service")
 	submitted := ownerAPIServiceAction(t, server, session, apiService.ID, "submit-review", apiService.Version, "profile-store-api-submit")
 	online := ownerAPIServiceAction(t, server, session, apiService.ID, "publish", submitted.Version, "profile-store-api-publish")
 	orderable := updateAPIServiceOrderSettings(t, server, session, online.ID, online.Version, true, "profile-store-api-settings")
@@ -3276,11 +3343,11 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if !strings.Contains(publicServiceBody, `"merchantDisplayName":"Profile Store"`) || !strings.Contains(publicServiceBody, `"merchantProfileSlug":"profile-store"`) || !strings.Contains(publicServiceBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public API service to expose store alias, got %s", publicServiceBody)
 	}
-	if strings.Contains(publicServiceBody, session.userID) || strings.Contains(publicServiceBody, second.ID) || strings.Contains(publicServiceBody, "updated-profile@example.com") {
+	if strings.Contains(publicServiceBody, session.userID) || strings.Contains(publicServiceBody, second.ID) || strings.Contains(publicServiceBody, transactionContact.ID) || strings.Contains(publicServiceBody, "updated-profile@example.com") {
 		t.Fatalf("public API service leaked owner/contact data: %s", publicServiceBody)
 	}
 
-	publicIdentityService := createAPIServiceWithPayload(t, server, session, apiServicePayload(second.ID, "1.0000"), "profile-public-api-service")
+	publicIdentityService := createAPIServiceWithPayload(t, server, session, apiServicePayload(transactionContact.ID, "1.0000"), "profile-public-api-service")
 	publicIdentitySubmitted := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "submit-review", publicIdentityService.Version, "profile-public-api-submit")
 	publicIdentityOnline := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "publish", publicIdentitySubmitted.Version, "profile-public-api-publish")
 	publicIdentityOrderable := updateAPIServiceOrderSettings(t, server, session, publicIdentityOnline.ID, publicIdentityOnline.Version, true, "profile-public-api-settings")
@@ -3346,7 +3413,7 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 		"isDefault":false,
 		"enabled":true
 	}`)
-	// 复用被拒绝请求的 key，证明 capability 拒绝发生在幂等 Begin 之前。
+	// Reuse the rejected request key to prove capability denial precedes idempotency acquisition.
 	addAuth(buyerScope, student, "student-contact-scope")
 	buyerScopeResponse := httptest.NewRecorder()
 	server.ServeHTTP(buyerScopeResponse, buyerScope)
@@ -3360,7 +3427,7 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	if err := json.NewDecoder(buyerScopeResponse.Body).Decode(&created); err != nil {
 		t.Fatalf("decode student contact: %v", err)
 	}
-	if created.ID == "" || len(created.UsageScopes) != 2 || created.UsageScopes[0] != "buyer" || created.UsageScopes[1] != "dispute" {
+	if created.ID == "" || !slices.Equal(created.UsageScopes, []string{"buyer", "dispute"}) {
 		t.Fatalf("unexpected canonical student contact scopes: %+v", created)
 	}
 
@@ -3380,40 +3447,6 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 	}
 	assertProblemCode(t, updateSellerScopeResponse, domain.CodeCapabilityRequired)
 
-	wechatRequest := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"wechat",
-		"label":"微信",
-		"value":"student-wechat",
-		"usageScopes":[],
-		"isDefault":false,
-		"enabled":true
-	}`)
-	addAuth(wechatRequest, student, "student-required-wechat")
-	wechatResponse := httptest.NewRecorder()
-	server.ServeHTTP(wechatResponse, wechatRequest)
-	if wechatResponse.Code != http.StatusCreated {
-		t.Fatalf("student required wechat status %d body %s", wechatResponse.Code, wechatResponse.Body.String())
-	}
-	var wechat struct {
-		ID          string   `json:"id"`
-		UsageScopes []string `json:"usageScopes"`
-	}
-	if err := json.NewDecoder(wechatResponse.Body).Decode(&wechat); err != nil {
-		t.Fatalf("decode required wechat: %v", err)
-	}
-	if wechat.ID == "" || !slices.Equal(wechat.UsageScopes, contact.AllUsageScopes()) {
-		t.Fatalf("required wechat scopes = %+v", wechat)
-	}
-
-	deleteWechat := httptest.NewRequest(http.MethodDelete, "/api/v1/contact-methods/"+wechat.ID, nil)
-	addAuth(deleteWechat, student, "student-required-wechat-delete")
-	deleteWechatResponse := httptest.NewRecorder()
-	server.ServeHTTP(deleteWechatResponse, deleteWechat)
-	if deleteWechatResponse.Code != http.StatusConflict {
-		t.Fatalf("required wechat delete status %d body %s", deleteWechatResponse.Code, deleteWechatResponse.Body.String())
-	}
-	assertProblemCode(t, deleteWechatResponse, domain.CodeInvalidStateTransition)
-
 	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
 		"type":"email",
 		"label":"未知范围邮箱",
@@ -3429,6 +3462,76 @@ func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotenc
 		t.Fatalf("unknown contact scope status %d body %s", unknownScopeResponse.Code, unknownScopeResponse.Body.String())
 	}
 	assertProblemCode(t, unknownScopeResponse, domain.CodeValidationFailed)
+}
+
+func TestStudentWechatScopesAreAutomaticAndDoNotGrantSellerCapability(t *testing.T) {
+	server := newTestServer(time.Now())
+	student := createStudentSession(t, server, "contact-scope-student")
+
+	createWechat := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["api_merchant"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(createWechat, student, "student-contact-scope")
+	createWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(createWechatResponse, createWechat)
+	if createWechatResponse.Code != http.StatusCreated {
+		t.Fatalf("student WeChat creation status %d body %s", createWechatResponse.Code, createWechatResponse.Body.String())
+	}
+	var created struct {
+		ID          string   `json:"id"`
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(createWechatResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode student contact: %v", err)
+	}
+	wantScopes := []string{"carpool_owner", "api_merchant", "buyer", "dispute"}
+	if created.ID == "" || !slices.Equal(created.UsageScopes, wantScopes) {
+		t.Fatalf("unexpected automatic student WeChat scopes: %+v", created)
+	}
+
+	updateWechat := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
+		"type":"wechat",
+		"label":"学生微信",
+		"value":"student-wechat",
+		"usageScopes":["unknown_scope"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(updateWechat, student, "student-contact-update")
+	updateWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateWechatResponse, updateWechat)
+	if updateWechatResponse.Code != http.StatusOK {
+		t.Fatalf("student WeChat update status %d body %s", updateWechatResponse.Code, updateWechatResponse.Body.String())
+	}
+	var updated struct {
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(updateWechatResponse.Body).Decode(&updated); err != nil || !slices.Equal(updated.UsageScopes, wantScopes) {
+		t.Fatalf("updated WeChat scopes were not normalized: payload=%+v error=%v", updated, err)
+	}
+
+	deleteWechat := httptest.NewRequest(http.MethodDelete, "/api/v1/contact-methods/"+created.ID, nil)
+	addAuth(deleteWechat, student, "student-required-wechat-delete")
+	deleteWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(deleteWechatResponse, deleteWechat)
+	if deleteWechatResponse.Code != http.StatusConflict {
+		t.Fatalf("required WeChat delete status %d body %s", deleteWechatResponse.Code, deleteWechatResponse.Body.String())
+	}
+	assertProblemCode(t, deleteWechatResponse, domain.CodeInvalidStateTransition)
+
+	merchantWrite := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", `{}`)
+	addAuth(merchantWrite, student, "student-api-service-create")
+	merchantWriteResponse := httptest.NewRecorder()
+	server.ServeHTTP(merchantWriteResponse, merchantWrite)
+	if merchantWriteResponse.Code != http.StatusForbidden {
+		t.Fatalf("automatic WeChat scopes granted seller capability: status %d body %s", merchantWriteResponse.Code, merchantWriteResponse.Body.String())
+	}
+	assertProblemCode(t, merchantWriteResponse, domain.CodeCapabilityRequired)
 }
 
 func TestAccountIdentityProfilePasswordEmailAndAvatarFlow(t *testing.T) {
@@ -3644,6 +3747,7 @@ type createdCarpoolMembership struct {
 	EndedAt              *string `json:"endedAt"`
 	EndedReason          string  `json:"endedReason"`
 	EndedByUserID        string  `json:"endedByUserId"`
+	OwnerNote            string  `json:"ownerNote"`
 	Version              int64   `json:"version"`
 }
 

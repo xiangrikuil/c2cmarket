@@ -98,8 +98,8 @@ func TestCarpoolAcceptanceEmailSentToVerifiedBuyerOnce(t *testing.T) {
 	buyer := testBoundUser("buyer-carpool-email", "buyer-carpool-email")
 	verifyProfileEmail(t, service, buyer, "buyer-carpool@example.com")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_carpool_email", contactmodule.AllUsageScopes())
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_carpool_email", contactmodule.DefaultUsageScopes())
+	ownerContact := createTestContactMethod(t, service, owner.ID, "wechat", "Owner TG", "@owner_carpool_email", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "wechat", "Buyer TG", "@buyer_carpool_email", contactmodule.DefaultUsageScopes())
 	application := createTestCarpoolApplication(t, service, owner, buyer, ownerContact.ID, buyerContact.ID)
 
 	_, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner, "accept-carpool-email", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
@@ -137,8 +137,8 @@ func TestCarpoolAcceptanceEmailSkipsUnverifiedBuyer(t *testing.T) {
 	owner := createTestBoundUser(t, service, "owner-carpool-unverified")
 	buyer := testBoundUser("buyer-carpool-unverified", "buyer-carpool-unverified")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_carpool_unverified", contactmodule.AllUsageScopes())
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_carpool_unverified", contactmodule.DefaultUsageScopes())
+	ownerContact := createTestContactMethod(t, service, owner.ID, "wechat", "Owner TG", "@owner_carpool_unverified", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "wechat", "Buyer TG", "@buyer_carpool_unverified", contactmodule.DefaultUsageScopes())
 	application := createTestCarpoolApplication(t, service, owner, buyer, ownerContact.ID, buyerContact.ID)
 
 	_, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner, "accept-carpool-unverified", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
@@ -161,8 +161,8 @@ func TestAPIOrderEmailSentToVerifiedMerchantOnce(t *testing.T) {
 	buyer := testStudentUser("buyer-api-email", "buyer-api-email")
 	verifyProfileEmail(t, service, owner, "merchant-api@example.com")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_api_email", contactmodule.AllUsageScopes())
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_email", contactmodule.DefaultUsageScopes())
+	ownerContact := createTestContactMethod(t, service, owner.ID, "wechat", "Owner TG", "@owner_api_email", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "wechat", "Buyer TG", "@buyer_api_email", contactmodule.DefaultUsageScopes())
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
 
 	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer, "api-intent-email", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
@@ -216,8 +216,8 @@ func TestAPIOrderEmailSkipsUnverifiedMerchant(t *testing.T) {
 	owner := createTestBoundUser(t, service, "owner-api-unverified")
 	buyer := testStudentUser("buyer-api-unverified", "buyer-api-unverified")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_api_unverified", contactmodule.AllUsageScopes())
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_unverified", contactmodule.DefaultUsageScopes())
+	ownerContact := createTestContactMethod(t, service, owner.ID, "wechat", "Owner TG", "@owner_api_unverified", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "wechat", "Buyer TG", "@buyer_api_unverified", contactmodule.DefaultUsageScopes())
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
 
 	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer, "api-intent-unverified", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
@@ -255,8 +255,8 @@ func TestEmailReminderFailuresDoNotBlockBusinessOperations(t *testing.T) {
 	verifyProfileEmail(t, service, buyer, "buyer-failure@example.com")
 	verifyProfileEmail(t, service, owner, "merchant-failure@example.com")
 
-	ownerContact := createTestContactMethod(t, service, owner.ID, "telegram", "Owner TG", "@owner_email_failure", contactmodule.AllUsageScopes())
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_email_failure", contactmodule.DefaultUsageScopes())
+	ownerContact := createTestContactMethod(t, service, owner.ID, "wechat", "Owner TG", "@owner_email_failure", contactmodule.AllUsageScopes())
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "wechat", "Buyer TG", "@buyer_email_failure", contactmodule.DefaultUsageScopes())
 	application := createTestCarpoolApplication(t, service, owner, buyer, ownerContact.ID, buyerContact.ID)
 	if _, appErr := service.AcceptCarpoolApplicationWithIdempotency(ctx, owner, "accept-email-failure", "accept-key", "accept-hash", AcceptCarpoolApplicationInput{
 		ApplicationID:   application.ID,

@@ -11,6 +11,7 @@ import type {
   PublicProfileCarpool,
   PublicProfileCompletion,
   PublicReviewRecord,
+  CommunityIdentity,
 } from '@/data/mock'
 import type {
   ContactMethodType,
@@ -66,6 +67,7 @@ type BackendProfile = {
     lastSyncedAt: string | null
   }
   badges: string[] | null
+  communityIdentities: CommunityIdentity[]
   restrictions: string[] | null
   usernameChangePolicy: {
     canChange: boolean
@@ -120,6 +122,7 @@ export type BackendMerchantProfile = {
 
 type BackendPublicUserProfile = Omit<PublicUserProfile, 'badges' | 'privacy'> & {
   badges: string[]
+  communityIdentities: CommunityIdentity[]
   privacy: BackendPrivacy
 }
 
@@ -267,6 +270,7 @@ function mapPublicProfile(value: BackendPublicUserProfile): PublicUserProfile {
     ...value,
     accountStatus: value.accountStatus as PublicUserProfile['accountStatus'],
     badges: value.badges.map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
+    communityIdentities: value.communityIdentities ?? [],
     privacy: {
       showCreatedAt: value.privacy.showCreatedAt,
       showLastActiveAt: value.privacy.showLastActiveAt,
@@ -302,6 +306,7 @@ function mapProfile(value: BackendProfile): UserProfile {
       lastSyncedAt: value.linuxDoBinding.lastSyncedAt,
     },
     badges: (value.badges ?? []).map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
+    communityIdentities: value.communityIdentities ?? [],
     accountStatus: value.accountStatus as UserProfile['accountStatus'],
     permissions: value.permissions,
     capabilities: normalizeCapabilities(value.capabilities),

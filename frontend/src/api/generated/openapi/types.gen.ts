@@ -302,6 +302,38 @@ export type UsernameAvailability = {
     available: boolean;
 };
 
+export type CommunityIdentity = {
+    code: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR';
+    name: string;
+    description: string;
+    grantedAt: string;
+    revokedAt?: string | null;
+    source?: 'AUTO' | 'ADMIN' | 'BACKFILL';
+};
+
+export type CommunityIdentityGrantRequest = {
+    identityType: 'BETA_CONTRIBUTOR';
+    reason: string;
+};
+
+export type CommunityIdentityRevokeRequest = {
+    reason: string;
+};
+
+export type AdminCommunityIdentity = CommunityIdentity & {
+    id?: string;
+    source?: string;
+    qualifiedAt?: string | null;
+    grantedBy?: string;
+    grantReason?: string;
+    revokedBy?: string;
+    revokeReason?: string;
+};
+
+export type AdminCommunityIdentityList = {
+    items: Array<AdminCommunityIdentity>;
+};
+
 export type MyProfile = {
     id: string;
     username: string;
@@ -323,6 +355,7 @@ export type MyProfile = {
         [key: string]: unknown;
     };
     badges: Array<string>;
+    communityIdentities: Array<CommunityIdentity>;
     restrictions: Array<string>;
     usernameChangePolicy: {
         [key: string]: unknown;
@@ -665,6 +698,7 @@ export type PublicUserProfile = {
     linuxDoUsername: string | null;
     trustLevel: number | null;
     badges: Array<string>;
+    communityIdentities: Array<CommunityIdentity>;
     accountStatus: string;
     createdAt: string | null;
     lastActiveAt: string | null;
@@ -1801,11 +1835,16 @@ export type QuotaUsagePolicy = {
 export type ApiServiceRequest = unknown & {
     merchantProfileId?: string;
     merchantIdentityMode?: 'public_profile' | 'store_alias';
+    /**
+     * Enabled WeChat contact owned by the merchant. Retained as a compatibility alias for the single item in ownerContactMethodIds.
+     */
     ownerContactMethodId?: string;
     /**
-     * Ordered merchant contacts to freeze for each purchase intent. The first item is also returned through ownerContactMethodId for compatibility.
+     * Exactly one enabled WeChat contact owned by the merchant. Its current version is frozen for each purchase intent.
      */
-    ownerContactMethodIds?: Array<string>;
+    ownerContactMethodIds?: [
+        string
+    ];
     /**
      * Optional while saving a draft. Publication and order acceptance require an enabled, verified connection owned by the seller.
      */
@@ -2066,6 +2105,10 @@ export type PublicApiService = {
     responseMedianMinutes?: number | null;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
+    /**
+     * Public community identities for a public-profile merchant. Detail responses only; omitted for store aliases and list projections.
+     */
+    communityIdentities?: Array<CommunityIdentity>;
     version: number;
     createdAt: string;
     updatedAt: string;
@@ -2086,13 +2129,15 @@ export type ApiService = {
      */
     merchantAvatarUrl?: string;
     /**
-     * Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
+     * Owner/admin view only. Enabled WeChat contact frozen for new transactions; public clients must create purchase intents instead of reading contact values from service detail.
      */
     ownerContactMethodId?: string;
     /**
-     * Owner/admin view only. Ordered contact-method identifiers; public service projections omit this field.
+     * Owner/admin view only. Contains exactly the single enabled WeChat contact identifier; public service projections omit this field.
      */
-    ownerContactMethodIds?: Array<string>;
+    ownerContactMethodIds?: [
+        string
+    ];
     /**
      * Owner/admin-only reusable probe connection binding. Public service DTOs never expose it.
      */
@@ -2253,6 +2298,21 @@ export type ApiServiceList = {
 export type PublicApiServiceList = {
     items: Array<PublicApiService>;
     nextCursor?: string | null;
+};
+
+export type PublicApiPackageModelFilterOption = {
+    id: string;
+    modelKey: string;
+    providerCode: string;
+    providerCategory: string;
+    providerName: string;
+    providerSortOrder: number;
+    sortOrder: number;
+};
+
+export type PublicApiPackageFilterOptions = {
+    models: Array<PublicApiPackageModelFilterOption>;
+    durations: Array<1 | 3 | 7 | 30>;
 };
 
 export type ApiServicePromotionPlacement = 'api_market_top';
@@ -2566,6 +2626,9 @@ export type CreateApiQuotaOrderRequest = {
      * Required for scheduled offers and omitted for continuous offers.
      */
     saleRoundId?: string;
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen for the quota order.
+     */
     buyerContactMethodId: string;
     selectedAccessMode: string;
     paymentMethod: 'wechat' | 'alipay';
@@ -2576,6 +2639,9 @@ export type CreateApiQuotaOrderRequest = {
 };
 
 export type CreateApiPurchaseIntentRequest = {
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen for the purchase intent.
+     */
     buyerContactMethodId: string;
     selectedAccessMode: 'merchant_operated_endpoint' | 'buyer_dedicated_sub_key' | 'buyer_dedicated_panel_subaccount' | 'fixed_package_offsite' | 'manual_offsite_arrangement';
     requestedCnyAmount: DecimalString;
@@ -3217,7 +3283,7 @@ export type RiskAcknowledgement = {
 export type CreateCarpoolListingRequest = {
     productPlanId: string;
     /**
-     * Owner-selected contact method. The platform freezes its current version only when an application is accepted.
+     * Owner's enabled WeChat contact. The platform freezes its current version only when an application is accepted.
      */
     ownerContactMethodId: string;
     cycleTerm: CarpoolCycleTermInput;
@@ -3329,6 +3395,9 @@ export type CarpoolListing = {
     id: string;
     ownerUserId: string;
     productPlanId: string;
+    /**
+     * Owner's enabled WeChat contact used for new applications.
+     */
     ownerContactMethodId: string;
     cycleTerm: CarpoolCycleTerm;
     title: string;
@@ -3370,6 +3439,10 @@ export type CarpoolListing = {
     applicationEligibility: CarpoolApplicationEligibility;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
+    /**
+     * Public community identities for the owner. Detail responses only; omitted from list and transaction projections.
+     */
+    communityIdentities?: Array<CommunityIdentity>;
     status: 'draft' | 'active' | 'stopped';
     governanceStatus: 'clear' | 'removed';
     recruitmentStopReason?: '' | 'owner' | 'full' | 'migration';
@@ -4582,6 +4655,9 @@ export type FeedbackTicketList = {
 };
 
 export type CreateCarpoolApplicationRequest = {
+    /**
+     * Buyer's enabled WeChat contact. The current version is frozen when the application is accepted.
+     */
     buyerContactMethodId: string;
     riskAcknowledgement?: RiskAcknowledgement;
 };
@@ -4621,6 +4697,9 @@ export type CarpoolApplication = {
     buyerUserId: string;
     ownerUserId: string;
     productPlanId: string;
+    /**
+     * Buyer's enabled WeChat contact selected for this application.
+     */
     buyerContactMethodId: string;
     status: 'pending_owner' | 'joined' | 'rejected' | 'cancelled_by_buyer';
     seatCount: 1;
@@ -4666,9 +4745,14 @@ export type CarpoolMembership = {
     endedAt?: string | null;
     endedReason?: string;
     endedByUserId?: string;
+    ownerNote?: string;
     version: number;
     createdAt: string;
     updatedAt: string;
+};
+
+export type CarpoolMembershipOwnerNoteRequest = {
+    note: string;
 };
 
 export type CarpoolMembershipList = {
@@ -4843,6 +4927,9 @@ export type CreateContactMethodRequest = {
     label: string;
     value?: string;
     displayValue?: string;
+    /**
+     * For WeChat, the server normalizes this field to all transaction scopes. Other contact types retain the submitted supported scopes.
+     */
     usageScopes: Array<ContactUsageScope>;
     isDefault?: boolean;
     enabled?: boolean;
@@ -4858,6 +4945,9 @@ export type ContactMethod = {
      * Returned only in authorized self/contact-window contexts when implemented.
      */
     displayValue?: string;
+    /**
+     * WeChat always contains all transaction scopes after server normalization.
+     */
     usageScopes: Array<ContactUsageScope>;
     isDefault: boolean;
     enabled: boolean;
@@ -6776,7 +6866,16 @@ export type ListPublicApiServicesData = {
          * Maximum accepted minimum purchase amount in CNY.
          */
         minimumIntentCnyMax?: string;
+        /**
+         * Legacy singular package-model filter. It is merged into packageModelCatalogIds when both forms are supplied.
+         *
+         * @deprecated
+         */
         packageModelCatalogId?: string;
+        /**
+         * Repeat this parameter to match any selected package model. Values are trimmed and deduplicated; zero values means all models.
+         */
+        packageModelCatalogIds?: Array<string>;
         packageDurationDays?: 1 | 3 | 7 | 30;
         /**
          * Maximum total price for an enabled package with stock.
@@ -6791,6 +6890,15 @@ export type ListPublicApiServicesData = {
     url: '/api/v1/api-services';
 };
 
+export type ListPublicApiServicesErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListPublicApiServicesError = ListPublicApiServicesErrors[keyof ListPublicApiServicesErrors];
+
 export type ListPublicApiServicesResponses = {
     /**
      * Public API services.
@@ -6799,6 +6907,33 @@ export type ListPublicApiServicesResponses = {
 };
 
 export type ListPublicApiServicesResponse = ListPublicApiServicesResponses[keyof ListPublicApiServicesResponses];
+
+export type GetPublicApiPackageFilterOptionsData = {
+    body?: never;
+    path?: never;
+    query: {
+        billingMode: 'fixed_package';
+    };
+    url: '/api/v1/api-services/filter-options';
+};
+
+export type GetPublicApiPackageFilterOptionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetPublicApiPackageFilterOptionsError = GetPublicApiPackageFilterOptionsErrors[keyof GetPublicApiPackageFilterOptionsErrors];
+
+export type GetPublicApiPackageFilterOptionsResponses = {
+    /**
+     * Current model and duration choices for fixed-package discovery.
+     */
+    200: PublicApiPackageFilterOptions;
+};
+
+export type GetPublicApiPackageFilterOptionsResponse = GetPublicApiPackageFilterOptionsResponses[keyof GetPublicApiPackageFilterOptionsResponses];
 
 export type ListPublicApiServicePromotionsData = {
     body?: never;
@@ -9944,6 +10079,49 @@ export type RemoveOwnerCarpoolMembershipResponses = {
 };
 
 export type RemoveOwnerCarpoolMembershipResponse = RemoveOwnerCarpoolMembershipResponses[keyof RemoveOwnerCarpoolMembershipResponses];
+
+export type UpdateOwnerCarpoolMembershipNoteData = {
+    body: CarpoolMembershipOwnerNoteRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/carpool-memberships/{id}/note';
+};
+
+export type UpdateOwnerCarpoolMembershipNoteErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateOwnerCarpoolMembershipNoteError = UpdateOwnerCarpoolMembershipNoteErrors[keyof UpdateOwnerCarpoolMembershipNoteErrors];
+
+export type UpdateOwnerCarpoolMembershipNoteResponses = {
+    /**
+     * Updated private owner note.
+     */
+    200: CarpoolMembership;
+};
+
+export type UpdateOwnerCarpoolMembershipNoteResponse = UpdateOwnerCarpoolMembershipNoteResponses[keyof UpdateOwnerCarpoolMembershipNoteResponses];
 
 export type ListOwnerApiServicesData = {
     body?: never;
@@ -13247,6 +13425,130 @@ export type GetAdminUserResponses = {
 };
 
 export type GetAdminUserResponse = GetAdminUserResponses[keyof GetAdminUserResponses];
+
+export type ListAdminCommunityIdentitiesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities';
+};
+
+export type ListAdminCommunityIdentitiesErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type ListAdminCommunityIdentitiesError = ListAdminCommunityIdentitiesErrors[keyof ListAdminCommunityIdentitiesErrors];
+
+export type ListAdminCommunityIdentitiesResponses = {
+    /**
+     * Administrator-only community identity records, including grant and revoke provenance.
+     */
+    200: AdminCommunityIdentityList;
+};
+
+export type ListAdminCommunityIdentitiesResponse = ListAdminCommunityIdentitiesResponses[keyof ListAdminCommunityIdentitiesResponses];
+
+export type GrantAdminCommunityIdentityData = {
+    body: CommunityIdentityGrantRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities';
+};
+
+export type GrantAdminCommunityIdentityErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type GrantAdminCommunityIdentityError = GrantAdminCommunityIdentityErrors[keyof GrantAdminCommunityIdentityErrors];
+
+export type GrantAdminCommunityIdentityResponses = {
+    /**
+     * Community identity granted atomically with its notification.
+     */
+    200: AdminCommunityIdentity;
+};
+
+export type GrantAdminCommunityIdentityResponse = GrantAdminCommunityIdentityResponses[keyof GrantAdminCommunityIdentityResponses];
+
+export type RevokeAdminCommunityIdentityData = {
+    body: CommunityIdentityRevokeRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+        identityType: 'FOUNDING_USER' | 'BETA_CONTRIBUTOR';
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/community-identities/{identityType}/revoke';
+};
+
+export type RevokeAdminCommunityIdentityErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RevokeAdminCommunityIdentityError = RevokeAdminCommunityIdentityErrors[keyof RevokeAdminCommunityIdentityErrors];
+
+export type RevokeAdminCommunityIdentityResponses = {
+    /**
+     * Community identity soft-revoked while retaining its history.
+     */
+    200: AdminCommunityIdentity;
+};
+
+export type RevokeAdminCommunityIdentityResponse = RevokeAdminCommunityIdentityResponses[keyof RevokeAdminCommunityIdentityResponses];
 
 export type UpdateAdminUserStatusData = {
     body: AdminUserStatusRequest;

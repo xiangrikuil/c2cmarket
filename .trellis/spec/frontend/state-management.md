@@ -900,7 +900,7 @@ All real-backend business lists follow the same ownership rule: the browser may 
 ### 1. Scope / Trigger
 
 - Trigger: changes to API market service/offer lists, cursor adapters, market
-  filters or tabs, SSR prefetch, or the infinite-scroll sentinel.
+  filters or canonical child routes, SSR prefetch, or the infinite-scroll sentinel.
 
 ### 2. Signatures
 
@@ -910,6 +910,14 @@ type CursorPage<T> = { items: T[]; nextCursor?: string }
 useInfiniteApiServices(filters, enabled, scope)
 useInfiniteApiQuotaOffers(filters, enabled)
 flattenUniqueCursorPages(pages)
+
+canonical routes:
+  /api-market/limited
+  /api-market/packages
+  /api-market/free
+
+package URL state:
+  ?model=<catalog-id-1>&model=<catalog-id-2>&duration=7&sort=updated_desc
 ```
 
 ### 3. Contracts
@@ -917,14 +925,13 @@ flattenUniqueCursorPages(pages)
 - Infinite queries request 20 rows per page, pass `nextCursor` back unchanged,
   and stop when it is absent. Query keys contain every server filter plus the
   market-view scope when two tabs share one endpoint.
-- Hidden market views keep their query disabled. Filter, slot, or view changes
+- Hidden market views keep their query disabled. Filter, slot, or child-route changes
   create a new cursor chain from the first page rather than reusing stale data.
-- API package/free tabs send the billing mode to the backend. Once a package
-  model and duration are selected, both values are server filters; limited
-  quota search and system-slot exclusion are also server filters. Components
-  may defensively project returned DTOs, but must not use current-page array
-  filtering as the source of visible matching results.
-- Flattened pages are deduplicated by business ID; a later copy replaces the
+- `/api-market?view=limited|packages|free` redirects deterministically to the matching child route while preserving only mode-valid filters. Static child routes are registered before `/api-market/:id`.
+- API package/free child routes send the billing mode to the backend. Package model state normalizes scalar or repeated `model` query values to a stable deduplicated array; zero values means all models. The array, optional duration, price, multiplier, and sort all belong in the query key and backend request. The backend applies OR-model and all other package conditions before pagination.
+- Filter options are a separate server query and remove stale model IDs or unsupported durations from URL state after loading. An explicit supported sort remains authoritative when selection eligibility changes.
+- Components may defensively project returned DTOs, but must not use current-page array filtering as the source of visible matching results.
+- Flattened service pages are deduplicated by service ID; the package projection then emits one row per package ID, so sibling packages belonging to one service remain distinct. A later copy replaces the
   stale record without changing the first-seen card position.
 - Each visible product source owns one sentinel. Intersection loads the next
   page only when it exists and no load/error is active. A next-page error keeps
@@ -942,10 +949,12 @@ flattenUniqueCursorPages(pages)
 | First page has no cursor | Render rows/empty state and `已加载全部`; no extra request |
 | Sentinel enters the 400px preload margin | Fetch one next page |
 | Next page fails | Preserve loaded cards and show `重试加载` |
-| Search/filter/view/slot changes | New query key and first-page cursor; matching is applied before backend pagination |
+| Search/filter/child-route/slot changes | New query key and first-page cursor; matching is applied before backend pagination |
 | Adjacent pages repeat an ID | Render one card using the later record |
 | Hidden tab | No background page requests |
-| SSR route uses `view=free` | Prefetch service page only, not limited offers |
+| SSR route is `/api-market/free` or `/api-market/packages` | Prefetch service page only; package route also prefetches filter options |
+| Package URL has repeated models | Preserve stable order, deduplicate IDs, send repeated `packageModelCatalogIds` |
+| Exact model/duration plus explicit `sort=updated_desc` | Keep update-time ordering; do not auto-switch to recommendation |
 
 ### 5. Good / Base / Bad Cases
 
@@ -959,7 +968,8 @@ flattenUniqueCursorPages(pages)
 
 - Cursor adapter serialization and null/blank cursor normalization.
 - Mock paging, page-boundary deduplication, and repeated-cursor rejection.
-- Query-key, enabled-state, visible-view SSR prefetch, and four-sentinel source
+- Repeated-model serialization, OR filtering before cursor pagination, package-ID projection, and stale-option cleanup.
+- Canonical route, legacy redirect, query-key, enabled-state, visible-view SSR prefetch, and four-sentinel source
   regressions.
 - Full Vitest, Nuxt typecheck, real-mode production build, and browser checks
   for incremental loading, retry, tab isolation, and horizontal overflow.

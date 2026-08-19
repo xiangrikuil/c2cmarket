@@ -416,7 +416,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-api-owner-"+suffix)
 	adminSession := createSession(t, server, "pg-api-admin-"+suffix, true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Owner "+suffix, "@pg_api_owner_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Owner WeChat "+suffix, "pg_api_owner_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-create-"+suffix)
 	if service.ReviewStatus != app.APIServiceReviewStatusDraft || service.Version != 1 {
@@ -542,7 +542,7 @@ func TestPostgresAPIServiceIntegrityConstraints(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createSession(t, server, "pg-api-integrity-owner-"+suffix, false)
 	otherSession := createSession(t, server, "pg-api-integrity-other-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Integrity Owner "+suffix, "@pg_api_integrity_owner_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Integrity Owner WeChat "+suffix, "pg_api_integrity_owner_"+suffix)
 	otherContact := createContactMethod(t, server, otherSession, "telegram", "PG API Integrity Other "+suffix, "@pg_api_integrity_other_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-integrity-create-"+suffix)
@@ -593,18 +593,14 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "pg-api-intent-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-api-intent-buyer-"+suffix, false)
 	adminSession := createSession(t, server, "pg-api-intent-admin-"+suffix, true)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Intent Owner "+suffix, "@pg_api_intent_owner_"+suffix)
-	ownerWechat := createContactMethod(t, server, ownerSession, "wechat", "PG API Intent WeChat "+suffix, "pg_api_intent_wechat_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Intent Buyer "+suffix, "@pg_api_intent_buyer_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Intent Owner WeChat "+suffix, "pg_api_intent_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG API Intent Buyer WeChat "+suffix, "pg_api_intent_buyer_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
 	servicePayload := apiServicePayloadWithProbeConnection(apiServicePayload(ownerContact.ID, "1.0000"), service.ProbeConnectionID)
-	servicePayload = strings.Replace(servicePayload,
-		`"ownerContactMethodId":"`+ownerContact.ID+`"`,
-		`"ownerContactMethodId":"`+ownerContact.ID+`","ownerContactMethodIds":["`+ownerContact.ID+`","`+ownerWechat.ID+`"]`, 1)
 	service = updateAPIService(t, server, ownerSession, service.ID, service.Version, servicePayload, "pg-api-intent-service-contacts-"+suffix)
-	if len(service.OwnerContactMethodIDs) != 2 || service.OwnerContactMethodIDs[0] != ownerContact.ID || service.OwnerContactMethodIDs[1] != ownerWechat.ID {
-		t.Fatalf("expected ordered owner contact selection, got %+v", service.OwnerContactMethodIDs)
+	if len(service.OwnerContactMethodIDs) != 1 || service.OwnerContactMethodIDs[0] != ownerContact.ID {
+		t.Fatalf("expected sole WeChat owner contact selection, got %+v", service.OwnerContactMethodIDs)
 	}
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-service-publish-"+suffix)
@@ -623,35 +619,35 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 		first.PricingSnapshot == "" {
 		t.Fatalf("unexpected postgres API purchase intent: %+v", first)
 	}
-	if first.MerchantContact == nil || first.MerchantContact.Value != "@pg_api_intent_owner_"+suffix {
+	if first.MerchantContact == nil || first.MerchantContact.Value != "pg_api_intent_owner_"+suffix {
 		t.Fatalf("expected merchant contact in postgres API intent create: %+v", first.MerchantContact)
 	}
-	if len(first.MerchantContacts) != 2 || first.MerchantContacts[0].Value != "@pg_api_intent_owner_"+suffix || first.MerchantContacts[1].Value != "pg_api_intent_wechat_"+suffix {
-		t.Fatalf("expected ordered frozen merchant contacts in postgres API intent create: %+v", first.MerchantContacts)
+	if len(first.MerchantContacts) != 1 || first.MerchantContacts[0].Value != "pg_api_intent_owner_"+suffix {
+		t.Fatalf("expected sole frozen WeChat merchant contact in postgres API intent create: %+v", first.MerchantContacts)
 	}
-	if first.SelectedAccessMode != "buyer_dedicated_sub_key" || first.OwnerUserID != "" || first.OwnerContactMethodID != "" || first.MerchantContact.Type != "telegram" {
+	if first.SelectedAccessMode != "buyer_dedicated_sub_key" || first.OwnerUserID != "" || first.OwnerContactMethodID != "" || first.MerchantContact.Type != "wechat" {
 		t.Fatalf("postgres create response leaked owner identity or missed frozen access/contact data: %+v", first)
 	}
 	if first.BuyerContact != nil {
 		t.Fatalf("create response must not include buyer contact: %+v", first.BuyerContact)
 	}
 	assertAPIPurchaseIntentSideEffects(t, databaseURL, first.ID, 1)
-	assertAPIPurchaseIntentIdempotencyCache(t, databaseURL, buyerSession.userID, published.ID, first.ID, "create", "pg-api-intent-create-"+suffix, app.APIPurchaseIntentStatusOpen, "@pg_api_intent_owner_"+suffix)
+	assertAPIPurchaseIntentIdempotencyCache(t, databaseURL, buyerSession.userID, published.ID, first.ID, "create", "pg-api-intent-create-"+suffix, app.APIPurchaseIntentStatusOpen, "pg_api_intent_owner_"+suffix)
 
 	buyerDetail := getAPIPurchaseIntent(t, server, buyerSession, "me", first.ID)
-	if buyerDetail.ID != first.ID || buyerDetail.MerchantContact == nil || buyerDetail.MerchantContact.Value != "@pg_api_intent_owner_"+suffix || len(buyerDetail.MerchantContacts) != 2 {
+	if buyerDetail.ID != first.ID || buyerDetail.MerchantContact == nil || buyerDetail.MerchantContact.Value != "pg_api_intent_owner_"+suffix || len(buyerDetail.MerchantContacts) != 1 {
 		t.Fatalf("unexpected buyer API purchase intent detail: %+v", buyerDetail)
 	}
 	ownerDetail := getAPIPurchaseIntent(t, server, ownerSession, "owner", first.ID)
-	if ownerDetail.ID != first.ID || ownerDetail.BuyerContactMethodID != buyerContact.ID || ownerDetail.OwnerContactMethodID != "" || ownerDetail.BuyerContact == nil || ownerDetail.BuyerContact.Value != "@pg_api_intent_buyer_"+suffix {
+	if ownerDetail.ID != first.ID || ownerDetail.BuyerContactMethodID != buyerContact.ID || ownerDetail.OwnerContactMethodID != "" || ownerDetail.BuyerContact == nil || ownerDetail.BuyerContact.Value != "pg_api_intent_buyer_"+suffix {
 		t.Fatalf("unexpected owner API purchase intent detail: %+v", ownerDetail)
 	}
 	assertAPIPurchaseIntentContactAccessLogs(t, databaseURL, first.ID, 1, 1)
 	if _, err := poolExec(databaseURL, `
 		UPDATE contact_methods
 		SET label = label || ' changed after intent'
-		WHERE id IN ($1, $2, $3)
-	`, ownerContact.ID, ownerWechat.ID, buyerContact.ID); err != nil {
+		WHERE id IN ($1, $2)
+	`, ownerContact.ID, buyerContact.ID); err != nil {
 		t.Fatalf("mutate contact labels after API intent: %v", err)
 	}
 	labelReplay := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-"+suffix)
@@ -660,8 +656,8 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	if labelReplay.MerchantContact.Label != first.MerchantContact.Label || labelBuyerDetail.MerchantContact.Label != first.MerchantContact.Label {
 		t.Fatalf("merchant contact label drifted after mutable method edit: create=%+v replay=%+v detail=%+v", first.MerchantContact, labelReplay.MerchantContact, labelBuyerDetail.MerchantContact)
 	}
-	if len(labelBuyerDetail.MerchantContacts) != 2 || labelBuyerDetail.MerchantContacts[1].Label != first.MerchantContacts[1].Label {
-		t.Fatalf("secondary merchant contact label drifted after mutable method edit: create=%+v detail=%+v", first.MerchantContacts, labelBuyerDetail.MerchantContacts)
+	if len(labelBuyerDetail.MerchantContacts) != 1 || labelBuyerDetail.MerchantContacts[0].Label != first.MerchantContacts[0].Label {
+		t.Fatalf("merchant contact collection label drifted after mutable method edit: create=%+v detail=%+v", first.MerchantContacts, labelBuyerDetail.MerchantContacts)
 	}
 	if labelOwnerDetail.BuyerContact.Label != ownerDetail.BuyerContact.Label {
 		t.Fatalf("buyer contact label drifted after mutable method edit: before=%+v after=%+v", ownerDetail.BuyerContact, labelOwnerDetail.BuyerContact)
@@ -716,8 +712,8 @@ func TestPostgresAPIOrderReleasesPurchaseIntent(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-api-order-release-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-api-order-release-buyer-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Order Release Owner "+suffix, "@pg_api_order_release_owner_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Order Release Buyer "+suffix, "@pg_api_order_release_buyer_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Order Release Owner WeChat "+suffix, "pg_api_order_release_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG API Order Release Buyer WeChat "+suffix, "pg_api_order_release_buyer_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-order-release-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-order-release-service-submit-"+suffix)
@@ -797,9 +793,9 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "pg-api-intent-integrity-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-api-intent-integrity-buyer-"+suffix, false)
 	otherSession := createSession(t, server, "pg-api-intent-integrity-other-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Intent Integrity Owner "+suffix, "@pg_api_intent_integrity_owner_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Intent Integrity Buyer "+suffix, "@pg_api_intent_integrity_buyer_"+suffix)
-	otherContact := createContactMethod(t, server, otherSession, "telegram", "PG API Intent Integrity Other "+suffix, "@pg_api_intent_integrity_other_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG API Intent Integrity Owner WeChat "+suffix, "pg_api_intent_integrity_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG API Intent Integrity Buyer WeChat "+suffix, "pg_api_intent_integrity_buyer_"+suffix)
+	otherContact := createContactMethod(t, server, otherSession, "wechat", "PG API Intent Integrity Other WeChat "+suffix, "pg_api_intent_integrity_other_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-integrity-service-create-"+suffix)
 	pausedIntent := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+service.ID+"/purchase-intents", apiPurchaseIntentPayload(buyerContact.ID))
@@ -830,7 +826,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 	if wrongContactResponse.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected wrong buyer contact validation error, got %d body %s", wrongContactResponse.Code, wrongContactResponse.Body.String())
 	}
-	assertProblemCode(t, wrongContactResponse, "CONTACT_METHOD_NOT_OWNED")
+	assertProblemCode(t, wrongContactResponse, "CONTACT_METHOD_REQUIRED")
 
 	tooHigh := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+published.ID+"/purchase-intents", strings.Replace(apiPurchaseIntentPayload(buyerContact.ID), `"requestedUsdAllowance":"20.000000"`, `"requestedUsdAllowance":"21.000000"`, 1))
 	addAuth(tooHigh, buyerSession, "pg-api-intent-too-high-"+suffix)
@@ -867,7 +863,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 	assertPostgresConstraintError(t, err, "API purchase intent owner method/version mismatch must be rejected")
 
 	secondOwnerSession := createLinuxDoSession(t, server, "pg-api-intent-integrity-owner-two-"+suffix)
-	secondOwnerContact := createContactMethod(t, server, secondOwnerSession, "telegram", "PG API Intent Integrity Owner Two "+suffix, "@pg_api_intent_integrity_owner_two_"+suffix)
+	secondOwnerContact := createContactMethod(t, server, secondOwnerSession, "wechat", "PG API Intent Integrity Owner Two WeChat "+suffix, "pg_api_intent_integrity_owner_two_"+suffix)
 	secondService := createPostgresAPIService(t, databaseURL, server, secondOwnerSession, secondOwnerContact.ID, "pg-api-intent-integrity-second-service-create-"+suffix)
 	secondSubmitted := ownerAPIServiceAction(t, server, secondOwnerSession, secondService.ID, "submit-review", secondService.Version, "pg-api-intent-integrity-second-submit-"+suffix)
 	secondPublished := ownerAPIServiceAction(t, server, secondOwnerSession, secondSubmitted.ID, "publish", secondSubmitted.Version, "pg-api-intent-integrity-second-publish-"+suffix)
@@ -1125,8 +1121,8 @@ func TestPostgresCarpoolMembershipUniquenessConstraint(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-member-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-member-buyer-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Member Owner "+suffix, "@pg_member_owner_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG Member Buyer "+suffix, "@pg_member_buyer_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG Member Owner WeChat "+suffix, "pg_member_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG Member Buyer WeChat "+suffix, "pg_member_buyer_"+suffix)
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-member-create-"+suffix)
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "pg-member-submit-"+suffix)
@@ -1202,8 +1198,8 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-carpool-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-carpool-buyer-"+suffix, false)
-	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Owner Carpool TG "+suffix, "@pg_owner_carpool_"+suffix)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG Buyer Carpool TG "+suffix, "@pg_buyer_carpool_"+suffix)
+	ownerContact := createContactMethod(t, server, ownerSession, "wechat", "PG Owner Carpool WeChat "+suffix, "pg_owner_carpool_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "PG Buyer Carpool WeChat "+suffix, "pg_buyer_carpool_"+suffix)
 
 	unlimitedBody := carpoolPayloadWithRiskAck(ownerContact.ID)
 	unlimitedBody = strings.Replace(unlimitedBody, `"distributionMethod":"sub2api"`, `"distributionMethod":"account_login"`, 1)
@@ -1327,7 +1323,7 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	if got := readResponse.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("expected no-store, got %q", got)
 	}
-	if !strings.Contains(readResponse.Body.String(), "@pg_owner_carpool_"+suffix) {
+	if !strings.Contains(readResponse.Body.String(), "pg_owner_carpool_"+suffix) {
 		t.Fatalf("expected owner contact in accepted carpool contact response")
 	}
 

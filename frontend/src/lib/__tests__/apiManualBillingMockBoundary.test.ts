@@ -93,7 +93,7 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
   const requiredServiceDeclarations = {
     declaredMaxConcurrency: 1,
     promptAuditEnabled: false,
-    ownerContactMethodIds: ['contact-linuxdo-orbit'],
+    ownerContactMethodIds: ['contact-wechat-orbit'],
   }
   const metered = await settle(api.submitApiService({
     billingMode: 'metered_credit',
@@ -118,6 +118,21 @@ test('keeps historical manual rows readable but never publicly orderable', async
   assert.equal(ownerView?.billingMode, 'manual_credit')
   assert.equal(ownerView?.publiclyOrderable, false)
   assert.equal(await settle(api.getApiServiceById(manual.id)), null)
+})
+
+test('keeps sold-out packages in owner management but hides public detail', async () => {
+  vi.useFakeTimers()
+  const soldOut = structuredClone(apiServices.find(service => service.id === 'a2')!)
+  soldOut.packages?.forEach((item) => {
+    item.stockAvailable = 0
+  })
+  soldOut.merchantId = apiServices[0]!.merchantId
+  soldOut.merchantUsername = apiServices[0]!.merchantUsername
+  soldOut.publiclyOrderable = false
+  const api = await loadMockApi([soldOut])
+
+  assert.equal((await settle(api.getMyApiServiceById(soldOut.id)))?.packages?.every(item => item.stockAvailable === 0), true)
+  assert.equal(await settle(api.getApiServiceById(soldOut.id)), null)
 })
 
 test('blocks publish and resume for unsupported modes without changing supported behavior', async () => {

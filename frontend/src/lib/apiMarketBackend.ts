@@ -26,6 +26,7 @@ import type {
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
   ApiService,
+  CommunityIdentity,
   ApiServiceCommercialSnapshot,
   ApiServiceSalesChannel,
   ApiServiceSalesView,
@@ -58,6 +59,7 @@ import type {
   ApiServiceSalesChannel as BackendApiServiceSalesChannel,
   ApiServiceSalesSummary as BackendApiServiceSalesSummary,
   CreateApiServicePromotionRequest,
+  PublicApiPackageFilterOptions,
   PublicApiService,
   PublicApiQuotaOffer as GeneratedPublicApiQuotaOffer,
   PublicApiServicePromotionList,
@@ -149,6 +151,7 @@ type BackendAPIService = {
     expiresAt?: string
   }
   sellerReputation?: ReputationSummary | null
+  communityIdentities?: CommunityIdentity[]
   healthSummary?: ApiServiceHealthSummary
   quotaUsagePolicy: unknown
   distributionSystem: string
@@ -422,13 +425,16 @@ const commercialSnapshotKeys = [
 type BackendAPIModel = {
   id: string
   providerCategory: string
+  providerCode: string
   provider: string
+  providerActive: boolean
   modelKey: string
   capabilities: string[]
   inputPricePerMillion?: string
   cachedInputPricePerMillion?: string
   outputPricePerMillion?: string
   sortOrder: number
+  active: boolean
   createdAt: string
   updatedAt: string
 }
@@ -650,6 +656,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     sourceUrl: service.sourceUrl ?? '',
     sourceAuthorVerification: service.sourceAuthorVerification,
     sellerReputation,
+    communityIdentities: service.communityIdentities ?? [],
     healthSummary: service.healthSummary,
     quotaUsagePolicy: parseApiQuotaUsagePolicy(service.quotaUsagePolicy),
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
@@ -692,6 +699,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     state,
     online,
     publiclyOrderable,
+    orderableReasons: service.orderableReasons ?? [],
     lastOnlineConfirmedAt: service.updatedAt,
     onlineExpiresAt: service.quotaExpiresAt ?? service.updatedAt,
     declaredTtftBand,
@@ -703,7 +711,11 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     dailyOrderLimit: 10,
     todayOrderCount: 0,
     unresolvedDisputes: service.unresolvedDisputes ?? sellerReputation?.unresolvedDisputes ?? null,
-    warning: state === 'reviewing' ? '等待管理员审核' : online && !publiclyOrderable ? '待配置接单设置' : undefined,
+    warning: state === 'reviewing'
+      ? '等待管理员审核'
+      : service.orderableReasons?.includes('package_sold_out')
+        ? '短期流量包已售罄'
+        : online && !publiclyOrderable ? '待配置接单设置' : undefined,
     warranty: service.merchantSupportNote || '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: service.merchantRefundCommitment
       ? '订单有效期内符合商户退款承诺条件时，由商户退还全部实付金额；平台记录但不垫付、不代赔'
@@ -1054,7 +1066,9 @@ export async function backendAPIServicesPage(filters: ApiServiceFilters = {}, pa
     const billingMode = filters.billingMode === 'metered_credit' ? 'metered_usd_quota' : filters.billingMode
     params.set('billingMode', billingMode)
   }
-  if (filters.packageModelCatalogId?.trim()) params.set('packageModelCatalogId', filters.packageModelCatalogId.trim())
+  for (const modelCatalogId of filters.packageModelCatalogIds ?? []) {
+    if (modelCatalogId.trim()) params.append('packageModelCatalogIds', modelCatalogId.trim())
+  }
   if (filters.packageDurationDays) params.set('packageDurationDays', String(filters.packageDurationDays))
   if (filters.search?.trim()) params.set('search', filters.search.trim())
   if (filters.modelCatalogId?.trim()) params.set('modelCatalogId', filters.modelCatalogId.trim())
@@ -1168,10 +1182,12 @@ export async function backendOwnerAPIServiceById(id: string) {
   return mapBackendAPIService(service)
 }
 
-function providerFromBackend(value: string): ModelCatalogItem['provider'] {
+export function providerFromBackend(value: string): ModelCatalogItem['provider'] {
   const normalized = value.trim().toLowerCase()
   if (normalized === 'openai' || normalized === 'gpt') return 'openai'
+  if (normalized === 'xai' || normalized === 'grok') return 'xai'
   if (normalized === 'anthropic' || normalized === 'claude') return 'anthropic'
+  if (normalized === 'google' || normalized === 'gemini') return 'google'
   return 'other'
 }
 
@@ -1190,13 +1206,17 @@ function capabilitiesFromBackend(values: string[]): ModelCatalogItem['capabiliti
 function mapBackendModel(model: BackendAPIModel): ModelCatalogItem {
   return {
     id: model.id,
-    provider: providerFromBackend(model.providerCategory || model.provider),
+    provider: providerFromBackend(model.providerCode || model.providerCategory || model.provider),
+    providerCode: model.providerCode,
+    providerCategory: model.providerCategory,
+    providerName: model.provider,
+    providerActive: model.providerActive,
     name: model.modelKey,
     capabilities: capabilitiesFromBackend(model.capabilities),
     officialInputPricePerMillion: model.inputPricePerMillion ? numberFromDecimal(model.inputPricePerMillion) : null,
     officialCachedInputPricePerMillion: model.cachedInputPricePerMillion ? numberFromDecimal(model.cachedInputPricePerMillion) : null,
     officialOutputPricePerMillion: model.outputPricePerMillion ? numberFromDecimal(model.outputPricePerMillion) : null,
-    active: true,
+    active: model.active,
     sortOrder: model.sortOrder,
     createdAt: model.createdAt,
     updatedAt: model.updatedAt,
@@ -1206,6 +1226,10 @@ function mapBackendModel(model: BackendAPIModel): ModelCatalogItem {
 export async function backendModelCatalog() {
   const response = await backendRequest<ListResponse<BackendAPIModel>>('/api/v1/api-models')
   return response.items.map(mapBackendModel)
+}
+
+export async function backendAPIPackageFilterOptions(): Promise<PublicApiPackageFilterOptions> {
+  return backendRequest<PublicApiPackageFilterOptions>('/api/v1/api-services/filter-options?billingMode=fixed_package')
 }
 
 function contactToChannel(contact?: ContactDisclosure | null) {
@@ -1591,32 +1615,20 @@ export async function backendCreateContactMethod(payload: SaveContactMethodReque
 	return backendCreateContact(payload)
 }
 
-export async function backendBoundLinuxDoContactMethod(): Promise<UserContactMethod> {
-	const methods = await backendMyContactMethods()
-	const contact = methods.find(method => method.enabled && method.type === 'linuxdo')
-	if (!contact) {
-		throw new Error('当前账号的 linux.do 绑定联系方式尚未同步，请重新登录后再试。')
-	}
-	return contact
-}
-
 export function selectBuyerContactMethod(methods: UserContactMethod[]): UserContactMethod {
-  const eligible = methods.filter(method => (
-    method.enabled
-    && method.usageScopes.includes('buyer')
-    && (method.type !== 'email' || method.verified)
-  ))
-  const contact = eligible.find(method => method.isDefault)
-    ?? eligible.find(method => method.type === 'linuxdo')
-    ?? eligible[0]
+  const contact = methods.find(method => method.enabled && method.type === 'wechat')
   if (!contact) {
-    throw new Error('请先在个人中心配置可用于买家交易的联系方式（如微信或已验证邮箱）。')
+    throw new Error('请先在个人中心配置微信联系方式。')
   }
   return contact
 }
 
+export async function backendEnabledWechatContactMethod(): Promise<UserContactMethod> {
+	return selectBuyerContactMethod(await backendMyContactMethods())
+}
+
 export async function backendBuyerContactMethod(): Promise<UserContactMethod> {
-  return selectBuyerContactMethod(await backendMyContactMethods())
+  return backendEnabledWechatContactMethod()
 }
 
 export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
@@ -2062,10 +2074,8 @@ export async function backendSubmitAPIService(payload: Record<string, unknown>) 
   await ensureBackendSession('merchant', false)
   const merchantIdentityMode = apiServiceMerchantIdentityMode(payload.merchantIdentityMode)
   const merchantProfile = merchantIdentityMode === 'store_alias' ? await ensureMerchantProfile(payload) : null
-	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
-		? payload.ownerContactMethodIds.map(String).filter(Boolean)
-		: []
-	if (!ownerContactMethodIds.length) throw new Error('请先在个人中心添加并选择至少一种 API 订单联系方式。')
+	const ownerContact = await backendEnabledWechatContactMethod()
+	const ownerContactMethodIds = [ownerContact.id]
   let response = await backendMutation<BackendAPIService>('/api/v1/owner/api-services', toBackendServiceRequest({
     ...payload,
 		ownerContactMethodId: ownerContactMethodIds[0],
