@@ -110,7 +110,6 @@ const submitPasswordLogin = async () => {
       turnstileToken: turnstileToken.value,
     })
     if (generation !== requestGeneration) return
-    password.value = ''
     trackAnalytics('login_success', { method: 'password', source_route: '/login' })
     emit('authenticated', session)
   } catch (error) {

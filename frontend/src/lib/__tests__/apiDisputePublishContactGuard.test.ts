@@ -8,6 +8,8 @@ const profileBackendSource = readFileSync(new URL('../profileBackend.ts', import
 const servicePublishSource = readFileSync(new URL('../../pages/ApiServicePublishPage.vue', import.meta.url), 'utf8')
 const rushPublishSource = readFileSync(new URL('../../pages/ApiQuotaRushPublishPage.vue', import.meta.url), 'utf8')
 const orderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
+const commerceStatusPanelSource = readFileSync(new URL('../../components/api-order/SellerCommerceStatusPanel.vue', import.meta.url), 'utf8')
+const disputePanelSource = readFileSync(new URL('../../components/api-order/ApiOrderDisputePanel.vue', import.meta.url), 'utf8')
 
 function sourceBetween(source: string, startMarker: string, endMarker: string) {
   const start = source.indexOf(startMarker)
@@ -36,13 +38,24 @@ describe('API 纠纷发布与身份联系方式约束', () => {
     expect(apiFacadeSource).toContain("contactSnapshot.sellerContacts = [mockWechatContactSnapshotItem(ownerContact, 'carpool_owner')]")
   })
 
-  it('两个发布入口都会提前读取活动纠纷并禁止最终提交', () => {
+  it('两个发布入口都使用后端经营等级决定是否可以开启接单', () => {
     for (const source of [servicePublishSource, rushPublishSource]) {
-      expect(source).toContain("useMerchantApiOrders({ dispute: 'active' })")
-      expect(source).toContain('发布前纠纷规则')
+      expect(source).toContain('useSellerCommerceStatus')
+      expect(source).toContain('SellerCommerceStatusPanel')
       expect(source).toContain('disputePublishBlocked')
-      expect(source).toContain('不能发布或恢复 API 服务与额度，也不会接收新订单')
+      expect(source).toContain("level === 'account_limited'")
     }
+    expect(rushPublishSource).toContain('affectedServiceIds.includes(selectedServiceId.value)')
+    expect(servicePublishSource).toContain('编辑和保存草稿仍然可用')
+    expect(commerceStatusPanelSource).toContain('活动纠纷只冻结对应订单')
+    expect(commerceStatusPanelSource).toContain('已成立订单仍可继续履约')
+  })
+
+  it('纠纷确认区区分双方责任且不宣称平台核验站外退款', () => {
+    expect(disputePanelSource).toContain('已完成当前处理，无需操作')
+    expect(disputePanelSource).toContain('平台未核验站外退款是否到账')
+    expect(disputePanelSource).toContain('confirmRemedyDialogOpen')
+    expect(disputePanelSource).toContain('fixed inset-x-0 bottom-0')
   })
 
   it('活动纠纷会隐藏订单普通交易动作和付款资料读取', () => {

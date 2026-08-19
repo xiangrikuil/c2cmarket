@@ -107,6 +107,11 @@ versions:
 | `000098_password_reset` | purpose-isolated active password-reset challenge uniqueness for immutable student-email recovery |
 | `000109_announcement_critical_delivery` | critical global delivery, acknowledgement receipts, and publish-time recipient snapshots |
 | `000111_carpool_lightweight_matching` | one-step carpool matching, recruitment/governance separation, USD spend-limit naming, and immutable condition snapshots |
+| `000112_carpool_optional_spend_limits_account_login` | independent optional spend limits and account-login distribution |
+| `000113_community_identity` | independent founding-user and beta-contributor community identity records |
+| `000114_carpool_membership_owner_note` | owner-private notes on carpool memberships |
+| `000115_wechat_contact_single_mapping` | one enabled WeChat contact per user for new transaction snapshots |
+| `000116_required_wechat_contact` | required all-purpose WeChat contact scopes for account-level transaction communication |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -609,6 +614,13 @@ enabled WeChat contact per user. WeChat remains stored through encrypted,
 versioned contact methods and is the sole contact type accepted by new carpool
 and API quota transaction writes. The down migration drops only the partial
 unique index.
+
+Version 116 (`000116_required_wechat_contact`) makes WeChat an account-level
+required transaction contact. Existing WeChat rows receive the complete carpool
+owner, API merchant, buyer, and dispute scope set, and a database constraint
+prevents later scope narrowing. Application services separately reject disabling,
+deleting, or converting a bound WeChat method. The down migration removes only
+the new constraint because prior user-selected scope sets cannot be reconstructed.
 
 ## Docker Compose
 

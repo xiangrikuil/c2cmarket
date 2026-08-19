@@ -388,6 +388,7 @@ type Service interface {
 	OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OpenOwnerAPIOrderDisputeWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
+	SellerCommerceStatus(ctx context.Context, user auth.User) (apiorder.SellerCommerceStatus, *domain.AppError)
 	AdminAPIOrders(ctx context.Context, user auth.User, filter apiorder.AdminOrderFilter, page domain.PageRequest) (domain.Page[apiorder.Order], *domain.AppError)
 	AdminAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	ResolveAPIOrderCatalogRiskHoldWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiorder.CatalogRiskHoldActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)

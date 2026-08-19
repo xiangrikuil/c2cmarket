@@ -174,6 +174,39 @@ func TestContactUsageScopesAreCanonicalAndDurableInMemory(t *testing.T) {
 	}
 }
 
+func TestRequiredWechatUsesAllScopesAndCannotBeDisabledConvertedOrDeleted(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(nil, func() time.Time { return time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC) })
+	created, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "required-wechat", Type: "wechat", Label: "微信", Value: "required-wechat-id", Enabled: true,
+		UsageScopes: []string{UsageScopeBuyer},
+	})
+	if appErr != nil || !slices.Equal(created.UsageScopes, AllUsageScopes()) {
+		t.Fatalf("required wechat create = %+v error=%v", created, appErr)
+	}
+
+	updated, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
+		UserID: "required-wechat", MethodID: created.ID, Type: "wechat", Label: "微信", Value: "required-wechat-updated", Enabled: true,
+		UsageScopes: []string{UsageScopeDispute},
+	})
+	if appErr != nil || updated.DisplayValue != "required-wechat-updated" || !slices.Equal(updated.UsageScopes, AllUsageScopes()) {
+		t.Fatalf("required wechat update = %+v error=%v", updated, appErr)
+	}
+
+	for _, input := range []UpdateContactMethodInput{
+		{UserID: "required-wechat", MethodID: created.ID, Type: "wechat", Label: "微信", Value: "required-wechat-updated", Enabled: false},
+		{UserID: "required-wechat", MethodID: created.ID, Type: "email", Label: "邮箱", Value: "converted@example.com", Enabled: true},
+	} {
+		if _, appErr := service.UpdateMethod(context.Background(), input); appErr == nil || appErr.Status != 409 || appErr.Code != domain.CodeInvalidStateTransition {
+			t.Fatalf("required wechat mutation must be rejected: input=%+v error=%#v", input, appErr)
+		}
+	}
+	if _, appErr := service.DeleteMethod(context.Background(), "required-wechat", created.ID); appErr == nil || appErr.Status != 409 || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("required wechat delete error = %#v", appErr)
+	}
+}
+
 func TestContactUsageScopesDefaultAndValidation(t *testing.T) {
 	t.Parallel()
 

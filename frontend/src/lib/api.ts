@@ -114,6 +114,7 @@ export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { ALL_CONTACT_USAGE_SCOPES } from '@/lib/contactUsageScopes'
 export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -212,6 +213,7 @@ import {
   backendOwnerAPIOrder,
   backendOwnerAPIOrders,
   backendOwnerAPIOrdersPage,
+  backendSellerCommerceStatus,
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
@@ -391,7 +393,7 @@ export type CarpoolNotification = {
 
 export type UnifiedNotification = {
   id: string
-  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒'
+  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒' | '交易待办' | '交易通知'
   title: string
   detail: string
   time: string
@@ -582,6 +584,33 @@ export type ApiOrderLatePaymentStatus = 'reported' | 'not_received' | 'received_
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
 export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
 export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
+
+export type SellerCommerceRestrictionLevel = 'normal' | 'service_limited' | 'account_limited'
+export type SellerCommerceReason = 'service_multiple_buyers' | 'seller_response_overdue' | 'account_multiple_buyers' | 'remedy_fulfillment_overdue'
+
+export type SellerCommerceDispute = {
+  disputeId: string
+  orderId: string
+  orderNo: string
+  apiServiceId: string
+  serviceTitle: string
+  status: ApiOrderDisputeStatus
+  nextActor: 'applicant' | 'respondent' | 'admin' | 'responsible_party' | 'counterparty' | 'none'
+  dueAt?: string | null
+  restrictionLevel: SellerCommerceRestrictionLevel
+  reasonCodes: SellerCommerceReason[]
+}
+
+export type SellerCommerceStatus = {
+  level: SellerCommerceRestrictionLevel
+  activeDisputeCount: number
+  activeBuyerCount: number
+  blockingDisputeCount: number
+  affectedServiceIds: string[]
+  reasonCodes: SellerCommerceReason[]
+  disputes: SellerCommerceDispute[]
+  nextReleaseAt?: string | null
+}
 
 export type ApiQuotaOrderSnapshot = ApiServiceCommercialSnapshot & {
   batchId: string
@@ -1035,8 +1064,9 @@ let feedbackTicketStore = readSessionStore<FeedbackTicket[]>(feedbackStorageKey,
 let notificationReadStore = readSessionStore<string[]>(notificationReadStorageKey, [])
 let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
 let myUserProfileStore = clone(myUserProfile)
+type MockAccountRecoveryState = Pick<UserProfile, 'email' | 'emailVerified' | 'emailVerifiedAt' | 'passwordConfigured'>
+const mockAccountRecoveryStore = new Map<string, MockAccountRecoveryState>()
 let myContactMethodStore = clone(myContactMethods)
-const allTransactionContactUsageScopes: ContactUsageScope[] = ['carpool_owner', 'api_merchant', 'buyer', 'dispute']
 let contactMethodVersionSequence = 0
 const contactMethodVersionStore = new Map(myContactMethodStore.map(item => [item.id, nextContactMethodVersionToken(item.id)]))
 const contactEmailVerificationStore = new Map<string, { email: string, code: string, expiresAt: string, contactMethodVersionId: string, attemptCount: number }>()
@@ -1077,15 +1107,22 @@ function nextContactMethodVersionToken(contactId: string) {
 function syncMockProfileIdentity() {
   const identity = requireMockIdentity()
   const linuxDo = identity.linuxDoBinding
+  let accountRecovery = mockAccountRecoveryStore.get(identity.id)
+  if (!accountRecovery) {
+    accountRecovery = {
+      email: identity.email,
+      emailVerified: Boolean(identity.email),
+      emailVerifiedAt: identity.email ? nowText() : null,
+      passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    }
+    mockAccountRecoveryStore.set(identity.id, accountRecovery)
+  }
   myUserProfileStore = {
     ...myUserProfileStore,
     id: identity.id,
     username: identity.username,
     displayName: identity.displayName,
-    email: identity.email,
-    emailVerified: Boolean(identity.email),
-    emailVerifiedAt: identity.email ? (myUserProfileStore.emailVerifiedAt ?? nowText()) : null,
-    passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    ...accountRecovery,
     avatarMode: linuxDo.bound ? 'linuxdo' : 'custom_url',
     avatarUrl: linuxDo.avatarUrl ?? null,
     linuxDoBinding: {
@@ -1100,6 +1137,16 @@ function syncMockProfileIdentity() {
     capabilities: [...identity.capabilities],
   }
   return myUserProfileStore
+}
+
+function rememberMockAccountRecoveryState() {
+  const identity = requireMockIdentity()
+  mockAccountRecoveryStore.set(identity.id, {
+    email: myUserProfileStore.email,
+    emailVerified: myUserProfileStore.emailVerified,
+    emailVerifiedAt: myUserProfileStore.emailVerifiedAt,
+    passwordConfigured: myUserProfileStore.passwordConfigured,
+  })
 }
 
 function clone<T>(value: T): T {
@@ -2262,7 +2309,7 @@ export type ApiOrderFilters = {
   search?: string
   dateRange?: 'all' | 'today' | '7d' | '30d'
   sort?: 'default_buyer' | 'default_merchant' | 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
-  dispute?: 'all' | 'active' | 'none'
+  dispute?: 'all' | 'active' | 'none' | 'needs_action' | 'waiting_counterparty' | 'platform_review'
   minAmount?: string
   maxAmount?: string
   risk?: 'all' | 'high' | 'has_note'
@@ -2424,12 +2471,18 @@ export function filterApiOrderRows(source: readonly ApiOrder[], filters: ApiOrde
     const createdAt = new Date(item.createdAt).getTime()
     const amount = item.amountDecimal ?? String(item.amount)
     const activeDispute = isApiOrderDisputeActive(item.disputeStatus)
+    const disputeFilterMatches = !filters.dispute || filters.dispute === 'all'
+      || filters.dispute === 'active' && activeDispute
+      || filters.dispute === 'none' && !activeDispute
+      || filters.dispute === 'needs_action' && activeDispute && Boolean(item.disputeNeedsAction)
+      || filters.dispute === 'waiting_counterparty' && activeDispute && !item.disputeNeedsAction && item.disputeNextActor !== 'admin'
+      || filters.dispute === 'platform_review' && activeDispute && item.disputeNextActor === 'admin'
     return (!filters.buyerId || item.buyerId === filters.buyerId)
       && (!filters.sellerId || item.sellerId === filters.sellerId)
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
       && (createdAfter === null || createdAt >= createdAfter)
-      && (!filters.dispute || filters.dispute === 'all' || filters.dispute === 'active' && activeDispute || filters.dispute === 'none' && !activeDispute)
+      && disputeFilterMatches
       && (minAmount === null || compareDecimal(amount, minAmount) >= 0)
       && (maxAmount === null || compareDecimal(amount, maxAmount) <= 0)
       && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
@@ -3708,6 +3761,7 @@ export async function setBackupPassword(payload: SetBackupPasswordRequest) {
     ...myUserProfileStore,
     passwordConfigured: true,
   }
+  rememberMockAccountRecoveryState()
 }
 
 export async function startEmailVerification(email: string): Promise<EmailVerificationChallenge> {
@@ -3733,6 +3787,7 @@ export async function confirmEmailVerification(payload: { email: string, code: s
     emailVerified: true,
     emailVerifiedAt: nowText(),
   }
+  rememberMockAccountRecoveryState()
   syncPublicCurrentUser()
   return clone(myUserProfileStore)
 }
@@ -3784,6 +3839,7 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
   }
   const createdAt = nowText()
+  const wechat = payload.type === 'wechat'
   const contact: UserContactMethod = {
     id: `contact-${Date.now()}`,
     userId: myUserProfileStore.id,
@@ -3791,9 +3847,9 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: payload.type === 'wechat' ? [...allTransactionContactUsageScopes] : [...payload.usageScopes],
+    usageScopes: wechat ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: payload.enabled,
+    enabled: wechat ? true : payload.enabled,
     verified: false,
     createdAt,
     updatedAt: createdAt,
@@ -3812,6 +3868,8 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo' && payload.displayValue !== current.displayValue) throw new Error('linux.do 联系方式不能手动修改')
+  if (current.type === 'wechat' && payload.type !== 'wechat') throw new Error('微信是必填联系方式，不能转换为其他类型')
+  if (current.type === 'wechat' && !payload.enabled) throw new Error('微信是必填联系方式，不能停用')
   const nextType = current.type === 'linuxdo' ? 'linuxdo' : payload.type
   if (nextType === 'wechat' && payload.enabled && myContactMethodStore.some(item => item.id !== contactId && item.enabled && item.type === 'wechat')) {
     throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
@@ -3825,9 +3883,9 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(current.type === 'linuxdo' ? 'linuxdo' : payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: nextType === 'wechat' ? [...allTransactionContactUsageScopes] : [...payload.usageScopes],
+    usageScopes: nextType === 'wechat' ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: payload.enabled,
+    enabled: nextType === 'wechat' ? true : payload.enabled,
     verified: valueChanged ? false : current.verified,
     updatedAt: nowText(),
   }
@@ -3845,6 +3903,7 @@ export async function deleteContactMethod(contactId: string) {
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo') throw new Error('linux.do 绑定联系方式不能删除')
+  if (current.type === 'wechat') throw new Error('微信是必填联系方式，不能删除')
   myContactMethodStore = myContactMethodStore.filter(item => item.id !== contactId)
   contactMethodVersionStore.delete(contactId)
   contactEmailVerificationStore.delete(contactId)
@@ -5637,6 +5696,8 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   const feedbackActionCount = currentUserFeedback
     .filter(item => item.status === 'needs_user_info' || feedbackUnread(item))
     .length
+  const buyerApiOrders = apiOrderStore.filter(item => item.buyerId === currentBuyerId)
+  const merchantApiOrders = apiOrderStore.filter(item => item.sellerId === currentMerchantId)
 
   const summary: NavigationBadgeSummary = {
     generatedAt: new Date(currentTime).toISOString(),
@@ -5646,17 +5707,17 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     supportActionCount: feedbackActionCount,
     buyer: {
       carpoolActions: buyerCarpoolActions,
-      apiOrderActions: apiOrderStore
-        .filter(item => item.buyerId === currentBuyerId)
-        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted')
+      apiOrderActions: buyerApiOrders
+        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted' || isApiOrderDisputeActive(item.disputeStatus))
         .length,
+      apiOrderDisputes: buyerApiOrders.filter(item => isApiOrderDisputeActive(item.disputeStatus)).length,
     },
     merchant: {
       carpoolActions: merchantCarpoolActions,
-      apiOrderActions: apiOrderStore
-        .filter(item => item.sellerId === currentMerchantId)
-        .filter(item => item.status === 'payment_submitted' || item.status === 'paid_confirmed')
+      apiOrderActions: merchantApiOrders
+        .filter(item => item.status === 'payment_submitted' || item.status === 'paid_confirmed' || isApiOrderDisputeActive(item.disputeStatus))
         .length,
+      apiOrderDisputes: merchantApiOrders.filter(item => isApiOrderDisputeActive(item.disputeStatus)).length,
     },
     admin: null,
   }
@@ -6584,6 +6645,36 @@ export async function getMerchantApiOrders(filters: ApiOrderFilters = {}) {
 export async function getMerchantApiOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}) {
   if (shouldUseRealBackend()) return backendOwnerAPIOrdersPage(filters, page)
   return paginateCursorItems(filterApiOrders({ ...filters, sellerId: currentMerchantId }), page)
+}
+
+export async function getSellerCommerceStatus(): Promise<SellerCommerceStatus> {
+  if (shouldUseRealBackend()) return backendSellerCommerceStatus()
+  await wait()
+  const active = filterApiOrders({ dispute: 'active', sellerId: currentMerchantId })
+  const buyerIds = new Set(active.map(item => item.buyerId))
+  const serviceBuyers = new Map<string, Set<string>>()
+  for (const order of active) {
+    const buyers = serviceBuyers.get(order.apiServiceId) ?? new Set<string>()
+    buyers.add(order.buyerId)
+    serviceBuyers.set(order.apiServiceId, buyers)
+  }
+  const affectedServiceIds = [...serviceBuyers.entries()].filter(([, buyers]) => buyers.size >= 2).map(([serviceId]) => serviceId)
+  const level: SellerCommerceRestrictionLevel = buyerIds.size >= 3 ? 'account_limited' : affectedServiceIds.length ? 'service_limited' : 'normal'
+  return clone({
+    level,
+    activeDisputeCount: active.length,
+    activeBuyerCount: buyerIds.size,
+    blockingDisputeCount: level === 'normal' ? 0 : active.length,
+    affectedServiceIds,
+    reasonCodes: level === 'account_limited' ? ['account_multiple_buyers'] : level === 'service_limited' ? ['service_multiple_buyers'] : [],
+    disputes: active.filter(item => item.disputeCaseId).map(item => ({
+      disputeId: item.disputeCaseId!, orderId: item.id, orderNo: item.orderNo,
+      apiServiceId: item.apiServiceId, serviceTitle: item.serviceTitle,
+      status: item.disputeStatus ?? 'none', nextActor: item.disputeNextActor ?? 'none',
+      dueAt: item.disputeDueAt, restrictionLevel: level, reasonCodes: [],
+    })),
+    nextReleaseAt: null,
+  })
 }
 
 export async function getApiOrderById(id: string, perspective: 'buyer' | 'merchant' = 'buyer') {

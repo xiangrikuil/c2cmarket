@@ -2926,8 +2926,8 @@ paths:
           in: query
           schema:
             type: string
-            enum: [all, active, none]
-          description: Filter by whether the order currently has an active dispute.
+            enum: [all, active, none, needs_action, waiting_counterparty, platform_review]
+          description: Filter by active-dispute state or by the current participant queue.
       responses:
         "200":
           description: Current user's API orders as buyer.
@@ -4773,8 +4773,8 @@ paths:
           in: query
           schema:
             type: string
-            enum: [all, active, none]
-          description: Filter by whether the order currently has an active dispute.
+            enum: [all, active, none, needs_action, waiting_counterparty, platform_review]
+          description: Filter by active-dispute state or by the seller's current queue.
       responses:
         "200":
           description: API orders for services owned by the current user.
@@ -4783,6 +4783,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIOrderList"
         "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-orders/commerce-status:
+    get:
+      operationId: getSellerCommerceStatus
+      tags: [OwnerAPIOrders]
+      description: Returns the server-authoritative temporary commerce restriction derived from active API-order disputes. Formal user restrictions remain independent.
+      responses:
+        "200":
+          description: Current seller commerce status. Sensitive dispute relations are private and must not be cached.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SellerCommerceStatus"
+        "403":
           $ref: "#/components/responses/Problem"
   /api/v1/owner/api-orders/{id}:
     get:
@@ -9278,12 +9296,15 @@ components:
             $ref: "#/components/schemas/Notification"
     NavigationBadgeRoleSummary:
       type: object
-      required: [carpoolActions, apiOrderActions]
+      required: [carpoolActions, apiOrderActions, apiOrderDisputes]
       properties:
         carpoolActions:
           type: integer
           minimum: 0
         apiOrderActions:
+          type: integer
+          minimum: 0
+        apiOrderDisputes:
           type: integer
           minimum: 0
     NavigationBadgeAdminSummary:
@@ -15248,6 +15269,76 @@ components:
           description: Immutable credential-free initial message.
         evidenceAssetIds:
           $ref: "#/components/schemas/DisputeEvidenceAssetIds"
+    SellerCommerceDispute:
+      type: object
+      additionalProperties: false
+      required: [disputeId, orderId, orderNo, apiServiceId, serviceTitle, status, nextActor, restrictionLevel, reasonCodes]
+      properties:
+        disputeId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        apiServiceId:
+          type: string
+          format: uuid
+        serviceTitle:
+          type: string
+        status:
+          type: string
+          enum: [negotiating, pending_seller_response, pending_applicant_decision, open, awaiting_fulfillment, fulfillment_confirmation]
+        nextActor:
+          type: string
+          enum: [applicant, respondent, admin, responsible_party, counterparty, none]
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        restrictionLevel:
+          type: string
+          enum: [normal, service_limited, account_limited]
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            enum: [service_multiple_buyers, seller_response_overdue, account_multiple_buyers, remedy_fulfillment_overdue]
+    SellerCommerceStatus:
+      type: object
+      additionalProperties: false
+      required: [level, activeDisputeCount, activeBuyerCount, blockingDisputeCount, affectedServiceIds, reasonCodes, disputes]
+      properties:
+        level:
+          type: string
+          enum: [normal, service_limited, account_limited]
+        activeDisputeCount:
+          type: integer
+          minimum: 0
+        activeBuyerCount:
+          type: integer
+          minimum: 0
+        blockingDisputeCount:
+          type: integer
+          minimum: 0
+        affectedServiceIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        reasonCodes:
+          type: array
+          items:
+            type: string
+            enum: [service_multiple_buyers, seller_response_overdue, account_multiple_buyers, remedy_fulfillment_overdue]
+        disputes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SellerCommerceDispute"
+        nextReleaseAt:
+          type: [string, "null"]
+          format: date-time
+          description: Earliest automatic buyer-side deadline among currently blocking disputes when one exists; null when release requires an explicit action.
     APIOrder:
       type: object
       additionalProperties: false

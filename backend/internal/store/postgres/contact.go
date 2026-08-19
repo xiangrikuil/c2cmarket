@@ -226,6 +226,9 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
+	if current.Type == "wechat" && (input.Type != "wechat" || !input.Enabled) {
+		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能停用或改为其他联系方式。")
+	}
 
 	method.ID = current.ID
 	method.UserID = current.UserID
@@ -349,6 +352,24 @@ func (s *Store) DeleteContactMethodWithIdempotency(ctx context.Context, entry id
 }
 
 func deleteContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
+	var currentType string
+	if err := tx.QueryRow(ctx, `
+		SELECT type
+		FROM contact_methods
+		WHERE id = $1 AND user_id = $2 AND enabled = true
+		FOR UPDATE
+	`, methodID, userID).Scan(&currentType); errors.Is(err, pgx.ErrNoRows) {
+		return contact.ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+	} else if err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	if currentType == "wechat" {
+		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能解除绑定。")
+	}
+	if currentType == "linuxdo" {
+		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
+	}
+
 	var method contact.ContactMethod
 	err := tx.QueryRow(ctx, `
 		UPDATE contact_methods

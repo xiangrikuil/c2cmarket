@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const detail = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
+const deliveryPage = readFileSync(new URL('../../pages/ApiOrderDeliveryContentPage.vue', import.meta.url), 'utf8')
+const credentialCard = readFileSync(new URL('../../components/api-order/ApiOrderDeliveryCredentialCard.vue', import.meta.url), 'utf8')
 const buyerList = readFileSync(new URL('../../pages/MyApiOrdersPage.vue', import.meta.url), 'utf8')
 const merchantList = readFileSync(new URL('../../pages/MerchantApiOrdersPage.vue', import.meta.url), 'utf8')
 const adminDetail = readFileSync(new URL('../../pages/AdminApiOrderDetailPage.vue', import.meta.url), 'utf8')
@@ -14,11 +16,31 @@ describe('API 订单角色视图', () => {
   it('gives the buyer a review window and explicit credential actions', () => {
     expect(detail).toContain("'API 购买订单'")
     expect(detail).toContain('凭证核验剩余时间')
-    expect(detail).toContain('确认凭证可用')
-    expect(detail).toContain('凭证存在问题')
-    expect(detail).toContain('credentialProblemOptions')
+    expect(detail).toContain('查看交付内容')
+    expect(detail).not.toContain('credentialProblemOpen')
     expect(detail).not.toContain('window.confirm')
     expect(buyerList).toContain("'待核验'")
+    expect(deliveryPage).toContain('确认凭证可用')
+    expect(deliveryPage).toContain('凭证存在问题')
+    expect(deliveryPage).toContain('API_ORDER_CREDENTIAL_PROBLEM_OPTIONS')
+    expect(deliveryPage).toContain("import { Label } from '@/components/ui/label'")
+    expect(deliveryPage).toContain(':for="`credential-problem-${option.value}`"')
+  })
+
+  it('provides a focused buyer delivery route and direct list entry', () => {
+    expect(router).toContain("path: '/my/api-orders/:id/delivery'")
+    expect(router).toContain("name: 'my-api-order-delivery'")
+    expect(buyerList).toContain('`/my/api-orders/${item.id}/delivery`')
+    expect(buyerList).toContain('查看交付')
+    expect(buyerList).toContain("event.target instanceof Element && event.target.closest('a,button')")
+    expect(detail).toContain('`/my/api-orders/${order.id}/delivery`')
+    expect(detail).toContain('查看交付内容')
+    expect(deliveryPage).toContain("useApiOrder(id, 'buyer')")
+    expect(deliveryPage).toContain('max-w-3xl')
+    expect(deliveryPage).toContain('卖家交付内容')
+    expect(deliveryPage).not.toContain('lg:grid-cols-[minmax(0,0.95fr)')
+    expect(deliveryPage).not.toContain('购买时额度规则')
+    expect(deliveryPage).not.toContain('付款方式')
   })
 
   it('ends seller work immediately after credential delivery', () => {
@@ -26,6 +48,22 @@ describe('API 订单角色视图', () => {
     expect(detail).toContain('已完成交付，无需继续操作')
     expect(merchantList).toContain('提交凭证后你的履约任务即完成')
     expect(merchantList).not.toContain('等待买家确认完成')
+  })
+
+  it('prioritizes active dispute state across seller list and shared detail', () => {
+    expect(merchantList).toContain("baseFilteredRows.value.filter(hasActiveDispute).length")
+    expect(merchantList).toContain("hasActiveDispute(item) ? getApiOrderDisputeStatusLabel(item.disputeStatus) : getApiOrderDisplayStatus(item, 'merchant')")
+    expect(merchantList).toContain(":tone=\"hasActiveDispute(item) ? 'risk' : undefined\"")
+    expect(merchantList).toContain(":class=\"hasActiveDispute(item) ? 'bg-risk/5' : ''\"")
+    expect(merchantList).not.toContain('<StatusBadge v-if="item.disputeCaseId" status="open"')
+    expect(detail).toContain('const primaryStatusLabel = computed')
+    expect(detail).toContain('if (activeDispute.value) return null')
+    expect(detail).toContain("const canOpenReviewCenter = computed(() => !activeDispute.value && order.value?.status === 'completed')")
+    expect(detail).toContain(":tone=\"activeDispute ? 'risk' : undefined\"")
+    expect(detail).toContain("activeDispute ? 'border-risk/30 bg-risk/5'")
+    expect(detail).toContain('v-if="activeDispute && disputePanelId"')
+    expect(detail).toContain('进入纠纷处理')
+    expect(detail).toContain('{{ primaryStatusLabel }}')
   })
 
   it('registers a read-only admin detail without rendering secret properties', () => {
@@ -106,20 +144,25 @@ describe('API 订单详情 UI 契约', () => {
   })
 
   it('默认遮罩 API Key 和初始密码并保留显示与复制动作', () => {
-    expect(source).toContain('function maskCredential')
-    expect(source).toContain("const apiKeyVisible = ref(false)")
-    expect(source).toContain("const passwordVisible = ref(false)")
-    expect(source).toContain("apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey)")
-    expect(source).toContain("passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password)")
-    expect(source).toContain('复制 API Key')
-    expect(source).toContain('显示初始密码')
+    expect(credentialCard).toContain('function maskCredential')
+    expect(credentialCard).toContain("const apiKeyVisible = ref(false)")
+    expect(credentialCard).toContain("const passwordVisible = ref(false)")
+    expect(credentialCard).toContain('apiKeyVisible ? credential.apiKey : maskCredential(credential.apiKey)')
+    expect(credentialCard).toContain('passwordVisible ? credential.password : maskCredential(credential.password)')
+    expect(credentialCard).toContain('复制 API Key')
+    expect(credentialCard).toContain('显示初始密码')
+    expect(credentialCard).toContain('打开 API Base URL')
+    expect(credentialCard).toContain('打开登录地址')
+    expect(credentialCard).toContain('watch(')
+    expect(credentialCard).toContain('apiKeyVisible.value = false')
+    expect(credentialCard).toContain('passwordVisible.value = false')
   })
 
   it('凭证销毁后仅展示审计事实且不承诺长期保存', () => {
-    expect(source).toContain('order.deliveryCredential.destroyedAt')
-    expect(source).toContain('历史凭证已按保留策略销毁')
-    expect(source).toContain('保留期内可查看')
-    expect(source).not.toContain('长期可查看')
+    expect(credentialCard).toContain('credential.destroyedAt')
+    expect(credentialCard).toContain('历史凭证已按保留策略销毁')
+    expect(credentialCard).toContain('保留期内可查看')
+    expect(credentialCard).not.toContain('长期可查看')
   })
 
   it('通过 shadcn-vue RadioGroupItem 与 Label 组合单选项', () => {

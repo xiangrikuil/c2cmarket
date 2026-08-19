@@ -64,7 +64,7 @@ func TestParseAdminAPIOrderFilterTreatsEmptyDefaultsAsUnfiltered(t *testing.T) {
 }
 
 func TestValidateAPIOrderListQueryRejectsUnknownDisputeFilter(t *testing.T) {
-	for _, value := range []string{"", "all", "active", "none"} {
+	for _, value := range []string{"", "all", "active", "none", "needs_action", "waiting_counterparty", "platform_review"} {
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/me/api-orders?dispute="+value, nil)
 		if appErr := validateAPIOrderListQuery(request); appErr != nil {
 			t.Fatalf("dispute filter %q rejected: %+v", value, appErr)
@@ -75,5 +75,32 @@ func TestValidateAPIOrderListQueryRejectsUnknownDisputeFilter(t *testing.T) {
 	appErr := validateAPIOrderListQuery(request)
 	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || appErr.Code != "VALIDATION_FAILED" || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "dispute" {
 		t.Fatalf("unexpected invalid dispute filter error: %+v", appErr)
+	}
+}
+
+func TestFilterAPIOrdersSupportsParticipantDisputeQueues(t *testing.T) {
+	orders := []apiorder.Order{
+		{ID: "seller-action", DisputeStatus: apiorder.DisputeStatusPendingSellerResponse, DisputeNextActor: "respondent", DisputeNextUserID: "seller-1"},
+		{ID: "buyer-action", DisputeStatus: apiorder.DisputeStatusFulfillmentConfirmation, DisputeNextActor: "counterparty", DisputeNextUserID: "buyer-1"},
+		{ID: "platform-review", DisputeStatus: apiorder.DisputeStatusOpen, DisputeNextActor: "admin"},
+		{ID: "closed", DisputeStatus: apiorder.DisputeStatusClosed, DisputeNextActor: "none"},
+	}
+
+	tests := []struct {
+		filter string
+		wantID string
+	}{
+		{filter: apiOrderDisputeFilterNeedsAction, wantID: "seller-action"},
+		{filter: apiOrderDisputeFilterWaitingCounterparty, wantID: "buyer-action"},
+		{filter: apiOrderDisputeFilterPlatformReview, wantID: "platform-review"},
+	}
+	for _, test := range tests {
+		t.Run(test.filter, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-orders?dispute="+test.filter, nil)
+			filtered := filterAPIOrders(request, orders, "seller-1")
+			if len(filtered) != 1 || filtered[0].ID != test.wantID {
+				t.Fatalf("filter %q returned %+v, want %q", test.filter, filtered, test.wantID)
+			}
+		})
 	}
 }

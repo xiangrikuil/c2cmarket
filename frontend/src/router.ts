@@ -26,6 +26,7 @@ const MyApiServiceDetailPage = () => import('@/pages/MyApiServiceDetailPage.vue'
 const MyApiProbeConnectionsPage = () => import('@/pages/MyApiProbeConnectionsPage.vue')
 const ApiModelTesterPage = () => import('@/pages/ApiModelTesterPage.vue')
 const ApiPurchaseOrderDetailPage = () => import('@/pages/ApiPurchaseOrderDetailPage.vue')
+const ApiOrderDeliveryContentPage = () => import('@/pages/ApiOrderDeliveryContentPage.vue')
 const MyApiOrderDisputePage = () => import('@/pages/MyApiOrderDisputePage.vue')
 const LegacyApiIntentRedirectPage = () => import('@/pages/LegacyApiIntentRedirectPage.vue')
 const MerchantApiOrdersPage = () => import('@/pages/MerchantApiOrdersPage.vue')
@@ -154,6 +155,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage, meta: userAuthMeta },
     { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: userAuthMeta },
+    { path: '/my/api-orders/:id/delivery', name: 'my-api-order-delivery', component: ApiOrderDeliveryContentPage, meta: userAuthMeta },
     { path: '/my/disputes/:id', name: 'my-api-order-dispute', component: MyApiOrderDisputePage, meta: userAuthMeta },
     { path: '/my/api-services', name: 'my-api-services', component: MyApiServicesPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/my/api-services/:id', name: 'my-api-service-detail', component: MyApiServiceDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },

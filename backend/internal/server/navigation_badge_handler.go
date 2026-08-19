@@ -8,8 +8,9 @@ import (
 )
 
 type navigationBadgeRoleDTO struct {
-	CarpoolActions  int `json:"carpoolActions"`
-	APIOrderActions int `json:"apiOrderActions"`
+	CarpoolActions   int `json:"carpoolActions"`
+	APIOrderActions  int `json:"apiOrderActions"`
+	APIOrderDisputes int `json:"apiOrderDisputes"`
 }
 
 type navigationBadgeAdminDTO struct {
@@ -54,12 +55,14 @@ func toNavigationBadgeSummaryDTO(summary navigationbadge.Summary) navigationBadg
 		FeedbackUnread:              summary.FeedbackUnread,
 		SupportActionCount:          summary.SupportActionCount,
 		Buyer: navigationBadgeRoleDTO{
-			CarpoolActions:  summary.Buyer.CarpoolActions,
-			APIOrderActions: summary.Buyer.APIOrderActions,
+			CarpoolActions:   summary.Buyer.CarpoolActions,
+			APIOrderActions:  summary.Buyer.APIOrderActions,
+			APIOrderDisputes: summary.Buyer.APIOrderDisputes,
 		},
 		Merchant: navigationBadgeRoleDTO{
-			CarpoolActions:  summary.Merchant.CarpoolActions,
-			APIOrderActions: summary.Merchant.APIOrderActions,
+			CarpoolActions:   summary.Merchant.CarpoolActions,
+			APIOrderActions:  summary.Merchant.APIOrderActions,
+			APIOrderDisputes: summary.Merchant.APIOrderDisputes,
 		},
 	}
 	if summary.Admin != nil {

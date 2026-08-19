@@ -14,6 +14,7 @@ import LocalTime from '@/components/market/LocalTime.vue'
 import { useMarkAllNotificationsReadMutation, useMarkNotificationReadMutation, useNotifications } from '@/queries/useMarketQueries'
 import { useAnnouncementUnreadCount, useAnnouncements } from '@/queries/useAnnouncementQueries'
 import { toast } from 'vue-sonner'
+import { businessNotificationCategory } from '@/lib/notificationUi'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,17 +34,12 @@ const activeTab = computed<NotificationTab>(() => {
   if (route.query.tab === 'announcements') return 'announcements'
   return 'todo'
 })
-const notificationCategory = (item: typeof notifications.value[number]): NotificationTab => {
-  if (['审核结果', '管理操作', '边界提醒'].includes(item.type)) return 'system'
-  if (item.unread) return 'todo'
-  return 'transactions'
-}
-const todoCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'todo').length)
-const transactionCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'transactions').length)
-const systemCount = computed(() => notifications.value.filter(item => notificationCategory(item) === 'system').length)
-const visibleNotifications = computed(() => notifications.value.filter(item => notificationCategory(item) === activeTab.value))
+const todoCount = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === 'todo').length)
+const transactionCount = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === 'transactions').length)
+const systemCount = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === 'system').length)
+const visibleNotifications = computed(() => notifications.value.filter(item => businessNotificationCategory(item) === activeTab.value))
 const stats = computed(() => [
-  { label: '待办未读', value: todoCount.value },
+  { label: '交易待办', value: todoCount.value },
   { label: '交易通知', value: transactionCount.value },
   { label: '系统通知', value: systemCount.value },
   { label: '平台公告', value: announcementUnreadCount.value ?? 0 },

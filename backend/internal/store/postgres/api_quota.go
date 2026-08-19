@@ -465,7 +465,7 @@ func (s *Store) ConfirmAPIQuotaSaleRoundFulfillmentWithIdempotency(ctx context.C
 		if !serviceReady || !batchReady {
 			return apiquota.SaleRound{}, invalidQuotaState("卖家账号、服务、探针、收款配置或额度批次当前不可履约。")
 		}
-		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, input.OwnerUserID, now); appErr != nil {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, input.OwnerUserID, round.APIServiceID, now); appErr != nil {
 			return apiquota.SaleRound{}, appErr
 		}
 		if round.FulfillmentConfirmedAt == nil {
@@ -521,7 +521,7 @@ func publishAPIQuotaBatchInTx(ctx context.Context, tx pgx.Tx, input apiquota.Bat
 	if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, batch.APIServiceID); appErr != nil {
 		return apiquota.Batch{}, appErr
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, batch.APIServiceID, now); appErr != nil {
 		return apiquota.Batch{}, appErr
 	}
 	if batch.Status != apiquota.BatchStatusDraft {
@@ -703,7 +703,7 @@ func (s *Store) updateAPIQuotaBatchStatusInTx(ctx context.Context, tx pgx.Tx, in
 		if appErr := ensureAPIServiceCatalogActiveInTx(ctx, tx, batch.APIServiceID); appErr != nil {
 			return apiquota.Batch{}, appErr
 		}
-		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, batch.APIServiceID, now); appErr != nil {
 			return apiquota.Batch{}, appErr
 		}
 	}
@@ -1244,7 +1244,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	if !serviceOrderable {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, invalidQuotaState("关联 API 服务当前不可接单。")
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, publication.Batch.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, publication.Batch.OwnerUserID, publication.Batch.APIServiceID, now); appErr != nil {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, appErr
 	}
 	if declaredMaxConcurrency < 1 {
@@ -1622,7 +1622,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if orderContext.OwnerUserID == input.BuyerUserID {
 		return apiorder.Order{}, idempotency.Completion{}, invalidQuotaState("不能购买自己发布的额度包。")
 	}
-	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, now); appErr != nil {
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, orderContext.APIServiceID, now); appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
 	buyerMethod, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "购买额度包前必须先配置微信联系方式。")

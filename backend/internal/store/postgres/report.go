@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -910,10 +911,7 @@ func (s *Store) applyDisputeParticipantActionInTx(ctx context.Context, tx pgx.Tx
 		if appErr := insertDisputeEvent(ctx, tx, "dispute", item.ID, "remedy_claimed_fulfilled", input.ActorUserID, "user", input.Note, true, input.RequestID, now); appErr != nil {
 			return appErr
 		}
-		confirmationHours := "48"
-		if remedy.Source == report.RemedySourceSellerAcceptance {
-			confirmationHours = "24"
-		}
+		confirmationHours := strconv.Itoa(int(confirmationWindow.Hours()))
 		return insertDisputeNotifications(ctx, tx, item.ID, "dispute.remedy_claimed", "履行声明待确认", "责任方已声明履行，请在 "+confirmationHours+" 小时内确认是否收到或完成。", remedy.ID+":claimed", now, remedy.BeneficiaryUserID)
 
 	case report.DisputeRemedyActionConfirm, report.DisputeRemedyActionContest:
@@ -2793,7 +2791,7 @@ func insertInfoRequestOpenedSideEffects(ctx context.Context, tx pgx.Tx, request 
 	}
 	targetURL := "/my/reports/report/" + request.EntityID
 	if request.EntityType == report.InfoRequestEntityDispute {
-		targetURL = "/my/reports/dispute/" + request.EntityID
+		targetURL = "/my/disputes/" + request.EntityID
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO notifications (
@@ -2862,7 +2860,7 @@ func insertDisputeNotifications(ctx context.Context, tx pgx.Tx, disputeID, event
 			)
 			VALUES ($1, $2, $3, $4, $5, 'dispute', $6, $7, $3, $8, $9)
 			ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
-		`, uuid.NewString(), userID, eventType, title, body, disputeID, "/my/reports/dispute/"+disputeID,
+		`, uuid.NewString(), userID, eventType, title, body, disputeID, "/my/disputes/"+disputeID,
 			"api-order-dispute-remedy:"+disputeID+":"+dedupeSuffix, now); err != nil {
 			return internalStoreError()
 		}

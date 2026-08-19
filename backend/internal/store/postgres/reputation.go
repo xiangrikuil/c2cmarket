@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
@@ -1219,7 +1220,7 @@ func (s *Store) FindActiveRestriction(ctx context.Context, userID, role, action 
 	return &item, nil
 }
 
-func ensureAPIServicePublishAllowedInTx(ctx context.Context, tx pgx.Tx, sellerUserID string, now time.Time) *domain.AppError {
+func ensureAPIServicePublishAllowedInTx(ctx context.Context, tx pgx.Tx, sellerUserID, apiServiceID string, now time.Time) *domain.AppError {
 	var userExists bool
 	if err := tx.QueryRow(ctx, `SELECT true FROM users WHERE id = $1 FOR SHARE`, sellerUserID).Scan(&userExists); err != nil {
 		return internalStoreError()
@@ -1252,19 +1253,16 @@ func ensureAPIServicePublishAllowedInTx(ctx context.Context, tx pgx.Tx, sellerUs
 		return domain.NewError(http.StatusForbidden, domain.CodeReputationActionRestricted, "Reputation action restricted", publicReason)
 	}
 
-	var activeDispute bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM api_orders
-			WHERE seller_user_id = $1
-			  AND dispute_status IN ('negotiating', 'open', 'awaiting_fulfillment', 'fulfillment_confirmation')
-		)
-	`, sellerUserID).Scan(&activeDispute); err != nil {
-		return internalStoreError()
+	commerce, appErr := sellerCommerceStatus(ctx, tx, sellerUserID, now)
+	if appErr != nil {
+		return appErr
 	}
-	if activeDispute {
-		return domain.NewError(http.StatusConflict, domain.CodeActiveAPIOrderDispute, "Active API order dispute", "当前存在未解决的 API 订单纠纷，暂不能发布或恢复 API 服务与额度，也不会接收新订单。请先完成纠纷处理。")
+	if commerce.BlocksService(apiServiceID) {
+		detail := "当前服务因多位买家的活动纠纷或卖家响应逾期，暂时不能开启新接单。其他未受影响服务仍可正常经营。"
+		if commerce.Level == apiorder.CommerceRestrictionAccount {
+			detail = "当前账号因多位买家的活动纠纷或纠纷履行逾期，暂时不能开启新接单。已成立订单仍可继续履约。"
+		}
+		return domain.NewError(http.StatusConflict, domain.CodeActiveAPIOrderDispute, "API order dispute commerce restriction", detail)
 	}
 	return nil
 }

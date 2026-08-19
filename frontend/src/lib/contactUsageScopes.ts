@@ -56,7 +56,9 @@ export function buildContactMethodPayload(input: {
     type: input.type,
     label: input.label,
     displayValue: input.displayValue.trim(),
-    usageScopes: normalizeContactUsageScopes(input.usageScopes),
+    usageScopes: input.type === 'wechat'
+      ? [...ALL_CONTACT_USAGE_SCOPES]
+      : normalizeContactUsageScopes(input.usageScopes),
     isDefault: input.current?.isDefault ?? false,
     enabled: true,
   }

@@ -3385,6 +3385,85 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 }
 
+func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotency(t *testing.T) {
+	server := newTestServer(time.Now())
+	student := createStudentSession(t, server, "contact-scope-student")
+
+	sellerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"seller-scope@example.edu",
+		"usageScopes":["api_merchant"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(sellerScope, student, "student-contact-scope")
+	sellerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(sellerScopeResponse, sellerScope)
+	if sellerScopeResponse.Code != http.StatusForbidden {
+		t.Fatalf("student seller contact scope status %d body %s", sellerScopeResponse.Code, sellerScopeResponse.Body.String())
+	}
+	assertProblemCode(t, sellerScopeResponse, domain.CodeCapabilityRequired)
+
+	buyerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"buyer-scope@example.edu",
+		"usageScopes":["dispute","buyer","dispute"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	// Reuse the rejected request key to prove capability denial precedes idempotency acquisition.
+	addAuth(buyerScope, student, "student-contact-scope")
+	buyerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(buyerScopeResponse, buyerScope)
+	if buyerScopeResponse.Code != http.StatusCreated {
+		t.Fatalf("student buyer contact scope status %d body %s", buyerScopeResponse.Code, buyerScopeResponse.Body.String())
+	}
+	var created struct {
+		ID          string   `json:"id"`
+		UsageScopes []string `json:"usageScopes"`
+	}
+	if err := json.NewDecoder(buyerScopeResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode student contact: %v", err)
+	}
+	if created.ID == "" || !slices.Equal(created.UsageScopes, []string{"buyer", "dispute"}) {
+		t.Fatalf("unexpected canonical student contact scopes: %+v", created)
+	}
+
+	updateSellerScope := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
+		"type":"email",
+		"label":"学生邮箱",
+		"value":"buyer-scope@example.edu",
+		"usageScopes":["carpool_owner","buyer"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(updateSellerScope, student, "")
+	updateSellerScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateSellerScopeResponse, updateSellerScope)
+	if updateSellerScopeResponse.Code != http.StatusForbidden {
+		t.Fatalf("student update seller scope status %d body %s", updateSellerScopeResponse.Code, updateSellerScopeResponse.Body.String())
+	}
+	assertProblemCode(t, updateSellerScopeResponse, domain.CodeCapabilityRequired)
+
+	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+		"type":"email",
+		"label":"未知范围邮箱",
+		"value":"unknown-scope@example.edu",
+		"usageScopes":["unknown_scope"],
+		"isDefault":false,
+		"enabled":true
+	}`)
+	addAuth(unknownScope, student, "student-contact-unknown-scope")
+	unknownScopeResponse := httptest.NewRecorder()
+	server.ServeHTTP(unknownScopeResponse, unknownScope)
+	if unknownScopeResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown contact scope status %d body %s", unknownScopeResponse.Code, unknownScopeResponse.Body.String())
+	}
+	assertProblemCode(t, unknownScopeResponse, domain.CodeValidationFailed)
+}
+
 func TestStudentWechatScopesAreAutomaticAndDoNotGrantSellerCapability(t *testing.T) {
 	server := newTestServer(time.Now())
 	student := createStudentSession(t, server, "contact-scope-student")
@@ -3435,6 +3514,15 @@ func TestStudentWechatScopesAreAutomaticAndDoNotGrantSellerCapability(t *testing
 	if err := json.NewDecoder(updateWechatResponse.Body).Decode(&updated); err != nil || !slices.Equal(updated.UsageScopes, wantScopes) {
 		t.Fatalf("updated WeChat scopes were not normalized: payload=%+v error=%v", updated, err)
 	}
+
+	deleteWechat := httptest.NewRequest(http.MethodDelete, "/api/v1/contact-methods/"+created.ID, nil)
+	addAuth(deleteWechat, student, "student-required-wechat-delete")
+	deleteWechatResponse := httptest.NewRecorder()
+	server.ServeHTTP(deleteWechatResponse, deleteWechat)
+	if deleteWechatResponse.Code != http.StatusConflict {
+		t.Fatalf("required WeChat delete status %d body %s", deleteWechatResponse.Code, deleteWechatResponse.Body.String())
+	}
+	assertProblemCode(t, deleteWechatResponse, domain.CodeInvalidStateTransition)
 
 	merchantWrite := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", `{}`)
 	addAuth(merchantWrite, student, "student-api-service-create")

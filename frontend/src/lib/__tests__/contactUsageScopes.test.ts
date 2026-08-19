@@ -46,16 +46,16 @@ describe('联系方式适用场景', () => {
     expect(sameContactUsageScopes(['api_merchant', 'buyer', 'dispute'], ['buyer', 'dispute'])).toBe(false)
   })
 
-  it('保存载荷使用显式草稿用途并按契约顺序去重', () => {
+  it('微信保存载荷固定使用全部用途，不能被草稿缩窄', () => {
     expect(buildContactMethodPayload({
       type: 'wechat',
       label: '微信',
       displayValue: ' wx_user_123 ',
-      usageScopes: ['buyer', 'api_merchant', 'api_merchant', 'dispute'],
+      usageScopes: ['buyer'],
       current: currentWechat,
     })).toMatchObject({
       displayValue: 'wx_user_123',
-      usageScopes: ['api_merchant', 'buyer', 'dispute'],
+      usageScopes: ['carpool_owner', 'api_merchant', 'buyer', 'dispute'],
       enabled: true,
     })
     expect(normalizeContactUsageScopes(['dispute', 'api_merchant', 'buyer']))

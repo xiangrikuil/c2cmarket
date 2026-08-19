@@ -135,6 +135,33 @@ test('keeps an expired delivered order open when a credential dispute exists', a
   assert.equal(api.getApiOrderNextAction(order, 'buyer'), '等待平台处理凭证问题')
 })
 
+test('counts active disputes once in navigation actions and exposes their risk count', async () => {
+  const disputed = {
+    ...orderWithStatus('payment_submitted'),
+    disputeStatus: 'open' as const,
+  }
+  const api = await loadApiWithStoredOrder(disputed)
+
+  const summary = await api.getNavigationBadges()
+  assert.equal(summary.buyer.apiOrderActions, 1)
+  assert.equal(summary.buyer.apiOrderDisputes, 1)
+  assert.equal(summary.merchant.apiOrderActions, 1)
+  assert.equal(summary.merchant.apiOrderDisputes, 1)
+})
+
+test('keeps terminal dispute history out of navigation risk counts', async () => {
+  const resolved = {
+    ...orderWithStatus('completed'),
+    disputeStatus: 'closed' as const,
+    hasDisputeHistory: true,
+  }
+  const api = await loadApiWithStoredOrder(resolved)
+
+  const summary = await api.getNavigationBadges()
+  assert.equal(summary.buyer.apiOrderDisputes, 0)
+  assert.equal(summary.merchant.apiOrderDisputes, 0)
+})
+
 test('rejects completion before the seller submits delivery', async () => {
   const api = await loadApiWithOrder('paid_confirmed')
 

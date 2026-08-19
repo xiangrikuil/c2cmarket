@@ -7,9 +7,9 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-1.md`
-- **Total Sessions**: 66
-- **Last Active**: 2026-08-17
+- **Active File**: `journal-2.md`
+- **Total Sessions**: 69
+- **Last Active**: 2026-08-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1994 | Active |
+| `journal-2.md` | ~75 | Active |
+| `journal-1.md` | ~1994 | Archived |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +30,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 69 | 2026-08-19 | 卖家纠纷状态与红色待办徽章 | `498f4c8` | `codex/api-order-delivery-content-view` |
+| 68 | 2026-08-19 | API delivery, account, commerce, and inline probe workflows | `ae60091`, `cfeeef2`, `ced709a` | `codex/api-order-delivery-content-view` |
+| 67 | 2026-08-18 | 修复 API 服务排序参数 422 | `9c8aa43` | `staging` |
 | 66 | 2026-08-17 | 完善 API 市场排序筛选 | `10a37bf` | `staging` |
 | 65 | 2026-08-17 | 拼车一次性撮合与完整车源条件 | `667f213` | `codex/carpool-lightweight-matching` |
 | 64 | 2026-08-16 | API 市场卡片身份、模型与图标修复 | `bfdffae` | `staging` |

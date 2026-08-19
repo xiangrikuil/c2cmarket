@@ -103,10 +103,11 @@ const (
 	RemedyLatenessLateConfirmed  = "late_confirmed"
 	RemedyLatenessLateExcused    = "late_excused"
 
-	RemedyConfirmationWindow          = 48 * time.Hour
+	RemedyConfirmationWindow          = 24 * time.Hour
 	VoluntaryRemedyConfirmationWindow = 24 * time.Hour
+	RemedyConfirmationReminderLead    = 2 * time.Hour
 	DisputeResponseWindow             = 24 * time.Hour
-	DisputeApplicantDecisionWindow    = 3 * 24 * time.Hour
+	DisputeApplicantDecisionWindow    = 24 * time.Hour
 	VoluntaryRemedyFulfillmentWindow  = 24 * time.Hour
 	DisputeInfoRequestWindow          = 48 * time.Hour
 	DisputeAppealWindow               = 30 * 24 * time.Hour

@@ -49,6 +49,10 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 	if err != nil {
 		return maintenance.Result{}, internalStoreError()
 	}
+	result.DisputeRemedyConfirmationReminders, err = sendDisputeRemedyConfirmationRemindersInTx(ctx, tx, now, batchSize)
+	if err != nil {
+		return maintenance.Result{}, internalStoreError()
+	}
 	result.DisputeRemedyConfirmationsExpired, err = expireDisputeRemedyConfirmationsInTx(ctx, tx, now, batchSize)
 	if err != nil {
 		return maintenance.Result{}, internalStoreError()
@@ -451,6 +455,66 @@ type expiredDisputeRemedyCandidate struct {
 	ResponsibleID string
 	BeneficiaryID string
 	Source        string
+}
+
+type disputeRemedyConfirmationReminderCandidate struct {
+	RemedyID      string
+	DisputeID     string
+	BeneficiaryID string
+}
+
+func sendDisputeRemedyConfirmationRemindersInTx(ctx context.Context, tx pgx.Tx, now time.Time, batchSize int) (int64, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT remedy.id::text, dispute.id::text, remedy.beneficiary_user_id::text
+		FROM api_order_dispute_remedies remedy
+		JOIN dispute_cases dispute ON dispute.id = remedy.dispute_case_id
+		JOIN api_orders api_order
+		  ON api_order.id = dispute.api_order_id
+		 AND api_order.dispute_case_id = dispute.id
+		WHERE remedy.status = 'claimed_fulfilled'
+		  AND remedy.confirmation_due_at > $1
+		  AND remedy.confirmation_due_at <= $1 + $2::interval
+		  AND dispute.active = true
+		  AND dispute.status IN ('resolved', 'voluntary_fulfillment')
+		  AND api_order.dispute_status = 'fulfillment_confirmation'
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM notifications notification
+		    WHERE notification.user_id = remedy.beneficiary_user_id
+		      AND notification.dedupe_key = 'api-order-dispute-remedy:' || dispute.id::text || ':' || remedy.id::text || ':confirmation_due'
+		  )
+		ORDER BY remedy.confirmation_due_at, remedy.id
+		LIMIT $3
+		FOR UPDATE OF remedy SKIP LOCKED
+	`, now, report.RemedyConfirmationReminderLead, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	candidates := make([]disputeRemedyConfirmationReminderCandidate, 0)
+	for rows.Next() {
+		var candidate disputeRemedyConfirmationReminderCandidate
+		if err := rows.Scan(&candidate.RemedyID, &candidate.DisputeID, &candidate.BeneficiaryID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	for _, candidate := range candidates {
+		if appErr := insertDisputeNotifications(
+			ctx, tx, candidate.DisputeID, "dispute.remedy_confirmation_due",
+			"处理结果即将到期", "卖家已提交处理结果，请在 2 小时内确认是否完成；逾期未反馈将中性结案，平台不据此认定退款已到账。",
+			candidate.RemedyID+":confirmation_due", now, candidate.BeneficiaryID,
+		); appErr != nil {
+			return 0, errors.New(appErr.Detail)
+		}
+	}
+	return int64(len(candidates)), nil
 }
 
 func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now time.Time, batchSize int) (int64, error) {

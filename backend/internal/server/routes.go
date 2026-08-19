@@ -232,6 +232,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-purchase-intents/{id}/mark-contacted", s.handleMarkAPIPurchaseIntentContacted)
 		r.Post("/owner/api-purchase-intents/{id}/close", s.handleCloseAPIPurchaseIntent)
 		r.Get("/owner/api-orders", s.handleOwnerAPIOrders)
+		r.Get("/owner/api-orders/commerce-status", s.handleSellerCommerceStatus)
 		r.Get("/owner/api-orders/{id}", s.handleOwnerAPIOrder)
 		r.Post("/owner/api-orders/{id}/confirm-payment", s.handleConfirmAPIOrderPayment)
 		r.Post("/owner/api-orders/{id}/report-payment-issue", s.handleReportAPIOrderPaymentIssue)

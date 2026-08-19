@@ -327,6 +327,9 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	if !ok || current.UserID != input.UserID {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 	}
+	if appErr := validateRequiredWechatUpdate(current, input); appErr != nil {
+		return ContactMethod{}, appErr
+	}
 	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(input.UserID, input.MethodID) {
 		return ContactMethod{}, DuplicateEnabledWechatError()
 	}
@@ -422,8 +425,8 @@ func (s *Service) DeleteMethodWithRequestID(ctx context.Context, userID, methodI
 	if !ok || method.UserID != userID {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 	}
-	if method.Type == "linuxdo" {
-		return ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
+	if method.Type == "linuxdo" || method.Type == "wechat" {
+		return ContactMethod{}, protectedContactDeleteError(method.Type)
 	}
 	method.Enabled = false
 	method.UpdatedAt = now
@@ -1169,6 +1172,23 @@ func normalizeUsageScopes(input []string) ([]string, *domain.AppError) {
 		}
 	}
 	return result, nil
+}
+
+func validateRequiredWechatUpdate(current ContactMethod, input UpdateContactMethodInput) *domain.AppError {
+	if current.Type != "wechat" {
+		return nil
+	}
+	if strings.TrimSpace(input.Type) != "wechat" || !input.Enabled {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能停用或改为其他联系方式。")
+	}
+	return nil
+}
+
+func protectedContactDeleteError(methodType string) *domain.AppError {
+	if methodType == "wechat" {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能解除绑定。")
+	}
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
 }
 
 func equalUsageScopes(left, right []string) bool {

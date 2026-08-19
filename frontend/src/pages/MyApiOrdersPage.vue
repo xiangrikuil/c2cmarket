@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { ArrowRight, CalendarClock, Code2, WalletCards } from 'lucide-vue-next'
+import { ArrowRight, CalendarClock, Code2, KeyRound, WalletCards } from 'lucide-vue-next'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -83,19 +83,27 @@ function sellerInitial(value: string) {
 }
 
 function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
-  if (event instanceof MouseEvent && (event.target as HTMLElement).closest('a,button')) return
+  if (event.target instanceof Element && event.target.closest('a,button')) return
   router.push(`/my/api-orders/${id}`)
 }
 
 function disputeActionLabel(item: (typeof rows.value)[number]) {
-	if (item.disputeAvailableActions?.includes('request_platform_intervention')) return '可申请平台介入'
-	if (item.disputeAvailableActions?.includes('confirm_remedy')) return '确认卖家处理结果'
-	if (item.disputeAvailableActions?.includes('withdraw')) return '等待卖家处理，可撤回'
+  if (item.disputeAvailableActions?.includes('request_platform_intervention')) return '可申请平台介入'
+  if (item.disputeAvailableActions?.includes('confirm_remedy')) return '确认卖家处理结果'
+  if (item.disputeAvailableActions?.includes('withdraw')) return '等待卖家处理，可撤回'
   if (item.disputeNeedsAction) return '售后待你处理'
   if (item.disputeNextActor === 'admin') return '等待平台处理'
   if (item.disputeNextActor === 'respondent') return '等待卖家处理'
   if (item.disputeNextActor === 'responsible_party') return '等待卖家或责任方履行'
   if (item.disputeNextActor === 'counterparty') return '等待对方确认'
+  return '纠纷处理中'
+}
+
+function disputeStatusLabel(item: (typeof rows.value)[number]) {
+  if (item.disputeNeedsAction) return '待你处理'
+  if (item.disputeNextActor === 'admin') return '平台处理中'
+  if (item.disputeNextActor === 'respondent') return '等待卖家处理'
+  if (item.disputeNextActor === 'responsible_party') return '等待责任方履行'
   return '纠纷处理中'
 }
 </script>
@@ -137,9 +145,13 @@ function disputeActionLabel(item: (typeof rows.value)[number]) {
             <div class="my-transaction-metric"><small>创建时间</small><strong class="inline-flex items-center gap-1.5"><CalendarClock class="h-3.5 w-3.5 text-muted-foreground" /><LocalTime :value="item.createdAt" /></strong><em>付款和交付信息按参与方权限展示</em></div>
             <div class="my-transaction-state">
               <StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'buyer')" />
-              <StatusBadge v-if="item.disputeCaseId" status="open" label="售后处理中" />
+              <StatusBadge v-if="item.disputeCaseId" status="open" :label="disputeStatusLabel(item)" />
               <span>{{ item.disputeCaseId ? disputeActionLabel(item) : getApiOrderNextAction(item, 'buyer') }}</span>
+              <span v-if="item.disputeCaseId && item.disputeDueAt" class="text-xs text-muted-foreground">截止 <LocalTime :value="item.disputeDueAt" /></span>
               <RouterLink v-if="item.disputeCaseId" :to="`/my/disputes/${item.disputeCaseId}?orderId=${item.id}`" class="text-xs font-medium text-primary">查看案件</RouterLink>
+              <Button v-if="item.deliverySubmittedAt" as-child size="sm" class="mt-1">
+                <RouterLink :to="`/my/api-orders/${item.id}/delivery`"><KeyRound class="h-4 w-4" />查看交付</RouterLink>
+              </Button>
             </div>
             <ArrowRight class="my-transaction-arrow" />
           </Card>

@@ -46,6 +46,7 @@ import type {
   OwnerApiService,
   PublicApiQuotaOffer,
   SaveContactMethodRequest,
+  SellerCommerceStatus,
   SubmitApiOrderDeliveryCredentialPayload,
   Sub2ApiMarketFilters,
   UserContactMethod,
@@ -1967,6 +1968,10 @@ export async function backendOwnerAPIOrdersPage(filters: ApiOrderFilters = {}, p
 
 export async function backendOwnerAPIOrders(filters: ApiOrderFilters = {}) {
 	return collectCursorPages(page => backendOwnerAPIOrdersPage(filters, page))
+}
+
+export async function backendSellerCommerceStatus(): Promise<SellerCommerceStatus> {
+	return backendRequest<SellerCommerceStatus>('/api/v1/owner/api-orders/commerce-status')
 }
 
 export async function backendMyAPIOrder(id: string) {

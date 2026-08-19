@@ -2,7 +2,7 @@
 
 Date: 2026-08-09
 Author: Codex
-Updated: 2026-08-16
+Updated: 2026-08-18
 
 ## Scenario: Dispute Phase Projection Remains Separate From Order Fulfillment
 
@@ -647,4 +647,172 @@ GET recommendation -> one repeatable-read snapshot
 administrator POST -> revalidate -> explicit fixed-tier restriction
 restriction copy -> "limits new orders, publishing, and restoring; existing orders continue"
 new quota order -> check seller restriction -> claim inventory -> create order
+```
+
+## Scenario: Active Disputes Produce Tiered Commerce Restrictions And Live Action Notifications
+
+### 1. Scope / Trigger
+
+- Trigger: changing seller API-service publication, restoration, order creation, dispute aggregation, participant deadlines, notification classification, or the seller commerce-status UI.
+- Temporary dispute restrictions protect new commerce only. They are calculated from current API-order dispute facts and remain independent from administrator-created `user_restrictions`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/owner/api-orders/commerce-status
+
+CommerceRestrictionLevel:
+  normal | service_limited | account_limited
+
+CommerceReasonCode:
+  service_multiple_buyers | seller_response_overdue |
+  account_multiple_buyers | remedy_fulfillment_overdue
+
+SellerCommerceStatus:
+  level, activeDisputeCount, activeBuyerCount,
+  blockingDisputeCount, affectedServiceIds[], reasonCodes[],
+  disputes[], nextReleaseAt?
+
+apiorder.EvaluateSellerCommerce(facts, now) SellerCommerceStatus
+SellerCommerceStatus.BlocksService(apiServiceID) bool
+
+notification.Notification:
+  ActionRequired bool
+  ActionDueAt *time.Time
+```
+
+### 3. Contracts
+
+- Every active dispute freezes only its linked order. One ordinary dispute, one seller rejection awaiting the buyer, one claimed remedy awaiting buyer confirmation, or one buyer request for platform review does not by itself block unrelated commerce.
+- Active buyer counts are distinct by buyer user ID. Two distinct buyers with active disputes on the same API service produce `service_limited` for that service only. Three distinct buyers across the seller account produce `account_limited` for every service.
+- A seller-response deadline reached in `pending_seller_response` produces `service_limited` for the linked service. A fulfillment deadline reached in `awaiting_fulfillment` produces `account_limited`.
+- Closed, withdrawn, self-resolved, neutral-expiry, and incomplete facts do not count. Recalculation immediately lowers or clears temporary restrictions when active facts fall below a threshold.
+- Publication, restoration, opening sales, fixed-quota publication, and new normal/quota order creation call the same target-service-aware backend decision. Draft edits, reads, and fulfillment of already-created orders remain available.
+- Formal reputation restrictions are checked independently and keep their existing error code. Closing an ordinary dispute never removes or bypasses an administrator restriction.
+- Buyer decision and remedy-confirmation windows are exactly 24 hours. A reminder may be emitted once when no more than two hours remain. Expiry closes neutrally and must not claim buyer confirmation or platform verification of off-platform payment or delivery.
+- `dispute.remedy_claimed` and `dispute.remedy_confirmation_due` project as `交易待办` only while the current notification recipient is the beneficiary of an active `claimed_fulfilled` remedy and `now < confirmation_due_at`. After confirmation, contest, expiry, or the exact deadline, the historical notification projects as `交易通知` even if it remains unread.
+- Notification read state is not action-completion state. PostgreSQL derives `ActionRequired` from current dispute/remedy rows on every notification read; in-memory mode clears the corresponding action flag on transition and at its deadline.
+- Dispute notifications link to `/my/disputes/{disputeId}`. Seller pages show the returned restriction level, reasons, affected services, cases, action owner, and deadline; they do not infer sellability from labels.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| One active ordinary dispute or one active buyer | Linked order remains frozen; other sales remain enabled |
+| Same buyer opens multiple active disputes | Count once for account and once per affected service |
+| Two distinct buyers affect one service | `service_limited`; only that service is blocked |
+| Three distinct buyers affect any seller services | `account_limited`; all new API commerce is blocked |
+| Seller response is overdue | Linked service is blocked; unrelated services remain enabled |
+| Seller remedy fulfillment is overdue | Entire seller account is blocked from new API commerce |
+| Buyer requests platform review once | Case enters review; no new account/service restriction from that action alone |
+| Buyer confirms, contests, or reaches confirmation deadline | Prior confirmation notification is no longer `交易待办` |
+| Temporary restriction and formal reputation restriction overlap | Both remain independently effective; ordinary closure clears only the temporary calculation |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the seller submits complete handling evidence, the case waits for the buyer, and all unrelated services continue accepting orders while the seller sees that no action is currently required.
+- Good: two different buyers dispute one API service, so only that service is paused; after one case closes, recalculation restores it.
+- Base: one buyer has three active orders in dispute. The seller sees all three cases, but the account buyer count is one and no threshold restriction is created solely from repetition.
+- Bad: classify every unread remedy notification as a current to-do, leaving completed confirmation work pinned in the high-priority queue.
+- Bad: let the browser count dispute rows or decide whether a service can sell, or let one review-button click pause the entire seller account.
+
+### 6. Tests Required
+
+- Pure aggregation tests cover single ordinary disputes, same-buyer de-duplication, two buyers on one service, three buyers across services, seller-response overdue, fulfillment overdue, and closed/incomplete exclusion.
+- PostgreSQL/store tests assert aggregation uses real order ownership and service IDs and every publication/order gate calls the shared status decision before side effects.
+- Notification tests assert actionable and completed category projection, recipient/remedy matching, exact-deadline expiry, unrelated-dispute isolation, reminder idempotency, and the `/my/disputes/{id}` route.
+- Handler/OpenAPI tests cover the commerce-status route, response fields, session requirement, generated types, and route parity.
+- Frontend tests cover seller status rendering, publication controls, role-specific dispute filters/actions, mobile confirmation controls, and explicit off-platform verification disclaimers.
+- Gates: full Go test/vet, full Vitest, Nuxt typecheck and real-mode build, OpenAPI generated-type/route checks, desktop/mobile browser inspection, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+has any active dispute -> block every seller service
+notification unread=true -> transaction to-do
+buyer clicked platform review -> block seller account
+```
+
+#### Correct
+
+```text
+active dispute facts -> distinct buyers per service/account -> highest tier
+current claimed remedy + matching beneficiary + before deadline -> transaction to-do
+historical event after confirm/contest/expiry -> transaction notice
+formal restriction -> independent reputation gate
+```
+
+## Scenario: Active Disputes Override Seller Order Presentation And Navigation Tone
+
+### 1. Scope / Trigger
+
+- Trigger: changing seller API-order list/detail status presentation, navigation badge summaries, dispute projection phases, or Mock navigation counts.
+- This contract keeps fulfillment facts intact while preventing an unresolved dispute from being visually hidden by `api_orders.status=completed`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/me/navigation-badges
+
+NavigationBadgeRoleSummary:
+  carpoolActions: integer >= 0
+  apiOrderActions: integer >= 0
+  apiOrderDisputes: integer >= 0
+
+active API-order dispute projection:
+  negotiating | pending_seller_response | pending_applicant_decision |
+  open | awaiting_fulfillment | fulfillment_confirmation
+```
+
+### 3. Contracts
+
+- `apiOrderDisputes` counts orders with an active dispute projection for that role. `none` and the legacy terminal `closed` value do not count.
+- `apiOrderActions` is the distinct union of the role's ordinary order actions and active disputed orders. PostgreSQL evaluates one `OR` predicate per order; Mock mode applies the same union with `isApiOrderDisputeActive`.
+- The seller `API 销售订单` navigation item displays `merchant.apiOrderActions` and uses destructive/red treatment whenever `merchant.apiOrderDisputes > 0`, including disputes currently waiting for the buyer or administrator.
+- Active disputes use the shared dispute label as the primary seller list/detail status and risk styling. Fulfillment status remains stored and visible through the transaction workflow; it becomes primary again only after the dispute projection is terminal.
+- Seller list controls must not expose ordinary payment/delivery mutations while the active dispute freezes the order. The linked dispute case remains the primary action route.
+- Real backend DTOs, OpenAPI-generated types, handwritten frontend adapter types, and Mock summaries add the field together; no missing-field fallback is supported.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Completed order with active dispute | Primary seller status is the shared dispute phase; navigation risk is red |
+| Active dispute also matches an ordinary action status | `apiOrderActions` increases by one, not two |
+| Active dispute waits for buyer/admin | Remains included in seller count and red tone |
+| Dispute projects to `none` or legacy `closed` | Fulfillment status becomes primary and risk count decreases |
+| Real/Mock contract omits `apiOrderDisputes` | Contract/type check fails; do not silently infer zero |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a completed order in platform review appears as `平台审核中`, links to the case, and makes the sales-order menu badge red.
+- Base: a paid-confirmed order without a dispute remains `待交付` and uses the ordinary navigation badge treatment.
+- Bad: render `已完成` first and append a smaller dispute badge, count action and dispute queues separately, or make the shell load full order lists to derive risk.
+
+### 6. Tests Required
+
+- PostgreSQL source/integration tests assert the complete active status set, terminal exclusion, and per-order `OR` union for buyer and seller counts.
+- Handler/OpenAPI tests assert `apiOrderDisputes` survives the role summary, JSON DTO, generated types, and route contract.
+- Mock tests use an order that is both ordinarily actionable and disputed, then assert total action count is one and dispute count is one; terminal history asserts zero risk.
+- Frontend tests assert dispute-first list/detail labels, risk row/panel styling, hidden ordinary seller mutations, and destructive desktop/mobile navigation badges.
+- Gates: full Go test/vet, full Vitest, Nuxt typecheck, real-mode build, OpenAPI generated-type/route checks, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+seller actions count + dispute count -> visible badge total
+disputeCaseId exists -> always override fulfillment status
+completed + active dispute -> show "已完成" first
+```
+
+#### Correct
+
+```text
+count orders where ordinary_action OR active_dispute -> visible badge total
+isApiOrderDisputeActive(disputeStatus) -> presentation priority and risk tone
+apiOrderDisputes > 0 -> red seller navigation badge
 ```

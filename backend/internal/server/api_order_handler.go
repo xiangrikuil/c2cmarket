@@ -173,6 +173,30 @@ type apiOrderCatalogRiskHoldResponse struct {
 	Version        int64   `json:"version"`
 }
 
+type sellerCommerceStatusResponse struct {
+	Level                string                          `json:"level"`
+	ActiveDisputeCount   int                             `json:"activeDisputeCount"`
+	ActiveBuyerCount     int                             `json:"activeBuyerCount"`
+	BlockingDisputeCount int                             `json:"blockingDisputeCount"`
+	AffectedServiceIDs   []string                        `json:"affectedServiceIds"`
+	ReasonCodes          []string                        `json:"reasonCodes"`
+	Disputes             []sellerCommerceDisputeResponse `json:"disputes"`
+	NextReleaseAt        *string                         `json:"nextReleaseAt"`
+}
+
+type sellerCommerceDisputeResponse struct {
+	DisputeID        string   `json:"disputeId"`
+	OrderID          string   `json:"orderId"`
+	OrderNo          string   `json:"orderNo"`
+	APIServiceID     string   `json:"apiServiceId"`
+	ServiceTitle     string   `json:"serviceTitle"`
+	Status           string   `json:"status"`
+	NextActor        string   `json:"nextActor"`
+	DueAt            *string  `json:"dueAt"`
+	RestrictionLevel string   `json:"restrictionLevel"`
+	ReasonCodes      []string `json:"reasonCodes"`
+}
+
 type apiOrderCatalogRiskHoldRequest struct {
 	ResolutionNote string `json:"resolutionNote"`
 }
@@ -250,7 +274,7 @@ func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders), false))
+	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders, actor.UserID), false))
 }
 
 func (s *Server) handleAdminAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -536,7 +560,25 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders), true))
+	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders, actor.UserID), true))
+}
+
+func (s *Server) handleSellerCommerceStatus(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityAPIServicePublish) {
+		return
+	}
+	status, appErr := s.app.SellerCommerceStatus(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, toSellerCommerceStatusResponse(status))
 }
 
 func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -663,6 +705,24 @@ func toAPIOrderResponses(orders []apiorder.Order, ownerView bool) []apiOrderResp
 		items = append(items, toAPIOrderResponse(order, ownerView, false))
 	}
 	return items
+}
+
+func toSellerCommerceStatusResponse(status apiorder.SellerCommerceStatus) sellerCommerceStatusResponse {
+	disputes := make([]sellerCommerceDisputeResponse, 0, len(status.Disputes))
+	for _, dispute := range status.Disputes {
+		disputes = append(disputes, sellerCommerceDisputeResponse{
+			DisputeID: dispute.DisputeID, OrderID: dispute.OrderID, OrderNo: dispute.OrderNo,
+			APIServiceID: dispute.APIServiceID, ServiceTitle: dispute.ServiceTitle,
+			Status: dispute.Status, NextActor: dispute.NextActor, DueAt: formatOptionalTime(dispute.DueAt),
+			RestrictionLevel: string(dispute.RestrictionLevel), ReasonCodes: dispute.ReasonCodes,
+		})
+	}
+	return sellerCommerceStatusResponse{
+		Level: string(status.Level), ActiveDisputeCount: status.ActiveDisputeCount,
+		ActiveBuyerCount: status.ActiveBuyerCount, BlockingDisputeCount: status.BlockingDisputeCount,
+		AffectedServiceIDs: status.AffectedServiceIDs, ReasonCodes: status.ReasonCodes,
+		Disputes: disputes, NextReleaseAt: formatOptionalTime(status.NextReleaseAt),
+	}
 }
 
 func toAdminAPIOrderResponses(orders []apiorder.Order) []apiOrderResponse {

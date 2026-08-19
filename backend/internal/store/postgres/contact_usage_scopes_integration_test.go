@@ -207,9 +207,16 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 		t.Fatalf("rollback wrong-type lookup transaction: %v", err)
 	}
 
-	deleted, _, changed, appErr := service.DeleteMethodWithIdempotency(ctx, userID, "contact-disable", "contact-disable-key", "contact-disable-hash", created.ID, "contact-disable", buildCompletion)
-	if appErr != nil || !changed || !slices.Equal(deleted.UsageScopes, contact.AllUsageScopes()) {
-		t.Fatalf("deleted method lost scopes: method=%+v changed=%t error=%v", deleted, changed, appErr)
+	if _, _, changed, appErr := service.DeleteMethodWithIdempotency(ctx, userID, "required-wechat-delete", "required-wechat-delete-key", "required-wechat-delete-hash", created.ID, "required-wechat-delete", buildCompletion); appErr == nil || changed || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("required wechat delete: changed=%t error=%#v", changed, appErr)
+	}
+	if _, _, changed, appErr := service.UpdateMethodWithIdempotency(ctx, userID, "required-wechat-disable", "required-wechat-disable-key", "required-wechat-disable-hash", contact.UpdateContactMethodInput{
+		UserID: userID, MethodID: created.ID, Type: "wechat", Label: "微信", Value: "postgres-scopes-3", Enabled: false,
+	}, buildCompletion); appErr == nil || changed || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("required wechat disable: changed=%t error=%#v", changed, appErr)
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE contact_methods SET usage_scopes = ARRAY['buyer']::text[] WHERE id = $1`, created.ID); err == nil {
+		t.Fatal("database allowed required wechat scopes to be narrowed")
 	}
 
 	rows, err := store.pool.Query(ctx, `
@@ -236,7 +243,7 @@ func TestPostgresContactUsageScopesRoundTrip(t *testing.T) {
 		}
 		actions = append(actions, action)
 	}
-	wantActions := []string{"contact_method.created", "contact_method.updated", "contact_method.updated", "contact_method.default_changed", "contact_method.disabled"}
+	wantActions := []string{"contact_method.created", "contact_method.updated", "contact_method.updated", "contact_method.default_changed"}
 	if !slices.Equal(actions, wantActions) {
 		t.Fatalf("contact audit actions = %v, want %v", actions, wantActions)
 	}

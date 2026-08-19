@@ -56,6 +56,7 @@ import {
   getMerchantApiPurchaseIntents,
   getMerchantApiOrders,
   getMerchantApiOrdersPage,
+  getSellerCommerceStatus,
   getMerchantCarpoolApplications,
   getMerchantCarpoolApplicationsPage,
   getMyFeedbackTicket,
@@ -899,6 +900,15 @@ export function useMerchantApiOrdersPage(
   return useQuery({
     queryKey: computed(() => ['merchant-api-orders', 'page', valueOf(filters), valueOf(page)]),
     queryFn: () => getMerchantApiOrdersPage(valueOf(filters), valueOf(page)),
+    enabled: computed(() => valueOf(enabled)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useSellerCommerceStatus(enabled: Ref<boolean> | boolean = true) {
+  return useQuery({
+    queryKey: ['seller-commerce-status'],
+    queryFn: getSellerCommerceStatus,
     enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })

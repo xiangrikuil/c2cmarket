@@ -43,6 +43,26 @@ func TestNotificationTargetURLAndCategoryForAPIOrder(t *testing.T) {
 	}
 }
 
+func TestDisputeNotificationCategoryUsesCurrentActionRequirement(t *testing.T) {
+	item := notification.Notification{
+		TargetType:      "dispute",
+		TargetID:        "dispute-123",
+		SourceEventType: "dispute.remedy_claimed",
+		ActionRequired:  true,
+	}
+
+	if got := notificationCategory(item); got != "交易待办" {
+		t.Fatalf("expected pending dispute action category, got %q", got)
+	}
+	item.ActionRequired = false
+	if got := notificationCategory(item); got != "交易通知" {
+		t.Fatalf("expected completed dispute action to become a transaction notice, got %q", got)
+	}
+	if got := notificationTargetURL(item); got != "/my/disputes/dispute-123" {
+		t.Fatalf("expected dispute detail route, got %q", got)
+	}
+}
+
 func TestNotificationTargetURLFallsBackToPerspectiveListForAPIPurchaseIntent(t *testing.T) {
 	tests := []struct {
 		name            string

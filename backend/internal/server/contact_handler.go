@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -51,7 +52,7 @@ func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if req.Type != contact.MethodTypeWechat {
+	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
 		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
 			writeProblem(w, r, appErr)
 			return
@@ -111,7 +112,7 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if req.Type != contact.MethodTypeWechat {
+	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
 		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
 			writeProblem(w, r, appErr)
 			return

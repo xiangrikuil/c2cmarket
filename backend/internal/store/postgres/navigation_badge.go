@@ -22,8 +22,10 @@ func (s *Store) NavigationBadgeSummary(ctx context.Context, userID string, isAdm
 		&result.SupportActionCount,
 		&result.Buyer.CarpoolActions,
 		&result.Buyer.APIOrderActions,
+		&result.Buyer.APIOrderDisputes,
 		&result.Merchant.CarpoolActions,
 		&result.Merchant.APIOrderActions,
+		&result.Merchant.APIOrderDisputes,
 		&admin.OfficialPrices,
 		&admin.Carpools,
 		&admin.APIServices,
@@ -101,7 +103,18 @@ SELECT
        (status = 'pending_payment' AND payment_expires_at > $2)
        OR status = 'payment_issue'
        OR status = 'delivery_submitted'
+       OR dispute_status IN (
+         'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+         'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+       )
      )) AS buyer_api_order_actions,
+  (SELECT count(*)::int
+   FROM api_orders
+   WHERE buyer_user_id = $1
+     AND dispute_status IN (
+       'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+       'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+     )) AS buyer_api_order_disputes,
   (SELECT count(*)::int
    FROM carpool_applications application
    WHERE application.owner_user_id = $1
@@ -109,7 +122,20 @@ SELECT
   (SELECT count(*)::int
    FROM api_orders
    WHERE seller_user_id = $1
-     AND status IN ('payment_submitted', 'paid_confirmed')) AS merchant_api_order_actions,
+     AND (
+       status IN ('payment_submitted', 'paid_confirmed')
+       OR dispute_status IN (
+         'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+         'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+       )
+     )) AS merchant_api_order_actions,
+  (SELECT count(*)::int
+   FROM api_orders
+   WHERE seller_user_id = $1
+     AND dispute_status IN (
+       'negotiating', 'pending_seller_response', 'pending_applicant_decision',
+       'open', 'awaiting_fulfillment', 'fulfillment_confirmation'
+     )) AS merchant_api_order_disputes,
   CASE WHEN $3 THEN
     (SELECT count(*)::int FROM official_price_leads WHERE status = 'pending')
   ELSE 0 END AS admin_official_prices,

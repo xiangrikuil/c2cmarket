@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Cable, ExternalLink, RefreshCw } from 'lucide-vue-next'
+import { Cable, Plus, RefreshCw } from 'lucide-vue-next'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  create: []
   refresh: []
 }>()
 
@@ -84,15 +85,15 @@ function selectConnection(value: unknown) {
 
         <Alert v-if="readyConnections.length === 0">
           <AlertTitle>暂无可绑定连接</AlertTitle>
-          <AlertDescription>先创建连接并完成鉴权验证，再返回继续发布。</AlertDescription>
+          <AlertDescription>在当前页面新建并验证探针连接后即可继续发布。</AlertDescription>
         </Alert>
 
         <div class="flex flex-wrap gap-2">
           <Button as-child size="sm" variant="outline">
             <RouterLink to="/my/api-probe-connections"><Cable class="h-4 w-4" />管理连接</RouterLink>
           </Button>
-          <Button as-child size="sm" variant="outline">
-            <RouterLink to="/my/api-probe-connections?create=1"><ExternalLink class="h-4 w-4" />新建连接</RouterLink>
+          <Button size="sm" variant="outline" type="button" @click="emit('create')">
+            <Plus class="h-4 w-4" />新建连接
           </Button>
         </div>
       </template>

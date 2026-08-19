@@ -1,6 +1,7 @@
 package apiorder
 
 import (
+	"sort"
 	"time"
 
 	"c2c-market/backend/internal/domain"
@@ -124,6 +125,193 @@ func IsDisputeActive(status string) bool {
 	default:
 		return false
 	}
+}
+
+type CommerceRestrictionLevel string
+
+const (
+	CommerceRestrictionNormal  CommerceRestrictionLevel = "normal"
+	CommerceRestrictionService CommerceRestrictionLevel = "service_limited"
+	CommerceRestrictionAccount CommerceRestrictionLevel = "account_limited"
+
+	CommerceReasonServiceMultipleBuyers = "service_multiple_buyers"
+	CommerceReasonSellerResponseOverdue = "seller_response_overdue"
+	CommerceReasonAccountMultipleBuyers = "account_multiple_buyers"
+	CommerceReasonRemedyOverdue         = "remedy_fulfillment_overdue"
+)
+
+type DisputeCommerceFact struct {
+	DisputeID     string
+	OrderID       string
+	OrderNo       string
+	APIServiceID  string
+	BuyerUserID   string
+	DisputeStatus string
+	NextActor     string
+	DueAt         *time.Time
+	ServiceTitle  string
+	RemedySource  string
+}
+
+type CommerceDispute struct {
+	DisputeID        string
+	OrderID          string
+	OrderNo          string
+	APIServiceID     string
+	ServiceTitle     string
+	Status           string
+	NextActor        string
+	DueAt            *time.Time
+	RestrictionLevel CommerceRestrictionLevel
+	ReasonCodes      []string
+}
+
+type SellerCommerceStatus struct {
+	Level                CommerceRestrictionLevel
+	ActiveDisputeCount   int
+	ActiveBuyerCount     int
+	BlockingDisputeCount int
+	AffectedServiceIDs   []string
+	ReasonCodes          []string
+	Disputes             []CommerceDispute
+	NextReleaseAt        *time.Time
+}
+
+func (status SellerCommerceStatus) BlocksService(apiServiceID string) bool {
+	if status.Level == CommerceRestrictionAccount {
+		return true
+	}
+	if status.Level != CommerceRestrictionService {
+		return false
+	}
+	for _, affectedID := range status.AffectedServiceIDs {
+		if affectedID == apiServiceID {
+			return true
+		}
+	}
+	return false
+}
+
+func EvaluateSellerCommerce(facts []DisputeCommerceFact, now time.Time) SellerCommerceStatus {
+	active := make([]DisputeCommerceFact, 0, len(facts))
+	buyers := make(map[string]struct{})
+	serviceBuyers := make(map[string]map[string]struct{})
+	responseOverdueServices := make(map[string]struct{})
+	remedyOverdueDisputes := make(map[string]struct{})
+
+	for _, fact := range facts {
+		if !IsDisputeActive(fact.DisputeStatus) || fact.DisputeID == "" || fact.OrderID == "" || fact.APIServiceID == "" || fact.BuyerUserID == "" {
+			continue
+		}
+		active = append(active, fact)
+		buyers[fact.BuyerUserID] = struct{}{}
+		if serviceBuyers[fact.APIServiceID] == nil {
+			serviceBuyers[fact.APIServiceID] = make(map[string]struct{})
+		}
+		serviceBuyers[fact.APIServiceID][fact.BuyerUserID] = struct{}{}
+		if fact.DueAt != nil && !now.Before(*fact.DueAt) {
+			switch fact.DisputeStatus {
+			case DisputeStatusPendingSellerResponse:
+				responseOverdueServices[fact.APIServiceID] = struct{}{}
+			case DisputeStatusAwaitingFulfillment:
+				remedyOverdueDisputes[fact.DisputeID] = struct{}{}
+			}
+		}
+	}
+
+	affectedServices := make(map[string]struct{})
+	reasonSet := make(map[string]struct{})
+	for serviceID, serviceBuyerSet := range serviceBuyers {
+		if len(serviceBuyerSet) >= 2 {
+			affectedServices[serviceID] = struct{}{}
+			reasonSet[CommerceReasonServiceMultipleBuyers] = struct{}{}
+		}
+	}
+	for serviceID := range responseOverdueServices {
+		affectedServices[serviceID] = struct{}{}
+		reasonSet[CommerceReasonSellerResponseOverdue] = struct{}{}
+	}
+
+	level := CommerceRestrictionNormal
+	if len(affectedServices) > 0 {
+		level = CommerceRestrictionService
+	}
+	accountMultipleBuyers := len(buyers) >= 3
+	if accountMultipleBuyers {
+		level = CommerceRestrictionAccount
+		reasonSet[CommerceReasonAccountMultipleBuyers] = struct{}{}
+	}
+	if len(remedyOverdueDisputes) > 0 {
+		level = CommerceRestrictionAccount
+		reasonSet[CommerceReasonRemedyOverdue] = struct{}{}
+	}
+
+	disputes := make([]CommerceDispute, 0, len(active))
+	blockingCount := 0
+	var nextReleaseAt *time.Time
+	for _, fact := range active {
+		disputeLevel := CommerceRestrictionNormal
+		disputeReasons := make([]string, 0, 3)
+		if accountMultipleBuyers {
+			disputeLevel = CommerceRestrictionAccount
+			disputeReasons = append(disputeReasons, CommerceReasonAccountMultipleBuyers)
+		}
+		if _, ok := remedyOverdueDisputes[fact.DisputeID]; ok {
+			disputeLevel = CommerceRestrictionAccount
+			disputeReasons = append(disputeReasons, CommerceReasonRemedyOverdue)
+		}
+		if disputeLevel != CommerceRestrictionAccount {
+			if len(serviceBuyers[fact.APIServiceID]) >= 2 {
+				disputeLevel = CommerceRestrictionService
+				disputeReasons = append(disputeReasons, CommerceReasonServiceMultipleBuyers)
+			}
+			if _, ok := responseOverdueServices[fact.APIServiceID]; ok {
+				disputeLevel = CommerceRestrictionService
+				if fact.DisputeStatus == DisputeStatusPendingSellerResponse && fact.DueAt != nil && !now.Before(*fact.DueAt) {
+					disputeReasons = append(disputeReasons, CommerceReasonSellerResponseOverdue)
+				}
+			}
+		}
+		if disputeLevel != CommerceRestrictionNormal {
+			blockingCount++
+			if fact.DueAt != nil && now.Before(*fact.DueAt) && (fact.DisputeStatus == DisputeStatusPendingApplicantDecision || fact.DisputeStatus == DisputeStatusFulfillmentConfirmation) && (nextReleaseAt == nil || fact.DueAt.Before(*nextReleaseAt)) {
+				value := *fact.DueAt
+				nextReleaseAt = &value
+			}
+		}
+		disputes = append(disputes, CommerceDispute{
+			DisputeID: fact.DisputeID, OrderID: fact.OrderID, OrderNo: fact.OrderNo,
+			APIServiceID: fact.APIServiceID, ServiceTitle: fact.ServiceTitle,
+			Status: fact.DisputeStatus, NextActor: fact.NextActor, DueAt: fact.DueAt,
+			RestrictionLevel: disputeLevel, ReasonCodes: disputeReasons,
+		})
+	}
+
+	affectedServiceIDs := mapKeys(affectedServices)
+	reasonCodes := mapKeys(reasonSet)
+	sort.Slice(disputes, func(i, j int) bool {
+		if disputes[i].DueAt == nil {
+			return false
+		}
+		if disputes[j].DueAt == nil {
+			return true
+		}
+		return disputes[i].DueAt.Before(*disputes[j].DueAt)
+	})
+	return SellerCommerceStatus{
+		Level: level, ActiveDisputeCount: len(active), ActiveBuyerCount: len(buyers),
+		BlockingDisputeCount: blockingCount, AffectedServiceIDs: affectedServiceIDs,
+		ReasonCodes: reasonCodes, Disputes: disputes, NextReleaseAt: nextReleaseAt,
+	}
+}
+
+func mapKeys(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func IsDisputeIssueCode(value string) bool {

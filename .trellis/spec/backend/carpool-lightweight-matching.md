@@ -42,7 +42,7 @@ Create/Patch spend fields:
 backend/migrations/000111_carpool_lightweight_matching.{up,down}.sql
 backend/migrations/000112_carpool_optional_spend_limits_account_login.{up,down}.sql
 backend/migrations/000114_carpool_membership_owner_note.{up,down}.sql
-database.ExpectedMigrationVersion = 115
+database.ExpectedMigrationVersion = 116
 ```
 
 Migration 111 owns `carpool_listing_condition_versions`, `carpool_application_condition_acceptances`, nullable `contact_sessions.ends_at`, listing `conditions_version`, `governance_status`, `recruitment_stop_reason`, `offline_occupied_seats`, and the application/membership condition snapshots. Its down migration restores the pre-launch schema only when no carpool listings, applications, memberships, condition versions, or open-ended contact sessions exist. Deleted workflow data remains backup-only and must never be fabricated by a down migration.

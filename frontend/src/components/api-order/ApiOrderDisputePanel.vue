@@ -9,6 +9,7 @@ import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { apiOrderDisputeIssueLabels, apiOrderDisputeRemedyLatenessLabels, apiOrderDisputeRemedyStatusLabels, apiOrderDisputeResolutionLabels } from '@/lib/apiOrderDispute'
 import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
@@ -46,6 +47,7 @@ const remedyNote = ref('')
 const remedyEvidence = ref<DisputeEvidenceAsset[]>([])
 const remedyResponse = ref('')
 const remedyContestEvidence = ref<DisputeEvidenceAsset[]>([])
+const confirmRemedyDialogOpen = ref(false)
 
 const sellerDecisionMutation = useSellerDisputeDecisionMutation()
 const platformInterventionMutation = useRequestDisputePlatformInterventionMutation()
@@ -63,6 +65,9 @@ const canClaimRemedy = computed(() => availableActions.value.has('claim_remedy')
 const canConfirmRemedy = computed(() => availableActions.value.has('confirm_remedy'))
 const canContestRemedy = computed(() => availableActions.value.has('contest_remedy'))
 const isVoluntaryRemedy = computed(() => currentRemedy.value?.source === 'seller_acceptance')
+const viewerIsSeller = computed(() => Boolean(viewerUserId.value && viewerUserId.value === dispute.value?.counterpartyUserId))
+const sellerWaitingForBuyer = computed(() => viewerIsSeller.value && dispute.value?.nextActor === 'counterparty' && currentRemedy.value?.status === 'claimed_fulfilled')
+const buyerConfirmationRequired = computed(() => !viewerIsSeller.value && (canConfirmRemedy.value || canContestRemedy.value))
 const mutationBusy = computed(() => [sellerDecisionMutation, platformInterventionMutation, withdrawMutation, supplementMutation, claimRemedyMutation, confirmRemedyMutation, contestRemedyMutation]
   .some(item => item.isPending.value))
 
@@ -74,6 +79,11 @@ const nextActorLabel = computed(() => ({
   counterparty: isVoluntaryRemedy.value ? '等待买家确认卖家处理结果' : '等待对方确认整改结果',
   none: '当前无需操作',
 }[dispute.value?.nextActor ?? 'none']))
+const viewerStatusLabel = computed(() => {
+  if (sellerWaitingForBuyer.value) return '已完成当前处理，无需操作'
+  if (buyerConfirmationRequired.value) return '请确认卖家处理结果'
+  return nextActorLabel.value
+})
 
 function mutationError(error: unknown, fallback: string) {
   toast.error(error instanceof Error ? error.message : fallback)
@@ -151,10 +161,15 @@ async function confirmRemedy() {
   try {
     await confirmRemedyMutation.mutateAsync({ disputeId: props.disputeId, reason: remedyResponse.value.trim() })
     remedyResponse.value = ''
+    confirmRemedyDialogOpen.value = false
     toast.success(isVoluntaryRemedy.value ? '已确认卖家完成处理。' : '已确认整改完成。')
   } catch (error) {
     mutationError(error, '整改确认失败。')
   }
+}
+
+function openConfirmRemedyDialog() {
+  confirmRemedyDialogOpen.value = true
 }
 
 async function contestRemedy() {
@@ -171,7 +186,7 @@ async function contestRemedy() {
 </script>
 
 <template>
-  <section class="py-6" aria-labelledby="api-order-dispute-title">
+  <section class="py-6" :class="buyerConfirmationRequired ? 'pb-28 sm:pb-6' : ''" aria-labelledby="api-order-dispute-title">
     <div class="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
       <div><h2 id="api-order-dispute-title" class="flex items-center gap-2 text-base font-semibold"><Scale class="h-4 w-4 text-warning" />订单售后申请</h2><p class="mt-1 text-sm text-muted-foreground">{{ dispute?.targetLabel }}</p></div>
       <Badge v-if="dispute" variant="status">{{ getDisputeCaseStatusLabel(dispute.status) }}</Badge>
@@ -181,7 +196,7 @@ async function contestRemedy() {
     <Alert v-else-if="disputeQuery.error.value" variant="destructive"><AlertTitle>纠纷详情读取失败</AlertTitle><AlertDescription>{{ disputeQuery.error.value instanceof Error ? disputeQuery.error.value.message : '请稍后重试。' }}</AlertDescription></Alert>
 
     <template v-else-if="dispute">
-      <Alert class="mb-5 border-warning/35 bg-warning/10"><Scale class="h-4 w-4 text-warning" /><AlertTitle>{{ nextActorLabel }}</AlertTitle><AlertDescription><span>{{ dispute.publicResult }}</span><span v-if="dispute.dueAt">，截止 <LocalTime :value="dispute.dueAt" /></span><span v-if="dispute.responseOverdue">。卖家响应已超时，买家现在可以申请平台介入；平台介入前卖家仍可处理。</span></AlertDescription></Alert>
+      <Alert class="mb-5" :class="buyerConfirmationRequired ? 'border-warning/50 bg-warning/10' : sellerWaitingForBuyer ? 'border-success/35 bg-success/5' : 'border-border'"><Scale class="h-4 w-4" :class="buyerConfirmationRequired ? 'text-warning' : sellerWaitingForBuyer ? 'text-success' : 'text-muted-foreground'" /><AlertTitle>{{ viewerStatusLabel }}</AlertTitle><AlertDescription><span>{{ dispute.publicResult }}</span><span v-if="dispute.dueAt">，截止 <LocalTime :value="dispute.dueAt" /></span><span v-if="dispute.responseOverdue">。卖家响应已超时，买家现在可以申请平台介入；平台介入前卖家仍可处理。</span></AlertDescription></Alert>
       <dl class="grid gap-4 border-b border-border pb-5 sm:grid-cols-3">
         <div><dt class="text-xs text-muted-foreground">问题类型</dt><dd class="mt-1 text-sm font-medium">{{ dispute.issueCode ? apiOrderDisputeIssueLabels[dispute.issueCode] : '历史案件' }}</dd></div>
         <div><dt class="text-xs text-muted-foreground">申请诉求</dt><dd class="mt-1 text-sm font-medium">{{ dispute.requestedResolution ? apiOrderDisputeResolutionLabels[dispute.requestedResolution] : '未结构化记录' }}</dd></div>
@@ -223,7 +238,13 @@ async function contestRemedy() {
         <dl class="mt-4 grid gap-4 sm:grid-cols-3"><div><dt class="text-xs text-muted-foreground">处理动作</dt><dd class="mt-1 text-sm font-medium">{{ apiOrderDisputeResolutionLabels[currentRemedy.action] }}</dd></div><div><dt class="text-xs text-muted-foreground">履行截止</dt><dd class="mt-1 text-sm font-medium"><LocalTime :value="currentRemedy.dueAt" /></dd></div><div v-if="!isVoluntaryRemedy"><dt class="text-xs text-muted-foreground">迟到记录</dt><dd class="mt-1 text-sm font-medium">{{ apiOrderDisputeRemedyLatenessLabels[currentRemedy.latenessStatus] }}</dd></div></dl>
         <p class="mt-4 whitespace-pre-wrap border-l-2 border-warning pl-4 text-sm leading-6">{{ currentRemedy.instructions }}</p>
         <div v-if="canClaimRemedy" class="mt-4 space-y-3"><Textarea v-model="remedyNote" class="min-h-24" maxlength="2000" placeholder="说明已经如何履行整改。" /><DisputeEvidencePicker v-if="orderId" v-model="remedyEvidence" :order-id="orderId" /><Button :disabled="remedyNote.trim().length < 2 || mutationBusy" @click="claimRemedy"><Check class="h-4 w-4" />声明已履行</Button></div>
-        <div v-else-if="canConfirmRemedy || canContestRemedy" class="mt-4 space-y-3"><Textarea v-model="remedyResponse" class="min-h-20" maxlength="2000" :placeholder="isVoluntaryRemedy ? '确认卖家已经完成处理，可选填说明。' : '填写确认说明，或说明仍未收到/未完成。'" /><DisputeEvidencePicker v-if="orderId && canContestRemedy" v-model="remedyContestEvidence" :order-id="orderId" /><div class="flex flex-wrap gap-2"><Button v-if="canConfirmRemedy" :disabled="mutationBusy" @click="confirmRemedy"><Check class="h-4 w-4" />确认完成</Button><Button v-if="canContestRemedy" variant="outline" :disabled="remedyResponse.trim().length < 2 || mutationBusy" @click="contestRemedy"><X class="h-4 w-4" />申请复核</Button></div></div>
+        <Alert v-if="sellerWaitingForBuyer" class="mt-4 border-success/35 bg-success/5"><Check class="h-4 w-4 text-success" /><AlertTitle>已完成当前处理，无需操作</AlertTitle><AlertDescription>案件正在等待买家确认，你可以继续处理其他订单；本订单在买家确认或确认窗口结束前保持冻结。</AlertDescription></Alert>
+        <div v-else-if="canConfirmRemedy || canContestRemedy" class="mt-4 space-y-3">
+          <Alert class="border-warning/40 bg-warning/10"><Clock3 class="h-4 w-4 text-warning" /><AlertTitle>请核对你的实际收款或履约结果</AlertTitle><AlertDescription>卖家已提交处理说明或凭证，但平台未核验站外退款是否到账。请以你的实际收款记录和服务状态为准。</AlertDescription></Alert>
+          <Textarea v-model="remedyResponse" class="min-h-20" maxlength="2000" :placeholder="isVoluntaryRemedy ? '确认卖家已经完成处理，可选填说明。' : '填写确认说明，或说明仍未收到/未完成。'" />
+          <DisputeEvidencePicker v-if="orderId && canContestRemedy" v-model="remedyContestEvidence" :order-id="orderId" />
+          <div class="hidden flex-wrap gap-2 sm:flex"><Button v-if="canConfirmRemedy" :disabled="mutationBusy" @click="openConfirmRemedyDialog"><Check class="h-4 w-4" />确认完成</Button><Button v-if="canContestRemedy" variant="outline" :disabled="remedyResponse.trim().length < 2 || mutationBusy" @click="contestRemedy"><X class="h-4 w-4" />申请复核</Button></div>
+        </div>
         <p v-if="currentRemedy.claimNote" class="mt-4 text-sm leading-6">履行声明：{{ currentRemedy.claimNote }}</p>
       </section>
 
@@ -232,6 +253,26 @@ async function contestRemedy() {
       <section v-if="canWithdraw" class="pt-5"><h3 class="text-sm font-semibold">撤回售后申请</h3><p class="mt-1 text-xs text-muted-foreground">只有申请人可以撤回。卖家同意申请或平台开始处理后不能撤回。</p><Textarea v-model="withdrawReason" class="mt-3 min-h-20" maxlength="500" placeholder="撤回原因（选填）" /><Button class="mt-3" variant="outline" :disabled="mutationBusy" @click="withdraw">撤回申请</Button></section>
 
       <Alert v-if="dispute.status === 'withdrawn' || dispute.status === 'self_resolved' || dispute.status === 'closed'" class="mt-5"><Clock3 class="h-4 w-4" /><AlertTitle>{{ getDisputeCaseStatusLabel(dispute.status) }}</AlertTitle><AlertDescription>{{ dispute.publicResult }}</AlertDescription></Alert>
+
+      <div v-if="buyerConfirmationRequired" class="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/96 px-4 py-3 shadow-lg backdrop-blur sm:hidden">
+        <div class="mx-auto flex max-w-md gap-2">
+          <Button v-if="canConfirmRemedy" class="flex-1" :disabled="mutationBusy" @click="openConfirmRemedyDialog"><Check class="h-4 w-4" />确认完成</Button>
+          <Button v-if="canContestRemedy" class="flex-1" variant="outline" :disabled="remedyResponse.trim().length < 2 || mutationBusy" @click="contestRemedy"><X class="h-4 w-4" />申请复核</Button>
+        </div>
+      </div>
+
+      <Dialog v-model:open="confirmRemedyDialogOpen">
+        <DialogContent class="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>确认处理已经完成？</DialogTitle>
+            <DialogDescription>确认后，本次纠纷将结束且不能再通过当前案件申请复核。平台未核验站外退款是否到账，请先核对你的实际收款记录或服务状态。</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" :disabled="mutationBusy" @click="confirmRemedyDialogOpen = false">返回核对</Button>
+            <Button :disabled="mutationBusy" @click="confirmRemedy"><Check class="h-4 w-4" />确认已经完成</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </template>
   </section>
 </template>
