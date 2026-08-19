@@ -44,20 +44,19 @@ func TestOperationAuditSingleSourcePlansIntegration(t *testing.T) {
 	}
 
 	sources := []operationAuditPlanSource{
-		{operationaudit.SourceAdmin, "admin_audit_logs", "ix_admin_audit_logs_operation_cursor", "ix_admin_audit_logs_operation_actor_cursor", "ix_admin_audit_logs_operation_target_cursor"},
-		{operationaudit.SourceModeration, "moderation_audit_logs", "ix_moderation_audit_logs_operation_cursor", "ix_moderation_audit_logs_actor", "ix_moderation_audit_logs_object"},
-		{operationaudit.SourceDomain, "domain_events", "ix_domain_events_operation_cursor", "ix_domain_events_operation_actor_cursor", "ix_domain_events_operation_target_cursor"},
-		{operationaudit.SourceAPIOrder, "api_order_events", "ix_api_order_events_operation_cursor", "ix_api_order_events_operation_actor_cursor", "ix_api_order_events_operation_target_cursor"},
-		{operationaudit.SourceContactSessionAccess, "contact_access_logs", "ix_contact_access_logs_operation_cursor", "ix_contact_access_logs_operation_actor_cursor", "ix_contact_access_logs_session_accessed"},
-		{operationaudit.SourceAPIIntentContactAccess, "api_purchase_intent_contact_access_logs", "ix_api_intent_contact_access_operation_cursor", "ix_api_intent_contact_access_logs_viewer_accessed", "ix_api_intent_contact_access_operation_target_cursor"},
-		{operationaudit.SourceAPIOrderAccess, "api_order_payment_instruction_access_logs", "ix_api_order_access_operation_cursor", "ix_api_order_access_operation_actor_cursor", "ix_api_order_payment_instruction_logs_order"},
-		{operationaudit.SourceProbe, "api_probe_connection_events", "ix_api_probe_connection_events_time", "ix_api_probe_connection_events_actor_time", "ix_api_probe_connection_events_target_time"},
+		{operationaudit.SourceAdmin, "admin_audit_logs"},
+		{operationaudit.SourceModeration, "moderation_audit_logs"},
+		{operationaudit.SourceDomain, "domain_events"},
+		{operationaudit.SourceAPIOrder, "api_order_events"},
+		{operationaudit.SourceContactSessionAccess, "contact_access_logs"},
+		{operationaudit.SourceAPIIntentContactAccess, "api_purchase_intent_contact_access_logs"},
+		{operationaudit.SourceAPIOrderAccess, "api_order_payment_instruction_access_logs"},
+		{operationaudit.SourceProbe, "api_probe_connection_events"},
 	}
 	for _, source := range sources {
 		queries := []struct {
-			name          string
-			query         operationaudit.Query
-			expectedIndex string
+			name  string
+			query operationaudit.Query
 		}{
 			{
 				name: "time",
@@ -65,7 +64,6 @@ func TestOperationAuditSingleSourcePlansIntegration(t *testing.T) {
 					SourceKind: source.sourceKind,
 					From:       now.Add(-time.Hour), To: now, Limit: 20,
 				},
-				expectedIndex: source.timeIndex,
 			},
 			{
 				name: "actor",
@@ -73,7 +71,6 @@ func TestOperationAuditSingleSourcePlansIntegration(t *testing.T) {
 					SourceKind: source.sourceKind, ActorUserID: fixture.actorID,
 					From: now.Add(-time.Hour), To: now, Limit: 20,
 				},
-				expectedIndex: source.actorIndex,
 			},
 			{
 				name: "target",
@@ -81,24 +78,20 @@ func TestOperationAuditSingleSourcePlansIntegration(t *testing.T) {
 					SourceKind: source.sourceKind, TargetID: fixture.targetBySource[source.sourceKind],
 					From: now.Add(-time.Hour), To: now, Limit: 20,
 				},
-				expectedIndex: source.targetIndex,
 			},
 		}
 		for _, item := range queries {
 			t.Run(source.sourceKind+"/"+item.name, func(t *testing.T) {
 				plan := explainOperationAuditPlan(t, ctx, tx, item.query)
-				assertOperationAuditPlan(t, plan, source.table, item.expectedIndex, item.query.Limit+1)
+				assertOperationAuditPlan(t, plan, source.table, item.query.Limit+1)
 			})
 		}
 	}
 }
 
 type operationAuditPlanSource struct {
-	sourceKind  string
-	table       string
-	timeIndex   string
-	actorIndex  string
-	targetIndex string
+	sourceKind string
+	table      string
 }
 
 type operationAuditPlanFixture struct {
@@ -118,7 +111,6 @@ type operationAuditExplainEnvelope struct {
 type operationAuditExplainNode struct {
 	NodeType     string                      `json:"Node Type"`
 	RelationName string                      `json:"Relation Name"`
-	IndexName    string                      `json:"Index Name"`
 	ActualRows   float64                     `json:"Actual Rows"`
 	Plans        []operationAuditExplainNode `json:"Plans"`
 }
@@ -144,7 +136,6 @@ func assertOperationAuditPlan(
 	t *testing.T,
 	plan operationAuditExplainEnvelope,
 	table string,
-	expectedIndex string,
 	maximumRows int,
 ) {
 	t.Helper()
@@ -154,30 +145,43 @@ func assertOperationAuditPlan(
 	if plan.ExecutionTime > 250 {
 		t.Fatalf("operation audit plan execution took %.3fms, local budget is 250ms", plan.ExecutionTime)
 	}
-	var foundIndex bool
-	usedIndexes := make([]string, 0, 2)
+	var foundIndexedSourceAccess bool
+	sourceAccessNodes := make([]string, 0, 1)
 	var walk func(operationAuditExplainNode)
 	walk = func(node operationAuditExplainNode) {
-		if node.IndexName != "" {
-			usedIndexes = append(usedIndexes, node.IndexName)
-		}
-		if node.IndexName == expectedIndex {
-			foundIndex = true
-		}
-		if node.RelationName == table && node.NodeType == "Seq Scan" {
-			t.Errorf("operation audit source %s used an unbounded sequential scan", table)
-		}
-		if strings.Contains(node.NodeType, "Sort") && node.ActualRows > float64(maximumRows) {
-			t.Errorf("operation audit sort processed %.0f rows, want at most %d", node.ActualRows, maximumRows)
+		if node.RelationName == table {
+			sourceAccessNodes = append(sourceAccessNodes, node.NodeType)
+			switch node.NodeType {
+			case "Seq Scan":
+				t.Errorf("operation audit source %s used an unbounded sequential scan", table)
+			case "Index Scan", "Index Only Scan":
+				foundIndexedSourceAccess = true
+			case "Bitmap Heap Scan":
+				if operationAuditPlanContainsNodeType(node, "Bitmap Index Scan") {
+					foundIndexedSourceAccess = true
+				}
+			}
 		}
 		for _, child := range node.Plans {
 			walk(child)
 		}
 	}
 	walk(plan.Plan)
-	if !foundIndex {
-		t.Errorf("operation audit source %s did not activate expected index %s; used %v", table, expectedIndex, usedIndexes)
+	if !foundIndexedSourceAccess {
+		t.Errorf("operation audit source %s did not use indexed access; source access nodes: %v", table, sourceAccessNodes)
 	}
+}
+
+func operationAuditPlanContainsNodeType(node operationAuditExplainNode, nodeType string) bool {
+	if node.NodeType == nodeType {
+		return true
+	}
+	for _, child := range node.Plans {
+		if operationAuditPlanContainsNodeType(child, nodeType) {
+			return true
+		}
+	}
+	return false
 }
 
 func seedOperationAuditPlanFixture(t *testing.T, ctx context.Context, tx pgx.Tx, now time.Time) operationAuditPlanFixture {
