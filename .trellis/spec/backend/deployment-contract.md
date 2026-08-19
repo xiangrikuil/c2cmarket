@@ -97,6 +97,8 @@ arbitrary Compose project, env path, or port:
 - `compose.yaml` retains `build.context` for local development and exposes
   `image: ${BACKEND_IMAGE:-c2cmarket-backend:local}`. A VPS release pulls the
   SHA image and starts it with `--no-build`.
+- Production and staging keep PostgreSQL and MinIO private to their Compose
+  networks. Only the backend publishes an environment-specific loopback port.
 - Production must finish the existing PostgreSQL dump, checksum, and R2 upload
   before migrations. Staging must not invoke the production backup.
 - The installer is streamed to the VPS through `bash -s`. Any deployment child
@@ -116,6 +118,7 @@ arbitrary Compose project, env path, or port:
 | Image is not the repository's matching full-SHA tag | Exit 2; never pull or start it |
 | Shared env file is missing | Exit non-zero before Compose mutation |
 | Compose expansion fails | Exit non-zero before database backup or migration |
+| Production/staging publishes PostgreSQL or MinIO on a host port | Compose exposure check exits non-zero |
 | Production backup or R2 upload fails | Exit non-zero; do not run migration |
 | Image pull or migration fails | Exit non-zero; do not update the current symlink |
 | Health, readiness, or runtime commit verification exhausts retries | Print Compose status and exit non-zero |
@@ -170,7 +173,8 @@ claim success by changing the current link.
   `tag:c2c-ci`, SCP and SSH succeed against the private address, and the node is
   removed when the job ends.
 - Expand production and staging Compose configurations with their real ignored
-  env files and `config --quiet`.
+  env files, assert PostgreSQL and MinIO have no published host ports, and run
+  `config --quiet`.
 - Build the local backend image to prove the default `build` path still works.
 - Run `go test ./...`, frontend typecheck/build/tests, OpenAPI route checks,
   migration documentation checks, and `git diff --check` before handoff.
