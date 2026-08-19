@@ -12,7 +12,7 @@
 
 两个前端由 Nuxt 4/Nitro Cloudflare Workers 提供 SSR，并由同一 Worker 绑定静态资源。两个 API hostname 使用 Cloudflare proxied A 记录指向 VPS `192.236.230.132`。VPS Caddy 自动申请和续期公开受信 TLS 证书，接收 Full (strict) HTTPS 后按 hostname 转发到对应 loopback backend。VPS 不运行 Cloudflare Tunnel。
 
-PostgreSQL 仅存在于各自 Compose network，不发布宿主端口。production override 将 backend host publish 固定为 `127.0.0.1`，公网只能经过 Cloudflare 与 Caddy 到达 API。
+PostgreSQL 与 MinIO 仅存在于各自 Compose network，不发布宿主端口。production override 将 backend host publish 固定为 `127.0.0.1`，公网只能经过 Cloudflare 与 Caddy 到达 API。
 
 ## 2. 环境文件
 

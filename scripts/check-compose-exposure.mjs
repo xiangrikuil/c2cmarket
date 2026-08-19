@@ -9,7 +9,7 @@ const variants = [
   {
     name: 'development',
     args: ['--env-file', '.env.example', '-f', 'compose.yaml'],
-    requirePrivatePostgres: false,
+    requirePrivateDataServices: false,
     requireImageOnly: false,
     expectedImage: 'c2cmarket-backend:local',
   },
@@ -23,7 +23,7 @@ const variants = [
       '-f',
       'compose.prod.yaml',
     ],
-    requirePrivatePostgres: true,
+    requirePrivateDataServices: true,
     requireImageOnly: true,
     expectedImage: 'c2cmarket-backend:CHANGE_ME_RELEASE_VERSION',
   },
@@ -37,7 +37,7 @@ const variants = [
       '-f',
       'compose.prod.yaml',
     ],
-    requirePrivatePostgres: true,
+    requirePrivateDataServices: true,
     requireImageOnly: true,
     expectedImage: 'c2cmarket-backend:CHANGE_ME_STAGING_RELEASE_VERSION',
   },
@@ -106,10 +106,15 @@ for (const variant of variants) {
     failures.push(`${variant.name}: minio-init must pass bucket setup as one shell command`)
   }
 
-  if (variant.requirePrivatePostgres) {
+  if (variant.requirePrivateDataServices) {
     const postgresPorts = config.services?.postgres?.ports ?? []
     if (postgresPorts.length > 0) {
       failures.push(`${variant.name}: PostgreSQL must not publish a host port`)
+    }
+
+    const minioPorts = config.services?.minio?.ports ?? []
+    if (minioPorts.length > 0) {
+      failures.push(`${variant.name}: MinIO must not publish a host port`)
     }
   }
 }

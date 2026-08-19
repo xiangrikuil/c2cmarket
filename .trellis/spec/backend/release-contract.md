@@ -125,7 +125,7 @@ Assertions:
 - Streamed VPS installation survives a deployment child that consumes stdin,
   and rejects a runtime commit that differs from the image SHA.
 - Production and staging expanded Compose configs contain `image` but no
-  backend `build`.
+  backend `build`, PostgreSQL host ports, or MinIO host ports.
 - OpenAPI regeneration has the same file set and bytes as the snapshot.
 
 ### 7. Wrong vs Correct
@@ -240,7 +240,7 @@ release-gate
 | Gitleaks detects a non-allowlisted secret | Secret-scan job fails |
 | An allowed public identifier shares a line with an unrelated generic key | Only the exact identifier is allowlisted; the unrelated key still fails the secret scan |
 | SBOM is missing or empty | Image job fails |
-| Production Compose retains `build` or public PostgreSQL | Compose guard fails |
+| Production Compose retains `build` or publishes PostgreSQL/MinIO | Compose guard fails |
 
 ### 5. Good / Base / Bad Cases
 

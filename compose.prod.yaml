@@ -3,6 +3,9 @@ services:
     restart: always
     ports: !reset []
 
+  minio:
+    ports: !reset []
+
   backend:
     build: !reset null
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
