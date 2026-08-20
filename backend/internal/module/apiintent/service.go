@@ -580,13 +580,17 @@ func validateCreateInput(input CreateIntentInput, service apimarket.Service) *do
 	if !ok {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Intent amount invalid", "意向金额格式不正确。", "requestedCnyAmount", "invalid", "意向金额必须为正数。")
 	}
+	tailOrder := apimarket.IsTailOrder(service)
+	maximum, maximumOK := parsePositiveDecimal(service.MaximumIntentCNY)
 	minimum, _ := parsePositiveDecimal(service.MinimumIntentCNY)
-	if minimum != nil && amount.Cmp(minimum) < 0 {
+	if tailOrder && (!maximumOK || amount.Cmp(maximum) != 0) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Tail order amount required", "尾单必须按当前剩余金额一次买完。", "requestedCnyAmount", "tail_order_required", "请刷新后按尾单固定金额下单。")
+	}
+	if !tailOrder && minimum != nil && amount.Cmp(minimum) < 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Intent amount too low", "意向金额不能低于服务最低金额。", "requestedCnyAmount", "too_low", "意向金额不能低于服务最低金额。")
 	}
 	if strings.TrimSpace(service.MaximumIntentCNY) != "" {
-		maximum, ok := parsePositiveDecimal(service.MaximumIntentCNY)
-		if !ok || amount.Cmp(maximum) > 0 {
+		if !maximumOK || amount.Cmp(maximum) > 0 {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Intent amount too high", "意向金额不能高于服务最高金额。", "requestedCnyAmount", "too_high", "意向金额不能高于服务最高金额。")
 		}
 	}
@@ -612,20 +616,20 @@ func validateCreateInput(input CreateIntentInput, service apimarket.Service) *do
 				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance too high", "意向美元额度不能超过商户声明上限。", "requestedUsdAllowance", "too_high", "意向美元额度不能超过商户声明上限。")
 			}
 		}
-		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
-		if availableText == "" {
-			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
-		}
+		availableText := apimarket.CurrentAvailableUSDAllowance(service)
 		available, ok := parsePositiveDecimal(availableText)
 		if !ok || allowance.Cmp(available) > 0 {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance unavailable", "意向美元额度不能超过商户当前可售额度。", "requestedUsdAllowance", "too_high", "请刷新后按当前可售额度下单。")
+		}
+		if tailOrder && allowance.Cmp(available) != 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Tail order allowance required", "尾单必须购买全部当前可售美元额度。", "requestedUsdAllowance", "tail_order_required", "请刷新后购买全部尾单额度。")
 		}
 		rate, ok := parsePositiveDecimal(service.DeclaredCNYPerUSDAllowance)
 		if !ok {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance price invalid", "美元额度售价不可用。", "requestedUsdAllowance", "invalid", "美元额度售价不可用。")
 		}
 		expectedAmount := new(big.Rat).Mul(allowance, rate)
-		if decimalString(expectedAmount, 2) != decimalString(amount, 2) {
+		if !tailOrder && decimalString(expectedAmount, 2) != decimalString(amount, 2) {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Intent amount mismatch", "意向金额必须等于美元额度乘以商户声明单价。", "requestedCnyAmount", "mismatch", "意向金额必须匹配意向美元额度。")
 		}
 		if strings.TrimSpace(input.SelectedPackageID) != "" {

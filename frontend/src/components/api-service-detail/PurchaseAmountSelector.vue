@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Input } from '@/components/ui/input'
 import type { ApiService } from '@/lib/api'
+import { isApiServiceTailOrder } from '@/lib/apiServicePricingPresentation'
 
 const props = defineProps<{
   service: ApiService
@@ -13,6 +14,7 @@ const emit = defineEmits<{
 }>()
 
 const inputValue = ref(String(props.modelValue))
+const tailOrder = computed(() => isApiServiceTailOrder(props.service))
 
 watch(() => props.modelValue, value => {
   const parsedInput = Number(inputValue.value)
@@ -31,10 +33,11 @@ function updateAmount(value: string) {
   <div class="space-y-2">
     <Input
       :model-value="inputValue"
+      :disabled="tailOrder"
       inputmode="decimal"
       placeholder="请输入订单金额"
       @update:model-value="value => updateAmount(String(value))"
     />
-    <p class="text-xs text-muted-foreground">可输入 ¥{{ service.minimumPurchaseCny }}–¥{{ service.maxBuy }}</p>
+    <p class="text-xs text-muted-foreground">{{ tailOrder ? `当前为尾单，固定 ¥${service.maxBuy}，需一次买完全部剩余额度。` : `可输入 ¥${service.minimumPurchaseCny}–¥${service.maxBuy}` }}</p>
   </div>
 </template>

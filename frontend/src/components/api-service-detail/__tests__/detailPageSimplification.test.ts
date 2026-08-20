@@ -55,6 +55,18 @@ test('uses direct amount entry and moves acknowledgement into the dialog', () =>
   assert.match(dialog, /submitting \|\| !acknowledged/)
 })
 
+test('locks a tail order to the full remaining amount', () => {
+  const selector = componentSource('PurchaseAmountSelector')
+  const panel = componentSource('ApiPurchasePanel')
+  const page = pageSource('ApiServiceDetailPage')
+
+  assert.match(selector, /:disabled="tailOrder"/)
+  assert.match(selector, /当前为尾单，固定/)
+  assert.match(panel, /尾单金额固定为/)
+  assert.match(panel, /tailOrder \? `尾单 ¥\$\{service\.maxBuy\}`/)
+  assert.match(page, /isApiServiceTailOrder\(value\) \? value\.maxBuy : value\.minimumPurchaseCny/)
+})
+
 test('does not rewrite mixed query families after creating an order', () => {
   const page = pageSource('ApiServiceDetailPage')
   const panel = componentSource('ApiPurchasePanel')

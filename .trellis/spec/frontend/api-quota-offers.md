@@ -1,7 +1,7 @@
 # Limited API Quota Offer Frontend Contract
 
 Date: 2026-07-19
-Updated: 2026-08-14
+Updated: 2026-08-20
 Author: Codex
 
 ## Scenario: Quota Offer Market, Purchase, And Owner Management
@@ -189,6 +189,73 @@ const responseTime = offer.healthSummary.medianTtftMs // platform-measured for p
 ```
 
 Limited offers preserve their own frozen business contract; legacy free-amount service defaults do not override them.
+
+## Scenario: Free-Amount API Quota Tail Purchase
+
+### 1. Scope / Trigger
+
+- Trigger: changes to free-amount API-service pricing presentation, market cards, detail amount selection, purchase validation, or real purchase-intent request mapping.
+- This scenario applies only to `metered_credit`; fixed packages and limited quota offers retain their existing fixed-price flows.
+
+### 2. Signatures
+
+```ts
+isApiServiceTailOrder(service): boolean
+requestedUsdAllowanceForApiServicePurchase(service, requestedCnyAmount): string
+maximumPurchaseCnyForInventory(availableUsdAllowance, cnyPerUsdAllowance): number
+backendCreateAPIPurchaseIntent(payload): Promise<ApiPurchaseIntent>
+```
+
+### 3. Contracts
+
+- A metered service is a tail order when `maxBuy` is at least `0.01` and below `minimumPurchaseCny`. The public backend excludes lower-value inventory as sold out.
+- Normal services display and accept `minimumPurchaseCny..maxBuy`. Tail cards and details display one fixed `尾单 ¥x.xx` amount with `一次买完`; they must never render an inverse range such as `¥10-¥9.99`.
+- The detail page initializes a tail amount to `maxBuy`, disables amount editing, and shows the complete remaining USD allowance in the confirmation flow.
+- Real purchase-intent mapping submits the complete `availableUsdAllowance`, normalized to six decimal places, for a tail. Normal metered purchases continue deriving allowance from CNY and rate; fixed packages submit no metered allowance.
+- Client tail detection is presentation and request-shaping only. The server revalidates current inventory, amount, and allowance and remains authoritative after concurrent inventory changes.
+
+### 4. Validation & Error Matrix
+
+| Condition | UI behavior |
+| --- | --- |
+| `maxBuy >= minimumPurchaseCny` | Editable normal amount with the configured lower and current upper bounds |
+| `0.01 <= maxBuy < minimumPurchaseCny` | Fixed tail amount, disabled input, complete allowance submission |
+| Tail amount differs from `maxBuy` | Disable confirmation and show the fixed tail amount |
+| Backend rejects a stale tail | Show the Problem Details message and require refreshed service data |
+| Service is fixed-package or limited-offer | Do not apply tail detection or metered allowance mapping |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a service with `minimumPurchaseCny=10`, `maxBuy=9.99`, and `availableUsdAllowance=12.499000` shows `尾单 ¥9.99 · 一次买完` and submits all `$12.499000`.
+- Base: a service with `maxBuy=10.00` keeps the normal editable amount control.
+- Bad: show `¥10-¥9.99`, let the buyer enter `¥5`, or derive the tail USD allowance by dividing the two-decimal CNY amount.
+
+### 6. Tests Required
+
+- Pricing helper tests cover normal/tail detection, tail display, and exact six-decimal tail allowance mapping.
+- Detail/card source regressions assert the tail default, disabled input, fixed label, full allowance preview, and absence of inverse ranges.
+- Run full Vitest, typecheck, and a real-mode production build.
+- Browser-check normal and tail market/detail states at desktop and mobile widths with no overflow, overlap, console errors, or editable tail input.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const requestedUsdAllowance = divideDecimal(requestedCnyAmount, rate, 6)
+const range = `¥${service.minimumPurchaseCny}-¥${service.maxBuy}`
+```
+
+#### Correct
+
+```ts
+const requestedUsdAllowance = isApiServiceTailOrder(service)
+  ? normalizeDecimalTrimmed(service.availableUsdAllowance, 6)
+  : normalizeDecimalTrimmed(divideDecimal(requestedCnyAmount, rate, 6), 6)
+const label = isApiServiceTailOrder(service)
+  ? `尾单 ¥${service.maxBuy} · 一次买完`
+  : `¥${service.minimumPurchaseCny}-¥${service.maxBuy}`
+```
 
 ## Scenario: Rush Countdown, Simplified Publication, And Copy Drafts
 

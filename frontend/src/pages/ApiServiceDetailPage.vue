@@ -24,7 +24,7 @@ import {
 } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
-import { getApiServicePricePresentation } from '@/lib/apiServicePricingPresentation'
+import { getApiServicePricePresentation, isApiServiceTailOrder } from '@/lib/apiServicePricingPresentation'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useMyApiServices, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
@@ -115,7 +115,7 @@ watch([service, () => route.query.package], ([value, packageQuery]) => {
     return
   }
   selectedPackageId.value = ''
-  amount.value = value.minimumPurchaseCny
+  amount.value = isApiServiceTailOrder(value) ? value.maxBuy : value.minimumPurchaseCny
 }, { immediate: true })
 
 watch(selectedPackageId, value => {

@@ -17,6 +17,7 @@ import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import PurchaseAmountSelector from './PurchaseAmountSelector.vue'
 import PurchaseConfirmDialog from './PurchaseConfirmDialog.vue'
 import { compareDecimal } from '@/lib/decimal'
+import { isApiServiceTailOrder } from '@/lib/apiServicePricingPresentation'
 import { apiServiceAvailableUsdAllowance, estimateUsdAllowance, formatCredit } from './utils'
 
 const props = defineProps<{
@@ -36,8 +37,11 @@ const emit = defineEmits<{
 
 const confirmOpen = ref(false)
 const merchantUrl = computed(() => getApiMerchantProfileUrl(props.service))
-const estimatedCredit = computed(() => estimateUsdAllowance(String(props.amount), props.service))
 const fixedPackageMode = computed(() => props.service.billingMode === 'fixed_package')
+const tailOrder = computed(() => isApiServiceTailOrder(props.service))
+const estimatedCredit = computed(() => tailOrder.value
+  ? apiServiceAvailableUsdAllowance(props.service)
+  : estimateUsdAllowance(String(props.amount), props.service))
 const availablePackages = computed(() => (props.service.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
 const selectedPackage = computed(() => availablePackages.value.find(item => item.id === props.selectedPackageId) ?? null)
 const acceptedPaymentMethods = computed(() => props.service.acceptedPaymentMethods ?? [])
@@ -56,7 +60,8 @@ const amountError = computed(() => {
   }
   if (!Number.isFinite(props.amount) || props.amount <= 0) return '请输入有效金额。'
   if (!decimalPattern.test(String(props.amount))) return '自定义金额最多保留两位小数。'
-  if (props.amount < props.service.minimumPurchaseCny) return `最低订单金额为 ¥${props.service.minimumPurchaseCny}。`
+  if (tailOrder.value && compareDecimal(String(props.amount), String(props.service.maxBuy)) !== 0) return `尾单金额固定为 ¥${props.service.maxBuy}，需一次买完。`
+  if (!tailOrder.value && props.amount < props.service.minimumPurchaseCny) return `最低订单金额为 ¥${props.service.minimumPurchaseCny}。`
   if (props.amount > props.service.maxBuy) return `单笔最高订单金额为 ¥${props.service.maxBuy}。`
   if (compareDecimal(estimatedCredit.value, apiServiceAvailableUsdAllowance(props.service)) > 0) return '超过商户当前可售美元额度。'
   return ''
@@ -134,7 +139,7 @@ async function shareService() {
       </div>
 
       <dl class="grid grid-cols-2 gap-3 text-xs">
-        <div><dt class="text-muted-foreground">订单金额</dt><dd class="mt-1 font-medium">{{ selectedPackage ? `¥${selectedPackage.priceCny}` : `¥${service.minimumPurchaseCny}–¥${service.maxBuy}` }}</dd></div>
+        <div><dt class="text-muted-foreground">订单金额</dt><dd class="mt-1 font-medium">{{ selectedPackage ? `¥${selectedPackage.priceCny}` : tailOrder ? `尾单 ¥${service.maxBuy}` : `¥${service.minimumPurchaseCny}–¥${service.maxBuy}` }}</dd></div>
         <div><dt class="text-muted-foreground">付款窗口</dt><dd class="mt-1 font-medium">{{ service.expectedResponseMinutes }} 分钟</dd></div>
       </dl>
 
