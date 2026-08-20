@@ -69,7 +69,7 @@ import { backendFormDataMutation, backendMutation, backendRequest, ensureBackend
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
 import { backendCreateContact, backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
-import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
+import { compareDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { apiOrderCommercialOutcomeLabels, apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
@@ -77,7 +77,7 @@ import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import { collectCursorPages, normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
-import { maximumPurchaseCnyForInventory } from '@/lib/apiServicePricingPresentation'
+import { maximumPurchaseCnyForInventory, requestedUsdAllowanceForApiServicePurchase } from '@/lib/apiServicePricingPresentation'
 
 type ListResponse<T> = { items: T[], nextCursor?: string | null }
 
@@ -1647,9 +1647,7 @@ export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseI
   await ensureBackendSession('buyer', false)
   const service = await backendAPIServiceById(payload.serviceId)
   const requestedCnyAmount = normalizeDecimal(String(payload.purchaseAmountCny), 2)
-  const requestedUsdAllowance = service.billingMode === 'fixed_package'
-    ? ''
-    : normalizeDecimalTrimmed(divideDecimal(requestedCnyAmount, service.cnyPerUsdAllowance || '1', 6), 6)
+  const requestedUsdAllowance = requestedUsdAllowanceForApiServicePurchase(service, requestedCnyAmount)
   const response = await backendMutation<BackendAPIPurchaseIntent>(`/api/v1/api-services/${payload.serviceId}/purchase-intents`, {
     buyerContactMethodId: payload.buyerContactMethodId,
     requestedCnyAmount,

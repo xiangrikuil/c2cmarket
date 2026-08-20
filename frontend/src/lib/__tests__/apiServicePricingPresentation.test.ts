@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ApiService, ApiServicePackage } from '@/data/mock'
 import {
   getApiServicePricePresentation,
+  isApiServiceTailOrder,
+  requestedUsdAllowanceForApiServicePurchase,
 } from '@/lib/apiServicePricingPresentation'
 
 const packageItem = (overrides: Partial<ApiServicePackage> = {}): ApiServicePackage => ({
@@ -29,7 +31,9 @@ const service = (overrides: Partial<ApiService> = {}) => ({
   billingMode: 'metered_credit',
   creditPerCny: 1.25,
   cnyPerUsdAllowance: '0.8000',
+  availableUsdAllowance: '500.000000',
   minimumPurchaseCny: 10,
+  maxBuy: 400,
   packages: [],
   ...overrides,
 } as ApiService)
@@ -66,6 +70,24 @@ describe('API service price presentation', () => {
       packageCount: 2,
       stockAvailable: 6,
     })
+  })
+
+  it('presents a sub-minimum remainder as one fixed tail order', () => {
+    const tail = service({
+      availableUsdAllowance: '12.499000',
+      maxBuy: 9.99,
+    })
+
+    expect(isApiServiceTailOrder(tail)).toBe(true)
+    expect(getApiServicePricePresentation(tail)).toMatchObject({
+      secondary: '尾单 ¥9.99 · 一次买完',
+      minimumPriceCny: 9.99,
+    })
+    expect(requestedUsdAllowanceForApiServicePurchase(tail, '9.99')).toBe('12.499')
+  })
+
+  it('keeps amount-derived allowance for normal metered orders', () => {
+    expect(requestedUsdAllowanceForApiServicePurchase(service(), '10.00')).toBe('12.5')
   })
 
   it('shows the selected package price and package facts on detail pages', () => {

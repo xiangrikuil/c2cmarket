@@ -1820,16 +1820,30 @@ func CurrentMaximumIntentCNY(service Service) string {
 	if service.BillingMode != ServiceBillingModeMetered {
 		return strings.TrimSpace(service.MaximumIntentCNY)
 	}
-	availableText := strings.TrimSpace(service.AvailableUSDAllowance)
-	if availableText == "" {
-		availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
-	}
+	availableText := CurrentAvailableUSDAllowance(service)
 	available, availableOK := parseNonNegativeDecimal(availableText)
 	rate, rateOK := parsePositiveDecimal(service.DeclaredCNYPerUSDAllowance)
 	if !availableOK || !rateOK {
 		return ""
 	}
 	return decimalStringDown(new(big.Rat).Mul(available, rate), 2)
+}
+
+func CurrentAvailableUSDAllowance(service Service) string {
+	availableText := strings.TrimSpace(service.AvailableUSDAllowance)
+	if availableText == "" {
+		availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+	}
+	return availableText
+}
+
+func IsTailOrder(service Service) bool {
+	if service.BillingMode != ServiceBillingModeMetered {
+		return false
+	}
+	maximum, maximumOK := parsePositiveDecimal(CurrentMaximumIntentCNY(service))
+	minimum, minimumOK := parsePositiveDecimal(service.MinimumIntentCNY)
+	return maximumOK && minimumOK && maximum.Cmp(minimum) < 0
 }
 
 func OrderableReasons(service Service) []string {
@@ -1866,11 +1880,10 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 	}
 	switch service.BillingMode {
 	case ServiceBillingModeMetered:
-		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
-		if availableText == "" {
-			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
-		}
-		if available, ok := parseNonNegativeDecimal(availableText); !ok || available.Sign() == 0 {
+		available, availableOK := parseNonNegativeDecimal(CurrentAvailableUSDAllowance(service))
+		maximumText := CurrentMaximumIntentCNY(service)
+		_, maximumOK := parsePositiveDecimal(maximumText)
+		if !availableOK || available.Sign() == 0 || maximumText != "" && !maximumOK {
 			reasons = append(reasons, "quota_sold_out")
 		}
 		if service.QuotaExpiresAt == nil {

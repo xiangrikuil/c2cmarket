@@ -1,9 +1,14 @@
 import type { ApiService, ApiServicePackage } from '@/data/mock'
-import { divideDecimal, formatDecimal, multiplyDecimalDown } from '@/lib/decimal'
+import { compareDecimal, divideDecimal, formatDecimal, multiplyDecimalDown, normalizeDecimalTrimmed } from '@/lib/decimal'
 
 type ApiServicePricingSource = Pick<
   ApiService,
-  'billingMode' | 'packages' | 'creditPerCny' | 'cnyPerUsdAllowance' | 'minimumPurchaseCny'
+  'billingMode' | 'packages' | 'creditPerCny' | 'cnyPerUsdAllowance' | 'minimumPurchaseCny' | 'maxBuy'
+>
+
+type ApiServicePurchaseSource = Pick<
+  ApiService,
+  'billingMode' | 'creditPerCny' | 'cnyPerUsdAllowance' | 'minimumPurchaseCny' | 'maxBuy' | 'availableUsdAllowance'
 >
 
 export type ApiServicePricePresentation = {
@@ -36,6 +41,24 @@ export function maximumPurchaseCnyForInventory(availableUsdAllowance: string | n
   return Number(multiplyDecimalDown(availableUsdAllowance, cnyPerUsdAllowance, 2))
 }
 
+export function isApiServiceTailOrder(
+  service: Pick<ApiService, 'billingMode' | 'minimumPurchaseCny' | 'maxBuy'>,
+) {
+  return service.billingMode === 'metered_credit'
+    && Number.isFinite(service.maxBuy)
+    && service.maxBuy >= 0.01
+    && compareDecimal(String(service.maxBuy), String(service.minimumPurchaseCny)) < 0
+}
+
+export function requestedUsdAllowanceForApiServicePurchase(service: ApiServicePurchaseSource, requestedCnyAmount: string) {
+  if (service.billingMode === 'fixed_package') return ''
+  if (isApiServiceTailOrder(service)) {
+    return normalizeDecimalTrimmed(service.availableUsdAllowance || '0', 6)
+  }
+  const rate = apiServiceCnyPerUsdAllowance(service)
+  return rate ? normalizeDecimalTrimmed(divideDecimal(requestedCnyAmount, rate, 6), 6) : ''
+}
+
 export function availableApiServicePackages(
   service: Pick<ApiService, 'packages'>,
 ) {
@@ -56,12 +79,15 @@ export function getApiServicePricePresentation(
   selectedPackage?: ApiServicePackage | null,
 ): ApiServicePricePresentation {
   if (service.billingMode !== 'fixed_package') {
+    const tailOrder = isApiServiceTailOrder(service)
     return {
       fixedPackage: false,
       label: '购买价格',
       value: formatCnyPerUsdQuota(service),
-      secondary: `最低 ¥${formatDecimal(service.minimumPurchaseCny, 0, 2)} 起购`,
-      minimumPriceCny: service.minimumPurchaseCny,
+      secondary: tailOrder
+        ? `尾单 ¥${formatDecimal(service.maxBuy, 0, 2)} · 一次买完`
+        : `最低 ¥${formatDecimal(service.minimumPurchaseCny, 0, 2)} 起购`,
+      minimumPriceCny: tailOrder ? service.maxBuy : service.minimumPurchaseCny,
       packageCount: 0,
       stockAvailable: 0,
     }

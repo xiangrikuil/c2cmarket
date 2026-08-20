@@ -51,6 +51,10 @@ func NewIntentWithOwnerContacts(input CreateIntentInput, service apimarket.Servi
 	if err != nil {
 		return Intent{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
+	minimumIntentCNYSnapshot := service.MinimumIntentCNY
+	if apimarket.IsTailOrder(service) {
+		minimumIntentCNYSnapshot = service.MaximumIntentCNY
+	}
 	return Intent{
 		ID:                                       uuid.NewString(),
 		APIServiceID:                             service.ID,
@@ -77,7 +81,7 @@ func NewIntentWithOwnerContacts(input CreateIntentInput, service apimarket.Servi
 		OwnerContactLabelSnapshot:                primaryOwnerContact.Label,
 		DeclaredCNYPerUSDAllowanceSnapshot:       decimalStringOptional(service.DeclaredCNYPerUSDAllowance, 4),
 		DeclaredMaxUSDAllowancePerIntentSnapshot: decimalStringOptional(service.DeclaredMaxUSDAllowancePerIntent, 6),
-		MinimumIntentCNYSnapshot:                 decimalStringMust(service.MinimumIntentCNY, 2),
+		MinimumIntentCNYSnapshot:                 decimalStringMust(minimumIntentCNYSnapshot, 2),
 		MaximumIntentCNYSnapshot:                 decimalStringOptional(service.MaximumIntentCNY, 2),
 		PricingSnapshot:                          pricingSnapshot,
 		QuotaUsagePolicySnapshot:                 quotaUsagePolicy,

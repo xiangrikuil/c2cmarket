@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"strings"
 	"testing"
@@ -40,6 +41,78 @@ func TestPublicAPIServicePredicateExcludesUnsupportedBillingModes(t *testing.T) 
 	predicate := publicAPIServiceOrderablePredicate("service")
 	if !strings.Contains(predicate, "service.billing_mode IN ('metered_usd_quota', 'fixed_package')") {
 		t.Fatalf("public API service predicate must exclude unsupported billing modes: %s", predicate)
+	}
+}
+
+func TestPublicAPIServicePredicateExcludesSubCentMeteredInventory(t *testing.T) {
+	predicate := publicAPIServiceOrderablePredicate("service")
+	fragment := "trunc(service.available_usd_allowance * service.declared_cny_per_usd_allowance, 2) >= 0.01"
+	if !strings.Contains(predicate, fragment) {
+		t.Fatalf("public API service predicate must exclude sub-cent inventory: %s", predicate)
+	}
+}
+
+func TestValidateCreateAPIPurchaseIntentForStoreRequiresExactTailOrder(t *testing.T) {
+	service := apimarket.Service{
+		OwnerUserID:                      "seller-1",
+		BillingMode:                      apimarket.ServiceBillingModeMetered,
+		DeclaredCNYPerUSDAllowance:       "0.8000",
+		DeclaredMaxUSDAllowancePerIntent: "12.499000",
+		AvailableUSDAllowance:            "12.499000",
+		MinimumIntentCNY:                 "10.00",
+		AccessModes:                      []apimarket.ServiceAccessMode{{AccessMode: "buyer_dedicated_sub_key"}},
+	}
+	validInput := apiintent.CreateIntentInput{
+		BuyerUserID:           "buyer-1",
+		BuyerContactMethodID:  "buyer-contact-1",
+		RequestedCNYAmount:    "9.99",
+		RequestedUSDAllowance: "12.499000",
+		SelectedAccessMode:    "buyer_dedicated_sub_key",
+	}
+
+	tests := []struct {
+		name      string
+		mutate    func(*apiintent.CreateIntentInput)
+		wantField string
+		wantCode  string
+	}{
+		{name: "complete tail order"},
+		{
+			name: "partial allowance",
+			mutate: func(input *apiintent.CreateIntentInput) {
+				input.RequestedUSDAllowance = "12.000000"
+			},
+			wantField: "requestedUsdAllowance",
+			wantCode:  "tail_order_required",
+		},
+		{
+			name: "wrong CNY amount",
+			mutate: func(input *apiintent.CreateIntentInput) {
+				input.RequestedCNYAmount = "9.98"
+			},
+			wantField: "requestedCnyAmount",
+			wantCode:  "tail_order_required",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := validInput
+			if test.mutate != nil {
+				test.mutate(&input)
+			}
+
+			appErr := validateCreateAPIPurchaseIntentForStore(input, service)
+			if test.wantField == "" {
+				if appErr != nil {
+					t.Fatalf("valid tail order rejected: %+v", appErr)
+				}
+				return
+			}
+			if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != test.wantField || appErr.FieldErrors[0].Code != test.wantCode {
+				t.Fatalf("unexpected tail validation result: %+v", appErr)
+			}
+		})
 	}
 }
 
