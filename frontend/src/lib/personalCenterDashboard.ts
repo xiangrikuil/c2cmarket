@@ -90,7 +90,6 @@ export type BuildPublishedContentInput = {
 
 export type BuildAccountCompletenessInput = {
   profile: UserProfile
-  wechatBound: boolean
   hasApiServices: boolean
   apiPaymentComplete: boolean
 }
@@ -268,13 +267,6 @@ export function buildAccountCompleteness(input: BuildAccountCompletenessInput): 
 
   tasks.push(
     {
-      id: 'contact',
-      label: '绑定微信',
-      description: '微信是平台必填联系方式，用于有效交易联系。',
-      completed: input.wechatBound,
-      to: '/my/contacts',
-    },
-    {
       id: 'display-name',
       label: '设置展示名',
       description: '让交易参与方清楚识别你。',
@@ -315,12 +307,6 @@ export function buildAccountCompleteness(input: BuildAccountCompletenessInput): 
 export function getPrimaryAccountAlert(completeness: AccountCompleteness): AccountAlert | null {
   const missingTasks = new Map(completeness.tasks.filter(item => !item.completed).map(item => [item.id, item]))
   const alertDefinitions: Array<Omit<AccountAlert, 'to'> & { id: AccountCompletenessTask['id'] }> = [
-    {
-      id: 'contact',
-      title: '请先绑定微信',
-      description: '微信是平台必填联系方式，绑定后会自动用于全部交易场景。',
-      actionLabel: '绑定微信',
-    },
     {
       id: 'linuxdo',
       title: 'Linux.do 绑定状态需要检查',

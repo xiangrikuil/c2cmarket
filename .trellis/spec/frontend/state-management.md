@@ -60,8 +60,8 @@ In real backend mode, product catalog state belongs to `GET /api/v1/product-cate
 
 ### 1. Scope / Trigger
 
-- Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, required WeChat contact state, or backup-password state.
-- The first public registration/login path is linux.do OAuth. Authenticated workspace and transaction actions require a verified recovery email, while public marketplace discovery remains browseable. WeChat onboarding shares the same account-setup dialog. A backup password remains available to linux.do-bound users but is optional and must never become a global navigation gate.
+- Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, optional transaction contacts, or backup-password state.
+- The first public registration/login path is linux.do OAuth. Authenticated workspace and transaction actions require a verified recovery email, while public marketplace discovery remains browseable. WeChat is an optional transaction contact and must never become an account-recovery or navigation gate. A backup password remains available to linux.do-bound users but is optional and must never become a global navigation gate.
 
 ### 2. Signatures
 
@@ -75,23 +75,19 @@ function accountRecoveryRequirements(profile: AccountRecoveryProfile): AccountRe
 function isAccountRecoveryAllowedPath(path: string): boolean
 function shouldRedirectToAccountRecovery(path: string, authAccess: unknown): boolean
 function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
-function wechatOnboardingRoute(returnTo: unknown): RouteLocationRaw
-function wechatOnboardingReturnTo(value: unknown): string
 ```
 
 ### 3. Contracts
 
-- The recovery-gate source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified`. The unified dialog also reads the contacts query for an enabled, non-empty WeChat contact; `UserProfile.passwordConfigured` and `UserProfile.linuxDoBinding.bound` only control the optional backup-password action.
+- The recovery-gate source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified`. Contact configuration is independent of recovery completion; `UserProfile.passwordConfigured` and `UserProfile.linuxDoBinding.bound` only control the optional backup-password action.
 - Do not store an additional "onboarding complete" flag in Pinia, localStorage, sessionStorage, or route meta.
 - Incomplete logged-in accounts are redirected only from routes whose `meta.auth` is `user` or `admin`. Public market lists and details remain browseable so account recovery does not block discovery.
 - The path allowlist prevents loops and preserves setup/explanation routes such as `/my/account`, login/mock, announcement details, and public profiles even when they carry authenticated shell metadata.
 - Redirects may preserve an internal `returnTo`, but `returnTo` must be same-origin path-only and must not point back to an allowed/setup page.
-- `/my/account` requires a verified email for every account. `passwordConfigured=false` must not cause a recovery redirect, including for linux.do-bound accounts. The unified required dialog offers the backup-password form after its required WeChat and email steps, but the form has a visible skip action and remains excluded from completion. An explicit account-page password action may also open it independently. Unbound accounts must not see either password form.
+- `/my/account` requires a verified email for every account. `passwordConfigured=false` must not cause a recovery redirect, including for linux.do-bound accounts. An explicit account-page password action may open the optional form independently. Unbound accounts must not see the password form.
 - The gate is frontend-enforced. If backend API blocking is required later, create a separate backend policy task instead of hiding that decision in frontend code.
-- Student registration success and OAuth `authOutcome=registered` enter `/my/account?onboarding=wechat` with a normalized internal `returnTo`. Ordinary login keeps its original return behavior.
-- The unified required dialog reads the contacts query before opening, marks an existing WeChat complete, and starts at email when WeChat is already bound. For linux.do-bound accounts without a password it then shows four steps: WeChat, verified email, optional backup password, and completion. The password step provides `暂不设置`; skipping advances to completion and must not reopen the dialog solely because `passwordConfigured=false`. An explicit password action retains its focused password/completion view.
-- WeChat onboarding state lives only in the route query. Once WeChat and email are complete, return to the normalized original target or `/my`; targets that point back to `/my/account?onboarding=wechat` collapse to `/my` to prevent loops.
-- The durable WeChat completion source is the contacts query: an enabled WeChat with a non-empty value. Do not persist a separate onboarding-complete browser flag.
+- Student registration success and OAuth `authOutcome=registered` continue to the normalized internal `returnTo`; when no target exists, use the existing default route. Ordinary login keeps its original return behavior.
+- Registration and shell code must not open a contact dialog, add contact-specific route queries, or persist contact-completion flags. Users choose an eligible verified email or enabled WeChat only inside the transaction action that needs it.
 
 ### 4. Validation & Error Matrix
 
@@ -100,34 +96,32 @@ function wechatOnboardingReturnTo(value: unknown): string
 | Incomplete account opens public `/carpools`, `/api-market/:id`, or `/official-prices/:id` | Keep the public route visible; do not redirect. |
 | Incomplete account opens authenticated `/carpools/new`, `/my/api-orders`, or `/admin` | Redirect to `/my/account` with an internal `returnTo`. |
 | Email is verified and `passwordConfigured=false` | No recovery redirect, regardless of linux.do binding; password remains an optional account-page action. |
-| Existing enabled WeChat loads before the dialog opens | Mark WeChat complete and open the verified-email step without asking for the WeChat value again. |
-| WeChat is missing | Open the WeChat step first; after save, advance to email or completion according to the profile state. |
-| Required WeChat and email are complete on a linux.do account without a password | Show the password inputs with `暂不设置`; either save or skip advances to completion. |
+| WeChat is missing after registration | Continue to the safe target without opening a contact dialog or marking the account incomplete. |
+| User has both eligible email and WeChat contacts | Transaction forms require an explicit selection; navigation does not choose one. |
 | User skips the optional password | Do not reopen or redirect solely because `passwordConfigured=false`. |
 | Incomplete account opens `/my/account` | No redirect loop; recovery tasks render. |
 | Incomplete account opens `/u/:username` or `/announcements/:slug` | No redirect. |
 | `returnTo` is external, protocol-relative, blank, or points to setup/allowed path | Drop it and do not render a continue action. |
-| Student registration succeeds | Open WeChat onboarding and preserve a safe original target. |
-| OAuth registration succeeds with incomplete setup | Open the unified `/my/account` dialog, complete missing WeChat/email items, then resume the original target. |
-| WeChat onboarding receives an external or self-referential `returnTo` | Use `/my`; never leave the origin or loop back into onboarding. |
+| Student registration succeeds | Continue to the safe original target without a contact prerequisite. |
+| OAuth registration succeeds | Remove the outcome query and continue normally without a contact prerequisite. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `AppShell.vue` gates only on verified email, while `MyCenterPage.vue` combines that profile fact with the contacts query to skip an existing WeChat and keeps backup password optional.
+- Good: `AppShell.vue` gates only on verified email, while `MyCenterPage.vue` keeps optional contact management and backup-password actions independent of recovery completion.
 - Base: login page still uses linux.do OAuth and password-login recovery copy; it does not become a public password registration page.
-- Bad: each page independently checks `profile.emailVerified`, the shell treats `passwordConfigured=false` as incomplete, or the dialog asks for a WeChat value already present in the contacts query.
+- Bad: each page independently checks `profile.emailVerified`, the shell treats `passwordConfigured=false` as incomplete, or registration opens a WeChat dialog.
 
 ### 6. Tests Required
 
 - Unit tests for completion, outstanding requirements, allowed paths, auth-meta redirect decisions, and return target sanitization.
-- Unit/source-contract tests for student and OAuth registration routing, `/my/account` WeChat onboarding target sanitization, existing-WeChat skip, optional-password non-blocking behavior, binding-success continuation, and ordinary-login non-regression.
+- Unit/source-contract tests for student and OAuth registration routing, safe target sanitization, absence of contact onboarding, optional-password non-blocking behavior, and ordinary-login non-regression.
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
 - Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Browser smoke when available:
   - incomplete account opens an authenticated publish/transaction route and reaches `/my/account`;
   - public market list and detail routes are not redirected;
-  - existing WeChat opens directly on email, completing email reveals the optional password inputs, and `暂不设置` allows continuing without another prompt;
-  - missing WeChat opens first, saves once, and then advances without a second contact form.
+  - registration with no WeChat continues to the safe target without a contact dialog;
+  - transaction forms present eligible contacts and require an explicit selection when more than one exists.
 
 ### 7. Wrong vs Correct
 

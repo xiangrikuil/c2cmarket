@@ -840,10 +840,10 @@ func validateCreateOrderInput(input CreateOrderInput) *domain.AppError {
 	}
 	buyerContactMethodID := strings.TrimSpace(input.BuyerContactMethodID)
 	if buyerContactMethodID == "" {
-		return contact.WechatRequiredError("buyerContactMethodId", "购买额度包前必须先配置微信联系方式。")
+		return contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	if _, err := uuid.Parse(buyerContactMethodID); err != nil {
-		return fieldError("buyerContactMethodId", "微信联系方式无效，请刷新后重试。")
+		return fieldError("buyerContactMethodId", "交易联系方式无效，请刷新后重试。")
 	}
 	if strings.TrimSpace(input.SelectedAccessMode) == "" {
 		return fieldError("selectedAccessMode", "必须选择接入方式。")

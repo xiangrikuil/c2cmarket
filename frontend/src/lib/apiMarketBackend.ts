@@ -67,7 +67,7 @@ import type {
 import { backendFormDataMutation, backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
-import { backendCreateContact, backendMyContactMethods, backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
+import { backendCreateContact, backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
@@ -141,7 +141,6 @@ type BackendAPIService = {
   merchantProfileSlug?: string
   merchantAvatarUrl?: string
   ownerContactMethodId?: string
-	ownerContactMethodIds?: string[]
   title: string
   shortDescription: string
   sourceUrl?: string
@@ -945,10 +944,9 @@ export async function backendCreateAPIQuotaOrder(payload: CreateApiQuotaOrderPay
   const selectedAccessMode = service.deliveryModes[0]
   if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
   if (!selectedAccessMode) throw new Error('商户尚未配置可用接入方式。')
-  const contact = await backendBuyerContactMethod()
   const response = await backendMutation<BackendAPIOrder>(`/api/v1/api-quota-offers/${payload.offerId}/orders`, {
     ...(payload.saleRoundId ? { saleRoundId: payload.saleRoundId } : {}),
-    buyerContactMethodId: contact.id,
+    buyerContactMethodId: payload.buyerContactMethodId,
     selectedAccessMode: toBackendAccessMode(selectedAccessMode),
     paymentMethod,
     buyerNote: '',
@@ -1615,32 +1613,15 @@ export async function backendCreateContactMethod(payload: SaveContactMethodReque
 	return backendCreateContact(payload)
 }
 
-export function selectBuyerContactMethod(methods: UserContactMethod[]): UserContactMethod {
-  const contact = methods.find(method => method.enabled && method.type === 'wechat')
-  if (!contact) {
-    throw new Error('请先在个人中心配置微信联系方式。')
-  }
-  return contact
-}
-
-export async function backendEnabledWechatContactMethod(): Promise<UserContactMethod> {
-	return selectBuyerContactMethod(await backendMyContactMethods())
-}
-
-export async function backendBuyerContactMethod(): Promise<UserContactMethod> {
-  return backendEnabledWechatContactMethod()
-}
-
 export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
   await ensureBackendSession('buyer', false)
   const service = await backendAPIServiceById(payload.serviceId)
-  const contact = await backendBuyerContactMethod()
   const requestedCnyAmount = normalizeDecimal(String(payload.purchaseAmountCny), 2)
   const requestedUsdAllowance = service.billingMode === 'fixed_package'
     ? ''
     : normalizeDecimalTrimmed(divideDecimal(requestedCnyAmount, service.cnyPerUsdAllowance || '1', 6), 6)
   const response = await backendMutation<BackendAPIPurchaseIntent>(`/api/v1/api-services/${payload.serviceId}/purchase-intents`, {
-    buyerContactMethodId: contact.id,
+    buyerContactMethodId: payload.buyerContactMethodId,
     requestedCnyAmount,
     requestedUsdAllowance,
     selectedAccessMode: service.billingMode === 'fixed_package' ? 'fixed_package_offsite' : toBackendAccessMode(payload.deliveryMode),
@@ -2074,12 +2055,9 @@ export async function backendSubmitAPIService(payload: Record<string, unknown>) 
   await ensureBackendSession('merchant', false)
   const merchantIdentityMode = apiServiceMerchantIdentityMode(payload.merchantIdentityMode)
   const merchantProfile = merchantIdentityMode === 'store_alias' ? await ensureMerchantProfile(payload) : null
-	const ownerContact = await backendEnabledWechatContactMethod()
-	const ownerContactMethodIds = [ownerContact.id]
   let response = await backendMutation<BackendAPIService>('/api/v1/owner/api-services', toBackendServiceRequest({
     ...payload,
-		ownerContactMethodId: ownerContactMethodIds[0],
-		ownerContactMethodIds,
+		ownerContactMethodId: String(payload.ownerContactMethodId ?? ''),
     merchantProfileId: merchantProfile?.id ?? '',
     merchantIdentityMode,
   }), {
@@ -2150,15 +2128,11 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
   if (typeof payload.promptAuditEnabled !== 'boolean') throw new Error('Prompt audit selection required')
 
   const fixedPackage = billing === 'fixed_package'
-	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
-		? payload.ownerContactMethodIds.map(String).filter(Boolean)
-		: []
   return {
     probeConnectionId: String(payload.probeConnectionId ?? ''),
     merchantProfileId: String(payload.merchantProfileId ?? ''),
     merchantIdentityMode: apiServiceMerchantIdentityMode(payload.merchantIdentityMode),
-		ownerContactMethodId: ownerContactMethodIds[0] ?? String(payload.ownerContactMethodId ?? ''),
-		ownerContactMethodIds,
+		ownerContactMethodId: String(payload.ownerContactMethodId ?? ''),
     title: String(payload.generatedTitle ?? 'API 服务'),
     shortDescription: String(payload.shortDescription ?? 'API 服务'),
     sourceUrl: String(payload.sourceUrl ?? ''),

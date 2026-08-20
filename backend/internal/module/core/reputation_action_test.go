@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
-	contactmodule "c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/reputation"
 )
 
@@ -52,8 +51,8 @@ func TestAPIPurchaseIntentContactDisclosureChecksReputationAction(t *testing.T) 
 	owner := createTestBoundUser(t, service, "seller-1")
 	buyer := createTestBoundUser(t, service, "buyer-1")
 	repo.restrictedContactUsers = map[string]struct{}{owner.ID: {}, buyer.ID: {}}
-	ownerContact := createTestContactMethod(t, service, owner.ID, "wechat", "Owner TG", "@owner_restricted", contactmodule.AllUsageScopes())
-	buyerContact := createTestContactMethod(t, service, buyer.ID, "wechat", "Buyer TG", "@buyer_restricted", contactmodule.DefaultUsageScopes())
+	ownerContact := createTestContactMethod(t, service, owner.ID, "wechat", "Owner TG", "@owner_restricted")
+	buyerContact := createTestContactMethod(t, service, buyer.ID, "wechat", "Buyer TG", "@buyer_restricted")
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
 	repo.calls = nil
 

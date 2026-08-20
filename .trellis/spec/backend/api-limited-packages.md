@@ -65,7 +65,7 @@ api_purchase_intent_owner_contact_snapshots:
 
 #### Publish Request And Stable Updates
 
-`APIServiceRequest.billingMode` is `fixed_package`. The request includes service-level `models[]` and one or more `packages[]`. `ownerContactMethodIds` is a non-empty ordered list of unique, enabled contact methods owned by the merchant; legacy `ownerContactMethodId` remains the first item for compatibility.
+`APIServiceRequest.billingMode` is `fixed_package`. The request includes service-level `models[]`, one or more `packages[]`, and one explicit `ownerContactMethodId`. The selected contact must be an enabled WeChat or verified email owned by the merchant; the service freezes its current version for future purchase intents.
 
 ```text
 models[]:

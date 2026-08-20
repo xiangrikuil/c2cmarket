@@ -262,8 +262,8 @@ func seedPublicAPISortService(t *testing.T, store *Store, ownerID string, now ti
 	ctx := context.Background()
 	contactID := uuid.NewString()
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['api_merchant']::text[], true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
 	`, contactID, ownerID, now); err != nil {
 		t.Fatalf("seed sort contact %d: %v", index, err)
 	}

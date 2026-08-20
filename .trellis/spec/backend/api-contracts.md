@@ -2536,7 +2536,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 116 (current repository target)
+  ExpectedMigrationVersion = 117 (current repository target)
 ```
 
 ### 3. Contracts

@@ -15,7 +15,6 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apiquota"
-	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/google/uuid"
@@ -1625,7 +1624,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, orderContext.APIServiceID, now); appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
-	buyerMethod, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "购买额度包前必须先配置微信联系方式。")
+	buyerMethod, buyerVersion, appErr := lockTransactionContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}

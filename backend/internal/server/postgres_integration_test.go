@@ -599,8 +599,8 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
 	servicePayload := apiServicePayloadWithProbeConnection(apiServicePayload(ownerContact.ID, "1.0000"), service.ProbeConnectionID)
 	service = updateAPIService(t, server, ownerSession, service.ID, service.Version, servicePayload, "pg-api-intent-service-contacts-"+suffix)
-	if len(service.OwnerContactMethodIDs) != 1 || service.OwnerContactMethodIDs[0] != ownerContact.ID {
-		t.Fatalf("expected sole WeChat owner contact selection, got %+v", service.OwnerContactMethodIDs)
+	if service.OwnerContactMethodID != ownerContact.ID {
+		t.Fatalf("expected explicit owner transaction contact %q, got %q", ownerContact.ID, service.OwnerContactMethodID)
 	}
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-service-publish-"+suffix)
@@ -932,8 +932,8 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 	adminSession := createSession(t, server, "pg-contact-admin-"+suffix, true)
 	buyerSession := createSession(t, server, "pg-contact-buyer-"+suffix, false)
 	sellerSession := createSession(t, server, "pg-contact-seller-"+suffix, false)
-	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Buyer PG TG "+suffix, "@pg_buyer_"+suffix)
-	sellerContact := createContactMethod(t, server, sellerSession, "telegram", "Seller PG TG "+suffix, "@pg_seller_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "wechat", "Buyer PG WeChat "+suffix, "pg_buyer_"+suffix)
+	sellerContact := createContactMethod(t, server, sellerSession, "wechat", "Seller PG WeChat "+suffix, "pg_seller_"+suffix)
 
 	request := newJSONRequest(http.MethodPost, "/api/v1/dev/contact-sessions", `{
 		"sellerUsername":"pg-contact-seller-`+suffix+`",
@@ -962,13 +962,13 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 	if got := readResponse.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("expected no-store, got %q", got)
 	}
-	if !strings.Contains(readResponse.Body.String(), "@pg_seller_"+suffix) {
+	if !strings.Contains(readResponse.Body.String(), "pg_seller_"+suffix) {
 		t.Fatalf("expected seller contact in participant response")
 	}
 	if count := storeAccessLogCount(t, store, created.ID); count != 1 {
 		t.Fatalf("expected one contact access log, got %d", count)
 	}
-	assertContactCiphertextDoesNotContain(t, databaseURL, "@pg_seller_"+suffix)
+	assertContactCiphertextDoesNotContain(t, databaseURL, "pg_seller_"+suffix)
 
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()

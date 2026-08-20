@@ -45,10 +45,10 @@ func (s *Store) CreateContactMethod(ctx context.Context, input contact.ContactMe
 func createContactMethodInTx(ctx context.Context, tx pgx.Tx, input contact.ContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion, encoded encodedContactValue) *domain.AppError {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO contact_methods (
-			id, user_id, type, label, usage_scopes, current_version_id, is_default, enabled, created_at, updated_at, version
+			id, user_id, type, label, current_version_id, is_default, enabled, verified_at, created_at, updated_at, version
 		)
-		VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10)
-	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, false, method.Enabled, method.CreatedAt, method.UpdatedAt, method.Version)
+		VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10)
+	`, method.ID, method.UserID, method.Type, method.Label, false, method.Enabled, method.VerifiedAt, method.CreatedAt, method.UpdatedAt, method.Version)
 	if err != nil {
 		if isUniqueViolationOnConstraint(err, "ux_contact_methods_one_enabled_wechat") {
 			return contact.DuplicateEnabledWechatError()
@@ -80,7 +80,7 @@ func createContactMethodInTx(ctx context.Context, tx pgx.Tx, input contact.Conta
 			return internalStoreError()
 		}
 	}
-	return insertContactMethodEvent(ctx, tx, method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"}, method.UpdatedAt)
+	return insertContactMethodEvent(ctx, tx, method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "verifiedAt", "isDefault", "enabled"}, method.UpdatedAt)
 }
 
 func (s *Store) CreateContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, input contact.ContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
@@ -121,7 +121,7 @@ func (s *Store) ListContactMethods(ctx context.Context, userID string) ([]contac
 		return nil, internalStoreError()
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, COALESCE(v.masked_value, ''),
+		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''),
 		       v.value_ciphertext, v.value_nonce, COALESCE(v.encryption_key_version, ''),
 		       COALESCE(v.encryption_format, ''), m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
@@ -198,7 +198,7 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 	var current contact.ContactMethod
 	var currentFingerprint string
 	err := tx.QueryRow(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, m.enabled, m.is_default, m.verified_at,
+		SELECT m.id::text, m.user_id::text, m.type, m.label, m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version,
 		       COALESCE(v.value_fingerprint, '')
 		FROM contact_methods m
@@ -210,7 +210,6 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 		&current.UserID,
 		&current.Type,
 		&current.Label,
-		&current.UsageScopes,
 		&current.Enabled,
 		&current.IsDefault,
 		&current.VerifiedAt,
@@ -226,16 +225,9 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
-	if current.Type == "wechat" && (input.Type != "wechat" || !input.Enabled) {
-		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能停用或改为其他联系方式。")
-	}
-
 	method.ID = current.ID
 	method.UserID = current.UserID
 	method.CreatedAt = current.CreatedAt
-	if input.UsageScopes == nil {
-		method.UsageScopes = append([]string(nil), current.UsageScopes...)
-	}
 	method.Version = current.Version + 1
 	method.DisplayValue = input.Value
 	valueChanged := input.Type != current.Type || subtle.ConstantTimeCompare([]byte(currentFingerprint), []byte(encoded.Fingerprint)) != 1
@@ -243,10 +235,14 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 		version.ContactMethodID = current.ID
 		version.OwnerUserID = current.UserID
 		method.CurrentVersionID = version.ID
-		method.VerifiedAt = nil
+		method.VerifiedAt = input.VerifiedAt
 	} else {
 		method.CurrentVersionID = current.CurrentVersionID
 		method.VerifiedAt = current.VerifiedAt
+		if input.VerifiedAt != nil {
+			verifiedAt := *input.VerifiedAt
+			method.VerifiedAt = &verifiedAt
+		}
 	}
 
 	if valueChanged {
@@ -281,10 +277,10 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 
 	_, err = tx.Exec(ctx, `
 		UPDATE contact_methods
-		SET type = $3, label = $4, usage_scopes = $5, current_version_id = $6, is_default = $7,
-		    enabled = $8, verified_at = $9, updated_at = $10, version = $11
+		SET type = $3, label = $4, current_version_id = $5, is_default = $6,
+		    enabled = $7, verified_at = $8, updated_at = $9, version = $10
 		WHERE id = $1 AND user_id = $2
-	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, method.CurrentVersionID, method.IsDefault,
+	`, method.ID, method.UserID, method.Type, method.Label, method.CurrentVersionID, method.IsDefault,
 		method.Enabled, method.VerifiedAt, method.UpdatedAt, method.Version)
 	if err != nil {
 		if isUniqueViolationOnConstraint(err, "ux_contact_methods_one_enabled_wechat") {
@@ -299,7 +295,7 @@ func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input co
 	if appErr := insertContactMethodEvent(ctx, tx, method, eventType, input.RequestID, contactMethodChangedFields(current, method, valueChanged), method.UpdatedAt); appErr != nil {
 		return contact.ContactMethod{}, appErr
 	}
-	return s.getContactMethodWithValue(ctx, tx, method.UserID, method.ID)
+	return method, nil
 }
 
 func (s *Store) DeleteContactMethod(ctx context.Context, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
@@ -363,9 +359,6 @@ func deleteContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, r
 	} else if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
-	if currentType == "wechat" {
-		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能解除绑定。")
-	}
 	if currentType == "linuxdo" {
 		return contact.ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
 	}
@@ -375,14 +368,13 @@ func deleteContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, r
 		UPDATE contact_methods
 		SET enabled = false, is_default = false, updated_at = $3, version = version + 1
 		WHERE id = $1 AND user_id = $2 AND enabled = true
-		RETURNING id::text, user_id::text, type, label, usage_scopes, '', enabled, is_default, verified_at,
+		RETURNING id::text, user_id::text, type, label, '', enabled, is_default, verified_at,
 		          COALESCE(current_version_id::text, ''), created_at, updated_at, version
 	`, methodID, userID, now).Scan(
 		&method.ID,
 		&method.UserID,
 		&method.Type,
 		&method.Label,
-		&method.UsageScopes,
 		&method.MaskedValue,
 		&method.Enabled,
 		&method.IsDefault,
@@ -698,8 +690,8 @@ func contactMethodChangedFields(before, after contact.ContactMethod, valueChange
 	if valueChanged {
 		fields = append(fields, "value")
 	}
-	if strings.Join(before.UsageScopes, "\x00") != strings.Join(after.UsageScopes, "\x00") {
-		fields = append(fields, "usageScopes")
+	if (before.VerifiedAt == nil) != (after.VerifiedAt == nil) || (before.VerifiedAt != nil && !before.VerifiedAt.Equal(*after.VerifiedAt)) {
+		fields = append(fields, "verifiedAt")
 	}
 	if before.IsDefault != after.IsDefault {
 		fields = append(fields, "isDefault")
@@ -720,11 +712,11 @@ func (s *Store) CreateContactSession(ctx context.Context, input contact.CreateCo
 	}
 	defer rollback(ctx, tx)
 
-	_, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+	_, buyerVersion, appErr := lockTransactionContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "buyerContactMethodId", "买家交易联系方式不可用。")
 	if appErr != nil {
 		return contact.ContactSession{}, appErr
 	}
-	_, sellerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.SellerContactMethodID, input.SellerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、归属不正确或未允许拼车用途。")
+	_, sellerVersion, appErr := lockTransactionContactVersionForOwner(ctx, tx, input.SellerContactMethodID, input.SellerUserID, "sellerContactMethodId", "卖家交易联系方式不可用。")
 	if appErr != nil {
 		return contact.ContactSession{}, appErr
 	}
@@ -936,26 +928,10 @@ func insertContactMethodEvent(ctx context.Context, tx pgx.Tx, method contact.Con
 }
 
 func lockContactVersionForOwner(ctx context.Context, q queryer, methodID, ownerID, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
-	return lockContactVersionForOwnerAndScope(ctx, q, methodID, ownerID, "", detail)
-}
-
-func lockContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredScope, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
-	return lockContactVersionForOwnerTypeAndScope(ctx, q, methodID, ownerID, "", requiredScope, detail)
-}
-
-func lockWechatContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredScope, field, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
-	method, version, appErr := lockContactVersionForOwnerTypeAndScope(ctx, q, methodID, ownerID, contact.MethodTypeWechat, requiredScope, detail)
-	if appErr != nil && appErr.Code == domain.CodeContactMethodNotOwned {
-		return contact.ContactMethod{}, contact.ContactMethodVersion{}, contact.WechatRequiredError(field, detail)
-	}
-	return method, version, appErr
-}
-
-func lockContactVersionForOwnerTypeAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredType, requiredScope, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
 	var method contact.ContactMethod
 	var version contact.ContactMethodVersion
 	err := q.QueryRow(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, m.enabled,
+		SELECT m.id::text, m.user_id::text, m.type, m.label, m.enabled,
 		       m.is_default, m.verified_at, m.created_at, m.updated_at, m.version,
 		       v.id::text, v.contact_method_id::text, v.owner_user_id::text, v.masked_value
 		FROM contact_methods m
@@ -969,15 +945,12 @@ func lockContactVersionForOwnerTypeAndScope(ctx context.Context, q queryer, meth
 		  AND m.current_version_id IS NOT NULL
 		  AND v.retired_at IS NULL
 		  AND v.destroyed_at IS NULL
-		  AND ($3 = '' OR m.type = $3)
-		  AND ($4 = '' OR $4 = ANY(m.usage_scopes))
 		FOR UPDATE
-	`, methodID, ownerID, strings.TrimSpace(requiredType), strings.TrimSpace(requiredScope)).Scan(
+	`, methodID, ownerID).Scan(
 		&method.ID,
 		&method.UserID,
 		&method.Type,
 		&method.Label,
-		&method.UsageScopes,
 		&method.Enabled,
 		&method.IsDefault,
 		&method.VerifiedAt,
@@ -999,10 +972,18 @@ func lockContactVersionForOwnerTypeAndScope(ctx context.Context, q queryer, meth
 	return method, version, nil
 }
 
+func lockTransactionContactVersionForOwner(ctx context.Context, q queryer, methodID, ownerID, field, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
+	method, version, appErr := lockContactVersionForOwner(ctx, q, methodID, ownerID, detail)
+	if appErr != nil || !contact.TransactionContactEligible(method) {
+		return contact.ContactMethod{}, contact.ContactMethodVersion{}, contact.TransactionContactRequiredError(field, detail)
+	}
+	return method, version, nil
+}
+
 func getContactMethod(ctx context.Context, q queryer, userID, methodID string) (contact.ContactMethod, *domain.AppError) {
 	var method contact.ContactMethod
 	err := q.QueryRow(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, COALESCE(v.masked_value, ''), m.enabled,
+		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''), m.enabled,
 		       m.is_default, m.verified_at, COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
 		FROM contact_methods m
 		LEFT JOIN contact_method_versions v ON v.id = m.current_version_id
@@ -1012,7 +993,6 @@ func getContactMethod(ctx context.Context, q queryer, userID, methodID string) (
 		&method.UserID,
 		&method.Type,
 		&method.Label,
-		&method.UsageScopes,
 		&method.MaskedValue,
 		&method.Enabled,
 		&method.IsDefault,
@@ -1036,7 +1016,7 @@ func (s *Store) getContactMethodWithValue(ctx context.Context, q queryer, userID
 	var ciphertext, nonce []byte
 	var keyVersion, cipherFormat string
 	err := q.QueryRow(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, COALESCE(v.masked_value, ''),
+		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''),
 		       v.value_ciphertext, v.value_nonce, COALESCE(v.encryption_key_version, ''),
 		       COALESCE(v.encryption_format, ''), m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
@@ -1048,7 +1028,6 @@ func (s *Store) getContactMethodWithValue(ctx context.Context, q queryer, userID
 		&method.UserID,
 		&method.Type,
 		&method.Label,
-		&method.UsageScopes,
 		&method.MaskedValue,
 		&ciphertext,
 		&nonce,
@@ -1087,7 +1066,6 @@ func scanContactMethods(rows pgx.Rows) ([]contact.ContactMethod, *domain.AppErro
 			&method.UserID,
 			&method.Type,
 			&method.Label,
-			&method.UsageScopes,
 			&method.MaskedValue,
 			&method.Enabled,
 			&method.IsDefault,
@@ -1118,7 +1096,6 @@ func (s *Store) scanContactMethodsWithValues(rows pgx.Rows) ([]contact.ContactMe
 			&method.UserID,
 			&method.Type,
 			&method.Label,
-			&method.UsageScopes,
 			&method.MaskedValue,
 			&ciphertext,
 			&nonce,

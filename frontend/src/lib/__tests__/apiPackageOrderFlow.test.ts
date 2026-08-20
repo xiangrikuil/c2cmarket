@@ -42,6 +42,7 @@ const createPackageOrder = async (api: Awaited<ReturnType<typeof loadApi>>, pack
   assert.ok(item)
   const intent = await api.createApiPurchaseIntent({
     serviceId: 'a2',
+    buyerContactMethodId: 'contact-wechat-orbit',
     purchaseAmountCny: item.priceCny,
     deliveryMode: 'api_key_endpoint',
     targetModel: item.models[0].modelName,

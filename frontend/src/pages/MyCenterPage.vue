@@ -8,7 +8,6 @@ import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSet
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
 import ContactMethodCard from '@/components/contact-payment/ContactMethodCard.vue'
-import ContactUsageScopeSelector from '@/components/contact-payment/ContactUsageScopeSelector.vue'
 import PasswordVisibilityInput from '@/components/auth/PasswordInput.vue'
 import PersonalCenterDashboard from '@/components/personal-center/PersonalCenterDashboard.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -23,7 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
-import { type AvatarMode, type ContactUsageScope, type UserContactMethod, type UserPrivacySettings, type UserProfile } from '@/lib/api'
+import { type AvatarMode, type UserContactMethod, type UserPrivacySettings, type UserProfile } from '@/lib/api'
 import { accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import { getBackupPasswordStrength, getBackupPasswordValidationMessage, getPasswordChecks } from '@/lib/passwordPolicy'
 import {
@@ -67,15 +66,6 @@ import {
 import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 import { backendErrorMessage, reauthenticatePassword, startLinuxDoLink } from '@/lib/backendClient'
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
-import { wechatOnboardingReturnTo } from '@/lib/authNavigation'
-import {
-  ALL_CONTACT_USAGE_SCOPES,
-  CONTACT_USAGE_SCOPE_OPTIONS,
-  buildContactMethodPayload,
-  contactUsageScopeOptionsForCapabilities,
-  initialContactUsageScopes,
-  sameContactUsageScopes,
-} from '@/lib/contactUsageScopes'
 
 const route = useRoute()
 const router = useRouter()
@@ -115,7 +105,7 @@ const deleteContactMutation = useDeleteContactMethodMutation()
 const setDefaultContactMutation = useSetDefaultContactMethodMutation()
 
 type AccountSetupDialogMode = 'required' | 'password' | 'email'
-type AccountSetupStep = 'wechat' | 'email' | 'password' | 'complete'
+type AccountSetupStep = 'email' | 'password' | 'complete'
 type AccountSetupStepItem = {
   id: AccountSetupStep
   step: number
@@ -157,7 +147,6 @@ const accountEmailForm = reactive({
 const contactEmailForm = reactive({
   email: '',
   code: '',
-  usageScopes: [] as ContactUsageScope[],
 })
 
 const privacyForm = reactive<UserPrivacySettings>({
@@ -210,27 +199,12 @@ function wechatFormSignature() {
 }
 
 function emailContactFormSignature() {
-  return JSON.stringify({
-    email: contactEmailForm.email.trim().toLowerCase(),
-    usageScopes: [...contactEmailForm.usageScopes].sort(),
-  })
+  return contactEmailForm.email.trim().toLowerCase()
 }
-
-const availableContactUsageScopeOptions = computed(() => contactUsageScopeOptionsForCapabilities({
-  canPublishCarpool: canPublishCarpool.value,
-  canPublishApiService: canPublishApiService.value,
-}))
-const defaultContactUsageScopes = computed<ContactUsageScope[]>(() => (
-  availableContactUsageScopeOptions.value.map(option => option.value)
-))
 
 const wechatContact = computed(() => (contacts.value ?? []).find(item => item.type === 'wechat') ?? null)
 const emailContact = computed(() => (contacts.value ?? []).find(item => item.type === 'email') ?? null)
 const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wechatContact.value.displayValue))
-const wechatOnboardingActive = computed(() => {
-  const onboarding = Array.isArray(route.query.onboarding) ? route.query.onboarding[0] : route.query.onboarding
-  return onboarding === 'wechat'
-})
 const enabledContactCount = computed(() => [wechatContact.value, emailContact.value].filter(item => item?.enabled && (item.type !== 'email' || item.verified)).length)
 const dashboardPendingTasks = computed(() => buildPendingTasks({
   buyerCarpoolApplications: rideApplications.value ?? [],
@@ -331,7 +305,6 @@ const dashboardCompleteness = computed(() => {
   if (!profile.value || dashboardCompletenessLoading.value || dashboardCompletenessError.value) return null
   return buildAccountCompleteness({
     profile: profile.value,
-    wechatBound: wechatBound.value,
     hasApiServices: hasApiServices.value,
     apiPaymentComplete: savedApiPaymentComplete.value,
   })
@@ -385,7 +358,6 @@ const wechatContactDirty = computed(() => wechatFormSignature() !== wechatContac
 const emailValueDirty = computed(() => (
   contactEmailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? '').trim().toLowerCase()
 ))
-const emailUsageScopesDirty = computed(() => !sameContactUsageScopes(contactEmailForm.usageScopes, initialContactUsageScopes(emailContact.value, defaultContactUsageScopes.value)))
 const emailContactDirty = computed(() => (
   (Boolean(emailContactSnapshot.value) && emailContactFormSignature() !== emailContactSnapshot.value)
   || Boolean(contactEmailForm.code.trim())
@@ -401,7 +373,7 @@ const currentSettingsDirty = computed(() => {
   return false
 })
 const completedContactSettingsCount = computed(() => (
-  Number(wechatBound.value) + Number(emailBound.value) + (canPublishApiService.value ? Number(savedApiPaymentComplete.value) : 0)
+  Number(enabledContactCount.value > 0) + (canPublishApiService.value ? Number(savedApiPaymentComplete.value) : 0)
 ))
 const linuxDoLinkPassword = ref('')
 const linuxDoReauthLoading = ref(false)
@@ -412,6 +384,7 @@ const savedApiPaymentOptions = computed(() => (
   (apiPaymentSettings.value?.paymentOptions ?? []).filter(option => option.enabled && isApiPaymentOptionComplete(option))
 ))
 const buyerPreviewOpen = ref(false)
+const accountEmailContactConfirmOpen = ref(false)
 useUnsavedChangesGuard(currentSettingsDirty, '当前账户设置尚未保存，确认离开此页面？')
 
 watch(
@@ -428,7 +401,7 @@ watch(
 )
 const accountRecoveryMissingItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value).filter(item => !item.completed) : [])
 const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
-const accountSetupComplete = computed(() => accountRecoveryComplete.value && wechatBound.value)
+const accountSetupComplete = computed(() => accountRecoveryComplete.value)
 const canConfigureBackupPassword = computed(() => Boolean(profile.value?.linuxDoBinding.bound))
 const shouldOfferBackupPassword = computed(() => canConfigureBackupPassword.value && !profile.value?.passwordConfigured)
 const accountRecoveryReturnTo = computed(() => sanitizeAccountRecoveryReturnTo(route.query.returnTo))
@@ -441,10 +414,10 @@ const accountRecoveryDialogTitle = computed(() => {
 const accountRecoveryDialogDescription = computed(() => {
   if (accountSetupComplete.value) {
     if (quotaPublishRecovery.value) return '继续选择 API 服务并发布限量额度包。'
-    return canConfigureBackupPassword.value ? '可以在这里更新微信、邮箱或备用密码。' : '可以在这里更新微信或验证邮箱。'
+    return canConfigureBackupPassword.value ? '可以在这里更新邮箱或备用密码。' : '可以在这里更新验证邮箱。'
   }
   if (quotaPublishRecovery.value) {
-    return '完成微信绑定和邮箱验证后，会继续进入限量额度包发布流程。'
+    return '完成邮箱验证后，会继续进入限量额度包发布流程。'
   }
   return '补全后即可访问个人中心其他页面和业务页。'
 })
@@ -465,9 +438,8 @@ let accountEmailVerificationTimer: number | null = null
 let contactEmailVerificationTimer: number | null = null
 const accountRecoveryDialogKey = computed(() => {
   if (!profile.value || activeSection.value !== 'account' || contactsQuery.isPending.value) return ''
-  if (accountSetupComplete.value && !(wechatOnboardingActive.value && shouldOfferBackupPassword.value)) return ''
+  if (accountSetupComplete.value) return ''
   const missingIds = [
-    ...(!wechatBound.value ? ['wechat'] : []),
     ...accountRecoveryMissingItems.value.map(item => item.id),
     ...(shouldOfferBackupPassword.value ? ['password-optional'] : []),
   ].join(',')
@@ -491,14 +463,8 @@ const accountSetupSteps = computed<AccountSetupStepItem[]>(() => {
   }
 
   const steps: AccountSetupStepItem[] = [{
-    id: 'wechat',
-    step: 1,
-    label: '绑定微信',
-    completed: wechatBound.value,
-    active: accountSetupActiveStep.value === 'wechat',
-  }, {
     id: 'email',
-    step: 2,
+    step: 1,
     label: '绑定邮箱',
     completed: Boolean(profile.value?.emailVerified),
     active: accountSetupActiveStep.value === 'email',
@@ -506,7 +472,7 @@ const accountSetupSteps = computed<AccountSetupStepItem[]>(() => {
   if (canConfigureBackupPassword.value) {
     steps.push({
       id: 'password',
-      step: 3,
+      step: 2,
       label: '备用密码',
       completed: Boolean(profile.value?.passwordConfigured),
       active: accountSetupActiveStep.value === 'password',
@@ -514,7 +480,7 @@ const accountSetupSteps = computed<AccountSetupStepItem[]>(() => {
   }
   steps.push({
     id: 'complete',
-    step: canConfigureBackupPassword.value ? 4 : 3,
+    step: canConfigureBackupPassword.value ? 3 : 2,
     label: '完成',
     completed: accountSetupComplete.value || accountSetupActiveStep.value === 'complete',
     active: accountSetupActiveStep.value === 'complete',
@@ -522,13 +488,13 @@ const accountSetupSteps = computed<AccountSetupStepItem[]>(() => {
   return steps
 })
 const accountSecuritySideDescription = computed(() => {
-  if (quotaPublishRecovery.value) return '先完成微信绑定和邮箱验证，之后会回到额度包发布流程。'
-  return '完成微信绑定和邮箱验证后，可以使用更多账号功能；备用密码可稍后设置。'
+  if (quotaPublishRecovery.value) return '先完成邮箱验证，之后会回到额度包发布流程。'
+  return '完成邮箱验证后，可以使用账号恢复功能；备用密码可稍后设置。'
 })
 const accountSecurityBenefits = computed(() => [
   {
     title: '交易联系',
-    description: '微信用于订单沟通，已绑定时会自动跳过。',
+    description: '交易时可选择已验证邮箱或微信，账号邮箱不会自动公开。',
     icon: MessageCircle,
   },
   {
@@ -612,11 +578,6 @@ watch(accountSetupComplete, complete => {
   }
 })
 
-watch([wechatOnboardingActive, accountSetupComplete, accountSetupActiveStep], ([onboarding, complete, step]) => {
-  if (!onboarding || !complete || step !== 'complete') return
-  void router.replace(wechatOnboardingReturnTo(route.query.returnTo))
-})
-
 function syncProfileDraft(currentProfile: UserProfile) {
   profileForm.displayName = currentProfile.displayName
   profileForm.username = currentProfile.username
@@ -641,7 +602,6 @@ function syncWechatDraft(contact: UserContactMethod | null) {
 function syncEmailContactDraft(contact: UserContactMethod | null) {
   contactEmailForm.email = contact?.displayValue ?? ''
   contactEmailForm.code = ''
-  contactEmailForm.usageScopes = initialContactUsageScopes(contact, defaultContactUsageScopes.value)
   emailContactSnapshot.value = emailContactFormSignature()
 }
 
@@ -657,7 +617,7 @@ watch(wechatContact, (contact) => {
   syncWechatDraft(contact)
 }, { immediate: true })
 
-watch([emailContact, defaultContactUsageScopes], ([contact]) => {
+watch(emailContact, (contact) => {
   if (emailContactDirty.value) return
   syncEmailContactDraft(contact)
 }, { immediate: true })
@@ -675,7 +635,6 @@ function handleBlockedSettingsNavigation() {
 function defaultAccountSetupStep(mode: AccountSetupDialogMode): AccountSetupStep {
   if (mode === 'email') return 'email'
   if (mode === 'password') return canConfigureBackupPassword.value ? 'password' : (profile.value?.emailVerified ? 'complete' : 'email')
-  if (!wechatBound.value) return 'wechat'
   if (!profile.value?.emailVerified) return 'email'
   if (shouldOfferBackupPassword.value) return 'password'
   return 'complete'
@@ -703,10 +662,6 @@ function setAccountRecoveryDialogOpen(open: boolean) {
   if (key) dismissedAccountRecoveryDialogKey.value = key
   accountSetupDialogMode.value = 'required'
   accountSetupActiveStep.value = defaultAccountSetupStep('required')
-}
-
-function scopeLabels(scopes: ContactUsageScope[]) {
-  return scopes.map(scope => CONTACT_USAGE_SCOPE_OPTIONS.find(item => item.value === scope)?.label ?? scope).join('、')
 }
 
 function stopAccountEmailVerificationTimer() {
@@ -836,9 +791,7 @@ function confirmEmailVerification() {
       accountEmailVerificationDevCodeEmail.value = ''
       stopAccountEmailVerificationTimer()
       accountEmailVerificationResendAvailableAt.value = null
-      accountSetupActiveStep.value = wechatBound.value
-        ? (updatedProfile.linuxDoBinding.bound && !updatedProfile.passwordConfigured ? 'password' : 'complete')
-        : 'wechat'
+      accountSetupActiveStep.value = updatedProfile.linuxDoBinding.bound && !updatedProfile.passwordConfigured ? 'password' : 'complete'
       toast.success('邮箱已绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
@@ -873,23 +826,17 @@ function saveWechatContact() {
     return
   }
   const current = wechatContact.value
-  const payload = buildContactMethodPayload({
+  const payload = {
     type: 'wechat',
     label: '微信',
     displayValue,
-    usageScopes: ALL_CONTACT_USAGE_SCOPES,
-    current,
-  })
+    isDefault: current?.isDefault ?? false,
+    enabled: current?.enabled ?? true,
+  } as const
   const mutationOptions = {
     onSuccess: (savedContact: UserContactMethod) => {
       syncWechatDraft(savedContact)
-      toast.success(current ? '微信联系方式已更新。' : '微信联系方式已绑定。')
-      if (accountRecoveryDialogOpen.value && accountSetupDialogMode.value === 'required') {
-        if (profile.value?.emailVerified) completeRequiredAccountSetup()
-        else accountSetupActiveStep.value = 'email'
-      } else if (wechatOnboardingActive.value) {
-        void router.push(wechatOnboardingReturnTo(route.query.returnTo))
-      }
+      toast.success(current ? '微信联系方式已更新。' : '微信联系方式已添加。')
     },
     onError: (error: Error) => toast.error(error.message),
   }
@@ -906,18 +853,14 @@ function persistEmailContactForVerification(onSaved: (contact: UserContactMethod
     toast.warning('请先填写邮箱。')
     return
   }
-  if (!contactEmailForm.usageScopes.length) {
-    toast.warning('请至少选择一个适用场景。')
-    return
-  }
   const current = emailContact.value
-  const payload = buildContactMethodPayload({
+  const payload = {
     type: 'email',
     label: '邮箱',
     displayValue,
-    usageScopes: contactEmailForm.usageScopes,
-    current,
-  })
+    isDefault: current?.isDefault ?? false,
+    enabled: current?.enabled ?? true,
+  } as const
   const mutationOptions = {
     onSuccess: (savedContact: UserContactMethod) => {
       syncEmailContactDraft(savedContact)
@@ -925,7 +868,7 @@ function persistEmailContactForVerification(onSaved: (contact: UserContactMethod
     },
     onError: (error: Error) => toast.error(error.message),
   }
-  if (current && !emailValueDirty.value && !emailUsageScopesDirty.value) {
+  if (current && !emailValueDirty.value) {
     onSaved(current)
     return
   }
@@ -952,31 +895,6 @@ function startContactEmailVerification() {
       },
       onError: error => toast.error(error instanceof Error ? error.message : '验证码发送失败。'),
     })
-  })
-}
-
-function saveEmailUsageScopes() {
-  const current = emailContact.value
-  if (!current || emailValueDirty.value) return
-  if (!contactEmailForm.usageScopes.length) {
-    toast.warning('请至少选择一个适用场景。')
-    return
-  }
-  updateContactMutation.mutate({
-    contactId: current.id,
-    payload: buildContactMethodPayload({
-      type: 'email',
-      label: current.label || '邮箱',
-      displayValue: contactEmailForm.email,
-      usageScopes: contactEmailForm.usageScopes,
-      current,
-    }),
-  }, {
-    onSuccess: savedContact => {
-      syncEmailContactDraft(savedContact)
-      toast.success('邮箱适用场景已更新。')
-    },
-    onError: (error: Error) => toast.error(error.message),
   })
 }
 
@@ -1009,12 +927,30 @@ function confirmContactEmailVerification() {
 function useVerifiedAccountEmailForContact() {
   const accountEmail = profile.value?.email?.trim().toLowerCase()
   if (!profile.value?.emailVerified || !accountEmail) return
-  contactEmailForm.email = accountEmail
-  contactEmailForm.code = ''
-  contactEmailVerificationDevCode.value = ''
-  contactEmailVerificationChallengeEmail.value = ''
-  stopContactEmailVerificationTimer()
-  contactEmailVerificationResendAvailableAt.value = null
+  accountEmailContactConfirmOpen.value = true
+}
+
+function confirmUseVerifiedAccountEmailForContact() {
+  const accountEmail = profile.value?.email?.trim().toLowerCase()
+  if (!profile.value?.emailVerified || !accountEmail) return
+  const current = emailContact.value
+  const payload = {
+    type: 'email',
+    label: '账号邮箱',
+    displayValue: accountEmail,
+    isDefault: current?.isDefault ?? false,
+    enabled: true,
+  } as const
+  const options = {
+    onSuccess: (savedContact: UserContactMethod) => {
+      syncEmailContactDraft(savedContact)
+      accountEmailContactConfirmOpen.value = false
+      toast.success('已将账号邮箱添加为交易联系方式。')
+    },
+    onError: (error: Error) => toast.error(error.message),
+  }
+  if (current) updateContactMutation.mutate({ contactId: current.id, payload }, options)
+  else createContactMutation.mutate(payload, options)
 }
 
 function removeContact(contact: UserContactMethod) {
@@ -1029,6 +965,26 @@ function removeContact(contact: UserContactMethod) {
       toast.success('联系方式已解除绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '删除失败'),
+  })
+}
+
+function toggleContactEnabled(contact: UserContactMethod) {
+  updateContactMutation.mutate({
+    contactId: contact.id,
+    payload: {
+      type: contact.type,
+      label: contact.label,
+      displayValue: contact.displayValue,
+      isDefault: contact.isDefault,
+      enabled: !contact.enabled,
+    },
+  }, {
+    onSuccess: savedContact => {
+      if (savedContact.type === 'wechat') syncWechatDraft(savedContact)
+      if (savedContact.type === 'email') syncEmailContactDraft(savedContact)
+      toast.success(savedContact.enabled ? '联系方式已启用。' : '联系方式已停用。')
+    },
+    onError: error => toast.error(error instanceof Error ? error.message : '更新失败'),
   })
 }
 
@@ -1152,7 +1108,7 @@ function goToLogin() {
 
             <p class="account-security-side-foot mt-auto flex gap-2 pt-8 text-xs leading-5 text-muted-foreground">
               <ShieldCheck class="mt-0.5 h-4 w-4 shrink-0 text-success" />
-              微信用于交易联系；邮箱和备用密码用于站内通知、找回和登录。
+              邮箱和备用密码用于站内通知、找回和登录；交易联系方式可另行选择。
             </p>
           </aside>
 
@@ -1204,24 +1160,7 @@ function goToLogin() {
                 </li>
               </ol>
 
-              <section v-if="accountSetupActiveStep === 'wechat'" class="mt-7 space-y-5">
-                <div>
-                  <h3 class="text-base font-semibold">绑定微信</h3>
-                  <p class="mt-2 text-sm leading-6 text-muted-foreground">
-                    微信用于订单沟通。已绑定的微信会自动识别，无需重复填写。
-                  </p>
-                </div>
-
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">微信号</span>
-                  <span class="relative block">
-                    <MessageCircle class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input v-model="wechatForm.displayValue" class="h-11 pl-10" autocomplete="off" placeholder="请输入微信号" />
-                  </span>
-                </label>
-              </section>
-
-              <section v-else-if="accountSetupActiveStep === 'email'" class="mt-7 space-y-5">
+              <section v-if="accountSetupActiveStep === 'email'" class="mt-7 space-y-5">
                 <div>
                   <h3 class="text-base font-semibold">绑定验证邮箱</h3>
                   <p class="mt-2 text-sm leading-6 text-muted-foreground">
@@ -1372,10 +1311,6 @@ function goToLogin() {
                 </div>
                 <dl class="grid gap-3 rounded-lg border border-border bg-card/70 p-4 text-left text-sm sm:grid-cols-2">
                   <div>
-                    <dt class="text-muted-foreground">绑定微信</dt>
-                    <dd class="mt-1 font-medium">{{ wechatBound ? wechatContact?.displayValue : '待同步' }}</dd>
-                  </div>
-                  <div>
                     <dt class="text-muted-foreground">绑定邮箱</dt>
                     <dd class="mt-1 font-medium">{{ profile.emailVerified ? profile.email : '待同步' }}</dd>
                   </div>
@@ -1390,14 +1325,7 @@ function goToLogin() {
 
             <DialogFooter class="account-security-footer gap-2 border-t border-border px-5 py-4 sm:justify-end sm:px-6">
               <Button
-                v-if="accountSetupActiveStep === 'wechat'"
-                :disabled="contactSaving || !wechatForm.displayValue.trim()"
-                @click="saveWechatContact"
-              >
-                下一步
-              </Button>
-              <Button
-                v-else-if="accountSetupActiveStep === 'email'"
+                v-if="accountSetupActiveStep === 'email'"
                 :disabled="confirmEmailVerificationMutation.isPending.value || !accountEmailForm.code.trim()"
                 @click="confirmEmailVerification"
               >
@@ -1425,6 +1353,21 @@ function goToLogin() {
             </DialogFooter>
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="accountEmailContactConfirmOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>使用账号邮箱作为交易联系方式</DialogTitle>
+          <DialogDescription>
+            交易关系建立后，{{ profile.email }} 可能会向交易对方展示。账号安全通知邮箱不会因为验证完成而自动公开。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" @click="accountEmailContactConfirmOpen = false">取消</Button>
+          <Button :disabled="contactSaving" @click="confirmUseVerifiedAccountEmailForContact">确认使用</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
 
@@ -1543,7 +1486,7 @@ function goToLogin() {
           </div>
         </div>
       </Card>
-      <Card class="p-4"><div class="flex items-center justify-between gap-3"><h2 class="font-semibold">资料完整度</h2><strong class="text-primary">{{ profileCompleteness === null ? '暂不可用' : `${profileCompleteness}%` }}</strong></div><div class="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="资料完整度" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="profileCompleteness ?? undefined"><div class="h-full rounded-full bg-primary" :style="{ width: `${profileCompleteness ?? 0}%` }"></div></div><p class="mt-3 text-xs leading-5 text-muted-foreground">显示名称、简介、身份绑定、恢复方式和联系方式共同组成完整度；发布 API 服务后还会检查收款设置。</p></Card>
+      <Card class="p-4"><div class="flex items-center justify-between gap-3"><h2 class="font-semibold">资料完整度</h2><strong class="text-primary">{{ profileCompleteness === null ? '暂不可用' : `${profileCompleteness}%` }}</strong></div><div class="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="资料完整度" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="profileCompleteness ?? undefined"><div class="h-full rounded-full bg-primary" :style="{ width: `${profileCompleteness ?? 0}%` }"></div></div><p class="mt-3 text-xs leading-5 text-muted-foreground">显示名称、简介、身份绑定和恢复方式共同组成完整度；发布 API 服务后还会检查收款设置。</p></Card>
       <Card class="p-4"><div class="flex gap-3"><ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">公开信息说明</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">公开主页展示名称、简介和你允许公开的交易信号，不会公开完整联系方式。</p></div></div></Card>
       </aside>
     </section>
@@ -1552,8 +1495,7 @@ function goToLogin() {
       <aside class="my-center-contacts-aside">
         <ConfigurationProgressCard
           :completed-count="completedContactSettingsCount"
-          :wechat-complete="wechatBound"
-          :email-complete="emailBound"
+          :contact-complete="enabledContactCount > 0"
           :payment-complete="savedApiPaymentComplete"
           :show-payment="canPublishApiService"
           @preview="buyerPreviewOpen = true"
@@ -1561,28 +1503,22 @@ function goToLogin() {
       </aside>
 
       <main class="contact-payment-main-grid min-w-0">
-        <Alert v-if="wechatOnboardingActive && !wechatBound" class="col-span-full border-primary/30 bg-primary/5 text-foreground">
-          <MessageCircle />
-          <AlertTitle>注册完成，请绑定微信</AlertTitle>
-          <AlertDescription>微信是平台必填联系方式。绑定后可修改微信号，但不能解除绑定；系统会自动用于全部交易场景。</AlertDescription>
-        </Alert>
-
         <div class="contact-payment-group-heading">
           <div>
             <h2>联系方式</h2>
-            <p>当前真实支持微信和验证邮箱，买家只能在有效联系窗口查看。</p>
+            <p>已验证邮箱和已启用微信可在交易时选择，仅在有效联系窗口向对方展示。</p>
           </div>
           <Badge variant="secondary">已配置 {{ enabledContactCount }} / 2</Badge>
         </div>
 
         <ContactMethodCard
           title="微信"
-          description="微信为必填联系方式，保存后可修改但不可解除；平台不做外部验证。"
+          description="微信是可选交易联系方式，平台不对微信号做外部验证。"
           :status-label="wechatBound ? '已配置' : '未配置'"
           :status-variant="wechatBound ? 'verified' : 'secondary'"
           :dirty="wechatContactDirty"
           :is-default="wechatContact?.isDefault"
-          :current-summary="wechatContact ? `当前：${wechatContact.maskedValue} · 自动用于拼车和 API 交易` : ''"
+          :current-summary="wechatContact ? `当前：${wechatContact.maskedValue} · ${wechatContact.enabled ? '可用于交易' : '已停用'}` : ''"
         >
           <template #icon><MessageCircle class="h-5 w-5" /></template>
           <template v-if="wechatContact" #actions>
@@ -1596,6 +1532,27 @@ function goToLogin() {
               @click="setDefaultContact(wechatContact)"
             >
               <Star class="h-4 w-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              :disabled="contactSaving"
+              :aria-label="wechatContact.enabled ? '停用微信联系方式' : '启用微信联系方式'"
+              :title="wechatContact.enabled ? '停用' : '启用'"
+              @click="toggleContactEnabled(wechatContact)"
+            >
+              <CheckCircle2 v-if="!wechatContact.enabled" class="h-4 w-4" />
+              <ShieldAlert v-else class="h-4 w-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              :disabled="deleteContactMutation.isPending.value"
+              aria-label="删除微信联系方式"
+              title="删除"
+              @click="removeContact(wechatContact)"
+            >
+              <Trash2 class="h-4 w-4" />
             </Button>
           </template>
           <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
@@ -1611,7 +1568,7 @@ function goToLogin() {
               <Save class="h-4 w-4" />保存微信
             </Button>
           </div>
-          <p class="mt-3 text-xs leading-5 text-muted-foreground">微信配置后自动用于拼车和 API 交易，不代表平台已验证该微信号。</p>
+          <p class="mt-3 text-xs leading-5 text-muted-foreground">交易提交时由你明确选择是否使用该微信，不代表平台已验证该微信号。</p>
         </ContactMethodCard>
 
         <ContactMethodCard
@@ -1621,7 +1578,7 @@ function goToLogin() {
           :status-variant="emailBound ? 'verified' : 'secondary'"
           :dirty="emailContactDirty"
           :is-default="emailContact?.isDefault"
-          :current-summary="emailContact ? `当前：${emailContact.maskedValue} · 适用：${scopeLabels(emailContact.usageScopes)}` : ''"
+          :current-summary="emailContact ? `当前：${emailContact.maskedValue} · ${emailContact.verified ? '已验证' : '待验证'}` : ''"
         >
           <template #icon><Mail class="h-5 w-5" /></template>
           <template v-if="emailContact" #actions>
@@ -1669,7 +1626,7 @@ function goToLogin() {
             </label>
             <Button
               class="sm:self-end"
-              :disabled="emailBindingPending || !contactEmailForm.code.trim() || !contactEmailForm.usageScopes.length || contactEmailForm.email.trim().toLowerCase() !== contactEmailVerificationChallengeEmail"
+              :disabled="emailBindingPending || !contactEmailForm.code.trim() || contactEmailForm.email.trim().toLowerCase() !== contactEmailVerificationChallengeEmail"
               @click="confirmContactEmailVerification"
             >
               验证并绑定邮箱
@@ -1679,21 +1636,7 @@ function goToLogin() {
             <Button type="button" size="sm" variant="ghost" class="h-8 px-2" @click="useVerifiedAccountEmailForContact">
               <Mail class="h-3.5 w-3.5" />使用已验证账号邮箱
             </Button>
-            <span>保存后仍需单独验证，并会在符合交易披露条件时向交易对方展示。</span>
-          </div>
-          <div class="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-            <ContactUsageScopeSelector
-              v-model="contactEmailForm.usageScopes"
-              :options="availableContactUsageScopeOptions"
-            />
-            <Button
-              v-if="emailContact"
-              variant="outline"
-              :disabled="contactSaving || emailValueDirty || !emailUsageScopesDirty || !contactEmailForm.usageScopes.length"
-              @click="saveEmailUsageScopes"
-            >
-              <Save class="h-4 w-4" />保存适用场景
-            </Button>
+            <span>确认后会创建独立的已验证交易联系方式，并可能在交易关系建立后向对方展示。</span>
           </div>
         </ContactMethodCard>
 

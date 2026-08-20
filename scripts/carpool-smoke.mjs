@@ -80,15 +80,14 @@ async function request(path, options = {}, auth) {
   return decode(response)
 }
 
-async function createContact(auth, value, label, usageScopes) {
+async function createContact(auth, value, label) {
   return request('/api/v1/contact-methods', {
     method: 'POST',
     idempotencyPrefix: `smoke-contact-${label}`,
     body: {
-      type: 'telegram',
+      type: 'wechat',
       label,
       value,
-      usageScopes,
     },
   }, auth)
 }
@@ -106,8 +105,8 @@ async function main() {
 
   const ownerContactValue = `@carpool_owner_${runSuffix.replaceAll('-', '_')}`
   const buyerContactValue = `@carpool_buyer_${runSuffix.replaceAll('-', '_')}`
-  const ownerContact = await createContact(owner, ownerContactValue, 'Smoke carpool owner', ['carpool_owner'])
-  const buyerContact = await createContact(buyer, buyerContactValue, 'Smoke carpool buyer', ['buyer'])
+  const ownerContact = await createContact(owner, ownerContactValue, 'Smoke carpool owner')
+  const buyerContact = await createContact(buyer, buyerContactValue, 'Smoke carpool buyer')
 
   const listing = await request('/api/v1/carpools', {
     method: 'POST',

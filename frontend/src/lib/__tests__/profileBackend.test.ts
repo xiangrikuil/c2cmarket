@@ -183,7 +183,6 @@ test('transaction contact email verification never calls the account email confi
       label: '交易邮箱',
       maskedValue: 'tr****om',
       displayValue: 'trade@example.com',
-      usageScopes: ['buyer', 'dispute'],
       isDefault: false,
       enabled: true,
       verified: true,

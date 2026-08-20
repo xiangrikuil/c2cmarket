@@ -50,7 +50,7 @@ func TestPostgresContactEmailVerificationIsIndependentAndVersionBound(t *testing
 	})
 	method, appErr := service.CreateMethod(ctx, contact.ContactMethodInput{
 		UserID: userID, Type: "email", Label: "交易邮箱", Value: "trade@example.com",
-		UsageScopes: contact.DefaultUsageScopes(), Enabled: true, RequestID: "contact-email-create",
+		Enabled: true, RequestID: "contact-email-create",
 	})
 	if appErr != nil {
 		t.Fatalf("create contact email: %v", appErr)
@@ -108,7 +108,7 @@ func TestPostgresContactEmailVerificationIsIndependentAndVersionBound(t *testing
 	now = now.Add(time.Minute)
 	metadataUpdated, appErr := service.UpdateMethod(ctx, contact.UpdateContactMethodInput{
 		UserID: userID, MethodID: method.ID, Type: "email", Label: "订单邮箱", Value: "trade@example.com",
-		UsageScopes: []string{contact.UsageScopeBuyer}, IsDefault: true, Enabled: true, RequestID: "contact-email-metadata-update",
+		IsDefault: true, Enabled: true, RequestID: "contact-email-metadata-update",
 	})
 	if appErr != nil {
 		t.Fatalf("update contact metadata: %v", appErr)
@@ -124,7 +124,7 @@ func TestPostgresContactEmailVerificationIsIndependentAndVersionBound(t *testing
 	now = now.Add(time.Minute)
 	valueUpdated, appErr := service.UpdateMethod(ctx, contact.UpdateContactMethodInput{
 		UserID: userID, MethodID: method.ID, Type: "email", Label: "订单邮箱", Value: "trade-new@example.com",
-		UsageScopes: []string{contact.UsageScopeBuyer}, IsDefault: true, Enabled: true, RequestID: "contact-email-value-update",
+		IsDefault: true, Enabled: true, RequestID: "contact-email-value-update",
 	})
 	if appErr != nil {
 		t.Fatalf("update contact email value: %v", appErr)
@@ -179,7 +179,7 @@ func TestPostgresContactEmailVerificationIsIndependentAndVersionBound(t *testing
 	now = now.Add(time.Minute)
 	typeUpdated, appErr := service.UpdateMethod(ctx, contact.UpdateContactMethodInput{
 		UserID: userID, MethodID: method.ID, Type: "other", Label: "其他联系", Value: "support-handle",
-		UsageScopes: []string{contact.UsageScopeBuyer}, IsDefault: true, Enabled: true, RequestID: "contact-email-type-update",
+		IsDefault: true, Enabled: true, RequestID: "contact-email-type-update",
 	})
 	if appErr != nil {
 		t.Fatalf("update verified email contact type: %v", appErr)

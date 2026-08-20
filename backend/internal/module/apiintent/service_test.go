@@ -262,8 +262,8 @@ func TestIntentFactoryRejectsNonWechatAndMultipleContactSnapshots(t *testing.T) 
 	}
 
 	_, appErr := NewIntentWithOwnerContacts(input, service, contact.ContactMethod{Type: "telegram"}, buyerVersion, []OwnerContactSnapshot{ownerWechat}, now)
-	if appErr == nil || appErr.Code != domain.CodeContactMethodRequired || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "wechat_required" {
-		t.Fatalf("expected buyer WeChat requirement, got %#v", appErr)
+	if appErr == nil || appErr.Code != domain.CodeContactMethodRequired || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "contact_required" {
+		t.Fatalf("expected buyer transaction contact requirement, got %#v", appErr)
 	}
 
 	validBuyer := contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "买家微信"}

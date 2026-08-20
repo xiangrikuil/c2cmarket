@@ -59,7 +59,8 @@ afterEach(() => {
 
 test('registration page uses the two-step contract and resets one-time Turnstile after every start attempt', () => {
   assert.match(loginSource, /type AuthMode = 'login' \| 'student-register'/)
-  assert.match(loginSource, /router\.push\(wechatOnboardingRoute\(route\.query\.returnTo\)\)/)
+  assert.match(loginSource, /router\.push\(returnTo\.value\)/)
+  assert.doesNotMatch(loginSource, /wechatOnboarding/)
   assert.match(registrationSource, /type RegistrationStep = 'email' \| 'account' \| 'completed'/)
   assert.match(registrationSource, /startEmailRegistration\(\{[\s\S]*email: submittedEmail,[\s\S]*turnstileToken: turnstileToken\.value/)
   assert.match(registrationSource, /finally \{[\s\S]*turnstileToken\.value = ''[\s\S]*turnstileWidget\.value\?\.reset\(\)/)

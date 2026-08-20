@@ -74,7 +74,6 @@ function backendWechatContactList() {
       label: '微信',
       maskedValue: 'own***',
       displayValue: 'owner_wechat',
-      usageScopes: ['carpool_owner', 'api_merchant', 'buyer', 'dispute'],
       isDefault: true,
       enabled: true,
       verified: false,
@@ -579,6 +578,7 @@ test('owner carpool edit detail maps every persisted publish field', async () =>
       totalSeats: 5,
       occupiedSeats: 2,
       openingChannelCode: 'other',
+      ownerContactMethodId: 'contact-id',
       customOpeningChannel: '邀请链接',
       paymentMethodCode: 'other',
       customPaymentMethod: '银行转账',
@@ -606,7 +606,6 @@ test('owner carpool update uses If-Match and submits with the patched version', 
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(jsonResponse(backendSession()))
     .mockResolvedValueOnce(jsonResponse(productPlan()))
-    .mockResolvedValueOnce(jsonResponse(backendWechatContactList()))
     .mockResolvedValueOnce(jsonResponse(ownerListing({ version: 12, status: 'draft' })))
     .mockResolvedValueOnce(jsonResponse(ownerListing({ version: 13, status: 'pending_review' })))
   vi.stubGlobal('fetch', fetchMock)
@@ -653,7 +652,7 @@ test('owner carpool update uses If-Match and submits with the patched version', 
   const updated = await backendUpdateOwnerCarpool('listing/id', payload, 11, 'contact-id', true)
   assert.equal(updated.backendVersion, 13)
 
-  const [patchPath, patchInit] = fetchMock.mock.calls[3] ?? []
+  const [patchPath, patchInit] = fetchMock.mock.calls[2] ?? []
   assert.equal(patchPath, '/api/v1/carpools/listing%2Fid')
   assert.equal(patchInit?.method, 'PATCH')
   assert.equal(new Headers(patchInit?.headers).get('If-Match'), '"11"')
@@ -670,7 +669,7 @@ test('owner carpool update uses If-Match and submits with the patched version', 
     policyVersion: 7,
   })
 
-  const [submitPath, submitInit] = fetchMock.mock.calls[4] ?? []
+  const [submitPath, submitInit] = fetchMock.mock.calls[3] ?? []
   assert.equal(submitPath, '/api/v1/carpools/listing%2Fid/submit-review')
   assert.equal(submitInit?.method, 'POST')
   assert.equal(new Headers(submitInit?.headers).get('If-Match'), '"12"')
@@ -681,7 +680,6 @@ test('owner carpool update preserves unlimited limits and normalizes account log
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(jsonResponse(backendSession()))
     .mockResolvedValueOnce(jsonResponse(productPlan()))
-    .mockResolvedValueOnce(jsonResponse(backendWechatContactList()))
     .mockResolvedValueOnce(jsonResponse(ownerListing({
       distributionMethod: 'account_login',
       providesAdminAccount: false,
@@ -708,7 +706,7 @@ test('owner carpool update preserves unlimited limits and normalizes account log
     rulesNote: '不得转售', status: 'draft',
   }, 11, 'contact-id', false)
 
-  const body = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))
+  const body = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))
   assert.equal(body.dailySpendLimitUsd, null)
   assert.equal(body.weeklySpendLimitUsd, null)
   assert.equal(body.vpsRegion, null)

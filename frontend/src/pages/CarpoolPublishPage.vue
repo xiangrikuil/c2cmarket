@@ -10,6 +10,7 @@ import CarpoolPublishPreview from '@/components/carpool-publish/CarpoolPublishPr
 import CarpoolRulesEditor from '@/components/carpool-publish/CarpoolRulesEditor.vue'
 import CarpoolWarrantySelector from '@/components/carpool-publish/CarpoolWarrantySelector.vue'
 import ChannelPaymentSection from '@/components/carpool-publish/ChannelPaymentSection.vue'
+import TransactionContactSelector from '@/components/contact-payment/TransactionContactSelector.vue'
 import SeatCapacityEditor from '@/components/carpool-publish/SeatCapacityEditor.vue'
 import type {
   CarpoolProductCatalogItem,
@@ -72,6 +73,7 @@ type Field =
   | 'accessArrangement'
   | 'warranty'
   | 'rulesNote'
+  | 'contact'
   | 'sensitive'
 
 const formDirty = ref(false)
@@ -105,6 +107,7 @@ const editInitialized = ref(false)
 const hydratingEdit = ref(false)
 const editVersion = ref(0)
 const editOwnerContactMethodId = ref('')
+const ownerContactMethodId = ref('')
 const errors = reactive<FieldErrors<Field>>({})
 const publishReturnTo = isEditMode.value ? route.fullPath : '/carpools/new'
 const publishLoginRoute = { path: '/login', query: { returnTo: publishReturnTo } }
@@ -182,6 +185,7 @@ watch(() => editQuery.data.value, async detail => {
 	hydratingEdit.value = true
 	editVersion.value = detail.version
 	editOwnerContactMethodId.value = detail.ownerContactMethodId
+	ownerContactMethodId.value = detail.ownerContactMethodId
 	Object.assign(form, detail.payload, { warranty: { ...detail.payload.warranty } })
 	form.dailyQuotaMode = detail.payload.dailyQuotaAmount === null ? 'unlimited' : 'amount'
 	form.weeklyQuotaMode = detail.payload.weeklyQuotaAmount === null ? 'unlimited' : 'amount'
@@ -253,6 +257,7 @@ async function handleCarpoolMutationError(error: unknown) {
 			activeBuyerMembers: 'seats', openingChannelCode: 'openingChannelCode', paymentMethodCode: 'paymentMethodCode',
 			distributionMethod: 'distribution', distributionMethodNote: 'distribution', providesAdminAccount: 'distribution',
 			accessArrangement: 'accessArrangement', summary: 'rulesNote',
+			ownerContactMethodId: 'contact',
 		}
 		const next: FieldErrors<Field> = {}
 		for (const issue of error.fieldErrors) {
@@ -675,8 +680,14 @@ watch(() => form.rulesNote, () => {
   if (!hasSensitiveText.value) clearError('sensitive')
 })
 
+watch(ownerContactMethodId, value => {
+  if (value) clearError('contact')
+  if (!hydratingEdit.value) formDirty.value = true
+})
+
 function validate(requireComplete: boolean) {
   const next: FieldErrors<Field> = {}
+  if (!ownerContactMethodId.value) next.contact = '请选择一个有效的交易联系方式。'
   if (!form.productId) next.product = '请选择产品目录。'
   if (form.productId === 'other-custom' && !form.customProductName?.trim()) next.product = '请填写自定义产品名称。'
   if (selectedProductForValidation.value && !canPublishProduct(selectedProductForValidation.value)) {
@@ -758,6 +769,7 @@ function validate(requireComplete: boolean) {
 
 function toPayload(status: 'draft' | 'reviewing') {
   return {
+    ownerContactMethodId: ownerContactMethodId.value,
     productId: form.productId,
     customProductName: form.customProductName,
     regionCode: form.regionCode,
@@ -1074,6 +1086,14 @@ async function copyShareText() {
             <p v-if="errors.accessArrangement" class="mt-2 text-xs text-destructive">{{ errors.accessArrangement }}</p>
           </Card>
           <SeatCapacityEditor :form="form" :errors="errors" />
+          <Card class="p-5">
+            <TransactionContactSelector
+              v-model="ownerContactMethodId"
+              title="车主交易联系方式"
+              description="申请被接受后，平台按联系窗口规则向成员展示所选联系方式。"
+              :error="errors.contact"
+            />
+          </Card>
           <ChannelPaymentSection
             :form="form"
             :opening-channels="channelOptions"

@@ -8,8 +8,6 @@ import {
   loginRoute,
   normalizeReturnTo,
   passwordResetRoute,
-  wechatOnboardingReturnTo,
-  wechatOnboardingRoute,
 } from '@/lib/authNavigation'
 
 describe('authentication navigation', () => {
@@ -42,19 +40,6 @@ describe('authentication navigation', () => {
     expect(authAccessFromMeta({ auth: 'admin' })).toBe('admin')
     expect(authAccessFromMeta({ auth: 'owner' })).toBeNull()
     expect(authAccessFromMeta({})).toBeNull()
-  })
-
-  it('builds a safe required-wechat onboarding route', () => {
-    expect(wechatOnboardingRoute('/api-market/a1?tab=plans#buy')).toEqual({
-      path: '/my/account',
-      query: {
-        onboarding: 'wechat',
-        returnTo: '/api-market/a1?tab=plans#buy',
-      },
-    })
-    expect(wechatOnboardingReturnTo('https://example.com/account')).toBe('/my')
-    expect(wechatOnboardingReturnTo('/my/account?onboarding=wechat&returnTo=/')).toBe('/my')
-    expect(wechatOnboardingReturnTo('/my/account?returnTo=/&onboarding=wechat')).toBe('/my')
   })
 
   it('coalesces concurrent session-invalidated redirects', async () => {

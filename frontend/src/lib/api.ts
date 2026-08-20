@@ -74,7 +74,7 @@ import {
   type CarpoolSeatSummary,
   type CarpoolProductCatalogItem,
   type ContactMethodType,
-  type ContactUsageScope,
+  type TransactionContactPurpose,
   type CommunityIdentity,
   type CreateContactReportRequest,
   type OpeningChannelOption,
@@ -114,7 +114,7 @@ export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { apiOrderPlatformTradeBoundary, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderCommercialOutcome, type ApiOrderDisputeAction, type ApiOrderDisputeRemedySource, type ApiOrderDisputeResolution, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
-import { ALL_CONTACT_USAGE_SCOPES } from '@/lib/contactUsageScopes'
+import { isTransactionContactEligible, transactionContactById } from '@/lib/transactionContacts'
 export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -845,6 +845,7 @@ export type ApiQuotaOfferFilters = {
 export type CreateApiQuotaOrderPayload = {
   offerId: string
   saleRoundId?: string
+  buyerContactMethodId: string
 }
 
 export type CreateApiQuotaBatchPayload = {
@@ -964,6 +965,7 @@ export type CarpoolDraftStatus = 'draft' | 'reviewing'
 export type OwnerCarpoolView = 'recruiting' | 'serving' | 'history' | 'needs_edit'
 
 export type SaveCarpoolDraftPayload = {
+  ownerContactMethodId: string
   productId: string
   customProductName: string | null
   regionCode: string
@@ -1029,6 +1031,7 @@ const carpoolOwnerNoteStorageKey = 'c2cmarket.carpoolOwnerNotes.v1'
 const adminAuditLogStorageKey = 'c2cmarket.adminAuditLogs.v1'
 const officialPriceStorageKey = 'c2cmarket.officialPrices.v1'
 const carpoolStorageKey = 'c2cmarket.carpools.v1'
+const carpoolOwnerContactMethodStorageKey = 'c2cmarket.carpoolOwnerContactMethods.v1'
 const apiServiceStorageKey = 'c2cmarket.apiServices.v1'
 const apiServicePaymentSnapshotStorageKey = 'c2cmarket.apiServicePaymentSnapshots.v1'
 const apiPaymentAccountSettingsStorageKey = 'c2cmarket.apiPaymentAccountSettings.v1'
@@ -1057,6 +1060,7 @@ let carpoolOwnerNoteStore = readSessionStore<Record<string, string>>(carpoolOwne
 let adminAuditLogStore = readSessionStore(adminAuditLogStorageKey, adminAuditLogs)
 let officialPriceStore = readSessionStore<OfficialPrice[]>(officialPriceStorageKey, officialPrices)
 let carpoolStore = normalizeCarpoolStore(readSessionStore<Carpool[]>(carpoolStorageKey, carpools))
+let carpoolOwnerContactMethodStore = readSessionStore<Record<string, string>>(carpoolOwnerContactMethodStorageKey, {})
 let apiServiceStore = normalizeApiServiceStore(readSessionStore<ApiService[]>(apiServiceStorageKey, apiServices))
 let apiServicePaymentSnapshotStore = readSessionStore<Record<string, ApiPaymentOption[]>>(apiServicePaymentSnapshotStorageKey, {})
 let apiPaymentAccountSettingsStore = normalizeApiPaymentAccountSettings(readLocalStore<ApiPaymentAccountSettings | null>(apiPaymentAccountSettingsStorageKey, null))
@@ -1071,21 +1075,20 @@ let contactMethodVersionSequence = 0
 const contactMethodVersionStore = new Map(myContactMethodStore.map(item => [item.id, nextContactMethodVersionToken(item.id)]))
 const contactEmailVerificationStore = new Map<string, { email: string, code: string, expiresAt: string, contactMethodVersionId: string, attemptCount: number }>()
 
-function enabledMockWechatContact(): UserContactMethod {
-  const contact = myContactMethodStore.find(item => item.enabled && item.type === 'wechat')
-  if (!contact) throw new Error('请先在个人中心配置微信联系方式。')
+function mockTransactionContact(contactId: string): UserContactMethod {
+  const contact = transactionContactById(myContactMethodStore, contactId)
+  if (!contact) throw new Error('请选择有效的交易联系方式。')
   return contact
 }
 
-function mockWechatContactChannel(): ApiContactChannel {
-  const contact = enabledMockWechatContact()
-  return { type: 'wechat', label: contact.label || '微信', value: contact.displayValue }
+function mockContactChannel(contact: UserContactMethod): ApiContactChannel {
+  return { type: contact.type, label: contact.label, value: contact.displayValue }
 }
 
-function mockWechatContactSnapshotItem(contact: UserContactMethod, usageScope: ContactUsageScope): OrderContactSnapshotItem {
+function mockContactSnapshotItem(contact: UserContactMethod, usageScope: OrderContactSnapshotItem['usageScope']): OrderContactSnapshotItem {
   return {
-    type: 'wechat',
-    label: contact.label || '微信',
+    type: contact.type,
+    label: contact.label,
     maskedValue: contact.maskedValue,
     displayValue: contact.displayValue,
     verified: false,
@@ -1469,6 +1472,7 @@ function persistMarketStores() {
   if (typeof window === 'undefined') return
   window.sessionStorage.setItem(officialPriceStorageKey, JSON.stringify(officialPriceStore))
   window.sessionStorage.setItem(carpoolStorageKey, JSON.stringify(carpoolStore))
+  window.sessionStorage.setItem(carpoolOwnerContactMethodStorageKey, JSON.stringify(carpoolOwnerContactMethodStore))
   window.sessionStorage.setItem(apiServiceStorageKey, JSON.stringify(apiServiceStore))
   window.sessionStorage.setItem(apiServicePaymentSnapshotStorageKey, JSON.stringify(apiServicePaymentSnapshotStore))
 }
@@ -1689,7 +1693,7 @@ export function apiIntentBuyerContactSnapshot(intent: ApiPurchaseIntent): OrderC
   }
 }
 
-function contactChannelsToSnapshotItems(channels: ApiContactChannel[], usageScope: ContactUsageScope) {
+function contactChannelsToSnapshotItems(channels: ApiContactChannel[], usageScope: OrderContactSnapshotItem['usageScope']) {
   return channels.map(channel => ({
     type: channel.type,
     label: channel.label,
@@ -1790,7 +1794,6 @@ export type SaveContactMethodRequest = {
   type: ContactMethodType
   label: string
   displayValue: string
-  usageScopes: ContactUsageScope[]
   isDefault: boolean
   enabled: boolean
 }
@@ -2392,6 +2395,7 @@ export type CreateApiPurchaseIntentPayload = {
   targetModel: string
   selectedPackageId?: string
   buyerNote?: string
+  buyerContactMethodId: string
 }
 
 export type CarpoolApplicationFilters = {
@@ -2732,12 +2736,16 @@ export async function getMyCarpoolForEdit(id: string): Promise<OwnerCarpoolEditD
 	if (!carpool) throw new Error('车源不存在。')
 	const product = carpoolProductCatalog.find(item => item.displayName === carpool.product)
 	const region = carpoolRegions.find(item => item.displayName === carpool.region)
+	const ownerContactMethodId = carpoolOwnerContactMethodStore[id]
+		?? myContactMethodStore.find(isTransactionContactEligible)?.id
+		?? ''
 	return clone({
 		id: carpool.id,
 		version: 1,
 		backendStatus: carpool.status === '审核中' ? 'pending_review' : 'draft',
-		ownerContactMethodId: 'mock-owner-contact',
+		ownerContactMethodId,
 		payload: {
+			ownerContactMethodId,
 			productId: product?.id ?? '',
 			customProductName: product ? null : carpool.product,
 			regionCode: region?.code ?? 'other',
@@ -2808,6 +2816,7 @@ export async function updateMyCarpool(id: string, payload: SaveCarpoolDraftPaylo
 		confirmedAt: nowText(),
 	}
 	carpoolStore[index] = updated
+	carpoolOwnerContactMethodStore[id] = mockTransactionContact(ownerContactMethodId || payload.ownerContactMethodId).id
 	persistMarketStores()
 	return clone({ ...updated, backendVersion: version + (submitForReview ? 2 : 1), backendStatus: submitForReview ? 'pending_review' : 'draft' })
 }
@@ -3838,8 +3847,15 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
   if (payload.type === 'wechat' && payload.enabled && myContactMethodStore.some(item => item.enabled && item.type === 'wechat')) {
     throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
   }
+  const normalizedValue = payload.type === 'email' ? payload.displayValue.trim().toLowerCase() : payload.displayValue.trim()
+  const existing = myContactMethodStore.find(item => item.enabled && item.type === payload.type && (
+    item.type === 'email' ? item.displayValue.trim().toLowerCase() : item.displayValue.trim()
+  ) === normalizedValue)
+  if (existing) return clone(existing)
   const createdAt = nowText()
-  const wechat = payload.type === 'wechat'
+  const verifiedAccountEmail = payload.type === 'email'
+    && myUserProfileStore.emailVerified
+    && myUserProfileStore.email?.trim().toLowerCase() === normalizedValue
   const contact: UserContactMethod = {
     id: `contact-${Date.now()}`,
     userId: myUserProfileStore.id,
@@ -3847,15 +3863,14 @@ export async function createContactMethod(payload: SaveContactMethodRequest) {
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: wechat ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: wechat ? true : payload.enabled,
-    verified: false,
+    enabled: payload.enabled,
+    verified: verifiedAccountEmail,
     createdAt,
     updatedAt: createdAt,
   }
   if (contact.isDefault) {
-    myContactMethodStore = myContactMethodStore.map(item => item.usageScopes.some(scope => contact.usageScopes.includes(scope)) ? { ...item, isDefault: false } : item)
+    myContactMethodStore = myContactMethodStore.map(item => ({ ...item, isDefault: false }))
   }
   myContactMethodStore = [contact, ...myContactMethodStore]
   contactMethodVersionStore.set(contact.id, nextContactMethodVersionToken(contact.id))
@@ -3868,8 +3883,6 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo' && payload.displayValue !== current.displayValue) throw new Error('linux.do 联系方式不能手动修改')
-  if (current.type === 'wechat' && payload.type !== 'wechat') throw new Error('微信是必填联系方式，不能转换为其他类型')
-  if (current.type === 'wechat' && !payload.enabled) throw new Error('微信是必填联系方式，不能停用')
   const nextType = current.type === 'linuxdo' ? 'linuxdo' : payload.type
   if (nextType === 'wechat' && payload.enabled && myContactMethodStore.some(item => item.id !== contactId && item.enabled && item.type === 'wechat')) {
     throw new Error('每个账号只能配置一个微信联系方式，请直接更新现有微信。')
@@ -3883,15 +3896,18 @@ export async function updateContactMethod(contactId: string, payload: SaveContac
     label: payload.label.trim() || defaultContactLabel(payload.type),
     maskedValue: contactMaskedValue(current.type === 'linuxdo' ? 'linuxdo' : payload.type, payload.displayValue),
     displayValue: payload.displayValue.trim(),
-    usageScopes: nextType === 'wechat' ? [...ALL_CONTACT_USAGE_SCOPES] : [...payload.usageScopes],
     isDefault: payload.isDefault,
-    enabled: nextType === 'wechat' ? true : payload.enabled,
-    verified: valueChanged ? false : current.verified,
+    enabled: payload.enabled,
+    verified: valueChanged
+      ? nextType === 'email'
+        && myUserProfileStore.emailVerified
+        && myUserProfileStore.email?.trim().toLowerCase() === nextVersionValue
+      : current.verified,
     updatedAt: nowText(),
   }
   myContactMethodStore = myContactMethodStore.map(item => item.id === contactId ? updated : item)
   if (updated.isDefault) {
-    myContactMethodStore = myContactMethodStore.map(item => item.id !== updated.id && item.usageScopes.some(scope => updated.usageScopes.includes(scope)) ? { ...item, isDefault: false } : item)
+    myContactMethodStore = myContactMethodStore.map(item => item.id === updated.id ? item : { ...item, isDefault: false })
   }
   if (valueChanged) contactMethodVersionStore.set(contactId, nextContactMethodVersionToken(contactId))
   return clone(updated)
@@ -3903,7 +3919,6 @@ export async function deleteContactMethod(contactId: string) {
   const current = myContactMethodStore.find(item => item.id === contactId)
   if (!current) throw new Error('未找到联系方式')
   if (current.type === 'linuxdo') throw new Error('linux.do 绑定联系方式不能删除')
-  if (current.type === 'wechat') throw new Error('微信是必填联系方式，不能删除')
   myContactMethodStore = myContactMethodStore.filter(item => item.id !== contactId)
   contactMethodVersionStore.delete(contactId)
   contactEmailVerificationStore.delete(contactId)
@@ -3917,7 +3932,7 @@ export async function setDefaultContactMethod(contactId: string) {
   if (!current) throw new Error('未找到联系方式')
   myContactMethodStore = myContactMethodStore.map(item => ({
     ...item,
-    isDefault: item.id === contactId || (item.isDefault && !item.usageScopes.some(scope => current.usageScopes.includes(scope))),
+    isDefault: item.id === contactId,
     updatedAt: item.id === contactId ? nowText() : item.updatedAt,
   }))
   return clone(myContactMethodStore.find(item => item.id === contactId)!)
@@ -4979,7 +4994,7 @@ export async function submitOfficialPriceLead(payload: Record<string, unknown>) 
 export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   if (shouldUseRealBackend()) return backendSubmitCarpool(payload)
   await wait()
-  enabledMockWechatContact()
+  const ownerContact = mockTransactionContact(payload.ownerContactMethodId)
   const product = carpoolProductCatalog.find(item => item.id === payload.productId)
   const region = carpoolRegions.find(item => item.code === payload.regionCode)
   const regionName = payload.customRegionName?.trim() || region?.displayName || '其他'
@@ -5033,6 +5048,7 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
     riskNoticeCode: carpoolRequiresRiskAck(product, payload.riskNoticeCode) ? product?.riskNoticeCode ?? payload.riskNoticeCode ?? undefined : undefined,
   }
   carpoolStore.unshift(carpool)
+  carpoolOwnerContactMethodStore[id] = ownerContact.id
   persistMarketStores()
   appendAdminAuditLog({
     actorType: 'system',
@@ -5053,14 +5069,8 @@ export async function submitApiService(payload: Record<string, unknown>) {
   await wait()
   const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const isPublish = payload.status === 'reviewing'
-	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
-		? payload.ownerContactMethodIds.map(value => String(value).trim()).filter(Boolean)
-		: []
-	if (ownerContactMethodIds.length !== 1) throw new Error('API 服务只能使用当前账号唯一的微信联系方式。')
-	const ownerContacts = ownerContactMethodIds.map(id => myContactMethodStore.find(contact => contact.id === id))
-	if (ownerContacts.some(contact => !contact || !contact.enabled || contact.type !== 'wechat' || !contact.usageScopes.includes('api_merchant'))) {
-		throw new Error('请先在个人中心配置微信联系方式。')
-	}
+	const ownerContactMethodId = String(payload.ownerContactMethodId ?? '').trim()
+	const ownerContact = mockTransactionContact(ownerContactMethodId)
   const probeConnectionId = stringValue(payload.probeConnectionId, '')
   const probeConnection = (await getOwnerAPIProbeConnections()).find(connection => connection.id === probeConnectionId)
   if (isPublish && (!probeConnection || !probeConnection.enabled || probeConnection.verificationStatus !== 'verified')) {
@@ -5201,7 +5211,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     })),
     recommendationResponseMedianMinutes: null,
     serviceUpdatedAt: nowText(),
-		contactChannels: ownerContacts.flatMap(contact => contact ? [{ type: contact.type, label: contact.label, value: contact.displayValue }] : []),
+		contactChannels: [mockContactChannel(ownerContact)],
     acceptedPaymentMethods: normalizedPaymentOptions.filter(option => option.enabled).map(option => option.paymentMethod),
   }
   apiServicePaymentSnapshotStore[id] = normalizeApiPaymentAccountSettings({
@@ -6013,10 +6023,10 @@ export async function getCarpoolApplicationEvents(id: string) {
   return clone(carpoolApplicationEventStore.filter(item => item.applicationId === id).sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt)))
 }
 
-export async function createCarpoolApplication(carpoolId: string, payload: { rulesAccepted: boolean }) {
+export async function createCarpoolApplication(carpoolId: string, payload: { rulesAccepted: boolean, buyerContactMethodId: string }) {
   if (shouldUseRealBackend()) return backendCreateCarpoolApplication(carpoolId, payload)
   await wait()
-  const buyerContact = enabledMockWechatContact()
+  const buyerContact = mockTransactionContact(payload.buyerContactMethodId)
   if (!payload.rulesAccepted) throw new Error('请先确认已阅读车源规则和车主承诺说明')
   const carpool = carpoolStore.find(item => item.id === carpoolId)
   if (!carpool) throw new Error(`Carpool not found: ${carpoolId}`)
@@ -6054,7 +6064,7 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
     orderType: 'carpool_application',
     orderId: id,
     sellerContacts: [],
-    buyerContacts: [mockWechatContactSnapshotItem(buyerContact, 'buyer')],
+    buyerContacts: [mockContactSnapshotItem(buyerContact, 'buyer')],
     contactWindowEndsAt: null,
     canView: false,
     unavailableReason: '车主确认上车并建立有效成员关系后才展示联系方式。',
@@ -6074,17 +6084,24 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
 }
 
 export async function createCarpoolIntent(carpool: Carpool) {
-  return createCarpoolApplication(carpool.id, { rulesAccepted: true })
+  const contact = myContactMethodStore.find(isTransactionContactEligible)
+  if (!contact) throw new Error('请选择有效的交易联系方式。')
+  return createCarpoolApplication(carpool.id, { rulesAccepted: true, buyerContactMethodId: contact.id })
 }
 
 export async function acceptCarpoolApplication(id: string) {
   if (shouldUseRealBackend()) return backendAcceptCarpoolApplication(id)
   await wait()
-  const ownerContact = enabledMockWechatContact()
   return updateCarpoolApplication(id, application => {
     if (application.status !== 'pending_owner') throw new Error('只有待车主处理的申请可以接受')
     const carpool = carpoolStore.find(item => item.id === application.carpoolId)
     if (!carpool) throw new Error(`Carpool not found: ${application.carpoolId}`)
+    const ownerContactMethodId = carpoolOwnerContactMethodStore[carpool.id]
+			?? myContactMethodStore.find(isTransactionContactEligible)?.id
+		const ownerContact = ownerContactMethodId
+			? transactionContactById(myContactMethodStore, ownerContactMethodId)
+			: null
+		if (!ownerContact) throw new Error('车主交易联系方式已失效。')
     const contactSnapshot = carpoolContactSnapshotStore.find(item => item.orderType === 'carpool_application' && item.orderId === id)
     if (!contactSnapshot) throw new Error('拼车联系方式快照不存在，请刷新后重试。')
     const seatSummary = getCarpoolSeatSummary(carpool)
@@ -6093,7 +6110,7 @@ export async function acceptCarpoolApplication(id: string) {
 			application.status = 'active'
 			application.startedAt = nowText()
 		carpool.currentConfirmedMembers += application.seatsRequested
-    contactSnapshot.sellerContacts = [mockWechatContactSnapshotItem(ownerContact, 'carpool_owner')]
+    contactSnapshot.sellerContacts = [mockContactSnapshotItem(ownerContact, 'carpool_owner')]
     contactSnapshot.canView = true
     contactSnapshot.unavailableReason = null
     appendCarpoolApplicationEvent({
@@ -6241,6 +6258,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
   await wait()
   const service = apiServiceStore.find(item => item.id === payload.serviceId)
   if (!service) throw new Error(`API service not found: ${payload.serviceId}`)
+  const buyerContact = mockTransactionContact(payload.buyerContactMethodId)
   requireSupportedApiServiceBillingMode(service.billingMode)
   if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可创建订单。')
   if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的 API 细节不属于该服务。')
@@ -6290,7 +6308,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
       note: '购买意向已提交，商户联系方式和收款确认资料已向买家展示，商户可查看买家选择的联系方式',
     },
     contactChannels: mockMerchantWechatContactChannels(service.contactChannels),
-    buyerContactChannels: [mockWechatContactChannel()],
+    buyerContactChannels: [mockContactChannel(buyerContact)],
     merchantResponseDeadline: service.online ? minutesFromNow(service.expectedResponseMinutes) : undefined,
     createdAt,
     updatedAt: createdAt,
@@ -6479,6 +6497,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
   const offer = apiQuotaOfferStore.find(item => item.id === payload.offerId)
   const service = offer ? apiServiceStore.find(item => item.id === offer.apiServiceId) : undefined
   if (!offer || !service) throw new Error('额度包不存在或已下架。')
+  const buyerContact = mockTransactionContact(payload.buyerContactMethodId)
   if (!offer.isOrderable || offer.availableCopies <= 0) throw new Error(offer.orderabilityReason || '当前额度包不可购买。')
   if (offer.saleMode === 'scheduled' && (!payload.saleRoundId || payload.saleRoundId !== offer.currentRound?.id)) throw new Error('当前放量轮次已变化，请刷新后重试。')
   if (payload.saleRoundId && apiOrderStore.some(order => order.buyerId === currentBuyerId && order.quotaSnapshot?.saleRoundId === payload.saleRoundId)) {
@@ -6526,7 +6545,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       note: '限量额度包已直接生成订单。',
     },
     contactChannels: clone(mockMerchantWechatContactChannels(service.contactChannels)),
-    buyerContactChannels: [mockWechatContactChannel()],
+    buyerContactChannels: [mockContactChannel(buyerContact)],
     createdAt,
     updatedAt: createdAt,
   }
@@ -7231,7 +7250,7 @@ export type {
   CarpoolCancellationResponsibility,
   CarpoolSeatSummary,
   ContactMethodType,
-  ContactUsageScope,
+  TransactionContactPurpose,
   CommunityIdentity,
   CreateContactReportRequest,
   CreateManualInterventionReportRequest,

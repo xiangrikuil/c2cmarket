@@ -20,7 +20,6 @@ type apiServiceRequest struct {
 	MerchantProfileID                string                        `json:"merchantProfileId"`
 	MerchantIdentityMode             string                        `json:"merchantIdentityMode"`
 	OwnerContactMethodID             string                        `json:"ownerContactMethodId"`
-	OwnerContactMethodIDs            []string                      `json:"ownerContactMethodIds"`
 	ProbeConnectionID                string                        `json:"probeConnectionId"`
 	Title                            string                        `json:"title"`
 	ShortDescription                 string                        `json:"shortDescription"`
@@ -121,7 +120,6 @@ type apiServiceResponse struct {
 	MerchantProfileSlug              string                              `json:"merchantProfileSlug,omitempty"`
 	MerchantAvatarURL                string                              `json:"merchantAvatarUrl,omitempty"`
 	OwnerContactMethodID             string                              `json:"ownerContactMethodId,omitempty"`
-	OwnerContactMethodIDs            []string                            `json:"ownerContactMethodIds,omitempty"`
 	ProbeConnectionID                string                              `json:"probeConnectionId,omitempty"`
 	ProbeReady                       bool                                `json:"probeReady"`
 	Title                            string                              `json:"title"`
@@ -1102,7 +1100,6 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		MerchantProfileID:                req.MerchantProfileID,
 		MerchantIdentityMode:             req.MerchantIdentityMode,
 		OwnerContactMethodID:             req.OwnerContactMethodID,
-		OwnerContactMethodIDs:            append([]string(nil), req.OwnerContactMethodIDs...),
 		ProbeConnectionID:                req.ProbeConnectionID,
 		Title:                            req.Title,
 		ShortDescription:                 req.ShortDescription,
@@ -1136,7 +1133,6 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		MerchantProfileID:                base.MerchantProfileID,
 		MerchantIdentityMode:             base.MerchantIdentityMode,
 		OwnerContactMethodID:             base.OwnerContactMethodID,
-		OwnerContactMethodIDs:            append([]string(nil), base.OwnerContactMethodIDs...),
 		ProbeConnectionID:                base.ProbeConnectionID,
 		Title:                            base.Title,
 		ShortDescription:                 base.ShortDescription,
@@ -1311,7 +1307,6 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		MerchantProfileSlug:              service.MerchantProfileSlug,
 		MerchantAvatarURL:                service.MerchantAvatarURL,
 		OwnerContactMethodID:             service.OwnerContactMethodID,
-		OwnerContactMethodIDs:            append([]string(nil), service.OwnerContactMethodIDs...),
 		ProbeConnectionID:                service.ProbeConnectionID,
 		ProbeReady:                       service.ProbeReady,
 		Title:                            service.Title,

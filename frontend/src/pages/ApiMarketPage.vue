@@ -12,6 +12,7 @@ import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
 import ApiQuotaOfferCard from '@/components/api-market/ApiQuotaOfferCard.vue'
 import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
 import ApiMarketActiveFilters from '@/components/api-market/ApiMarketActiveFilters.vue'
+import TransactionContactSelector from '@/components/contact-payment/TransactionContactSelector.vue'
 import ApiPackageModelFilter from '@/components/api-market/ApiPackageModelFilter.vue'
 import { orderSellerDeclaredApiModels, type ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
 import { usePromotionImpression, type PromotionAnalyticsProperties } from '@/composables/usePromotionImpression'
@@ -93,6 +94,9 @@ const now = ref(Date.now())
 const serverClockOffset = ref(0)
 const selectedSlotKey = ref('')
 const pendingOfferId = ref('')
+const purchaseOfferDialogOpen = ref(false)
+const selectedPurchaseOffer = ref<PublicApiQuotaOffer | null>(null)
+const buyerContactMethodId = ref('')
 let refreshedBoundary = ''
 let timer: ReturnType<typeof setInterval> | undefined
 let pendingMarketRouteWrites = 0
@@ -655,12 +659,21 @@ function trackPromotedCardClick(item?: ApiServicePromotion, position?: Promotion
 
 async function purchaseOffer(offer: PublicApiQuotaOffer) {
   if (!offer.isOrderable || pendingOfferId.value) return
+  selectedPurchaseOffer.value = offer
+  purchaseOfferDialogOpen.value = true
+}
+
+async function confirmPurchaseOffer() {
+  const offer = selectedPurchaseOffer.value
+  if (!offer || !buyerContactMethodId.value || pendingOfferId.value) return
   pendingOfferId.value = offer.id
   try {
     const order = await createOrderMutation.mutateAsync({
       offerId: offer.id,
       saleRoundId: offer.saleMode === 'scheduled' ? offer.currentRound?.id : undefined,
+      buyerContactMethodId: buyerContactMethodId.value,
     })
+    purchaseOfferDialogOpen.value = false
     toast.success('额度包订单已创建，请在付款截止前完成站外付款。')
     await router.push(`/my/api-orders/${order.id}`)
   } catch (error) {
@@ -1041,6 +1054,22 @@ onBeforeUnmount(() => {
         />
       </TabsContent>
     </Tabs>
+
+    <Dialog v-model:open="purchaseOfferDialogOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>确认购买额度包</DialogTitle>
+          <DialogDescription>选择本次订单使用的联系方式。订单创建后将锁定当前版本。</DialogDescription>
+        </DialogHeader>
+        <TransactionContactSelector v-model="buyerContactMethodId" />
+        <DialogFooter>
+          <Button variant="outline" :disabled="Boolean(pendingOfferId)" @click="purchaseOfferDialogOpen = false">取消</Button>
+          <Button :disabled="Boolean(pendingOfferId) || !buyerContactMethodId" @click="confirmPurchaseOffer">
+            {{ pendingOfferId ? '正在创建订单...' : '确认购买' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog v-model:open="mobileFiltersOpen">
       <DialogContent class="bottom-0 left-0 top-auto max-h-[82dvh] max-w-full translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-b-none rounded-t-2xl p-0 lg:hidden">
