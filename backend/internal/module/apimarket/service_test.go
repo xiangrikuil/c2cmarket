@@ -1041,6 +1041,52 @@ func TestCurrentMaximumIntentCNYTracksAvailableAllowance(t *testing.T) {
 	}
 }
 
+func TestMeteredTailOrderAndSubCentInventoryBoundaries(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(48 * time.Hour)
+	service := Service{
+		OwnerContactMethodID:             "contact-1",
+		ProbeConnectionID:                "probe-1",
+		ProbeReady:                       true,
+		BillingMode:                      ServiceBillingModeMetered,
+		DeclaredCNYPerUSDAllowance:       "0.8000",
+		DeclaredMaxUSDAllowancePerIntent: "12.499000",
+		AvailableUSDAllowance:            "12.499000",
+		MinimumIntentCNY:                 "10.00",
+		QuotaExpiresAt:                   &expiresAt,
+		AcceptingOrders:                  true,
+		PaymentWindowMinutes:             10,
+		ReviewStatus:                     ServiceReviewStatusApproved,
+		PublicationStatus:                ServicePublicationStatusOnline,
+		ModerationStatus:                 ServiceModerationStatusClear,
+		PaymentOptions:                   []PaymentOption{{PaymentMethod: PaymentMethodWechat, Enabled: true}},
+	}
+
+	if got := CurrentMaximumIntentCNY(service); got != "9.99" {
+		t.Fatalf("tail maximum = %q, want 9.99", got)
+	}
+	if !IsTailOrder(service) {
+		t.Fatal("expected remaining inventory to be a tail order")
+	}
+	if reasons := OrderableReasonsAt(service, now); len(reasons) != 0 {
+		t.Fatalf("tail order must remain orderable, got %#v", reasons)
+	}
+
+	service.AvailableUSDAllowance = "0.012000"
+	if got := CurrentMaximumIntentCNY(service); got != "0.00" {
+		t.Fatalf("sub-cent maximum = %q, want 0.00", got)
+	}
+	if IsTailOrder(service) {
+		t.Fatal("sub-cent inventory must not be a tail order")
+	}
+	reasons := OrderableReasonsAt(service, now)
+	if len(reasons) != 1 || reasons[0] != "quota_sold_out" {
+		t.Fatalf("sub-cent inventory must be sold out, got %#v", reasons)
+	}
+}
+
 func validLimitedPackageCreateInput() CreateServiceInput {
 	duration := 3
 	refundCommitment := true

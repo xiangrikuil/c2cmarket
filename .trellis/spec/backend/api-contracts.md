@@ -2,7 +2,7 @@
 
 Date: 2026-06-21
 Author: Codex
-Updated: 2026-08-17
+Updated: 2026-08-20
 
 ## Scenario: Backend Contract Foundation And Current Real Business Slices
 
@@ -2225,6 +2225,74 @@ available = declaredMaxUsdAllowancePerIntent
 requestedUsd = decimalDivide("10.00", "0.8000") // "12.500000"
 UPDATE api_services SET available_usd_allowance = available_usd_allowance - requested
 WHERE id = service_id AND available_usd_allowance >= requested
+```
+
+## Scenario: Metered API Quota Tail Orders
+
+### 1. Scope / Trigger
+
+- Trigger: changes to metered API-service orderability, current purchase maximums, purchase-intent validation/snapshots, or service-level allowance reservation and release.
+- Fixed packages and limited quota offers keep their fixed-value inventory contracts and do not use this tail-order rule.
+
+### 2. Signatures
+
+```text
+apimarket.CurrentAvailableUSDAllowance(Service) string
+apimarket.CurrentMaximumIntentCNY(Service) string
+apimarket.IsTailOrder(Service) bool
+apiintent.CreateIntentInput.RequestedCNYAmount string
+apiintent.CreateIntentInput.RequestedUSDAllowance string
+POST /api/v1/api-services/{serviceId}/purchase-intents
+```
+
+### 3. Contracts
+
+- Normal metered inventory whose current CNY value is at least `minimumIntentCny` keeps the configured minimum and existing free-amount purchase range.
+- A tail order exists when the current metered inventory value, rounded down to two CNY decimal places, is at least `0.01` and below `minimumIntentCny`.
+- A tail intent must submit exactly the current two-decimal CNY maximum and the complete current six-decimal USD allowance. The intent freezes that complete allowance; it must not derive the frozen allowance back from the rounded CNY amount.
+- Tail intent snapshots set both `minimumIntentCnySnapshot` and `maximumIntentCnySnapshot` to the fixed tail CNY amount. Normal intent snapshots keep the configured minimum.
+- Metered inventory whose rounded-down CNY value is below `0.01` is `quota_sold_out`. Public PostgreSQL reads and in-memory orderability must apply the same boundary.
+- Purchase-intent validation re-evaluates the tail against the current service snapshot. Order creation still atomically reserves the frozen USD allowance, so concurrent stale intents cannot oversell. Pending-payment cancellation and timeout release that exact frozen allowance.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Normal amount is below configured minimum | `422 VALIDATION_FAILED`, `requestedCnyAmount/too_low` |
+| Tail CNY amount differs from current maximum | `422 VALIDATION_FAILED`, `requestedCnyAmount/tail_order_required` |
+| Tail USD allowance differs from complete current allowance | `422 VALIDATION_FAILED`, `requestedUsdAllowance/tail_order_required` |
+| Tail request is stale and exceeds current allowance | `422 VALIDATION_FAILED`, `requestedUsdAllowance/too_high` |
+| Rounded-down inventory value is below `0.01` | Public reads hide it and direct purchase-intent creation is not orderable |
+| Two orders reserve the same tail | At most one reservation succeeds; the other returns an inventory conflict |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `$12.499000` at `¥0.8000/$1` becomes a `¥9.99` tail; the intent freezes `¥9.99` and all `$12.499000`.
+- Base: remaining value `¥10.00` uses the normal configurable amount flow, while remaining value `¥0.00` is sold out.
+- Bad: accept `¥9.99` with `$12.000000`, or calculate the tail allowance as `9.99 / 0.8` and leave decimal inventory behind.
+
+### 6. Tests Required
+
+- `apimarket` unit tests cover normal, `¥9.99` tail, and sub-cent sold-out boundaries.
+- Module and direct PostgreSQL-store validation tests accept the exact tail and reject a partial allowance or a different CNY amount with the expected field code.
+- Public predicate tests assert `trunc(available_usd_allowance * declared_cny_per_usd_allowance, 2) >= 0.01`.
+- Order tests cover one-winner concurrent reservation and exact pending cancellation/timeout release; run full `go test ./...`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+tailUsd = divideAndRoundToSix(tailCny, rate)
+validate minimumIntentCny <= tailCny <= currentMaximumCny
+```
+
+#### Correct
+
+```text
+tailCny = floorToTwo(availableUsd * rate)
+request = { requestedCnyAmount: tailCny, requestedUsdAllowance: availableUsd }
+validate requestedCnyAmount == tailCny && requestedUsdAllowance == availableUsd
 ```
 
 ## Scenario: Admin API Order Supervision Query Contract

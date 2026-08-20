@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { formatDecimal } from '@/lib/decimal'
+import { compareDecimal, formatDecimal } from '@/lib/decimal'
 import { compactApiServiceModels, type ApiFreeServiceCardData } from './apiFreeServiceCard'
 import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
@@ -22,6 +22,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ activate: [] }>()
 
 const compactModels = computed(() => compactApiServiceModels(props.card.models))
+const tailOrder = computed(() => compareDecimal(String(props.card.maximumPurchaseCny), String(props.card.minimumPurchaseCny)) < 0)
 const modelTitle = computed(() => props.card.models.join(' / ') || '模型待选择')
 const visibleModelSummary = computed(() => compactModels.value.visibleModels.join(' / ') || '模型待选择')
 const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && props.card.sellerReputation.state !== 'active'))
@@ -87,7 +88,7 @@ const merchantIdentity = computed(() => ({
               <span class="text-xs font-medium">/ $1</span>
             </div>
             <div class="text-[11px] text-muted-foreground">
-              按金额购买 · 最低 ¥{{ card.minimumPurchaseCny }} 起
+              {{ tailOrder ? `尾单 ¥${card.maximumPurchaseCny} · 一次买完` : `按金额购买 · 最低 ¥${card.minimumPurchaseCny} 起` }}
             </div>
           </div>
           <div class="shrink-0 pb-0.5 text-right text-xs text-muted-foreground">
@@ -109,7 +110,7 @@ const merchantIdentity = computed(() => ({
       <div class="api-product-card__details flex-1">
         <dl class="api-product-card__detail-facts">
           <div><dt>可售额度</dt><dd :title="`$${card.availableUsdAllowance}`">${{ formatDecimal(card.availableUsdAllowance || 0, 0, 6) }}</dd></div>
-          <div><dt>单笔范围</dt><dd :title="`¥${card.minimumPurchaseCny} - ¥${card.maximumPurchaseCny}`">¥{{ card.minimumPurchaseCny }} - ¥{{ card.maximumPurchaseCny }}</dd></div>
+          <div><dt>{{ tailOrder ? '尾单金额' : '单笔范围' }}</dt><dd :title="tailOrder ? `尾单 ¥${card.maximumPurchaseCny}` : `¥${card.minimumPurchaseCny} - ¥${card.maximumPurchaseCny}`">{{ tailOrder ? `¥${card.maximumPurchaseCny}` : `¥${card.minimumPurchaseCny} - ¥${card.maximumPurchaseCny}` }}</dd></div>
           <div><dt>预计响应</dt><dd>{{ card.paymentWindowMinutes }} 分钟内</dd></div>
           <div><dt>号池</dt><dd :title="card.accountPoolLabel">{{ card.accountPoolLabel || '历史服务未补充' }}</dd></div>
         </dl>
@@ -164,7 +165,7 @@ const merchantIdentity = computed(() => ({
           <p class="mt-1 text-center text-[10px] text-muted-foreground">预览状态，不可操作</p>
         </div>
         <RouterLink v-else-if="card.actionHref" :to="card.actionHref" class="block" @click.capture="emit('activate')">
-          <Button class="h-11 w-full sm:h-9"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
+          <Button class="h-11 w-full sm:h-9"><ShoppingCart class="h-4 w-4" />{{ tailOrder ? '购买尾单' : '选择金额并下单' }}</Button>
         </RouterLink>
       </div>
     </div>

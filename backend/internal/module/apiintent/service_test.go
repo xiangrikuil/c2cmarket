@@ -407,6 +407,69 @@ func TestMeteredIntentUsesCurrentInventoryInsteadOfLegacyCNYMaximum(t *testing.T
 	}
 }
 
+func TestMeteredTailIntentRequiresFullInventoryAndFreezesEffectiveRange(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(48 * time.Hour)
+	service := apimarket.Service{
+		ID:                               "service-tail",
+		OwnerUserID:                      "seller-1",
+		OwnerContactMethodID:             "owner-contact-1",
+		ProbeConnectionID:                "probe-1",
+		ProbeReady:                       true,
+		BillingMode:                      apimarket.ServiceBillingModeMetered,
+		DeclaredCNYPerUSDAllowance:       "0.8000",
+		DeclaredMaxUSDAllowancePerIntent: "12.499000",
+		AvailableUSDAllowance:            "12.499000",
+		MinimumIntentCNY:                 "10.00",
+		MaximumIntentCNY:                 "100.00",
+		AcceptingOrders:                  true,
+		PaymentWindowMinutes:             10,
+		ReviewStatus:                     apimarket.ServiceReviewStatusApproved,
+		PublicationStatus:                apimarket.ServicePublicationStatusOnline,
+		ModerationStatus:                 apimarket.ServiceModerationStatusClear,
+		QuotaExpiresAt:                   &expiresAt,
+		AccessModes:                      []apimarket.ServiceAccessMode{{AccessMode: "buyer_dedicated_sub_key"}},
+		PaymentOptions:                   []apimarket.PaymentOption{{PaymentMethod: apimarket.PaymentMethodWechat, Enabled: true}},
+	}
+	input := CreateIntentInput{
+		APIServiceID:          service.ID,
+		BuyerUserID:           "buyer-1",
+		BuyerContactMethodID:  "buyer-contact-1",
+		RequestedCNYAmount:    "9.99",
+		RequestedUSDAllowance: "12.499000",
+		SelectedAccessMode:    "buyer_dedicated_sub_key",
+	}
+	if appErr := validateCreateInput(input, service); appErr != nil {
+		t.Fatalf("valid tail intent rejected: %+v", appErr)
+	}
+
+	partial := input
+	partial.RequestedUSDAllowance = "12.000000"
+	appErr := validateCreateInput(partial, service)
+	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "requestedUsdAllowance" || appErr.FieldErrors[0].Code != "tail_order_required" {
+		t.Fatalf("expected partial tail rejection, got %+v", appErr)
+	}
+
+	wrongAmount := input
+	wrongAmount.RequestedCNYAmount = "9.98"
+	appErr = validateCreateInput(wrongAmount, service)
+	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "requestedCnyAmount" || appErr.FieldErrors[0].Code != "tail_order_required" {
+		t.Fatalf("expected fixed tail amount rejection, got %+v", appErr)
+	}
+
+	intent, appErr := NewIntent(input, service,
+		contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "买家微信"}, contact.ContactMethodVersion{ID: "buyer-version-1"},
+		contact.ContactMethod{Type: contact.MethodTypeWechat, Label: "卖家微信"}, contact.ContactMethodVersion{ID: "owner-version-1"}, now)
+	if appErr != nil {
+		t.Fatalf("create tail intent snapshot: %+v", appErr)
+	}
+	if intent.MinimumIntentCNYSnapshot != "9.99" || intent.MaximumIntentCNYSnapshot != "9.99" || intent.RequestedUSDAllowance != "12.499000" {
+		t.Fatalf("unexpected tail snapshots: minimum=%s maximum=%s allowance=%s", intent.MinimumIntentCNYSnapshot, intent.MaximumIntentCNYSnapshot, intent.RequestedUSDAllowance)
+	}
+}
+
 func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	duration := 3
