@@ -87,7 +87,9 @@ func TestOperationAuditSingleSourcePlansIntegration(t *testing.T) {
 		for _, item := range queries {
 			t.Run(source.sourceKind+"/"+item.name, func(t *testing.T) {
 				plan := explainOperationAuditPlan(t, ctx, tx, item.query)
-				assertOperationAuditPlan(t, plan, source.table, item.expectedIndex, item.query.Limit+1)
+				maximumResultRows := item.query.Limit + 1
+				// Bitmap plans may sort the bounded one-hour match set before applying LIMIT.
+				assertOperationAuditPlan(t, plan, source.table, item.expectedIndex, maximumResultRows, maximumResultRows*2)
 			})
 		}
 	}
@@ -145,11 +147,12 @@ func assertOperationAuditPlan(
 	plan operationAuditExplainEnvelope,
 	table string,
 	expectedIndex string,
-	maximumRows int,
+	maximumResultRows int,
+	maximumSortRows int,
 ) {
 	t.Helper()
-	if plan.Plan.ActualRows > float64(maximumRows) {
-		t.Fatalf("operation audit plan returned %.0f rows, want at most %d", plan.Plan.ActualRows, maximumRows)
+	if plan.Plan.ActualRows > float64(maximumResultRows) {
+		t.Fatalf("operation audit plan returned %.0f rows, want at most %d", plan.Plan.ActualRows, maximumResultRows)
 	}
 	if plan.ExecutionTime > 250 {
 		t.Fatalf("operation audit plan execution took %.3fms, local budget is 250ms", plan.ExecutionTime)
@@ -167,8 +170,8 @@ func assertOperationAuditPlan(
 		if node.RelationName == table && node.NodeType == "Seq Scan" {
 			t.Errorf("operation audit source %s used an unbounded sequential scan", table)
 		}
-		if strings.Contains(node.NodeType, "Sort") && node.ActualRows > float64(maximumRows) {
-			t.Errorf("operation audit sort processed %.0f rows, want at most %d", node.ActualRows, maximumRows)
+		if strings.Contains(node.NodeType, "Sort") && node.ActualRows > float64(maximumSortRows) {
+			t.Errorf("operation audit sort processed %.0f rows, want at most %d", node.ActualRows, maximumSortRows)
 		}
 		for _, child := range node.Plans {
 			walk(child)

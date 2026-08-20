@@ -89,6 +89,7 @@ outcome: succeeded | status_changed | accessed
 - Privacy golden scans serialize representative entries and reject contact/payment/credential/delivery/evidence/request/session/token fields and arbitrary database JSON.
 - Handler/OpenAPI/generated/frontend tests assert `admin.access`, exact enums/DTO fields, stable validation, no legacy before/after/reason fields, shared recent-operation projection, no real-to-mock fallback, and responsive filter/pagination behavior.
 - Performance verification uses representative mixed data and `EXPLAIN (ANALYZE, BUFFERS)` to confirm source indexes plus bounded time/cursor/limit behavior.
+- EXPLAIN assertions keep the final `LIMIT + 1` result budget separate from the bounded candidate-sort budget. PostgreSQL may legitimately choose a bitmap index plan that sorts the filtered time-window match set before applying `LIMIT`; tests must still require the expected source index, reject sequential scans, cap sorted candidates relative to the requested limit, and enforce the execution-time budget.
 
 ### 7. Wrong vs Correct
 
