@@ -2,41 +2,37 @@ package server
 
 import (
 	"c2c-market/backend/internal/domain"
-	authmodule "c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
 	"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
 type createContactMethodRequest struct {
-	Type         string   `json:"type"`
-	Label        string   `json:"label"`
-	Value        string   `json:"value"`
-	DisplayValue string   `json:"displayValue"`
-	UsageScopes  []string `json:"usageScopes"`
-	IsDefault    bool     `json:"isDefault"`
-	Enabled      *bool    `json:"enabled"`
+	Type         string `json:"type"`
+	Label        string `json:"label"`
+	Value        string `json:"value"`
+	DisplayValue string `json:"displayValue"`
+	IsDefault    bool   `json:"isDefault"`
+	Enabled      *bool  `json:"enabled"`
 }
 
 type contactMethodResponse struct {
-	ID           string   `json:"id"`
-	UserID       string   `json:"userId"`
-	Type         string   `json:"type"`
-	Label        string   `json:"label"`
-	MaskedValue  string   `json:"maskedValue"`
-	DisplayValue string   `json:"displayValue,omitempty"`
-	UsageScopes  []string `json:"usageScopes"`
-	IsDefault    bool     `json:"isDefault"`
-	Enabled      bool     `json:"enabled"`
-	Verified     bool     `json:"verified"`
-	CreatedAt    string   `json:"createdAt"`
-	UpdatedAt    string   `json:"updatedAt"`
-	Version      int64    `json:"version"`
+	ID           string `json:"id"`
+	UserID       string `json:"userId"`
+	Type         string `json:"type"`
+	Label        string `json:"label"`
+	MaskedValue  string `json:"maskedValue"`
+	DisplayValue string `json:"displayValue,omitempty"`
+	IsDefault    bool   `json:"isDefault"`
+	Enabled      bool   `json:"enabled"`
+	Verified     bool   `json:"verified"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+	Version      int64  `json:"version"`
 }
 
 type contactMethodListResponse = listResponse[contactMethodResponse]
@@ -52,13 +48,6 @@ func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
-		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
-			writeProblem(w, r, appErr)
-			return
-		}
-	}
-
 	value := req.Value
 	if value == "" {
 		value = req.DisplayValue
@@ -71,7 +60,7 @@ func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Reques
 	completion, appErr := s.app.CreateContactMethodWithIdempotency(
 		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
 		contact.ContactMethodInput{
-			UserID: user.ID, Type: req.Type, Label: req.Label, Value: value, UsageScopes: req.UsageScopes,
+			UserID: user.ID, Type: req.Type, Label: req.Label, Value: value,
 			IsDefault: req.IsDefault, Enabled: enabled, RequestID: requestIDFrom(r),
 		},
 		contactMethodCompletionBuilder(http.StatusCreated),
@@ -112,12 +101,6 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
-	if strings.TrimSpace(req.Type) != contact.MethodTypeWechat {
-		if appErr := requireContactUsageScopeCapabilities(user, req.UsageScopes); appErr != nil {
-			writeProblem(w, r, appErr)
-			return
-		}
-	}
 	value := req.Value
 	if value == "" {
 		value = req.DisplayValue
@@ -129,15 +112,14 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 	methodID := chi.URLParam(r, "id")
 	routeKey := "PATCH /api/v1/contact-methods/{id}:" + methodID
 	completion, appErr := s.app.UpdateContactMethodWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPatch, routeKey, body), contact.UpdateContactMethodInput{
-		UserID:      user.ID,
-		MethodID:    methodID,
-		Type:        req.Type,
-		Label:       req.Label,
-		Value:       value,
-		UsageScopes: req.UsageScopes,
-		IsDefault:   req.IsDefault,
-		Enabled:     enabled,
-		RequestID:   requestIDFrom(r),
+		UserID:    user.ID,
+		MethodID:  methodID,
+		Type:      req.Type,
+		Label:     req.Label,
+		Value:     value,
+		IsDefault: req.IsDefault,
+		Enabled:   enabled,
+		RequestID: requestIDFrom(r),
 	}, contactMethodCompletionBuilder(http.StatusOK))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -359,7 +341,6 @@ func toContactMethodResponse(method contact.ContactMethod) contactMethodResponse
 		Label:        method.Label,
 		MaskedValue:  method.MaskedValue,
 		DisplayValue: method.DisplayValue,
-		UsageScopes:  append([]string(nil), method.UsageScopes...),
 		IsDefault:    method.IsDefault,
 		Enabled:      method.Enabled,
 		Verified:     method.VerifiedAt != nil,
@@ -367,22 +348,4 @@ func toContactMethodResponse(method contact.ContactMethod) contactMethodResponse
 		UpdatedAt:    method.UpdatedAt.UTC().Format(time.RFC3339),
 		Version:      method.Version,
 	}
-}
-
-func requireContactUsageScopeCapabilities(user authmodule.User, usageScopes []string) *domain.AppError {
-	for _, scope := range usageScopes {
-		if scope == contact.UsageScopeCarpoolOwner {
-			if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
-				return appErr
-			}
-		}
-	}
-	for _, scope := range usageScopes {
-		if scope == contact.UsageScopeAPIMerchant {
-			if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
-				return appErr
-			}
-		}
-	}
-	return nil
 }

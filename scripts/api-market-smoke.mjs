@@ -128,7 +128,7 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'smoke-owner-contact',
     body: {
-      type: 'telegram',
+      type: 'wechat',
       label: 'Smoke API owner',
       value: ownerContactValue,
     },
@@ -226,7 +226,7 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'smoke-buyer-contact',
     body: {
-      type: 'telegram',
+      type: 'wechat',
       label: 'Smoke API buyer',
       value: buyerContactValue,
     },

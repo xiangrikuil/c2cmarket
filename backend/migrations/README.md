@@ -112,6 +112,7 @@ versions:
 | `000114_carpool_membership_owner_note` | owner-private notes on carpool memberships |
 | `000115_wechat_contact_single_mapping` | one enabled WeChat contact per user for new transaction snapshots |
 | `000116_required_wechat_contact` | required all-purpose WeChat contact scopes for account-level transaction communication |
+| `000117_optional_transaction_contacts` | explicit per-transaction selection of enabled WeChat or verified email contacts |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -621,6 +622,13 @@ owner, API merchant, buyer, and dispute scope set, and a database constraint
 prevents later scope narrowing. Application services separately reject disabling,
 deleting, or converting a bound WeChat method. The down migration removes only
 the new constraint because prior user-selected scope sets cannot be reconstructed.
+
+Version 117 (`000117_optional_transaction_contacts`) removes account-level
+contact usage scopes and the required-WeChat constraint. New transaction writes
+select one enabled WeChat or verified email explicitly and freeze its current
+version in the owning business record. Contact versions, contact windows, and the
+single-enabled-WeChat index remain intact. The down migration restores the former
+scope column with the complete scope set for existing contacts.
 
 ## Docker Compose
 

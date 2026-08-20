@@ -443,8 +443,7 @@ const confirmedReceiptAmount = baseFilteredRows.value
 
 ```ts
 type APIServiceRequest = {
-  ownerContactMethodId?: string
-  ownerContactMethodIds: string[]
+  ownerContactMethodId: string
 }
 
 type BackendAPIPurchaseIntent = {
@@ -465,9 +464,9 @@ type OpenApiOrderDisputeInput = {
 
 ### 3. Contracts
 
-- Publish pages list only enabled personal contact methods whose usage scope includes `api_merchant`. Selection uses checkboxes because one or more methods are allowed, preserves visible order, and requires at least one method.
-- When available, first-party defaults recommend/select WeChat plus linux.do. Otherwise the enabled default or first eligible method may be selected. An empty state links to `/my/contacts`; publication must never silently create `@merchant` or another placeholder.
-- Real and Mock submit paths trim IDs, reject duplicates, and send `ownerContactMethodIds`; the first ID populates the legacy single field. The backend remains authoritative for ownership and enabled-state validation.
+- Publish pages list only eligible transaction contacts: enabled WeChat or enabled verified email with a current version. Selection uses radio controls and requires exactly one explicit contact ID.
+- `linuxdo`, unverified email, disabled contacts, and unsupported contact types never enter the selector. An empty state links to `/my/contacts`; publication must never silently create or choose a placeholder contact.
+- Real and Mock submit paths send the selected `ownerContactMethodId`. The backend remains authoritative for ownership, enabled state, type, email verification, and immutable-version validation.
 - Authorized intent/order detail renders every frozen `merchantContacts[]` item in snapshot order. It falls back to legacy `merchantContact` only when the array is absent, never to the mutable current service or profile.
 - Buyer and merchant detail trust `canOpenDispute` and `afterSalesExpiresAt`. A completed eligible order shows the reporting-grace explanation and requires `issueOccurredAt`; the input maximum is the earlier of browser-now and the frozen service validity end.
 - Refund evidence labels `api-merchant-refund-v1` as `API 商户退款规则 v1`, states `下单时已锁定`, and opens the frozen merchant commitment, applicability, exclusions, and platform boundary. Unknown historical versions show their literal value without borrowing current policy copy.
@@ -478,7 +477,7 @@ type OpenApiOrderDisputeInput = {
 | Condition | Expected behavior |
 | --- | --- |
 | No eligible merchant contact | Disable/block publication and link to `/my/contacts` |
-| Duplicate selected contact IDs | Reject before Mock persistence; backend returns field validation in real mode |
+| More than one eligible contact | Require the user to choose one; do not preselect a preferred type |
 | Contact becomes unavailable before real submit | Show backend error; do not create a placeholder or report success |
 | Intent contains `merchantContacts[]` | Render all frozen items in returned order |
 | Array absent but legacy contact exists | Render the single frozen legacy contact |
@@ -489,15 +488,15 @@ type OpenApiOrderDisputeInput = {
 
 ### 5. Good / Base / Bad Cases
 
-- Good: a merchant selects WeChat and linux.do, the buyer later sees both frozen labels/values even after the merchant edits the profile, and the seller sees the same ordered evidence.
+- Good: a merchant explicitly selects verified email, the buyer later sees that frozen value even after the merchant edits the account contact, and the seller sees the same evidence.
 - Good: an order completed inside the grace period asks when the outage occurred and clearly says that API validity has not been extended.
 - Base: a historical intent with only `merchantContact` still renders one contact without fabricating an array or reading a current service.
-- Bad: silently create `@merchant`, use radio buttons for multi-select, show only the first new contact, or call the current contact API to repair an old order.
+- Bad: silently create or auto-select a contact, accept linux.do as a transaction contact, or call the current contact API to repair an old order.
 - Bad: display only `api-merchant-refund-v1`, omit exclusions/platform boundary, or describe `补报截止` as a guaranteed refund deadline.
 
 ### 6. Tests Required
 
-- Component tests cover eligible contact filtering, checkbox order, WeChat/linux.do recommendation, empty-state settings link, duplicate rejection, and no placeholder creation.
+- Component tests cover eligible contact filtering, explicit radio selection, WeChat/verified-email choices, empty-state settings link, and no placeholder creation.
 - Adapter tests cover new arrays plus legacy fallbacks, all participant after-sales fields, administrator contact omission, and frozen snapshot mapping in normal and limited-quota paths.
 - Order-detail tests cover completed eligible/ineligible states, earlier-of-now-and-validity occurrence maximum, occurrence payload serialization, grace-period copy, rule display name, lock label, applicability, exclusions, and platform boundary.
 - Mock/real contract tests prove equivalent contact validation, frozen refund evidence, after-sales eligibility fields, and completed-order occurrence validation.
@@ -508,16 +507,14 @@ type OpenApiOrderDisputeInput = {
 #### Wrong
 
 ```ts
-if (!ownerContactMethodId) {
-  await createContactMethod({ type: 'linuxdo', displayValue: '@merchant' })
-}
+const ownerContactMethodId = contacts.value.find(item => item.enabled)?.id
 const canOpenDispute = order.status !== 'completed'
 ```
 
 #### Correct
 
 ```ts
-const ownerContactMethodIds = selectedEligibleContacts.value.map(item => item.id)
+const ownerContactMethodId = selectedTransactionContactId.value
 const canOpenDispute = order.canOpenDispute
 ```
 

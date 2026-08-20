@@ -21,7 +21,6 @@ test('mock contact email challenge survives metadata changes but rejects version
     type: 'email',
     label: '交易邮箱',
     displayValue: 'metadata@example.com',
-    usageScopes: ['buyer', 'dispute'],
     isDefault: false,
     enabled: true,
   })
@@ -30,7 +29,6 @@ test('mock contact email challenge survives metadata changes but rejects version
     type: 'email',
     label: '订单邮箱',
     displayValue: 'metadata@example.com',
-    usageScopes: ['buyer'],
     isDefault: true,
     enabled: true,
   })
@@ -41,7 +39,6 @@ test('mock contact email challenge survives metadata changes but rejects version
     type: 'email',
     label: '备用邮箱',
     displayValue: 'version-a@example.com',
-    usageScopes: ['buyer'],
     isDefault: false,
     enabled: true,
   })
@@ -50,7 +47,6 @@ test('mock contact email challenge survives metadata changes but rejects version
     type: 'email',
     label: '备用邮箱',
     displayValue: 'version-b@example.com',
-    usageScopes: ['buyer'],
     isDefault: false,
     enabled: true,
   })
@@ -58,7 +54,6 @@ test('mock contact email challenge survives metadata changes but rejects version
     type: 'email',
     label: '备用邮箱',
     displayValue: 'version-a@example.com',
-    usageScopes: ['buyer'],
     isDefault: false,
     enabled: true,
   })
@@ -75,7 +70,6 @@ test('mock contact email challenge locks after five wrong attempts', async () =>
     type: 'email',
     label: '交易邮箱',
     displayValue: 'attempts@example.com',
-    usageScopes: ['buyer'],
     isDefault: false,
     enabled: true,
   })

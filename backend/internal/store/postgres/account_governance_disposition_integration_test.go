@@ -144,9 +144,9 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 	effectiveAt := now.Add(-time.Hour)
 	joinedAt := now.Add(-24 * time.Hour)
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'telegram', 'buyer', ARRAY['buyer']::text[], true, true, $5, $5),
-		       ($3, $4, 'telegram', 'owner', ARRAY['carpool_owner']::text[], true, true, $5, $5)
+		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'telegram', 'buyer', true, true, $5, $5),
+		       ($3, $4, 'telegram', 'owner', true, true, $5, $5)
 	`, buyerContactID, buyer.ID, ownerContactID, owner.ID, joinedAt); err != nil {
 		t.Fatalf("insert restricted carpool contacts: %v", err)
 	}

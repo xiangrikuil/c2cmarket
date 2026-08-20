@@ -1992,12 +1992,14 @@ func (s *Service) CreateContactMethod(ctx context.Context, input ContactMethodIn
 	if strings.TrimSpace(input.Type) == "linuxdo" {
 		return ContactMethod{}, identityManagedContactError()
 	}
-	if input.Type != contactmodule.MethodTypeWechat {
-		if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, input.UsageScopes); appErr != nil {
-			return ContactMethod{}, appErr
-		}
+	prepared, existing, appErr := s.prepareContactMethodInput(ctx, input)
+	if appErr != nil {
+		return ContactMethod{}, appErr
 	}
-	return s.contactService.CreateMethod(ctx, input)
+	if existing != nil {
+		return *existing, nil
+	}
+	return s.contactService.CreateMethod(ctx, prepared)
 }
 
 func (s *Service) CreateContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input ContactMethodInput, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
@@ -2005,12 +2007,15 @@ func (s *Service) CreateContactMethodWithIdempotency(ctx context.Context, user U
 	if strings.TrimSpace(input.Type) == "linuxdo" {
 		return IdempotencyCompletion{}, identityManagedContactError()
 	}
-	if input.Type != contactmodule.MethodTypeWechat {
-		if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, input.UsageScopes); appErr != nil {
-			return IdempotencyCompletion{}, appErr
-		}
+	prepared, existing, appErr := s.prepareContactMethodInput(ctx, input)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
 	}
-	_, completion, _, appErr := s.contactService.CreateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+	if existing != nil {
+		_, completion, _, appErr := s.contactService.ReuseMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, *existing, buildCompletion)
+		return completion, appErr
+	}
+	_, completion, _, appErr := s.contactService.CreateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, prepared, buildCompletion)
 	return completion, appErr
 }
 
@@ -2035,25 +2040,11 @@ func (s *Service) UpdateContactMethod(ctx context.Context, input contactmodule.U
 	if strings.TrimSpace(input.Type) == "linuxdo" || isLinuxDo {
 		return ContactMethod{}, identityManagedContactError()
 	}
-	effectiveScopes := input.UsageScopes
-	if effectiveScopes == nil {
-		methods, listErr := s.contactService.ListMethods(ctx, input.UserID)
-		if listErr != nil {
-			return ContactMethod{}, listErr
-		}
-		for _, method := range methods {
-			if method.ID == input.MethodID {
-				effectiveScopes = method.UsageScopes
-				break
-			}
-		}
+	prepared, appErr := s.prepareContactMethodUpdate(ctx, input)
+	if appErr != nil {
+		return ContactMethod{}, appErr
 	}
-	if input.Type != contactmodule.MethodTypeWechat {
-		if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, effectiveScopes); appErr != nil {
-			return ContactMethod{}, appErr
-		}
-	}
-	return s.contactService.UpdateMethod(ctx, input)
+	return s.contactService.UpdateMethod(ctx, prepared)
 }
 
 func (s *Service) UpdateContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input contactmodule.UpdateContactMethodInput, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
@@ -2065,57 +2056,74 @@ func (s *Service) UpdateContactMethodWithIdempotency(ctx context.Context, user U
 	if strings.TrimSpace(input.Type) == "linuxdo" || isLinuxDo {
 		return IdempotencyCompletion{}, identityManagedContactError()
 	}
-	effectiveScopes := input.UsageScopes
-	if effectiveScopes == nil {
-		methods, listErr := s.contactService.ListMethods(ctx, user.ID)
-		if listErr != nil {
-			return IdempotencyCompletion{}, listErr
-		}
-		for _, method := range methods {
-			if method.ID == input.MethodID {
-				effectiveScopes = method.UsageScopes
-				break
-			}
-		}
+	prepared, appErr := s.prepareContactMethodUpdate(ctx, input)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
 	}
-	if input.Type != contactmodule.MethodTypeWechat {
-		if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, effectiveScopes); appErr != nil {
-			return IdempotencyCompletion{}, appErr
-		}
-	}
-	_, completion, _, appErr := s.contactService.UpdateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+	_, completion, _, appErr := s.contactService.UpdateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, prepared, buildCompletion)
 	return completion, appErr
 }
 
-func (s *Service) requireContactUsageScopeCapabilities(ctx context.Context, userID string, usageScopes []string) *domain.AppError {
-	requiresCarpoolPublish := false
-	requiresAPIServicePublish := false
-	for _, scope := range usageScopes {
-		switch scope {
-		case contactmodule.UsageScopeCarpoolOwner:
-			requiresCarpoolPublish = true
-		case contactmodule.UsageScopeAPIMerchant:
-			requiresAPIServicePublish = true
+func (s *Service) prepareContactMethodInput(ctx context.Context, input ContactMethodInput) (ContactMethodInput, *ContactMethod, *domain.AppError) {
+	if strings.TrimSpace(input.Type) != contactmodule.MethodTypeEmail {
+		return input, nil, nil
+	}
+	input.Value = strings.ToLower(strings.TrimSpace(input.Value))
+	methods, appErr := s.contactService.ListMethods(ctx, input.UserID)
+	if appErr != nil {
+		return ContactMethodInput{}, nil, appErr
+	}
+	for index := range methods {
+		method := methods[index]
+		if method.Enabled && method.Type == contactmodule.MethodTypeEmail && strings.EqualFold(strings.TrimSpace(method.DisplayValue), input.Value) {
+			return input, &method, nil
 		}
 	}
-	if !requiresCarpoolPublish && !requiresAPIServicePublish {
-		return nil
+	accountEmail, verifiedAt, appErr := s.verifiedAccountEmail(ctx, input.UserID)
+	if appErr != nil {
+		return ContactMethodInput{}, nil, appErr
+	}
+	if verifiedAt != nil && strings.EqualFold(accountEmail, input.Value) {
+		value := *verifiedAt
+		input.VerifiedAt = &value
+	}
+	return input, nil, nil
+}
+
+func (s *Service) prepareContactMethodUpdate(ctx context.Context, input contactmodule.UpdateContactMethodInput) (contactmodule.UpdateContactMethodInput, *domain.AppError) {
+	if strings.TrimSpace(input.Type) != contactmodule.MethodTypeEmail {
+		return input, nil
+	}
+	input.Value = strings.ToLower(strings.TrimSpace(input.Value))
+	accountEmail, verifiedAt, appErr := s.verifiedAccountEmail(ctx, input.UserID)
+	if appErr != nil {
+		return contactmodule.UpdateContactMethodInput{}, appErr
+	}
+	if verifiedAt != nil && strings.EqualFold(accountEmail, input.Value) {
+		value := *verifiedAt
+		input.VerifiedAt = &value
+	}
+	return input, nil
+}
+
+func (s *Service) verifiedAccountEmail(ctx context.Context, userID string) (string, *time.Time, *domain.AppError) {
+	profile, appErr := s.profileService.MyProfile(ctx, User{ID: userID})
+	if appErr != nil {
+		return "", nil, appErr
+	}
+	if profile.EmailVerifiedAt != nil && strings.TrimSpace(profile.Email) != "" {
+		verifiedAt := *profile.EmailVerifiedAt
+		return strings.ToLower(strings.TrimSpace(profile.Email)), &verifiedAt, nil
 	}
 	user, appErr := s.authService.UserByID(ctx, userID)
 	if appErr != nil {
-		return appErr
+		return "", nil, appErr
 	}
-	if requiresCarpoolPublish {
-		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
-			return appErr
-		}
+	if user.StudentClaim == nil || strings.TrimSpace(user.StudentClaim.NormalizedEmail) == "" {
+		return "", nil, nil
 	}
-	if requiresAPIServicePublish {
-		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
-			return appErr
-		}
-	}
-	return nil
+	verifiedAt := user.StudentClaim.ClaimedAt
+	return strings.ToLower(strings.TrimSpace(user.StudentClaim.NormalizedEmail)), &verifiedAt, nil
 }
 
 func (s *Service) DeleteContactMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {

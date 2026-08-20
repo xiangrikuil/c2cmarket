@@ -24,7 +24,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [OAuth Identity And Administrator Bootstrap](./auth-identity.md) | Immutable provider identity ownership and proven create-only administrator bootstrap | Active |
 | [Authentication Sessions](./auth-sessions.md) | Turnstile gates, renewal, student registration, deterministic capabilities, linux.do linking, and fixed development personas | Active |
 | [Administrator Registration Invite Codes](./registration-invite-codes.md) | Admin-issued single-use registration codes, transactional consumption, OAuth boundaries, cleanup, and audit retention | Active |
-| [Contact Usage Scopes](./contact-usage-scopes.md) | Durable buyer, dispute, carpool-owner, and API-merchant contact purposes with capability and audit boundaries | Active |
+| [Transaction Contacts](./transaction-contacts.md) | Explicit per-transaction WeChat or verified-email selection, snapshots, and privacy boundaries | Active |
 | [Unified Operation Audit](./operation-audit.md) | Authoritative domain events, atomic idempotent writes, allowlisted safe projection, and stable administrator history | Active |
 | [Restricted-Account Governance Appeals](./account-governance-appeals.md) | Existing-identity-only OAuth, dedicated fixed-expiry sessions, and appeal/account-status isolation | Active |
 | [Administrator User Directory](./admin-user-directory.md) | Server pagination, safe account detail, and transactional account governance | Active |
@@ -62,7 +62,7 @@ Before editing backend code, read:
 6. [OAuth Identity And Administrator Bootstrap](./auth-identity.md) when touching OAuth identity ownership, provider bindings, OAuth permissions, or first-admin bootstrap
 7. [Authentication Sessions](./auth-sessions.md) when touching session creation, validation, student registration, capability projection, linux.do linking, cookies, revocation, or expiry
 8. [Administrator Registration Invite Codes](./registration-invite-codes.md) when touching required-code registration, administrator code management, password/OAuth/WeChat account creation, or registration-code cleanup
-9. [Contact Usage Scopes](./contact-usage-scopes.md) when touching contact CRUD, transaction contact selection, seller capabilities, linux.do projection, or contact audit events
+9. [Transaction Contacts](./transaction-contacts.md) when touching contact CRUD, transaction contact selection, account-email reuse, seller capabilities, linux.do projection, or contact audit events
 10. [Unified Operation Audit](./operation-audit.md) when touching covered mutations/events, audit/access tables, administrator operation history, privacy projection, cursor filters, or retention semantics
 11. [Restricted-Account Governance Appeals](./account-governance-appeals.md) when touching restricted OAuth, dedicated appeal sessions, account-governance appeals, or their standalone frontend
 12. [Administrator User Directory](./admin-user-directory.md) when touching administrator account discovery, safe detail, status, permissions, or account-governance audit records

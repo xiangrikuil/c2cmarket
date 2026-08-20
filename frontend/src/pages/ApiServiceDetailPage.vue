@@ -6,6 +6,7 @@ import { toast } from 'vue-sonner'
 import ApiPurchasePanel from '@/components/api-service-detail/ApiPurchasePanel.vue'
 import ApiServiceDetailsTabs from '@/components/api-service-detail/ApiServiceDetailsTabs.vue'
 import ApiServiceHeader from '@/components/api-service-detail/ApiServiceHeader.vue'
+import TransactionContactSelector from '@/components/contact-payment/TransactionContactSelector.vue'
 import ApiServiceSummary from '@/components/api-service-detail/ApiServiceSummary.vue'
 import { Button } from '@/components/ui/button'
 import EmptyState from '@/components/market/EmptyState.vue'
@@ -49,6 +50,7 @@ const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices('a
 const amount = ref(10)
 const selectedPackageId = ref('')
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
+const buyerContactMethodId = ref('')
 const { data: favoriteStatus } = useFavoriteStatus('api-service', id, import.meta.client)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const favorited = computed(() => Boolean(favoriteStatus.value))
@@ -138,6 +140,7 @@ const createOrderMutation = useMutation({
     if (!service.value) throw new Error('API 服务不存在。')
     const paymentMethod = getApiServiceDefaultPaymentMethod(service.value)
     if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
+    if (!buyerContactMethodId.value) throw new Error('请选择一个有效的交易联系方式。')
     if (service.value.billingMode === 'fixed_package' && !selectedPackage.value) throw new Error('请选择有库存的短期流量包。')
     const intent = await createApiPurchaseIntent({
       serviceId: service.value.id,
@@ -145,6 +148,7 @@ const createOrderMutation = useMutation({
       deliveryMode: selectedDeliveryMode.value,
       targetModel: selectedPackage.value?.models[0]?.modelName ?? service.value.models[0],
       selectedPackageId: selectedPackage.value?.id,
+      buyerContactMethodId: buyerContactMethodId.value,
     })
     const order = await createApiOrderFromIntent(intent.id, paymentMethod)
     return { intent, order }
@@ -231,16 +235,24 @@ function createOrder() {
         <Button as-child class="mt-4 w-full"><RouterLink :to="loginRoute(route.fullPath)">前往登录</RouterLink></Button>
       </Card>
 
-      <ApiPurchasePanel
-        v-else
-        v-model:amount="amount"
-        v-model:selected-package-id="selectedPackageId"
-        :service="service"
-        :submitting="createOrderMutation.isPending.value"
-        :favorited="favorited"
-        @toggle-favorite="toggleFavorite"
-        @confirm="createOrder"
-      />
+      <div v-else class="min-w-0 space-y-4">
+        <Card class="p-4">
+          <TransactionContactSelector
+            v-model="buyerContactMethodId"
+            title="订单联系方式"
+            description="创建订单时锁定当前版本，并按订单联系窗口向商户展示。"
+          />
+        </Card>
+        <ApiPurchasePanel
+          v-model:amount="amount"
+          v-model:selected-package-id="selectedPackageId"
+          :service="service"
+          :submitting="createOrderMutation.isPending.value"
+          :favorited="favorited"
+          @toggle-favorite="toggleFavorite"
+          @confirm="createOrder"
+        />
+      </div>
     </div>
   </div>
 </template>

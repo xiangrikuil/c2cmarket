@@ -100,7 +100,6 @@ type BackendContact = {
   label: string
   maskedValue: string
   displayValue?: string
-  usageScopes: UserContactMethod['usageScopes']
   isDefault: boolean
   enabled: boolean
   verified: boolean
@@ -345,7 +344,6 @@ function mapContact(value: BackendContact, displayValue = ''): UserContactMethod
     label: value.label,
     maskedValue: value.maskedValue,
     displayValue: value.displayValue ?? displayValue,
-    usageScopes: value.usageScopes,
     isDefault: value.isDefault,
     enabled: value.enabled,
     verified: value.verified,
@@ -359,7 +357,6 @@ function toContactPayload(payload: SaveContactMethodRequest) {
     type: payload.type,
     label: payload.label,
     displayValue: payload.displayValue,
-    usageScopes: payload.usageScopes,
     isDefault: payload.isDefault,
     enabled: payload.enabled,
   }

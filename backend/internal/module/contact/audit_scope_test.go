@@ -10,27 +10,24 @@ import (
 	"c2c-market/backend/internal/module/idempotency"
 )
 
-func TestContactUsageScopeAndAuditEventsStayAlignedInMemory(t *testing.T) {
+func TestTransactionContactAndAuditEventsStayAlignedInMemory(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	service := NewService(nil, func() time.Time { return now })
 	method, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
 		UserID: "buyer", Type: "email", Label: "交易邮箱", Value: "buyer@example.com",
-		UsageScopes: []string{UsageScopeBuyer}, Enabled: true, RequestID: "create-request",
+		Enabled: true, RequestID: "create-request",
 	})
 	if appErr != nil {
 		t.Fatalf("create contact method: %v", appErr)
 	}
-	if _, _, ok := service.VersionForOwnerAndScope(method.ID, "buyer", UsageScopeBuyer); !ok {
-		t.Fatal("buyer-scoped method was not accepted for buyer usage")
-	}
-	if _, _, ok := service.VersionForOwnerAndScope(method.ID, "buyer", UsageScopeCarpoolOwner); ok {
-		t.Fatal("buyer-scoped method was accepted for carpool owner usage")
+	if _, _, ok := service.TransactionVersionForOwner(method.ID, "buyer"); ok {
+		t.Fatal("unverified email was accepted as a transaction contact")
 	}
 
 	now = now.Add(time.Minute)
 	method, appErr = service.UpdateMethod(context.Background(), UpdateContactMethodInput{
 		UserID: "buyer", MethodID: method.ID, Type: "email", Label: "备用交易邮箱", Value: "next@example.com",
-		UsageScopes: []string{UsageScopeBuyer, UsageScopeDispute}, Enabled: true, RequestID: "update-request",
+		Enabled: true, RequestID: "update-request",
 	})
 	if appErr != nil {
 		t.Fatalf("update contact method: %v", appErr)
@@ -53,6 +50,9 @@ func TestContactUsageScopeAndAuditEventsStayAlignedInMemory(t *testing.T) {
 	)
 	if appErr != nil || !changed {
 		t.Fatalf("verify contact method: changed=%t error=%v", changed, appErr)
+	}
+	if _, _, ok := service.TransactionVersionForOwner(method.ID, "buyer"); !ok {
+		t.Fatal("verified email was not accepted as a transaction contact")
 	}
 	now = now.Add(time.Minute)
 	if _, appErr = service.DeleteMethodWithRequestID(context.Background(), "buyer", method.ID, "disable-request"); appErr != nil {

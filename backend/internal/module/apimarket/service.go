@@ -1557,28 +1557,28 @@ func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, 
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
-			return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+			return nil, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 		}
 		if _, exists := seen[value]; exists {
-			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodIds", "duplicate", "联系方式不能重复。")
+			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodId", "duplicate", "联系方式不能重复。")
 		}
 		seen[value] = struct{}{}
 		result = append(result, value)
 	}
 	if len(result) == 0 {
-		return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+		return nil, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 	}
 	if len(result) != 1 {
-		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "One WeChat contact required", "API 服务只能使用当前账号唯一的微信联系方式。", "ownerContactMethodIds", "invalid_count", "只能提交一个微信联系方式。")
+		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "One contact required", "API 服务只能选择一个交易联系方式。", "ownerContactMethodId", "invalid_count", "只能提交一个交易联系方式。")
 	}
 	return result, nil
 }
 
 func (s *Manager) validateOwnerContacts(service Service, ownerUserID string) *domain.AppError {
 	for _, methodID := range service.OwnerContactMethodIDs {
-		method, _, ok := s.contact.WechatVersionForOwnerAndScope(methodID, ownerUserID, contact.UsageScopeAPIMerchant)
+		method, _, ok := s.contact.TransactionVersionForOwner(methodID, ownerUserID)
 		if !ok || !method.Enabled {
-			return contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+			return contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 		}
 	}
 	return nil

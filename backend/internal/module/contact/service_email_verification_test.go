@@ -48,7 +48,7 @@ func TestContactEmailVerificationIsVersionBoundAndPreservesMetadataUpdates(t *te
 	now = now.Add(time.Minute)
 	metadataUpdated, appErr := service.UpdateMethod(ctx, UpdateContactMethodInput{
 		UserID: "owner", MethodID: method.ID, Type: "email", Label: "订单邮箱", Value: "trade@example.com",
-		UsageScopes: []string{UsageScopeBuyer, UsageScopeDispute}, IsDefault: true, Enabled: true, RequestID: "metadata-update",
+		IsDefault: true, Enabled: true, RequestID: "metadata-update",
 	})
 	if appErr != nil {
 		t.Fatalf("metadata update: %v", appErr)
@@ -64,7 +64,7 @@ func TestContactEmailVerificationIsVersionBoundAndPreservesMetadataUpdates(t *te
 	now = now.Add(time.Minute)
 	valueUpdated, appErr := service.UpdateMethod(ctx, UpdateContactMethodInput{
 		UserID: "owner", MethodID: method.ID, Type: "email", Label: "订单邮箱", Value: "new-trade@example.com",
-		UsageScopes: metadataUpdated.UsageScopes, IsDefault: true, Enabled: true, RequestID: "value-update",
+		IsDefault: true, Enabled: true, RequestID: "value-update",
 	})
 	if appErr != nil {
 		t.Fatalf("value update: %v", appErr)
@@ -84,7 +84,7 @@ func TestContactEmailVerificationRejectsInvalidTargetsAndBoundsAttempts(t *testi
 	now := time.Date(2026, 8, 16, 11, 0, 0, 0, time.UTC)
 	service := NewService(nil, func() time.Time { return now })
 	wechat, appErr := service.CreateMethod(ctx, ContactMethodInput{
-		UserID: "owner", Type: "wechat", Label: "微信", Value: "wechat-id", UsageScopes: DefaultUsageScopes(), Enabled: true,
+		UserID: "owner", Type: "wechat", Label: "微信", Value: "wechat-id", Enabled: true,
 	})
 	if appErr != nil {
 		t.Fatalf("create wechat: %v", appErr)
@@ -192,7 +192,7 @@ func TestContactEmailVerificationConcurrentConfirmationChangesOnce(t *testing.T)
 func createEmailMethodForTest(t *testing.T, service *Service, userID, email string) ContactMethod {
 	t.Helper()
 	method, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: userID, Type: "email", Label: "交易邮箱", Value: email, UsageScopes: DefaultUsageScopes(), Enabled: true,
+		UserID: userID, Type: "email", Label: "交易邮箱", Value: email, Enabled: true,
 	})
 	if appErr != nil {
 		t.Fatalf("create email method: %v", appErr)

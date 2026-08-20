@@ -107,9 +107,9 @@ describe('API 订单详情 UI 契约', () => {
   })
 
   it('uses frozen contacts and the server-owned completed-order after-sales projection', () => {
-    expect(contactSelector).toContain('成交时锁定当前微信')
-    expect(contactSelector).toContain('微信自动用于 API 交易联系')
-    expect(contactSelector).not.toContain('type="checkbox"')
+    expect(contactSelector).toContain('<TransactionContactSelector')
+    expect(contactSelector).toContain('v-model="form.ownerContactMethodId"')
+    expect(contactSelector).toContain('linux.do 只作为身份信息')
     expect(backendAdapter).toContain('intent.merchantContacts.flatMap(contactToChannel)')
     expect(backendAdapter).toContain('afterSalesExpiresAt: order.afterSalesExpiresAt')
     expect(backendAdapter).toContain('canOpenDispute: order.canOpenDispute')

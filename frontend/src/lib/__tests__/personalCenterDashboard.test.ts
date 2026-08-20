@@ -236,7 +236,6 @@ describe('个人中心账户完整度', () => {
   it('普通用户不需要配置 API 收款方式', () => {
     const completeness = buildAccountCompleteness({
       profile: profile(),
-      wechatBound: true,
       hasApiServices: false,
       apiPaymentComplete: false,
     })
@@ -249,42 +248,39 @@ describe('个人中心账户完整度', () => {
   it('已发布 API 服务时将收款设置加入分母和提醒', () => {
     const completeness = buildAccountCompleteness({
       profile: profile(),
-      wechatBound: true,
       hasApiServices: true,
       apiPaymentComplete: false,
     })
 
-    expect(completeness).toMatchObject({ completedCount: 6, missingCount: 1, percentage: 86 })
+    expect(completeness).toMatchObject({ completedCount: 5, missingCount: 1, percentage: 83 })
     expect(getPrimaryAccountAlert(completeness)).toMatchObject({
       id: 'api-payment',
       to: '/my/contacts',
     })
   })
 
-  it('未绑定微信时将微信提醒置于其他账户完善项之前', () => {
+  it('联系方式不进入账户完整度，优先提示缺失的社区身份', () => {
     const completeness = buildAccountCompleteness({
       profile: profile({
         emailVerified: false,
         passwordConfigured: false,
         linuxDoBinding: { bound: false } as UserProfile['linuxDoBinding'],
       }),
-      wechatBound: false,
       hasApiServices: true,
       apiPaymentComplete: false,
     })
 
     expect(getPrimaryAccountAlert(completeness)).toMatchObject({
-      id: 'contact',
-      title: '请先绑定微信',
-      to: '/my/contacts',
+      id: 'linuxdo',
+      title: 'Linux.do 绑定状态需要检查',
+      to: '/my/account',
     })
     expect(completeness.tasks.map(item => item.id)).not.toContain('password')
   })
 
-  it('绑定微信后继续提示缺失的社区身份', () => {
+  it('缺失社区身份时显示对应提醒', () => {
     const completeness = buildAccountCompleteness({
       profile: profile({ linuxDoBinding: { bound: false } as UserProfile['linuxDoBinding'] }),
-      wechatBound: true,
       hasApiServices: false,
       apiPaymentComplete: false,
     })

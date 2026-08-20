@@ -100,7 +100,8 @@ describe('公开市场与交易页面一致性', () => {
     expect(apiMarket).toContain('限量额度包')
     expect(apiMarket).toContain('@purchase="purchaseOffer"')
     expect(apiMarket).toContain('<ApiQuotaOfferCard')
-    expect(apiMarket).not.toContain('confirmPurchase')
+    expect(apiMarket).toContain('confirmPurchaseOffer')
+    expect(apiMarket).toContain('<TransactionContactSelector')
     expect(apiMarket).not.toContain('api-market-intent-button')
   })
 

@@ -23,7 +23,7 @@ This directory contains the current project conventions for the Nuxt 4 + Vue 3 f
 | [API Health And Quota Policy](../backend/api-health-quota-policy.md) | Probe administration, public health presentation, SKU quota rules, and order snapshots | Active |
 | [API Probe Connections And Model Tester State](./type-safety.md#scenario-api-probe-connections-and-model-tester-state) | Reusable seller connections, service binding, HTTP acknowledgement, order import, temporary credentials, and batch model tests | Active |
 | [Capability-Driven Navigation](./type-safety.md#scenario-capability-driven-student-seller-and-administrator-navigation) | Student, linux.do, probe, seller, and administrator menu/route/query boundaries | Active |
-| [Contact Usage Scopes](../backend/contact-usage-scopes.md) | Buyer/dispute/seller contact form options, selection, persistence, and audit boundaries | Active |
+| [Transaction Contacts](../backend/transaction-contacts.md) | Explicit transaction contact selection, account-email disclosure, and snapshot boundaries | Active |
 | [Unified Operation Audit](../backend/operation-audit.md) | Administrator filters, stable cursor pages, safe DTO projection, and no real-to-mock fallback | Active |
 | [Public API Order Numbers](../backend/api-order-public-numbers.md) | Full public references, UUID route separation, normalized search, Mock migration, and responsive display | Active |
 | [API Order Dispute Lifecycle](../backend/api-order-disputes.md) | Shared dispute projection labels, participant/admin consistency, remediation actions, and governance copy | Active |
@@ -57,7 +57,7 @@ Before editing frontend code, read:
 7. [API Health And Quota Policy](../backend/api-health-quota-policy.md) when touching probe administration, public health facts, quota rules, or order snapshots
 8. [API Probe Connections And Model Tester State](./type-safety.md#scenario-api-probe-connections-and-model-tester-state) when touching seller connections, service binding, HTTP acknowledgement, order imports, or temporary model tests
 9. [Capability-Driven Navigation](./type-safety.md#scenario-capability-driven-student-seller-and-administrator-navigation) when touching authenticated menus, routes, owner queries, student/linux.do mocks, probes, or administrator access
-10. [Contact Usage Scopes](../backend/contact-usage-scopes.md) when touching contact settings, merchant/carpool contact selection, or contact audit display
+10. [Transaction Contacts](../backend/transaction-contacts.md) when touching contact settings, merchant/carpool contact selection, account-email disclosure, or contact audit display
 11. [Unified Operation Audit](../backend/operation-audit.md) when touching `/admin/logs`, operation-audit filters/cursors, recent-operation cards, safe DTOs, or real/mock behavior
 12. [Public API Order Numbers](../backend/api-order-public-numbers.md) when touching API order identifiers, adapters, lists, details, search, notifications, or Mock migration
 13. [API Order Dispute Lifecycle](../backend/api-order-disputes.md) when touching API order dispute labels, actions, messages, remediation, or governance copy

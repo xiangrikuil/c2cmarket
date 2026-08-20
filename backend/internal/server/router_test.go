@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -3213,7 +3212,6 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		"type":"email",
 		"label":"Profile Email Updated",
 		"displayValue":"updated-profile@example.com",
-		"usageScopes":["api_merchant"],
 		"isDefault":true,
 		"enabled":true
 	}`)
@@ -3385,94 +3383,64 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 }
 
-func TestStudentContactUsageScopesRoundTripAndRejectSellerScopesBeforeIdempotency(t *testing.T) {
+func TestStudentVerifiedAccountEmailCanBeReusedAsTransactionContact(t *testing.T) {
 	server := newTestServer(time.Now())
-	student := createStudentSession(t, server, "contact-scope-student")
+	student := createStudentSession(t, server, "contact-email-student")
+	accountEmail := "contact-email-student@students.example.edu"
 
-	sellerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
+	create := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
 		"type":"email",
 		"label":"学生邮箱",
-		"value":"seller-scope@example.edu",
-		"usageScopes":["api_merchant"],
+		"value":"`+accountEmail+`",
 		"isDefault":false,
 		"enabled":true
 	}`)
-	addAuth(sellerScope, student, "student-contact-scope")
-	sellerScopeResponse := httptest.NewRecorder()
-	server.ServeHTTP(sellerScopeResponse, sellerScope)
-	if sellerScopeResponse.Code != http.StatusForbidden {
-		t.Fatalf("student seller contact scope status %d body %s", sellerScopeResponse.Code, sellerScopeResponse.Body.String())
-	}
-	assertProblemCode(t, sellerScopeResponse, domain.CodeCapabilityRequired)
-
-	buyerScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"email",
-		"label":"学生邮箱",
-		"value":"buyer-scope@example.edu",
-		"usageScopes":["dispute","buyer","dispute"],
-		"isDefault":false,
-		"enabled":true
-	}`)
-	// Reuse the rejected request key to prove capability denial precedes idempotency acquisition.
-	addAuth(buyerScope, student, "student-contact-scope")
-	buyerScopeResponse := httptest.NewRecorder()
-	server.ServeHTTP(buyerScopeResponse, buyerScope)
-	if buyerScopeResponse.Code != http.StatusCreated {
-		t.Fatalf("student buyer contact scope status %d body %s", buyerScopeResponse.Code, buyerScopeResponse.Body.String())
+	addAuth(create, student, "student-account-email-contact")
+	createResponse := httptest.NewRecorder()
+	server.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create account email contact status %d body %s", createResponse.Code, createResponse.Body.String())
 	}
 	var created struct {
-		ID          string   `json:"id"`
-		UsageScopes []string `json:"usageScopes"`
+		ID       string `json:"id"`
+		Verified bool   `json:"verified"`
 	}
-	if err := json.NewDecoder(buyerScopeResponse.Body).Decode(&created); err != nil {
-		t.Fatalf("decode student contact: %v", err)
+	if err := json.NewDecoder(createResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode account email contact: %v", err)
 	}
-	if created.ID == "" || !slices.Equal(created.UsageScopes, []string{"buyer", "dispute"}) {
-		t.Fatalf("unexpected canonical student contact scopes: %+v", created)
+	if created.ID == "" || !created.Verified {
+		t.Fatalf("unexpected account email contact: %+v", created)
 	}
 
-	updateSellerScope := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
+	duplicate := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
 		"type":"email",
-		"label":"学生邮箱",
-		"value":"buyer-scope@example.edu",
-		"usageScopes":["carpool_owner","buyer"],
+		"label":"同一学生邮箱",
+		"value":"`+strings.ToUpper(accountEmail)+`",
 		"isDefault":false,
 		"enabled":true
 	}`)
-	addAuth(updateSellerScope, student, "")
-	updateSellerScopeResponse := httptest.NewRecorder()
-	server.ServeHTTP(updateSellerScopeResponse, updateSellerScope)
-	if updateSellerScopeResponse.Code != http.StatusForbidden {
-		t.Fatalf("student update seller scope status %d body %s", updateSellerScopeResponse.Code, updateSellerScopeResponse.Body.String())
+	addAuth(duplicate, student, "student-account-email-contact-duplicate")
+	duplicateResponse := httptest.NewRecorder()
+	server.ServeHTTP(duplicateResponse, duplicate)
+	if duplicateResponse.Code != http.StatusCreated {
+		t.Fatalf("reuse account email contact status %d body %s", duplicateResponse.Code, duplicateResponse.Body.String())
 	}
-	assertProblemCode(t, updateSellerScopeResponse, domain.CodeCapabilityRequired)
-
-	unknownScope := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
-		"type":"email",
-		"label":"未知范围邮箱",
-		"value":"unknown-scope@example.edu",
-		"usageScopes":["unknown_scope"],
-		"isDefault":false,
-		"enabled":true
-	}`)
-	addAuth(unknownScope, student, "student-contact-unknown-scope")
-	unknownScopeResponse := httptest.NewRecorder()
-	server.ServeHTTP(unknownScopeResponse, unknownScope)
-	if unknownScopeResponse.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("unknown contact scope status %d body %s", unknownScopeResponse.Code, unknownScopeResponse.Body.String())
+	var reused struct {
+		ID string `json:"id"`
 	}
-	assertProblemCode(t, unknownScopeResponse, domain.CodeValidationFailed)
+	if err := json.NewDecoder(duplicateResponse.Body).Decode(&reused); err != nil || reused.ID != created.ID {
+		t.Fatalf("account email contact was duplicated: first=%+v reused=%+v error=%v", created, reused, err)
+	}
 }
 
-func TestStudentWechatScopesAreAutomaticAndDoNotGrantSellerCapability(t *testing.T) {
+func TestStudentOptionalWechatCanBeDeletedAndDoesNotGrantSellerCapability(t *testing.T) {
 	server := newTestServer(time.Now())
-	student := createStudentSession(t, server, "contact-scope-student")
+	student := createStudentSession(t, server, "optional-wechat-student")
 
 	createWechat := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{
 		"type":"wechat",
 		"label":"学生微信",
 		"value":"student-wechat",
-		"usageScopes":["api_merchant"],
 		"isDefault":false,
 		"enabled":true
 	}`)
@@ -3483,24 +3451,21 @@ func TestStudentWechatScopesAreAutomaticAndDoNotGrantSellerCapability(t *testing
 		t.Fatalf("student WeChat creation status %d body %s", createWechatResponse.Code, createWechatResponse.Body.String())
 	}
 	var created struct {
-		ID          string   `json:"id"`
-		UsageScopes []string `json:"usageScopes"`
+		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(createWechatResponse.Body).Decode(&created); err != nil {
 		t.Fatalf("decode student contact: %v", err)
 	}
-	wantScopes := []string{"carpool_owner", "api_merchant", "buyer", "dispute"}
-	if created.ID == "" || !slices.Equal(created.UsageScopes, wantScopes) {
-		t.Fatalf("unexpected automatic student WeChat scopes: %+v", created)
+	if created.ID == "" || strings.Contains(createWechatResponse.Body.String(), "usageScopes") {
+		t.Fatalf("unexpected optional student WeChat response: %s", createWechatResponse.Body.String())
 	}
 
 	updateWechat := newJSONRequest(http.MethodPatch, "/api/v1/contact-methods/"+created.ID, `{
 		"type":"wechat",
 		"label":"学生微信",
 		"value":"student-wechat",
-		"usageScopes":["unknown_scope"],
 		"isDefault":false,
-		"enabled":true
+		"enabled":false
 	}`)
 	addAuth(updateWechat, student, "student-contact-update")
 	updateWechatResponse := httptest.NewRecorder()
@@ -3508,21 +3473,17 @@ func TestStudentWechatScopesAreAutomaticAndDoNotGrantSellerCapability(t *testing
 	if updateWechatResponse.Code != http.StatusOK {
 		t.Fatalf("student WeChat update status %d body %s", updateWechatResponse.Code, updateWechatResponse.Body.String())
 	}
-	var updated struct {
-		UsageScopes []string `json:"usageScopes"`
-	}
-	if err := json.NewDecoder(updateWechatResponse.Body).Decode(&updated); err != nil || !slices.Equal(updated.UsageScopes, wantScopes) {
-		t.Fatalf("updated WeChat scopes were not normalized: payload=%+v error=%v", updated, err)
+	if !strings.Contains(updateWechatResponse.Body.String(), `"enabled":false`) {
+		t.Fatalf("student WeChat was not disabled: %s", updateWechatResponse.Body.String())
 	}
 
 	deleteWechat := httptest.NewRequest(http.MethodDelete, "/api/v1/contact-methods/"+created.ID, nil)
 	addAuth(deleteWechat, student, "student-required-wechat-delete")
 	deleteWechatResponse := httptest.NewRecorder()
 	server.ServeHTTP(deleteWechatResponse, deleteWechat)
-	if deleteWechatResponse.Code != http.StatusConflict {
-		t.Fatalf("required WeChat delete status %d body %s", deleteWechatResponse.Code, deleteWechatResponse.Body.String())
+	if deleteWechatResponse.Code != http.StatusOK {
+		t.Fatalf("delete optional WeChat status %d body %s", deleteWechatResponse.Code, deleteWechatResponse.Body.String())
 	}
-	assertProblemCode(t, deleteWechatResponse, domain.CodeInvalidStateTransition)
 
 	merchantWrite := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", `{}`)
 	addAuth(merchantWrite, student, "student-api-service-create")
@@ -3686,8 +3647,7 @@ type approveResponse struct {
 }
 
 type createdContact struct {
-	ID          string   `json:"id"`
-	UsageScopes []string `json:"usageScopes"`
+	ID string `json:"id"`
 }
 
 type createdMerchantProfile struct {
@@ -3753,7 +3713,7 @@ type createdCarpoolMembership struct {
 
 type createdAPIService struct {
 	ID                     string                          `json:"id"`
-	OwnerContactMethodIDs  []string                        `json:"ownerContactMethodIds"`
+	OwnerContactMethodID   string                          `json:"ownerContactMethodId"`
 	ProbeConnectionID      string                          `json:"probeConnectionId"`
 	SourceURL              string                          `json:"sourceUrl"`
 	ReviewStatus           string                          `json:"reviewStatus"`
@@ -4239,11 +4199,7 @@ func approveLead(t *testing.T, server http.Handler, session testSession, leadID,
 
 func createContactMethod(t *testing.T, server http.Handler, session testSession, typ, label, value string) createdContact {
 	t.Helper()
-	usageScopes := `["carpool_owner","api_merchant","buyer","dispute"]`
-	if session.student {
-		usageScopes = `["buyer","dispute"]`
-	}
-	request := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{"type":"`+typ+`","label":"`+label+`","value":"`+value+`","usageScopes":`+usageScopes+`}`)
+	request := newJSONRequest(http.MethodPost, "/api/v1/contact-methods", `{"type":"`+typ+`","label":"`+label+`","value":"`+value+`"}`)
 	addAuth(request, session, "contact-"+label)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)

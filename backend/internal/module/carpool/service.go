@@ -98,8 +98,8 @@ func (s *Service) CreateListing(ctx context.Context, user auth.User, input Creat
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
+	if _, _, ok := s.contact.TransactionVersionForOwner(listing.OwnerContactMethodID, user.ID); !ok {
+		return Listing{}, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -146,10 +146,10 @@ func (s *Service) CreateListingWithIdempotency(ctx context.Context, user auth.Us
 		return Listing{}, idempotency.Completion{}, false, appErr
 	}
 	s.mu.Lock()
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+	if _, _, ok := s.contact.TransactionVersionForOwner(listing.OwnerContactMethodID, user.ID); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Listing{}, idempotency.Completion{}, false, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
+		return Listing{}, idempotency.Completion{}, false, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -246,8 +246,8 @@ func (s *Service) PublishListing(ctx context.Context, user auth.User, input Publ
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
+	if _, _, ok := s.contact.TransactionVersionForOwner(listing.OwnerContactMethodID, user.ID); !ok {
+		return Listing{}, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -300,10 +300,10 @@ func (s *Service) PublishListingWithIdempotency(ctx context.Context, user auth.U
 		return Listing{}, idempotency.Completion{}, false, appErr
 	}
 	s.mu.Lock()
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
+	if _, _, ok := s.contact.TransactionVersionForOwner(listing.OwnerContactMethodID, user.ID); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Listing{}, idempotency.Completion{}, false, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
+		return Listing{}, idempotency.Completion{}, false, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 	s.listings[listing.ID] = listing
 	s.listingOrder = append(s.listingOrder, listing.ID)
@@ -343,8 +343,8 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	if input.BuyerSeatCapacity < listing.ActiveBuyerMembers+input.OfflineOccupiedSeats {
 		return Listing{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSeatUnavailable, "Seat unavailable", "买家总名额不能小于线下已占名额与平台有效成员数之和。", "buyerSeatCapacity", "below_occupied", "总名额不能小于已占名额。")
 	}
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
+	if _, _, ok := s.contact.TransactionVersionForOwner(input.OwnerContactMethodID, user.ID); !ok {
+		return Listing{}, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 
 	previousConditions := NewListingConditionsSnapshot(listing)
@@ -562,8 +562,8 @@ func (s *Service) SubmitListingForReview(ctx context.Context, user auth.User, in
 	if err := validatePlanPublishAllowed(plan); err != nil {
 		return Listing{}, err
 	}
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, user.ID, contact.UsageScopeCarpoolOwner); !ok {
-		return Listing{}, contact.WechatRequiredError("ownerContactMethodId", "恢复或发布拼车前必须先配置微信联系方式。")
+	if _, _, ok := s.contact.TransactionVersionForOwner(listing.OwnerContactMethodID, user.ID); !ok {
+		return Listing{}, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 	now := s.now()
 	listing.Status = ListingStatusActive
@@ -894,8 +894,8 @@ func (s *Service) CreateApplication(ctx context.Context, user auth.User, input C
 	if err := validateCreateApplicationInput(input, listing, plan); err != nil {
 		return Application{}, err
 	}
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
-		return Application{}, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
+	if _, _, ok := s.contact.TransactionVersionForOwner(input.BuyerContactMethodID, user.ID); !ok {
+		return Application{}, contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	now := s.now()
 	application := newApplication(input, listing, now)
@@ -982,10 +982,10 @@ func (s *Service) CreateApplicationWithIdempotency(ctx context.Context, user aut
 		s.idempotency.Cancel(ctx, entry)
 		return Application{}, idempotency.Completion{}, false, appErr
 	}
-	if _, _, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, user.ID, contact.UsageScopeBuyer); !ok {
+	if _, _, ok := s.contact.TransactionVersionForOwner(input.BuyerContactMethodID, user.ID); !ok {
 		s.mu.Unlock()
 		s.idempotency.Cancel(ctx, entry)
-		return Application{}, idempotency.Completion{}, false, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
+		return Application{}, idempotency.Completion{}, false, contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	application := newApplication(input, listing, now)
 	completion, appErr := buildCompletion(application)
@@ -1697,13 +1697,13 @@ func (s *Service) acceptApplicationInMemory(input AcceptApplicationInput) (Appli
 	if listing.Status != ListingStatusActive || listing.GovernanceStatus != "clear" {
 		return Application{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前车源不可接受申请。")
 	}
-	buyerMethod, buyerVersion, ok := s.contact.WechatVersionForOwnerAndScope(application.BuyerContactMethodID, application.BuyerUserID, contact.UsageScopeBuyer)
+	buyerMethod, buyerVersion, ok := s.contact.TransactionVersionForOwner(application.BuyerContactMethodID, application.BuyerUserID)
 	if !ok || !buyerMethod.Enabled {
-		return Application{}, contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
+		return Application{}, contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
-	ownerMethod, ownerVersion, ok := s.contact.WechatVersionForOwnerAndScope(listing.OwnerContactMethodID, input.OwnerUserID, contact.UsageScopeCarpoolOwner)
+	ownerMethod, ownerVersion, ok := s.contact.TransactionVersionForOwner(listing.OwnerContactMethodID, input.OwnerUserID)
 	if !ok || !ownerMethod.Enabled {
-		return Application{}, contact.WechatRequiredError("ownerContactMethodId", "车主必须先配置微信联系方式。")
+		return Application{}, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 	now := s.now()
 	session := contact.ContactSession{
@@ -1844,7 +1844,7 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeProductPlanResolutionRequired, "Product plan required", "必须选择产品套餐。", "productPlanId", "required", "必须选择产品套餐。")
 	}
 	if strings.TrimSpace(input.OwnerContactMethodID) == "" {
-		return contact.WechatRequiredError("ownerContactMethodId", "发布拼车前必须先配置微信联系方式。")
+		return contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的车主交易联系方式。")
 	}
 	if err := validatePlanPublishAllowed(plan); err != nil {
 		return err
@@ -1995,7 +1995,7 @@ func validateCreateApplicationInput(input CreateApplicationInput, listing Listin
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Cannot apply to own carpool", "不能申请自己的车源。")
 	}
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return contact.WechatRequiredError("buyerContactMethodId", "申请拼车前必须先配置微信联系方式。")
+		return contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	if listing.AvailableSeats <= 0 {
 		return domain.NewError(http.StatusConflict, domain.CodeSeatUnavailable, "Seat unavailable", "当前车源没有可申请名额。")
