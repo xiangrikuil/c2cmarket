@@ -107,7 +107,7 @@ func TestSubmitDeliveryAcceptsStructuredCredentialAndRejectsUnsafeFields(t *test
 	}
 }
 
-func TestDeliveryReviewWindowSupportsBuyerConfirmationReminderAndAutoCompletion(t *testing.T) {
+func TestSellerDeliveryCompletesOrderAndKeepsAfterSalesWindow(t *testing.T) {
 	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
 	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
 	newPaidOrder := func(id string) Order {
@@ -147,51 +147,24 @@ func TestDeliveryReviewWindowSupportsBuyerConfirmationReminderAndAutoCompletion(
 		return service.orders[id]
 	}
 
-	confirmed := submit("buyer-confirmed", "buyer-confirmed-delivery")
-	if confirmed.DeliveryReviewExpiresAt == nil || !confirmed.DeliveryReviewExpiresAt.Equal(now.Add(DeliveryReviewWindow)) {
-		t.Fatalf("expected 24-hour review deadline, got %+v", confirmed.DeliveryReviewExpiresAt)
+	completed := submit("seller-delivered", "seller-delivered-completion")
+	if completed.Status != StatusCompleted || completed.CompletionSource != CompletionSourceSellerDelivered || completed.CompletedAt == nil || !completed.CompletedAt.Equal(now) {
+		t.Fatalf("expected seller delivery to complete the order, got %+v", completed)
 	}
-	_, appErr := service.ConfirmCompleteWithIdempotency(context.Background(), "buyer-1", "confirm-complete", "buyer-confirmed", "buyer-confirmed-hash", ActionInput{
-		OrderID:         confirmed.ID,
-		ExpectedVersion: confirmed.Version,
-		RequestID:       "buyer-confirmed",
-	}, testAPIOrderCompletion)
-	if appErr != nil {
-		t.Fatalf("confirm delivery credential: %v", appErr)
+	if completed.DeliveryReviewExpiresAt == nil || !completed.DeliveryReviewExpiresAt.Equal(now.Add(DeliveryReviewWindow)) {
+		t.Fatalf("expected 24-hour after-sales deadline, got %+v", completed.DeliveryReviewExpiresAt)
 	}
-	confirmed = service.orders[confirmed.ID]
-	if confirmed.Status != StatusCompleted || confirmed.CompletionSource != CompletionSourceBuyerConfirmed {
-		t.Fatalf("expected buyer-confirmed completion, got %+v", confirmed)
+	if !completed.CanOpenDispute || completed.AfterSalesExpiresAt == nil || !completed.AfterSalesExpiresAt.Equal(*completed.DeliveryReviewExpiresAt) {
+		t.Fatalf("expected completed order to remain dispute eligible, got %+v", completed)
 	}
 
-	automatic := submit("auto-completed", "auto-completed-delivery")
-	now = automatic.DeliveryReviewExpiresAt.Add(-DeliveryReviewReminderLead)
-	if _, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, automatic.ID); appErr != nil {
-		t.Fatalf("materialize reminder: %v", appErr)
-	}
-	if service.orders[automatic.ID].DeliveryReviewRemindedAt == nil {
-		t.Fatal("expected one delivery review reminder marker")
-	}
-	if _, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, automatic.ID); appErr != nil {
-		t.Fatalf("repeat reminder read: %v", appErr)
-	}
-	reminders := 0
-	for _, event := range service.events {
-		if event.APIOrderID == automatic.ID && event.EventType == EventDeliveryReviewReminder {
-			reminders++
-		}
-	}
-	if reminders != 1 {
-		t.Fatalf("expected one reminder event, got %d", reminders)
-	}
-
-	now = automatic.DeliveryReviewExpiresAt.Add(time.Minute)
-	materialized, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, automatic.ID)
+	now = completed.DeliveryReviewExpiresAt.Add(time.Minute)
+	materialized, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, completed.ID)
 	if appErr != nil {
-		t.Fatalf("materialize auto completion: %v", appErr)
+		t.Fatalf("read completed order after after-sales expiry: %v", appErr)
 	}
-	if materialized.Status != StatusCompleted || materialized.CompletionSource != CompletionSourceAutoCompleted || materialized.CompletedAt == nil || !materialized.CompletedAt.Equal(*automatic.DeliveryReviewExpiresAt) {
-		t.Fatalf("expected deadline-based auto completion, got %+v", materialized)
+	if materialized.Status != StatusCompleted || materialized.CompletionSource != CompletionSourceSellerDelivered || materialized.CanOpenDispute || materialized.DisputeEligibilityReason != DisputeEligibilityAfterSalesExpired {
+		t.Fatalf("expected completion to remain stable after after-sales expiry, got %+v", materialized)
 	}
 }
 
@@ -287,7 +260,7 @@ func (verifier *deliveryCredentialVerifier) Verify(_ context.Context, baseURL, a
 	return verifier.result
 }
 
-func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
+func TestCompletedDeliveryWithActiveDisputeRemainsCompleted(t *testing.T) {
 	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(-time.Minute)
 	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
@@ -295,10 +268,12 @@ func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
 		ID:                      "disputed-delivery",
 		BuyerUserID:             "buyer-1",
 		SellerUserID:            "seller-1",
-		Status:                  StatusDeliverySubmitted,
+		Status:                  StatusCompleted,
 		DisputeStatus:           DisputeStatusOpen,
 		DeliverySubmittedAt:     timePointer(expiresAt.Add(-DeliveryReviewWindow)),
 		DeliveryReviewExpiresAt: &expiresAt,
+		CompletionSource:        CompletionSourceSellerDelivered,
+		CompletedAt:             timePointer(expiresAt.Add(-DeliveryReviewWindow)),
 		CreatedAt:               expiresAt.Add(-DeliveryReviewWindow),
 		UpdatedAt:               expiresAt.Add(-DeliveryReviewWindow),
 		Version:                 4,
@@ -308,8 +283,8 @@ func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("read disputed delivery: %v", appErr)
 	}
-	if order.Status != StatusDeliverySubmitted || order.CompletedAt != nil || order.CompletionSource != "" {
-		t.Fatalf("open dispute must pause auto completion, got %+v", order)
+	if order.Status != StatusCompleted || order.CompletedAt == nil || order.CompletionSource != CompletionSourceSellerDelivered {
+		t.Fatalf("active dispute must not rewrite the fulfillment completion fact, got %+v", order)
 	}
 }
 
@@ -332,7 +307,6 @@ func TestActiveDisputePausesOrdinaryActionsPaymentTimeoutAndSellerPublicationPro
 		{action: "confirm_payment", status: StatusPaymentSubmitted},
 		{action: "report_payment_issue", status: StatusPaymentSubmitted},
 		{action: "submit_delivery", status: StatusPaidConfirmed},
-		{action: "confirm_complete", status: StatusDeliverySubmitted},
 	}
 	for _, test := range ordinaryTransitions {
 		candidate := order

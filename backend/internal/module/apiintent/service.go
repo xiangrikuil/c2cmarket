@@ -562,6 +562,7 @@ func (s *Manager) appendContactAccessLogLocked(intentID, viewerUserID, side, req
 }
 
 func validateCreateInput(input CreateIntentInput, service apimarket.Service) *domain.AppError {
+	service = apimarket.WithCurrentPurchaseMaximum(service)
 	if strings.TrimSpace(input.APIServiceID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "apiServiceId", "required", "必须提供 API 服务。")
 	}
@@ -610,6 +611,14 @@ func validateCreateInput(input CreateIntentInput, service apimarket.Service) *do
 			if !ok || allowance.Cmp(maxAllowance) > 0 {
 				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance too high", "意向美元额度不能超过商户声明上限。", "requestedUsdAllowance", "too_high", "意向美元额度不能超过商户声明上限。")
 			}
+		}
+		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
+		if availableText == "" {
+			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+		}
+		available, ok := parsePositiveDecimal(availableText)
+		if !ok || allowance.Cmp(available) > 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance unavailable", "意向美元额度不能超过商户当前可售额度。", "requestedUsdAllowance", "too_high", "请刷新后按当前可售额度下单。")
 		}
 		rate, ok := parsePositiveDecimal(service.DeclaredCNYPerUSDAllowance)
 		if !ok {

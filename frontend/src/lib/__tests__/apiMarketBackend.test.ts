@@ -167,6 +167,18 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.declaredMaxConcurrency, 12)
   assert.equal(service.merchantRefundCommitment, true)
   assert.equal(service.merchantRefundPolicyVersion, 'api-merchant-refund-v1')
+  assert.equal(service.maxBuy, 400)
+})
+
+test('derives the maximum purchase amount from current seller inventory', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const service = apiMarketBackend.mapBackendAPIService(backendPublicAPIService({
+    availableUsdAllowance: '124.999000',
+    declaredCnyPerUsdAllowance: '0.8000',
+    maximumIntentCny: '300.00',
+  }))
+
+  assert.equal(service.maxBuy, 99.99)
 })
 
 test('preserves sold-out state for non-public service projections', async () => {
@@ -180,6 +192,8 @@ test('preserves sold-out state for non-public service projections', async () => 
   assert.equal(service.publiclyOrderable, false)
   assert.deepEqual(service.orderableReasons, ['package_sold_out'])
   assert.equal(service.warning, '短期流量包已售罄')
+  assert.equal(service.cnyPerUsdAllowance, undefined)
+  assert.equal(service.creditPerCny, 0)
 })
 
 test('keeps historical manual billing rows readable', async () => {

@@ -61,7 +61,7 @@ Migration 111 owns `carpool_listing_condition_versions`, `carpool_application_co
 - Carpool applications and memberships never create review eligibility, public completion counts, ratings, or reputation facts. Reports, disputes, audits, governance disposition, and account restrictions still accept `carpool_membership` where their own contracts require it.
 - `PATCH /api/v1/owner/carpool-memberships/{membershipId}/note` updates `carpool_memberships.owner_note` for an active or historical membership. The request requires `note` plus `If-Match` and `Idempotency-Key`; whitespace is trimmed, an empty string clears the note, and values longer than 500 Unicode characters are rejected.
 - Owner membership responses may include `ownerNote`; buyer membership responses and all public/listing/application projections must omit it. Removal reason is optional and an empty reason is stored as an empty string.
-- Removed routes must stay absent: carpool `confirm-join`, carpool `confirm-complete`, `withdraw-acceptance`, and carpool review creation/edit compatibility routes. API-order `confirm-complete` remains valid.
+- Removed routes must stay absent: carpool `confirm-join`, carpool `confirm-complete`, `withdraw-acceptance`, carpool review creation/edit compatibility routes, and API-order `confirm-complete`.
 
 ## 4. Validation & Error Matrix
 

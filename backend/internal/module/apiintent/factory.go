@@ -24,6 +24,7 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 }
 
 func NewIntentWithOwnerContacts(input CreateIntentInput, service apimarket.Service, buyerContact contact.ContactMethod, buyerVersion contact.ContactMethodVersion, ownerContacts []OwnerContactSnapshot, now time.Time) (Intent, *domain.AppError) {
+	service = apimarket.WithCurrentPurchaseMaximum(service)
 	if buyerContact.Type != contact.MethodTypeWechat || strings.TrimSpace(buyerVersion.ID) == "" {
 		return Intent{}, contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}

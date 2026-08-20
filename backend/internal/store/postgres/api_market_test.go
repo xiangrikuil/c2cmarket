@@ -43,6 +43,23 @@ func TestPublicAPIServicePredicateExcludesUnsupportedBillingModes(t *testing.T) 
 	}
 }
 
+func TestPublicAPIQuotaOfferOrderablePredicateMatchesMarketplaceRules(t *testing.T) {
+	predicate := publicAPIQuotaOfferOrderablePredicate("$1")
+	for _, fragment := range []string{
+		"b.status = 'published'",
+		"o.status = 'published'",
+		apiServiceFulfillmentReadyPredicate("s"),
+		"$1 < b.sale_cutoff_at",
+		"stock.available_copies > 0",
+		"current_round.fulfillment_confirmed_at IS NOT NULL",
+		"credentials.available_copies >= stock.available_copies",
+	} {
+		if !strings.Contains(predicate, fragment) {
+			t.Fatalf("public API quota offer predicate missing %q", fragment)
+		}
+	}
+}
+
 func TestOwnerAPISalesAggregationUsesOneAuthoritativeChannelProjection(t *testing.T) {
 	query := ownerAPISalesAggregationSQL()
 	for _, fragment := range []string{

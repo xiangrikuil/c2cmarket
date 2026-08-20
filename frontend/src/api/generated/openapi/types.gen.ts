@@ -1863,6 +1863,9 @@ export type ApiServiceRequest = {
     quotaExpiresAt?: string;
     quotaUsagePolicy: QuotaUsagePolicyInput;
     minimumIntentCny: DecimalString;
+    /**
+     * For metered USD quota services, the server derives this as the current available USD allowance multiplied by the declared CNY price per USD, rounded down to two CNY decimal places. Fixed packages retain their package-price boundary.
+     */
     maximumIntentCny?: DecimalString;
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
     /**
@@ -2046,6 +2049,9 @@ export type PublicApiService = {
     quotaUsagePolicy: QuotaUsagePolicy;
     healthSummary: ServiceHealthSummary;
     minimumIntentCny: DecimalString;
+    /**
+     * Current purchase maximum. Metered services derive it from current available USD allowance multiplied by the declared CNY price per USD, rounded down to two CNY decimal places; fixed packages retain their package-price boundary.
+     */
     maximumIntentCny?: DecimalString;
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
     publicAccessNote?: string;
@@ -2154,6 +2160,9 @@ export type ApiService = {
     quotaExpiresAt?: string;
     quotaUsagePolicy: QuotaUsagePolicy;
     minimumIntentCny: DecimalString;
+    /**
+     * Current purchase maximum. Metered services derive it from current available USD allowance multiplied by the declared CNY price per USD, rounded down to two CNY decimal places; fixed packages retain their package-price boundary.
+     */
     maximumIntentCny?: DecimalString;
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
     publicAccessNote?: string;
@@ -2286,6 +2295,22 @@ export type ApiServiceList = {
 export type PublicApiServiceList = {
     items: Array<PublicApiService>;
     nextCursor?: string | null;
+};
+
+export type PublicApiMarketAvailability = {
+    generatedAt: string;
+    /**
+     * Currently orderable limited quota offers.
+     */
+    limitedOffers: number;
+    /**
+     * Currently orderable fixed-duration packages, counted per package.
+     */
+    fixedPackages: number;
+    /**
+     * Currently orderable buyer-selected metered quota services.
+     */
+    meteredServices: number;
 };
 
 export type PublicApiPackageModelFilterOption = {
@@ -2685,14 +2710,27 @@ export type ApiPurchaseIntentCore = {
     updatedAt: string;
 };
 
-export type ApiPurchaseIntentListItem = ApiPurchaseIntentCore & {};
+export type ApiPurchaseIntentListItem = ApiPurchaseIntentCore & {
+    /**
+     * Current public account username of the service owner.
+     */
+    ownerUsername: string;
+};
 
 export type OwnerApiPurchaseIntentListItem = ApiPurchaseIntentCore & {
     buyerUserId?: string;
+    /**
+     * Current public account username of the buyer.
+     */
+    buyerUsername: string;
     buyerContactMethodId?: string;
 };
 
 export type CreateApiPurchaseIntentResponse = ApiPurchaseIntentCore & {
+    /**
+     * Current public account username of the service owner.
+     */
+    ownerUsername: string;
     /**
      * Frozen merchant contact disclosed immediately after successful intent creation. Never includes subject/user identifiers.
      */
@@ -2705,7 +2743,11 @@ export type CreateApiPurchaseIntentResponse = ApiPurchaseIntentCore & {
 
 export type BuyerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
     /**
-     * Frozen merchant contact for the buyer. Never includes owner user ID, owner contact method ID, subject ID, username, or public profile URL.
+     * Current public account username of the service owner.
+     */
+    ownerUsername: string;
+    /**
+     * Frozen merchant contact for the buyer. The contact object itself never includes owner user ID, owner contact method ID, subject ID, username, or public profile URL.
      */
     merchantContact: ContactDisclosure;
     /**
@@ -2716,6 +2758,10 @@ export type BuyerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
 
 export type OwnerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
     buyerUserId?: string;
+    /**
+     * Current public account username of the buyer.
+     */
+    buyerUsername: string;
     buyerContactMethodId?: string;
     /**
      * Frozen buyer-selected contact for the service owner. Never includes subject IDs.
@@ -2725,7 +2771,15 @@ export type OwnerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
 
 export type AdminApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
     buyerUserId?: string;
+    /**
+     * Current public account username of the buyer.
+     */
+    buyerUsername: string;
     ownerUserId?: string;
+    /**
+     * Current public account username of the service owner.
+     */
+    ownerUsername: string;
     buyerContactMethodId?: string;
     ownerContactMethodId?: string;
 };
@@ -2916,9 +2970,17 @@ export type ApiOrder = {
      */
     buyerUserId?: string;
     /**
+     * Current public account username of the buyer. Present on owner and administrator views.
+     */
+    buyerUsername?: string;
+    /**
      * Present on buyer and administrator views.
      */
     sellerUserId?: string;
+    /**
+     * Current public account username of the seller. Present on buyer and administrator views.
+     */
+    sellerUsername?: string;
     buyerReputation: ReputationSummary | null;
     sellerReputation: ReputationSummary | null;
     status: 'pending_payment' | 'payment_submitted' | 'payment_issue' | 'paid_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled';
@@ -3052,7 +3114,7 @@ export type ApiOrder = {
     deliveryNote?: string;
     deliverySubmittedAt?: string | null;
     /**
-     * Authoritative end of the 24-hour buyer credential-review window. Set when delivery is submitted and retained after completion.
+     * Delivery-time 24-hour after-sales deadline used when the purchased service has no explicit validity end. It does not delay order completion.
      */
     deliveryReviewExpiresAt?: string | null;
     /**
@@ -3070,9 +3132,9 @@ export type ApiOrder = {
     quotaValidityIssueAt?: string | null;
     quotaValidityIssueReason?: 'delivery_insufficient';
     /**
-     * Present only after completion. Automatic completion records review-window expiry and is not a buyer rating or endorsement.
+     * Present only after completion. New orders use seller_delivered because immutable credential submission completes the transaction; older values remain readable as historical facts.
      */
-    completionSource?: 'buyer_confirmed' | 'auto_completed';
+    completionSource?: 'buyer_confirmed' | 'auto_completed' | 'seller_delivered' | 'remedy_confirmed';
     completedAt?: string | null;
     cancelledAt?: string | null;
     cancelReason?: string;
@@ -6816,6 +6878,31 @@ export type GetApiModelResponses = {
 
 export type GetApiModelResponse = GetApiModelResponses[keyof GetApiModelResponses];
 
+export type GetPublicApiMarketAvailabilityData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/api-market/availability';
+};
+
+export type GetPublicApiMarketAvailabilityErrors = {
+    /**
+     * Problem Details error.
+     */
+    503: ProblemDetails;
+};
+
+export type GetPublicApiMarketAvailabilityError = GetPublicApiMarketAvailabilityErrors[keyof GetPublicApiMarketAvailabilityErrors];
+
+export type GetPublicApiMarketAvailabilityResponses = {
+    /**
+     * Current sellable units for each API marketplace mode.
+     */
+    200: PublicApiMarketAvailability;
+};
+
+export type GetPublicApiMarketAvailabilityResponse = GetPublicApiMarketAvailabilityResponses[keyof GetPublicApiMarketAvailabilityResponses];
+
 export type ListPublicApiServicesData = {
     body?: never;
     path?: never;
@@ -9215,45 +9302,6 @@ export type CancelMyApiOrderResponses = {
 };
 
 export type CancelMyApiOrderResponse = CancelMyApiOrderResponses[keyof CancelMyApiOrderResponses];
-
-export type ConfirmMyApiOrderCompleteData = {
-    body: EmptyRequestWritable;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/me/api-orders/{id}/confirm-complete';
-};
-
-export type ConfirmMyApiOrderCompleteErrors = {
-    /**
-     * Problem Details error.
-     */
-    409: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ConfirmMyApiOrderCompleteError = ConfirmMyApiOrderCompleteErrors[keyof ConfirmMyApiOrderCompleteErrors];
-
-export type ConfirmMyApiOrderCompleteResponses = {
-    /**
-     * Buyer confirmed the API order completed after seller notes were submitted.
-     */
-    200: ApiOrder;
-};
-
-export type ConfirmMyApiOrderCompleteResponse = ConfirmMyApiOrderCompleteResponses[keyof ConfirmMyApiOrderCompleteResponses];
 
 export type OpenMyApiOrderDisputeData = {
     body: ApiOrderDisputeRequest;

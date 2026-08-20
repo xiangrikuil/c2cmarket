@@ -42,7 +42,7 @@ test('renders the home API entry list from publicly orderable service fields', (
 
   assert.match(homeSource, /filter\(isApiServicePubliclyOrderable\)/)
   assert.match(snapshotSource, /formatModelSummary\(item\.models\)/)
-  assert.match(snapshotSource, /formatCnyPerUsdQuota\(item\)/)
+  assert.match(snapshotSource, /getApiServicePricePresentation\(service\)/)
   assert.match(snapshotSource, /getApiMerchantDisplayName\(item\)/)
   assert.match(snapshotSource, /<h3 id="home-api-snapshot-title">可购买 API 服务/)
   assert.doesNotMatch(`${homeSource}\n${snapshotSource}`, /2\.5M Tokens|500K Tokens|1M Tokens|\/ 1K Tokens/)

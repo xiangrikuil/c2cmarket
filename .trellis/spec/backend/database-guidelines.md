@@ -196,7 +196,7 @@ backend/migrations/000064_contact_cipher_aad.{up,down}.sql
 backend/migrations/000065_remove_demands.{up,down}.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.{up,down}.sql
 backend/migrations/000067_api_account_payment_settings.{up,down}.sql
-database.ExpectedMigrationVersion = 117 (current repository target)
+database.ExpectedMigrationVersion = 118 (current repository target)
 ```
 
 Standard execution remains:
@@ -267,7 +267,7 @@ Correct:
 ```text
 backend/migrations/000066_api_service_multiplier_reconciliation.up.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.down.sql
-database.ExpectedMigrationVersion = 117 (current repository target)
+database.ExpectedMigrationVersion = 118 (current repository target)
 api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHECK (merchant_multiplier > 0)
 ```
 
@@ -326,7 +326,7 @@ DROP CONSTRAINT ck_api_service_models_sub2api_multiplier;
 ```text
 backend/migrations/000067_api_account_payment_settings.up.sql
 backend/migrations/000067_api_account_payment_settings.down.sql
-database.ExpectedMigrationVersion = 117 (current repository target)
+database.ExpectedMigrationVersion = 118 (current repository target)
 
 api_payment_account_options:
   PRIMARY KEY (user_id, payment_method)
@@ -389,55 +389,52 @@ ON api_payment_account_options(user_id)
 WHERE enabled = true;
 ```
 
-## Scenario: API Order Delivery Review Materialization
+## Scenario: API Order Seller Delivery Completion
 
 ### 1. Scope / Trigger
 
-- Trigger: schema, repository, maintenance, notification, or reporting changes involving API orders after credential delivery.
-- The seller's immutable credential submission finishes seller fulfillment, while the order remains reviewable by the buyer for 24 hours.
+- Trigger: schema, repository, notification, or reporting changes involving API orders after credential delivery.
+- The seller's immutable credential submission finishes seller fulfillment and the order in the same transaction.
 
 ### 2. Signatures
 
 ```text
 api_orders.delivery_review_expires_at timestamptz
 api_orders.delivery_review_reminded_at timestamptz
-api_orders.completion_source text CHECK IN ('buyer_confirmed', 'auto_completed')
+api_orders.completion_source text CHECK IN ('buyer_confirmed', 'auto_completed', 'seller_delivered', 'remedy_confirmed')
 
-MaterializeExpiredAPIOrders(ctx, now) -> payment expired, review reminded, auto completed counts
 GET /api/v1/admin/api-orders/{id}
 ```
 
 ### 3. Contracts
 
-- `delivery_submitted` rows require `delivery_review_expires_at`, no completion source, and no completed timestamp.
-- `completed` rows require the retained review deadline, `completion_source`, and `completed_at`.
-- Credential submission sets the deadline once and credentials remain immutable. Buyer confirmation writes `buyer_confirmed`; deadline materialization writes `auto_completed` using the deadline as the completion timestamp.
-- Open disputes block automatic completion. The final-two-hour reminder uses `delivery_review_reminded_at` as a durable deduplication marker.
-- Lazy reads/actions and scheduled maintenance share the same transaction-level transition logic, row lock, and state recheck. The partial expiry index covers only `status='delivery_submitted'`.
-- Migration 68 gives historical `delivery_submitted` rows a fresh `now() + 24 hours` window and labels historical completed rows `buyer_confirmed`.
+- New credential submissions write `completed/seller_delivered`, retain `delivery_review_expires_at` as a fallback dispute deadline, and set `completed_at` to the submission time.
+- Completed rows require a retained dispute deadline, a supported `completion_source`, and `completed_at`.
+- Credentials remain immutable. No lazy read or scheduled maintenance path sends delivery-review reminders or changes order completion after seller delivery.
+- Migration 118 converts existing `delivery_submitted` rows to `completed/seller_delivered` and removes the partial delivery-review expiry index.
+- Historical `buyer_confirmed`, `auto_completed`, and `remedy_confirmed` rows remain valid for read compatibility.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Expected behavior |
 | --- | --- |
-| `delivery_submitted` has no review deadline | State-shape constraint rejects the write |
+| New seller delivery omits the fallback dispute deadline | State-shape constraint rejects the write |
 | Completed row has no valid completion source | State-shape/source constraint rejects the write |
-| Review deadline reached with an open dispute | Keep `delivery_submitted`; emit no completion event |
-| Reminder already marked | Emit no duplicate reminder event or notification |
-| Lazy read races maintenance | Row lock and state recheck yield one durable transition |
-| Historical pending review row is migrated | Deadline is migration time plus 24 hours, never immediate bulk completion |
+| Seller submits twice | State transition rejects the second write |
+| Dispute opens after seller delivery | Keep the order completed and advance only the dispute lifecycle |
+| Historical pending review row is migrated | Preserve its deadline and credential; write `completed/seller_delivered` |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: maintenance locks an eligible row, writes `completed/auto_completed`, one event, one notification, and one completion timestamp atomically.
-- Base: the buyer confirms before the deadline and the same row becomes `completed/buyer_confirmed`.
-- Bad: compute a deadline from browser time, auto-complete an open dispute, or let lazy and scheduled paths maintain separate transition implementations.
+- Good: seller delivery locks the row and writes the credential, `completed/seller_delivered`, one event, and one completion timestamp atomically.
+- Base: a historical `completed/buyer_confirmed` or `completed/auto_completed` row remains readable without being rewritten.
+- Bad: compute a dispute deadline from browser time, retain a buyer confirmation mutation, or let maintenance create a second completion transition.
 
 ### 6. Tests Required
 
-- Migration source tests assert columns, source values, state-shape constraints, the partial index, historical backfill, and down migration.
-- In-memory/service tests assert review deadline, buyer confirmation, reminder deduplication, automatic completion, and open-dispute pause.
-- PostgreSQL tests assert row-lock/state-recheck behavior, event/notification uniqueness, and maintenance counters.
+- Migration source tests assert source values, state-shape constraints, historical completion backfill, expiry-index removal, and down migration.
+- In-memory/service and PostgreSQL tests assert immediate seller-delivered completion, retained dispute eligibility, immutable credentials, and event/notification uniqueness.
+- Maintenance tests assert only payment expiry remains in API-order timeout materialization.
 - Run `go test ./...`, `go vet ./...`, `node scripts/check-migrations-doc.mjs`, and `git diff --check`.
 
 ### 7. Wrong vs Correct
@@ -445,18 +442,21 @@ GET /api/v1/admin/api-orders/{id}
 #### Wrong
 
 ```sql
-UPDATE api_orders SET status = 'completed'
-WHERE delivery_submitted_at < now() - interval '24 hours';
+SELECT id FROM api_orders
+WHERE status = 'delivery_submitted'
+  AND delivery_review_expires_at <= $1
+FOR UPDATE SKIP LOCKED;
 ```
 
 #### Correct
 
 ```sql
-SELECT id FROM api_orders
-WHERE status = 'delivery_submitted'
-  AND dispute_status <> 'open'
-  AND delivery_review_expires_at <= $1
-FOR UPDATE SKIP LOCKED;
+UPDATE api_orders
+SET status = 'completed',
+    completion_source = 'seller_delivered',
+    completed_at = $1,
+    delivery_submitted_at = $1
+WHERE id = $2 AND status = 'paid_confirmed';
 ```
 
 ## Scenario: Account Governance Business Disposition

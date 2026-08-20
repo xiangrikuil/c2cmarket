@@ -100,6 +100,8 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(generatedTitle(form, new Map()), 'GPT · 短期流量包')
 
   form.billingMode = 'metered_credit'
+  applySimplifiedApiQuotaDefaults(form)
+  assert.equal(form.maximumPurchaseCny, 400)
   assert.equal(generatedTitle(form, new Map()), 'GPT · 其他 API 接入 自选额度')
 
   assert.doesNotMatch(merchantNoteTemplate, new RegExp('接入' + '方式：'))

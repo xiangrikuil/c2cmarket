@@ -2765,10 +2765,9 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	completeEarly.Header.Set("If-Match", `"`+strconv.FormatInt(paid.Version, 10)+`"`)
 	completeEarlyResponse := httptest.NewRecorder()
 	server.ServeHTTP(completeEarlyResponse, completeEarly)
-	if completeEarlyResponse.Code != http.StatusConflict {
-		t.Fatalf("expected early complete conflict, got %d body %s", completeEarlyResponse.Code, completeEarlyResponse.Body.String())
+	if completeEarlyResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected removed buyer completion route to return 404, got %d body %s", completeEarlyResponse.Code, completeEarlyResponse.Body.String())
 	}
-	assertProblemCode(t, completeEarlyResponse, "INVALID_STATE_TRANSITION")
 
 	confirmed := apiOrderAction(t, server, ownerSession, "owner", paid.ID, "confirm-payment", paid.Version, "api-order-confirm-payment", `{}`)
 	if confirmed.Status != "paid_confirmed" || confirmed.PaidConfirmedAt == nil || confirmed.BuyerUserID != buyerSession.userID || confirmed.Version != paid.Version+1 {
@@ -2793,7 +2792,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 
 	delivered := apiOrderAction(t, server, ownerSession, "owner", confirmed.ID, "submit-delivery", confirmed.Version, "api-order-submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-test","instructions":"买家专属；提交后不可修改，后续更换请站外联系。"}`)
-	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryReviewExpiresAt == nil || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != confirmed.Version+1 {
+	if delivered.Status != "completed" || delivered.CompletionSource != "seller_delivered" || delivered.CompletedAt == nil || delivered.DeliveryNote == "" || delivered.DeliveryReviewExpiresAt == nil || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != confirmed.Version+1 {
 		t.Fatalf("unexpected delivered order: %+v", delivered)
 	}
 	duplicateDelivery := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+delivered.ID+"/submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-other"}`)
@@ -2842,12 +2841,8 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		t.Fatalf("unexpected admin API order detail: %+v", adminDetail)
 	}
 
-	completed := apiOrderAction(t, server, buyerSession, "me", delivered.ID, "confirm-complete", delivered.Version, "api-order-confirm-complete", `{}`)
-	if completed.Status != "completed" || completed.CompletionSource != "buyer_confirmed" || completed.CompletedAt == nil || completed.Version != delivered.Version+1 {
-		t.Fatalf("unexpected completed order: %+v", completed)
-	}
-	if completed.DeliveryCredential == nil || completed.DeliveryCredential.APIKey != "sk-proj-test" {
-		t.Fatalf("expected credential to remain visible on completed order detail: %+v", completed)
+	if delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" {
+		t.Fatalf("expected credential to remain visible on completed order detail: %+v", delivered)
 	}
 
 	duplicateAfterCompleted := newJSONRequest(http.MethodPost, "/api/v1/me/api-purchase-intents/"+intent.ID+"/orders", `{"paymentMethod":"wechat"}`)

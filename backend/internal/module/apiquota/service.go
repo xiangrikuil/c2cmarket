@@ -525,6 +525,17 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 	return result, nil
 }
 
+func (m *Manager) PublicOrderableOfferCount(ctx context.Context) (int, *domain.AppError) {
+	if m.repo == nil {
+		return 0, nil
+	}
+	repo, ok := m.repo.(PublicOfferInventoryRepository)
+	if !ok {
+		return 0, domain.NewError(http.StatusServiceUnavailable, domain.CodeInternalError, "API quota inventory count unavailable", "限量额度包数量暂时不可用。")
+	}
+	return repo.CountPublicOrderableAPIQuotaOffers(ctx, m.now().UTC())
+}
+
 func (filter PublicOfferFilter) NormalizedSort() string {
 	switch strings.TrimSpace(filter.Sort) {
 	case PublicOfferSortRecommended, PublicOfferSortReputationDesc, PublicOfferSortCompletedDesc,

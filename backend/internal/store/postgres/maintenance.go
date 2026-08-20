@@ -62,7 +62,7 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 		return maintenance.Result{}, internalStoreError()
 	}
 
-	result.APIOrdersPaymentExpired, result.APIOrderReviewReminders, result.APIOrdersAutoCompleted, err = s.materializeAPIOrdersForMaintenanceInTx(ctx, tx, now, batchSize)
+	result.APIOrdersPaymentExpired, err = s.materializeAPIOrdersForMaintenanceInTx(ctx, tx, now, batchSize)
 	if err != nil {
 		return maintenance.Result{}, internalStoreError()
 	}
@@ -883,56 +883,45 @@ func execMaintenanceBatch(ctx context.Context, tx pgx.Tx, query string, args ...
 	return commandTag.RowsAffected(), nil
 }
 
-func (s *Store) materializeAPIOrdersForMaintenanceInTx(ctx context.Context, tx pgx.Tx, now time.Time, batchSize int) (int64, int64, int64, error) {
+func (s *Store) materializeAPIOrdersForMaintenanceInTx(ctx context.Context, tx pgx.Tx, now time.Time, batchSize int) (int64, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id::text
 		FROM api_orders
 		WHERE NOT EXISTS (SELECT 1 FROM api_order_catalog_risk_holds hold WHERE hold.api_order_id = api_orders.id AND hold.status = 'active')
-		  AND ((status = 'pending_payment' AND dispute_status IN ('none', 'closed') AND payment_expires_at <= $1)
-		   OR (
-		     status = 'delivery_submitted'
-		     AND dispute_status IN ('none', 'closed')
-		     AND delivery_review_expires_at <= $2
-		   ))
-		ORDER BY COALESCE(delivery_review_expires_at, payment_expires_at), id
-		LIMIT $3
+		  AND status = 'pending_payment'
+		  AND dispute_status IN ('none', 'closed')
+		  AND payment_expires_at <= $1
+		ORDER BY payment_expires_at, id
+		LIMIT $2
 		FOR UPDATE SKIP LOCKED
-	`, now, now.Add(apiorder.DeliveryReviewReminderLead), batchSize)
+	`, now, batchSize)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, err
 	}
 	ids := make([]string, 0, batchSize)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return 0, 0, 0, err
+			return 0, err
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return 0, 0, 0, err
+		return 0, err
 	}
 	rows.Close()
 
 	var paymentExpired int64
-	var reviewReminders int64
-	var autoCompleted int64
 	for _, id := range ids {
 		result, appErr := s.materializeExpiredAPIOrderInTx(ctx, tx, id, now)
 		if appErr != nil {
-			return 0, 0, 0, errors.New(appErr.Detail)
+			return 0, errors.New(appErr.Detail)
 		}
 		if result.PaymentTimeoutCancelled {
 			paymentExpired++
 		}
-		if result.DeliveryReviewReminded {
-			reviewReminders++
-		}
-		if result.AutoCompleted {
-			autoCompleted++
-		}
 	}
-	return paymentExpired, reviewReminders, autoCompleted, nil
+	return paymentExpired, nil
 }

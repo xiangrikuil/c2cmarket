@@ -38,14 +38,13 @@ const keyword = ref('')
 const timeRange = ref<'all' | 'today' | '7d' | '30d'>('all')
 const sortMode = ref<'default' | 'updated' | 'created' | 'amount'>('default')
 
-const activeStatuses = ['pending_payment', 'payment_issue', 'delivery_submitted']
+const activeStatuses = ['pending_payment', 'payment_issue']
 
 const tabStatusByLabel: Partial<Record<string, ApiOrderStatus>> = {
   待付款: 'pending_payment',
   待补充: 'payment_issue',
   已付款: 'payment_submitted',
   待交付: 'paid_confirmed',
-  待核验: 'delivery_submitted',
   已完成: 'completed',
   已取消: 'cancelled',
 }
@@ -114,7 +113,7 @@ function disputeStatusLabel(item: (typeof rows.value)[number]) {
 
     <div class="my-api-orders-layout">
       <main class="min-w-0 space-y-4">
-        <StatusTabs v-model="activeTab" :items="['全部', '纠纷中', '待付款', '待补充', '已付款', '待交付', '待核验', '已完成', '已取消']" />
+        <StatusTabs v-model="activeTab" :items="['全部', '纠纷中', '待付款', '待补充', '已付款', '待交付', '已完成', '已取消']" />
 
         <div class="grid gap-2 md:grid-cols-[1fr_160px_180px]">
           <Input v-model="keyword" placeholder="搜索订单编号、服务、商户" />
@@ -161,7 +160,7 @@ function disputeStatusLabel(item: (typeof rows.value)[number]) {
       <aside class="my-api-orders-aside space-y-3">
         <Card class="my-api-order-overview p-4">
           <div class="flex items-center justify-between"><h2 class="font-semibold">订单概览</h2><WalletCards class="h-5 w-5 text-cyan-600" /></div>
-          <div class="mt-4 grid grid-cols-2 gap-3"><div><small>订单总数</small><strong>{{ (data ?? []).length }}</strong></div><div><small>纠纷中</small><strong>{{ (data ?? []).filter(item => item.disputeCaseId).length }}</strong></div><div><small>待我处理</small><strong>{{ (data ?? []).filter(item => activeStatuses.includes(item.status) || item.disputeNeedsAction).length }}</strong></div><div><small>已完成</small><strong>{{ (data ?? []).filter(item => item.status === 'completed').length }}</strong></div></div>
+          <div class="mt-4 grid grid-cols-2 gap-3"><div><small>订单总数</small><strong>{{ (data ?? []).length }}</strong></div><div><small>纠纷中</small><strong>{{ (data ?? []).filter(item => item.disputeCaseId).length }}</strong></div><div><small>待我处理</small><strong>{{ (data ?? []).filter(item => activeStatuses.includes(item.status) || item.disputeNeedsAction).length }}</strong></div><div><small>已完成</small><strong>{{ (data ?? []).filter(item => item.status === 'completed' || item.status === 'delivery_submitted').length }}</strong></div></div>
         </Card>
         <Card class="p-4">
           <h2 class="font-semibold">订单处理顺序</h2>
@@ -169,7 +168,7 @@ function disputeStatusLabel(item: (typeof rows.value)[number]) {
             <li>1. 查看商户收款资料并完成付款</li>
             <li>2. 提交付款信息，异常时按提示补充</li>
             <li>3. 商户确认到账后提交交付</li>
-            <li>4. 交付后在 24 小时内确认可用或报告问题</li>
+						<li>4. 商家提交凭证后订单完成；有问题可联系商家或发起纠纷</li>
           </ol>
         </Card>
         <Card class="p-4">

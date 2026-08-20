@@ -731,6 +731,23 @@ func (s *Service) PublicAPIServices(ctx context.Context, filter apimarket.Public
 	return domain.Page[APIService]{Items: items, NextCursor: services.NextCursor}, nil
 }
 
+func (s *Service) PublicAPIMarketAvailability(ctx context.Context) (apimarket.PublicMarketAvailability, *domain.AppError) {
+	serviceCounts, appErr := s.apiMarket.PublicInventoryCounts(ctx)
+	if appErr != nil {
+		return apimarket.PublicMarketAvailability{}, appErr
+	}
+	limitedOffers, appErr := s.apiQuota.PublicOrderableOfferCount(ctx)
+	if appErr != nil {
+		return apimarket.PublicMarketAvailability{}, appErr
+	}
+	return apimarket.PublicMarketAvailability{
+		GeneratedAt:     s.now().UTC(),
+		LimitedOffers:   limitedOffers,
+		FixedPackages:   serviceCounts.FixedPackages,
+		MeteredServices: serviceCounts.MeteredServices,
+	}, nil
+}
+
 func (s *Service) PublicAPIPackageFilterOptions(ctx context.Context, billingMode string) (apimarket.PublicPackageFilterOptions, *domain.AppError) {
 	return s.apiMarket.PublicPackageFilterOptions(ctx, billingMode)
 }
@@ -1542,14 +1559,6 @@ func (s *Service) SubmitAPIOrderPaymentWithIdempotency(ctx context.Context, user
 
 func (s *Service) CancelAPIOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	return s.apiOrder.CancelWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) ConfirmAPIOrderCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiOrder.ConfirmCompleteWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) ConfirmAPIOrderCompleteForActorWithIdempotency(ctx context.Context, actor authmodule.BusinessActor, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiOrder.ConfirmCompleteForActorWithIdempotency(ctx, actor, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
@@ -2739,10 +2748,10 @@ func reviewTransactionFromAPIOrder(order apiorder.Order) review.Transaction {
 		ID:                order.ID,
 		Target:            order.ServiceTitleSnapshot,
 		BuyerUserID:       order.BuyerUserID,
-		BuyerUsername:     order.BuyerUserID,
+		BuyerUsername:     order.BuyerUsername,
 		BuyerDisplayName:  order.BuyerUserID,
 		SellerUserID:      order.SellerUserID,
-		SellerUsername:    order.SellerUserID,
+		SellerUsername:    order.SellerUsername,
 		SellerDisplayName: order.SellerUserID,
 		CompletedAt:       commercialOutcomeAt,
 		ReviewDeadlineAt:  review.ReviewDeadlineForAPIOrder(commercialOutcomeAt),

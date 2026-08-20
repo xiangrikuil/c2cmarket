@@ -13,6 +13,7 @@ import {
   type CarpoolApplication,
   type UserProfile,
 } from '@/lib/api'
+import { getApiServicePricePresentation } from '@/lib/apiServicePricingPresentation'
 
 export type PersonalCenterTask = {
   key: string
@@ -197,6 +198,11 @@ function apiServiceStatus(item: ApiService) {
   return '已下线'
 }
 
+function apiServicePublishedSummary(item: ApiService) {
+  const pricing = getApiServicePricePresentation(item)
+  return `${pricing.value} · ${pricing.secondary} · ${item.delivery}`
+}
+
 export function buildPublishedContent(input: BuildPublishedContentInput) {
   const items: PublishedContentItem[] = [
     ...input.carpools.map(item => ({
@@ -217,7 +223,7 @@ export function buildPublishedContent(input: BuildPublishedContentInput) {
       kind: 'api-service' as const,
       kindLabel: 'API 服务',
       title: item.title,
-      summary: `¥${item.cnyPerUsdAllowance ?? item.rate} / $1 · 可售 $${item.availableUsdAllowance ?? item.balance} · ${item.delivery}`,
+      summary: apiServicePublishedSummary(item),
       status: apiServiceStatus(item),
       updatedAt: item.lastOnlineConfirmedAt,
       manageTo: `/my/api-services/${item.id}`,

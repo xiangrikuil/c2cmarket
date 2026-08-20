@@ -1168,6 +1168,22 @@ paths:
                 $ref: "#/components/schemas/APIModel"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/api-market/availability:
+    get:
+      operationId: getPublicAPIMarketAvailability
+      tags: [APIMarket]
+      security: []
+      summary: Get current sellable API marketplace counts.
+      description: Returns unfiltered marketplace availability. Limited offers count currently orderable offer cards, fixed packages count enabled in-stock packages with an enabled service model, and metered services count currently orderable services.
+      responses:
+        "200":
+          description: Current sellable units for each API marketplace mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPIMarketAvailability"
+        "503":
+          $ref: "#/components/responses/Problem"
   /api/v1/api-services:
     get:
       operationId: listPublicAPIServices
@@ -3067,36 +3083,6 @@ paths:
         "412":
           $ref: "#/components/responses/Problem"
         "422":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/me/api-orders/{id}/confirm-complete:
-    post:
-      operationId: confirmMyAPIOrderComplete
-      tags: [APIOrders]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Buyer confirmed the API order completed after seller notes were submitted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIOrder"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
@@ -13374,6 +13360,7 @@ components:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
           $ref: "#/components/schemas/DecimalString"
+          description: For metered USD quota services, the server derives this as the current available USD allowance multiplied by the declared CNY price per USD, rounded down to two CNY decimal places. Fixed packages retain their package-price boundary.
         usageVisibility:
           type: string
           enum: [none, merchant_reported, offsite_panel_readonly, fixed_package_only]
@@ -13680,6 +13667,7 @@ components:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
           $ref: "#/components/schemas/DecimalString"
+          description: Current purchase maximum. Metered services derive it from current available USD allowance multiplied by the declared CNY price per USD, rounded down to two CNY decimal places; fixed packages retain their package-price boundary.
         usageVisibility:
           type: string
           enum: [none, merchant_reported, offsite_panel_readonly, fixed_package_only]
@@ -13866,6 +13854,7 @@ components:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
           $ref: "#/components/schemas/DecimalString"
+          description: Current purchase maximum. Metered services derive it from current available USD allowance multiplied by the declared CNY price per USD, rounded down to two CNY decimal places; fixed packages retain their package-price boundary.
         usageVisibility:
           type: string
           enum: [none, merchant_reported, offsite_panel_readonly, fixed_package_only]
@@ -14137,6 +14126,26 @@ components:
             $ref: "#/components/schemas/PublicAPIService"
         nextCursor:
           type: [string, "null"]
+    PublicAPIMarketAvailability:
+      type: object
+      additionalProperties: false
+      required: [generatedAt, limitedOffers, fixedPackages, meteredServices]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        limitedOffers:
+          type: integer
+          minimum: 0
+          description: Currently orderable limited quota offers.
+        fixedPackages:
+          type: integer
+          minimum: 0
+          description: Currently orderable fixed-duration packages, counted per package.
+        meteredServices:
+          type: integer
+          minimum: 0
+          description: Currently orderable buyer-selected metered quota services.
     PublicAPIPackageModelFilterOption:
       type: object
       additionalProperties: false
@@ -14967,16 +14976,24 @@ components:
         - $ref: "#/components/schemas/APIPurchaseIntentCore"
         - type: object
           additionalProperties: false
-          properties: {}
+          required: [ownerUsername]
+          properties:
+            ownerUsername:
+              type: string
+              description: Current public account username of the service owner.
     OwnerAPIPurchaseIntentListItem:
       allOf:
         - $ref: "#/components/schemas/APIPurchaseIntentCore"
         - type: object
           additionalProperties: false
+          required: [buyerUsername]
           properties:
             buyerUserId:
               type: string
               format: uuid
+            buyerUsername:
+              type: string
+              description: Current public account username of the buyer.
             buyerContactMethodId:
               type: string
               format: uuid
@@ -14985,8 +15002,11 @@ components:
         - $ref: "#/components/schemas/APIPurchaseIntentCore"
         - type: object
           additionalProperties: false
-          required: [merchantContact, merchantContacts]
+          required: [ownerUsername, merchantContact, merchantContacts]
           properties:
+            ownerUsername:
+              type: string
+              description: Current public account username of the service owner.
             merchantContact:
               $ref: "#/components/schemas/ContactDisclosure"
               description: Frozen merchant contact disclosed immediately after successful intent creation. Never includes subject/user identifiers.
@@ -15001,11 +15021,14 @@ components:
         - $ref: "#/components/schemas/APIPurchaseIntentCore"
         - type: object
           additionalProperties: false
-          required: [merchantContact, merchantContacts]
+          required: [ownerUsername, merchantContact, merchantContacts]
           properties:
+            ownerUsername:
+              type: string
+              description: Current public account username of the service owner.
             merchantContact:
               $ref: "#/components/schemas/ContactDisclosure"
-              description: Frozen merchant contact for the buyer. Never includes owner user ID, owner contact method ID, subject ID, username, or public profile URL.
+              description: Frozen merchant contact for the buyer. The contact object itself never includes owner user ID, owner contact method ID, subject ID, username, or public profile URL.
             merchantContacts:
               type: array
               minItems: 1
@@ -15017,11 +15040,14 @@ components:
         - $ref: "#/components/schemas/APIPurchaseIntentCore"
         - type: object
           additionalProperties: false
-          required: [buyerContact]
+          required: [buyerUsername, buyerContact]
           properties:
             buyerUserId:
               type: string
               format: uuid
+            buyerUsername:
+              type: string
+              description: Current public account username of the buyer.
             buyerContactMethodId:
               type: string
               format: uuid
@@ -15033,13 +15059,20 @@ components:
         - $ref: "#/components/schemas/APIPurchaseIntentCore"
         - type: object
           additionalProperties: false
+          required: [buyerUsername, ownerUsername]
           properties:
             buyerUserId:
               type: string
               format: uuid
+            buyerUsername:
+              type: string
+              description: Current public account username of the buyer.
             ownerUserId:
               type: string
               format: uuid
+            ownerUsername:
+              type: string
+              description: Current public account username of the service owner.
             buyerContactMethodId:
               type: string
               format: uuid
@@ -15377,10 +15410,16 @@ components:
           type: string
           format: uuid
           description: Present on owner and administrator views.
+        buyerUsername:
+          type: string
+          description: Current public account username of the buyer. Present on owner and administrator views.
         sellerUserId:
           type: string
           format: uuid
           description: Present on buyer and administrator views.
+        sellerUsername:
+          type: string
+          description: Current public account username of the seller. Present on buyer and administrator views.
         buyerReputation:
           oneOf:
             - $ref: "#/components/schemas/ReputationSummary"
@@ -15599,7 +15638,7 @@ components:
         deliveryReviewExpiresAt:
           type: [string, "null"]
           format: date-time
-          description: Authoritative end of the 24-hour buyer credential-review window. Set when delivery is submitted and retained after completion.
+          description: Delivery-time 24-hour after-sales deadline used when the purchased service has no explicit validity end. It does not delay order completion.
         deliveryCredential:
           $ref: "#/components/schemas/APIOrderDeliveryCredential"
           description: Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses. After destruction it contains audit timestamps and no secret payload fields.
@@ -15619,8 +15658,8 @@ components:
           enum: [delivery_insufficient]
         completionSource:
           type: string
-          enum: [buyer_confirmed, auto_completed]
-          description: Present only after completion. Automatic completion records review-window expiry and is not a buyer rating or endorsement.
+          enum: [buyer_confirmed, auto_completed, seller_delivered, remedy_confirmed]
+          description: Present only after completion. New orders use seller_delivered because immutable credential submission completes the transaction; older values remain readable as historical facts.
         completedAt:
           type: [string, "null"]
           format: date-time

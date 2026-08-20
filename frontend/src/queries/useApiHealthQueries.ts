@@ -9,6 +9,7 @@ import {
   updateOwnerAPIProbeConnection,
   verifyOwnerAPIProbeConnection,
 } from '@/lib/apiHealthFacade'
+import { apiMarketAvailabilityQueryKey } from '@/queries/useApiMarketAvailability'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value
@@ -44,6 +45,7 @@ function invalidateConnections(queryClient: ReturnType<typeof useQueryClient>, i
     queryClient.invalidateQueries({ queryKey: apiHealthQueryKeys.all }),
     queryClient.invalidateQueries({ queryKey: ['my-api-services'] }),
     queryClient.invalidateQueries({ queryKey: ['api-services'] }),
+    queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey }),
   ]
   if (id) requests.push(queryClient.invalidateQueries({ queryKey: apiHealthQueryKeys.detail(id) }))
   return Promise.all(requests)

@@ -881,7 +881,7 @@ func TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversHistoricalPreimportedC
 	if appErr != nil {
 		t.Fatalf("read delivered preimported order: %v", appErr)
 	}
-	if order.Status != apiorder.StatusDeliverySubmitted || order.PaidConfirmedAt == nil || order.DeliverySubmittedAt == nil || order.DeliveryCredential == nil || order.DeliveryCredential.APIKey != "sk-quota-buyer-only" {
+	if order.Status != apiorder.StatusCompleted || order.CompletionSource != apiorder.CompletionSourceSellerDelivered || order.CompletedAt == nil || order.PaidConfirmedAt == nil || order.DeliverySubmittedAt == nil || order.DeliveryCredential == nil || order.DeliveryCredential.APIKey != "sk-quota-buyer-only" {
 		t.Fatalf("unexpected preimported delivery result: %+v", order)
 	}
 	var unitStatus, credentialStatus string

@@ -5,8 +5,9 @@ import ChevronRight from 'lucide-vue-next/dist/esm/icons/chevron-right.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import ShieldCheck from 'lucide-vue-next/dist/esm/icons/shield-check.js'
 import type { ApiService, Carpool } from '@/data/mock'
-import { formatCnyPerUsdQuota, formatModelSummary } from '@/components/api-service-detail/utils'
+import { formatModelSummary } from '@/components/api-service-detail/utils'
 import { getApiMerchantDisplayName } from '@/lib/apiServicePresentation'
+import { getApiServicePricePresentation } from '@/lib/apiServicePricingPresentation'
 import { getCurrentPayablePrice, getRemainingSeats } from '@/lib/pricing'
 import { getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
 import EmptyState from '@/components/market/EmptyState.vue'
@@ -33,6 +34,7 @@ const openMarketRecord = (event: MouseEvent | KeyboardEvent, to: string) => {
 
 const productIconSrc = (product: string) => getProductIconSrc(product, props.categoryIconByCode)
 const apiServiceIconSrc = (service: ApiService) => getApiServiceProductIconSrc(service, props.categoryIconByCode)
+const apiServicePrice = (service: ApiService) => getApiServicePricePresentation(service)
 </script>
 
 <template>
@@ -100,7 +102,7 @@ const apiServiceIconSrc = (service: ApiService) => getApiServiceProductIconSrc(s
               <span class="home-market-snapshot-title-line"><strong>{{ item.title }}</strong><span class="home-market-snapshot-badge">可购买</span></span>
               <span class="home-market-snapshot-meta"><span>{{ getApiMerchantDisplayName(item) }}</span><span>{{ formatModelSummary(item.models) }}</span><span>{{ item.defaultMultiplier.toFixed(2) }}x 倍率</span></span>
             </span>
-            <span class="home-market-snapshot-aside"><strong>{{ formatCnyPerUsdQuota(item) }}</strong><small>¥{{ item.minimumPurchaseCny }} 起购</small></span>
+            <span class="home-market-snapshot-aside"><strong>{{ apiServicePrice(item).value }}</strong><small>{{ apiServicePrice(item).secondary }}</small></span>
           </div>
         </div>
       </section>

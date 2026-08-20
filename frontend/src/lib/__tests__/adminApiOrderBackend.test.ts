@@ -10,7 +10,9 @@ describe('管理员 API 订单适配', () => {
       apiPurchaseIntentId: 'intent-1',
       apiServiceId: 'service-1',
       buyerUserId: 'buyer-user-id',
+      buyerUsername: 'lin_buyer',
       sellerUserId: 'seller-user-id',
+      sellerUsername: 'api_merchant',
       status: 'delivery_submitted',
       disputeStatus: 'awaiting_fulfillment',
       disputeCaseId: 'dispute-1',
@@ -51,6 +53,7 @@ describe('管理员 API 订单适配', () => {
     expect(row.secondary).toContain('API-20260802-K7M4P9Q2XZ')
     expect(row.detailItems).toContainEqual({ label: '订单号', value: 'API-20260802-K7M4P9Q2XZ' })
     expect(row.secondary).toContain('订单金额 ¥10.00')
+    expect(row.owner).toBe('买家 @lin_buyer / 商户 @api_merchant')
     expect(row.detailItems).toContainEqual({ label: '购买额度', value: '12.500000 美元额度' })
     expect(row.detailItems).toContainEqual({ label: '商业结果', value: '商业结果待确认' })
     expect(row.detailItems).toContainEqual({ label: '历史纠纷', value: '有历史案件' })
@@ -67,7 +70,9 @@ describe('管理员 API 订单适配', () => {
       apiPurchaseIntentId: 'intent-2',
       apiServiceId: 'service-2',
       buyerUserId: 'buyer-user-id',
+      buyerUsername: 'lin_buyer',
       sellerUserId: 'seller-user-id',
+      sellerUsername: 'api_merchant',
       status: 'completed',
       disputeStatus: 'none',
       latestDisputeCaseId: 'dispute-closed-1',
@@ -99,12 +104,42 @@ describe('管理员 API 订单适配', () => {
     const detail = mapBackendAdminAPIOrderDetail(order)
 
     expect(detail.buyerUserId).toBe('buyer-user-id')
+    expect(detail.buyerUsername).toBe('lin_buyer')
     expect(detail.sellerUserId).toBe('seller-user-id')
+    expect(detail.sellerUsername).toBe('api_merchant')
     expect(detail.completionSource).toBe('auto_completed')
     expect(detail.latestDisputeCaseId).toBe('dispute-closed-1')
     expect(detail.hasDisputeHistory).toBe(true)
     expect(detail.commercialOutcome).toBe('normal_fulfillment')
     expect(JSON.stringify(detail)).not.toContain('must-not-leak')
     expect(detail).not.toHaveProperty('deliveryCredential')
+  })
+
+  it('falls back to shortened participant IDs when usernames are unavailable', () => {
+    const order = {
+      id: 'order-fallback',
+      orderNo: 'API-20260802-K7M4P9Q2XZ',
+      purchaseKind: 'api_service',
+      apiPurchaseIntentId: 'intent-fallback',
+      apiServiceId: 'service-fallback',
+      buyerUserId: 'buyer-12345678',
+      sellerUserId: 'seller-12345678',
+      status: 'pending_payment',
+      hasDisputeHistory: false,
+      serviceTitleSnapshot: 'Fallback API',
+      amount: '10.00',
+      currency: 'CNY',
+      selectedPaymentMethod: 'wechat',
+      paymentWindowMinutesSnapshot: 10,
+      paymentExpiresAt: '2026-08-20T01:00:00Z',
+      merchantConfirmOverdue: false,
+      deliveryOverdue: false,
+      commercialOutcome: 'pending',
+      version: 1,
+      createdAt: '2026-08-20T00:00:00Z',
+      updatedAt: '2026-08-20T00:00:00Z',
+    } satisfies BackendAPIOrder
+
+    expect(mapBackendAdminAPIOrder(order).owner).toBe('买家 buyer-12 / 商户 seller-1')
   })
 })

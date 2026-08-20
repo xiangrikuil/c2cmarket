@@ -1,6 +1,9 @@
 import type { ApiService } from '@/lib/api'
 import { formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
+import { apiServiceCnyPerUsdAllowance } from '@/lib/apiServicePricingPresentation'
 import { divideDecimal, formatDecimal, type DecimalInput } from '@/lib/decimal'
+
+export { apiServiceCnyPerUsdAllowance, formatCnyPerUsdQuota } from '@/lib/apiServicePricingPresentation'
 
 export function formatMultiplier(value: number) {
   return `${value.toFixed(2)}x`
@@ -29,12 +32,6 @@ export function formatCredit(value: DecimalInput) {
   return `$${formatDecimal(value, 2, 6)} 美元额度`
 }
 
-export function apiServiceCnyPerUsdAllowance(service: Pick<ApiService, 'creditPerCny' | 'cnyPerUsdAllowance'>) {
-  if (service.cnyPerUsdAllowance) return service.cnyPerUsdAllowance
-  if (service.creditPerCny <= 0) return ''
-  return divideDecimal('1', String(service.creditPerCny), 4)
-}
-
 export function apiServiceAvailableUsdAllowance(service: Pick<ApiService, 'balance' | 'availableUsdAllowance'>) {
   return service.availableUsdAllowance || String(service.balance)
 }
@@ -46,12 +43,6 @@ export function apiServiceMaxUsdAllowancePerOrder(service: Pick<ApiService, 'bal
 export function estimateUsdAllowance(amountCny: DecimalInput, service: Pick<ApiService, 'creditPerCny' | 'cnyPerUsdAllowance'>) {
   const rate = apiServiceCnyPerUsdAllowance(service)
   return rate ? divideDecimal(amountCny, rate, 6) : '0.000000'
-}
-
-export function formatCnyPerUsdQuota(service: Pick<ApiService, 'creditPerCny' | 'cnyPerUsdAllowance'>) {
-  const rate = apiServiceCnyPerUsdAllowance(service)
-  if (!rate) return '—'
-  return `¥${formatDecimal(rate, 2, 4)} / $1`
 }
 
 export function formatCny(value: number) {

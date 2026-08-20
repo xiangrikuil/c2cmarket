@@ -60,6 +60,7 @@ import type {
   ApiServiceSalesSummary as BackendApiServiceSalesSummary,
   CreateApiServicePromotionRequest,
   PublicApiPackageFilterOptions,
+  PublicApiMarketAvailability,
   PublicApiService,
   PublicApiQuotaOffer as GeneratedPublicApiQuotaOffer,
   PublicApiServicePromotionList,
@@ -76,6 +77,7 @@ import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import { collectCursorPages, normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
+import { maximumPurchaseCnyForInventory } from '@/lib/apiServicePricingPresentation'
 
 type ListResponse<T> = { items: T[], nextCursor?: string | null }
 
@@ -218,7 +220,9 @@ export type BackendAPIPurchaseIntent = {
   id: string
   apiServiceId: string
   buyerUserId?: string
+  buyerUsername?: string
   ownerUserId?: string
+  ownerUsername?: string
   buyerContactMethodId?: string
   status: ApiPurchaseIntent['status']
   requestedCnyAmount: string
@@ -270,7 +274,9 @@ export type BackendAPIOrder = {
   apiPurchaseIntentId: string
   apiServiceId: string
   buyerUserId?: string
+  buyerUsername?: string
   sellerUserId?: string
+  sellerUsername?: string
   buyerReputation?: ReputationSummary | null
   sellerReputation?: ReputationSummary | null
   status: string
@@ -635,8 +641,10 @@ function modelPriceRows(models: BackendServiceModel[]): ModelPriceRow[] {
 }
 
 export function mapBackendAPIService(service: BackendAPIService): ApiService {
-  const cnyPerUsd = numberFromDecimal(service.declaredCnyPerUsdAllowance, 1)
-  const creditPerCny = cnyPerUsd > 0 ? Number((1 / cnyPerUsd).toFixed(4)) : 1
+  const mappedBillingMode = billingMode(service.billingMode)
+  const fixedPackage = mappedBillingMode === 'fixed_package'
+  const cnyPerUsd = fixedPackage ? 0 : numberFromDecimal(service.declaredCnyPerUsdAllowance, 1)
+  const creditPerCny = cnyPerUsd > 0 ? Number((1 / cnyPerUsd).toFixed(4)) : 0
   const modes = deliveryModes(service.accessModes)
   const state = serviceState(service)
   const isStoreAlias = service.merchantIdentityMode === 'store_alias'
@@ -646,6 +654,10 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
   const publiclyOrderable = Boolean(service.isOrderable)
   const declaredTtftBand = apiTTFTBand(service.declaredTtftBand)
   const sellerReputation = mapBackendReputationSummary(service.sellerReputation)
+  const availableUsdAllowance = service.availableUsdAllowance || service.declaredMaxUsdAllowancePerIntent || '0'
+  const maximumPurchaseCny = fixedPackage
+    ? numberFromDecimal(service.maximumIntentCny, 999999)
+    : maximumPurchaseCnyForInventory(availableUsdAllowance, service.declaredCnyPerUsdAllowance || '1')
   return {
     id: service.id,
     version: service.version,
@@ -671,14 +683,14 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     rate: `${numberFromDecimal(service.models[0]?.merchantMultiplier, 1).toFixed(2)}x`,
     defaultMultiplier: numberFromDecimal(service.models[0]?.merchantMultiplier, 1),
     creditPerCny,
-    cnyPerUsdAllowance: service.declaredCnyPerUsdAllowance || '1.0000',
-    availableUsdAllowance: service.availableUsdAllowance || service.declaredMaxUsdAllowancePerIntent || '0',
+    cnyPerUsdAllowance: fixedPackage ? undefined : service.declaredCnyPerUsdAllowance || '1.0000',
+    availableUsdAllowance,
     maxUsdAllowancePerOrder: service.declaredMaxUsdAllowancePerIntent || service.availableUsdAllowance || '0',
     minimumPurchaseCny: numberFromDecimal(service.minimumIntentCny, 1),
-    maxBuy: numberFromDecimal(service.maximumIntentCny, 999999),
+    maxBuy: maximumPurchaseCny,
     balance: numberFromDecimal(service.declaredMaxUsdAllowancePerIntent, 0),
     delivery: distributionLabel(service.distributionSystem),
-    billingMode: billingMode(service.billingMode),
+    billingMode: mappedBillingMode,
     deliveryModes: modes,
     usageVisibility: usageVisibility(service.usageVisibility),
     panelBaseUrl: null,
@@ -1090,6 +1102,10 @@ export async function backendAPIServices(filters: ApiServiceFilters = {}) {
   return collectCursorPages(page => backendAPIServicesPage(filters, page))
 }
 
+export async function backendPublicAPIMarketAvailability(): Promise<PublicApiMarketAvailability> {
+  return backendRequest<PublicApiMarketAvailability>('/api/v1/api-market/availability')
+}
+
 export async function backendPublicAPIPromotions(): Promise<ApiServicePromotion[]> {
   const response = await backendRequest<PublicApiServicePromotionList>('/api/v1/api-service-promotions?placement=api_market_top')
   return response.items.map(item => ({
@@ -1237,6 +1253,17 @@ function contactToChannel(contact?: ContactDisclosure | null) {
 
 type ApiIntentViewerRole = 'buyer' | 'merchant'
 
+function participantIdentity(username?: string, userId?: string, fallback = '未知') {
+  const normalizedUsername = username?.trim()
+  if (normalizedUsername) return `@${normalizedUsername}`
+  const normalizedUserId = userId?.trim()
+  return normalizedUserId ? normalizedUserId.slice(0, 8) : fallback
+}
+
+function participantLabel(role: '买家' | '商户', username?: string, userId?: string) {
+  return `${role} ${participantIdentity(username, userId)}`
+}
+
 function parsePackageSnapshot(value?: string): ApiServicePackageSnapshot | undefined {
   if (!value) return undefined
   try {
@@ -1268,14 +1295,15 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
   const amount = numberFromDecimal(intent.requestedCnyAmount)
   const credit = numberFromDecimal(intent.requestedUsdAllowance)
   const mode = deliveryMode(intent.selectedAccessMode)
-  const merchantName = 'API 商户'
+  const buyerName = participantIdentity(intent.buyerUsername, intent.buyerUserId, '买家')
+  const merchantName = participantIdentity(intent.ownerUsername, intent.ownerUserId, 'API 商户')
   const pricingSnapshot = projectAPIIntentPricingSnapshot(intent.pricingSnapshot)
   return {
     id: intent.id,
     serviceId: intent.apiServiceId,
     version: intent.version,
     buyerId: intent.buyerUserId ?? 'buyer',
-    buyer: intent.buyerUserId ? `买家 ${intent.buyerUserId.slice(0, 8)}` : '买家',
+    buyer: buyerName,
     merchantId: intent.ownerUserId ?? 'merchant',
     merchant: merchantName,
     status: intent.status,
@@ -1293,7 +1321,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
       serviceTitle: intent.serviceTitleSnapshot,
       merchantId: intent.ownerUserId ?? 'merchant',
       merchant: merchantName,
-      merchantUsername: intent.ownerUserId ?? 'merchant',
+      merchantUsername: intent.ownerUsername ?? intent.ownerUserId ?? 'merchant',
       merchantIdentityMode: 'store_alias',
       merchantDisplayName: merchantName,
       trustLevel: null,
@@ -1388,7 +1416,7 @@ export function mapBackendAdminAPIIntent(item: BackendAPIPurchaseIntent): AdminR
     id: item.id,
     primary: `${item.serviceTitleSnapshot} 购买意向`,
     secondary: `${item.id} · 意向金额 ¥${numberFromDecimal(item.requestedCnyAmount)}`,
-    owner: `买家 ${item.buyerUserId?.slice(0, 8) ?? '未知'} / 商户 ${item.ownerUserId?.slice(0, 8) ?? '未知'}`,
+    owner: `${participantLabel('买家', item.buyerUsername, item.buyerUserId)} / ${participantLabel('商户', item.ownerUsername, item.ownerUserId)}`,
     status: adminIntentStatusLabel(item.status),
     risk: item.ownerCloseReason || item.buyerCancelReason || `更新于 ${item.updatedAt}`,
     targetType: 'api-intent',
@@ -1416,7 +1444,7 @@ function adminOrderStatusLabel(value: string) {
 		payment_submitted: '待确认收款',
 		payment_issue: '等待买家补充',
 		paid_confirmed: '待商户交付',
-		delivery_submitted: '买家核验期',
+		delivery_submitted: '历史交付待完成',
 		completed: '已完成',
 		cancelled: '已取消',
 	}
@@ -1461,9 +1489,9 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 		id: order.id,
 		primary: `${order.serviceTitleSnapshot} API 订单`,
 		secondary: `${order.orderNo} · 订单金额 ¥${order.amount}`,
-		owner: `买家 ${order.buyerUserId?.slice(0, 8) ?? '未知'} / 商户 ${order.sellerUserId?.slice(0, 8) ?? '未知'}`,
+		owner: `${participantLabel('买家', order.buyerUsername, order.buyerUserId)} / ${participantLabel('商户', order.sellerUsername, order.sellerUserId)}`,
 		status: order.status === 'completed'
-			? order.completionSource === 'auto_completed' ? '系统自动完成' : '买家主动确认'
+			? order.completionSource === 'seller_delivered' ? '商家交付完成' : order.completionSource === 'auto_completed' ? '系统自动完成' : order.completionSource === 'remedy_confirmed' ? '补救履行完成' : '买家主动确认'
 			: adminOrderStatusLabel(order.status),
 		risk: order.disputeStatus || order.cancelReason || `更新于 ${order.updatedAt}`,
 		targetType: 'api-order',
@@ -1481,14 +1509,14 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 				{ label: '商业结果', value: apiOrderCommercialOutcomeLabels[order.commercialOutcome] },
 				{ label: '历史纠纷', value: order.hasDisputeHistory ? '有历史案件' : '无' },
 				{ label: '额度有效期', value: order.quotaValidityIssueAt ? '首次交付时剩余不足 60 分钟' : '未记录异常' },
-			{ label: '完成方式', value: order.completionSource === 'auto_completed' ? '系统自动完成' : order.completionSource === 'buyer_confirmed' ? '买家主动确认' : '尚未完成' },
+			{ label: '完成方式', value: order.completionSource === 'seller_delivered' ? '商家提交交付' : order.completionSource === 'auto_completed' ? '系统自动完成' : order.completionSource === 'remedy_confirmed' ? '补救履行确认' : order.completionSource === 'buyer_confirmed' ? '买家主动确认' : '尚未完成' },
 			{ label: '最近更新', value: order.updatedAt },
 		],
 	}
 }
 
 function apiOrderCompletionSource(value?: string): ApiOrderCompletionSource | undefined {
-  if (value === 'buyer_confirmed' || value === 'auto_completed') return value
+  if (value === 'buyer_confirmed' || value === 'auto_completed' || value === 'seller_delivered' || value === 'remedy_confirmed') return value
   return undefined
 }
 
@@ -1506,7 +1534,9 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     apiPurchaseIntentId: order.apiPurchaseIntentId,
     apiServiceId: order.apiServiceId,
     buyerUserId: order.buyerUserId,
+    buyerUsername: order.buyerUsername ?? '',
     sellerUserId: order.sellerUserId,
+    sellerUsername: order.sellerUsername ?? '',
     status: apiOrderStatus(order.status),
 		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
 	    disputeCaseId: order.disputeCaseId,
@@ -1824,9 +1854,9 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     apiPurchaseIntentId: order.apiPurchaseIntentId,
     apiServiceId: order.apiServiceId,
     buyerId: order.buyerUserId ?? intent.buyerId,
-    buyer: intent.buyer,
+    buyer: order.buyerUsername ? participantIdentity(order.buyerUsername, order.buyerUserId) : intent.buyer,
     sellerId: order.sellerUserId ?? intent.merchantId,
-    seller: intent.snapshot.merchantDisplayName || intent.merchant,
+    seller: order.sellerUsername ? participantIdentity(order.sellerUsername, order.sellerUserId) : intent.snapshot.merchantDisplayName || intent.merchant,
     buyerReputation: mapBackendReputationSummary(order.buyerReputation),
     sellerReputation: mapBackendReputationSummary(order.sellerReputation),
     status: apiOrderStatus(order.status),
@@ -1998,14 +2028,6 @@ export async function backendReportLateAPIOrderPayment(id: string, note: string,
   return mapBackendAPIOrder(response, 'buyer')
 }
 
-export async function backendConfirmAPIOrderComplete(id: string, version: number) {
-  const response = await backendMutation<BackendAPIOrder>(`/api/v1/me/api-orders/${id}/confirm-complete`, {}, {
-    idempotencyPrefix: 'api-order-confirm-complete',
-    ifMatch: version,
-  })
-  return mapBackendAPIOrder(response, 'buyer')
-}
-
 export function apiOrderDisputePath(id: string) {
   return `/api/v1/me/api-orders/${encodeURIComponent(id)}/dispute`
 }
@@ -2128,6 +2150,9 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
   if (typeof payload.promptAuditEnabled !== 'boolean') throw new Error('Prompt audit selection required')
 
   const fixedPackage = billing === 'fixed_package'
+  const maximumIntentCny = fixedPackage
+    ? String(payload.maximumPurchaseCny ?? '')
+    : String(maximumPurchaseCnyForInventory(Number(payload.availableCreditUsd ?? 0), Number(payload.cnyPerUsdCredit ?? 0)))
   return {
     probeConnectionId: String(payload.probeConnectionId ?? ''),
     merchantProfileId: String(payload.merchantProfileId ?? ''),
@@ -2144,7 +2169,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
     quotaExpiresAt: fixedPackage ? '' : beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? '')),
     quotaUsagePolicy: toApiQuotaUsagePolicyInput(payload.quotaUsagePolicy),
     minimumIntentCny: String(payload.minimumPurchaseCny ?? '10'),
-    maximumIntentCny: String(payload.maximumPurchaseCny ?? '300'),
+    maximumIntentCny,
     usageVisibility: toBackendUsageVisibility(payload.usageVisibility),
     publicAccessNote: String(payload.distributionSystemNote ?? ''),
     merchantNote: String(payload.merchantNote ?? ''),

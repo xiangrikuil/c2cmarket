@@ -61,6 +61,7 @@ import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/l
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery, useSellerCommerceStatus } from '@/queries/useMarketQueries'
+import { apiMarketAvailabilityQueryKey } from '@/queries/useApiMarketAvailability'
 import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import type { OwnerAPIProbeConnection } from '@/types/apiHealth'
@@ -156,7 +157,7 @@ const form = reactive<ApiServicePublishForm>({
   quotaExpiresAt: defaultQuotaExpiresAtInput(),
   quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   minimumPurchaseCny: 10,
-  maximumPurchaseCny: 300,
+  maximumPurchaseCny: null,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
   declaredMaxConcurrency: 1,
@@ -615,6 +616,7 @@ const publishMutation = useMutation({
 
 async function invalidateApiServicePublishQueries() {
   await queryClient.invalidateQueries({ queryKey: ['api-services'] })
+  await queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey })
   await queryClient.invalidateQueries({ queryKey: ['api-market'] })
   await queryClient.invalidateQueries({ queryKey: ['home-market'] })
   await queryClient.invalidateQueries({ queryKey: ['admin-section'] })

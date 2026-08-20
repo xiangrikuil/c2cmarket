@@ -153,6 +153,7 @@ describe('个人中心待办聚合', () => {
       buyerApiOrders: [
         apiOrder('order-buyer-action', 'payment_issue', '2026-07-26 13:00'),
         apiOrder('order-buyer-wait', 'payment_submitted', '2026-07-26 14:00'),
+		apiOrder('order-delivery-legacy', 'delivery_submitted', '2026-07-26 14:30'),
       ],
       merchantApiOrders: [
         apiOrder('order-merchant-action', 'paid_confirmed', '2026-07-26 15:00'),
@@ -212,7 +213,10 @@ describe('个人中心发布内容投影', () => {
       apiServices: [{
         id: 'api-1',
         title: 'GPT API 美元额度',
+        billingMode: 'metered_credit',
         cnyPerUsdAllowance: '0.8000',
+        creditPerCny: 1.25,
+        minimumPurchaseCny: 10,
         availableUsdAllowance: '500',
         delivery: 'Sub2API',
         state: 'paused',
@@ -229,6 +233,46 @@ describe('个人中心发布内容投影', () => {
   it('无效时间排到有效时间之后', () => {
     expect(dashboardTimestamp('not-a-time')).toBe(0)
     expect(dashboardTimestamp('2026-07-26 10:00')).toBeGreaterThan(0)
+  })
+
+  it('短期流量包展示真实套餐价格和库存而不是美元单价', () => {
+    const [item] = buildPublishedContent({
+      carpools: [],
+      apiServices: [{
+        id: 'api-package-1',
+        title: 'GPT 短期流量包',
+        billingMode: 'fixed_package',
+        cnyPerUsdAllowance: '1.0000',
+        packages: [
+          {
+            id: 'package-1',
+            name: '3 天套餐',
+            priceCny: 9.9,
+            panelAllowance: 5,
+            durationDays: 3,
+            stockTotal: 10,
+            stockAvailable: 4,
+            description: '测试套餐',
+            enabled: true,
+            sortOrder: 0,
+            models: [],
+            quotaUsagePolicy: {
+              fiveHour: { mode: 'unlimited', amountUsd: null },
+              daily: { mode: 'unlimited', amountUsd: null },
+              scope: 'per_buyer_credential',
+              dailyReset: 'utc_plus_8_calendar_day',
+            },
+          },
+        ],
+        delivery: 'Sub2API',
+        state: 'online',
+        online: true,
+        lastOnlineConfirmedAt: '2026-08-20T10:00:00+08:00',
+      } as ApiService],
+    })
+
+    expect(item?.summary).toBe('¥9.9 · 1 款套餐 · 剩余 4 份 · Sub2API')
+    expect(item?.summary).not.toContain('/ $1')
   })
 })
 
