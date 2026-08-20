@@ -62,21 +62,21 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 	contactService := contact.NewService(store, nowFn)
 	ownerContact, appErr := contactService.CreateMethod(ctx, contact.ContactMethodInput{
 		UserID: userID, Type: "wechat", Label: "拼车微信", Value: "audit-owner-contact",
-		UsageScopes: []string{contact.UsageScopeCarpoolOwner}, Enabled: true, RequestID: "owner-contact-create",
+		Enabled: true, RequestID: "owner-contact-create",
 	})
 	if appErr != nil {
 		t.Fatalf("create owner contact: %v", appErr)
 	}
 	buyerOnlyContact, appErr := contactService.CreateMethod(ctx, contact.ContactMethodInput{
 		UserID: userID, Type: "telegram", Label: "买家联系", Value: "audit-buyer-contact",
-		UsageScopes: []string{contact.UsageScopeBuyer}, Enabled: true, RequestID: "buyer-contact-create",
+		Enabled: true, RequestID: "buyer-contact-create",
 	})
 	if appErr != nil {
 		t.Fatalf("create buyer contact: %v", appErr)
 	}
 	applicationBuyerContact, appErr := contactService.CreateMethod(ctx, contact.ContactMethodInput{
 		UserID: buyerUserID, Type: "wechat", Label: "申请人微信", Value: "audit-application-buyer-contact",
-		UsageScopes: []string{contact.UsageScopeBuyer}, Enabled: true, RequestID: "application-buyer-contact-create",
+		Enabled: true, RequestID: "application-buyer-contact-create",
 	})
 	if appErr != nil {
 		t.Fatalf("create application buyer contact: %v", appErr)
@@ -315,8 +315,8 @@ func TestPostgresCarpoolListingAuditAndIdempotencyAreAtomic(t *testing.T) {
 
 	invalidInput := validCarpoolListingAuditInput(buyerOnlyContact.ID, "invalid-scope-request")
 	_, _, _, appErr = service.CreateListingWithIdempotency(ctx, owner, "carpool-create-invalid", "invalid-key", "invalid-hash", invalidInput, completionBuilder)
-	if appErr == nil || appErr.Code != domain.CodeContactMethodRequired || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "wechat_required" {
-		t.Fatalf("non-WeChat contact returned an unexpected listing error: %#v", appErr)
+	if appErr == nil || appErr.Code != domain.CodeContactMethodRequired || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "contact_required" {
+		t.Fatalf("unsupported contact returned an unexpected listing error: %#v", appErr)
 	}
 	var invalidListings, invalidEvents int
 	if err := store.pool.QueryRow(ctx, `SELECT count(*)::int FROM carpool_listings WHERE owner_user_id = $1 AND id <> $2`, userID, listing.ID).Scan(&invalidListings); err != nil {

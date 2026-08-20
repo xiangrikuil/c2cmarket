@@ -20,22 +20,22 @@ function sourceBetween(source: string, startMarker: string, endMarker: string) {
 }
 
 describe('API 纠纷发布与身份联系方式约束', () => {
-  it('API 购买与拼车都只使用账号唯一的微信联系方式', () => {
+  it('API 购买与拼车显式提交当前交易选择的联系方式', () => {
     expect(sourceBetween(apiMarketBackendSource, 'export async function backendCreateAPIQuotaOrder', 'export async function backendOwnerAPIQuotaBatches'))
-      .toContain('backendBuyerContactMethod()')
+      .toContain('buyerContactMethodId: payload.buyerContactMethodId')
     expect(sourceBetween(apiMarketBackendSource, 'export async function backendCreateAPIPurchaseIntent', 'export async function backendCreateAPIOrderFromIntent'))
-      .toContain('backendBuyerContactMethod()')
+      .toContain('buyerContactMethodId: payload.buyerContactMethodId')
     expect(sourceBetween(carpoolBackendSource, 'export async function backendSubmitCarpool', 'export async function backendUpdateOwnerCarpool'))
-      .toContain('backendEnabledWechatContactMethod()')
+      .toContain('payload.ownerContactMethodId')
     expect(sourceBetween(carpoolBackendSource, 'export async function backendCreateCarpoolApplication', 'async function ownerApplication'))
-      .toContain('backendEnabledWechatContactMethod()')
-    expect(apiMarketBackendSource).toContain("methods.find(method => method.enabled && method.type === 'wechat')")
-    expect(apiMarketBackendSource).toContain('请先在个人中心配置微信联系方式。')
+      .toContain('buyerContactMethodId: payload.buyerContactMethodId')
+    expect(apiMarketBackendSource).not.toContain('backendBuyerContactMethod')
+    expect(carpoolBackendSource).not.toContain('backendEnabledWechatContactMethod')
     const mockCarpoolContacts = sourceBetween(apiFacadeSource, 'export async function getCarpoolApplicationContacts', 'export async function createContactReport')
     expect(mockCarpoolContacts).not.toContain("type: 'linuxdo'")
     expect(mockCarpoolContacts).not.toContain('application.ownerUsername')
-    expect(apiFacadeSource).toContain("buyerContacts: [mockWechatContactSnapshotItem(buyerContact, 'buyer')]")
-    expect(apiFacadeSource).toContain("contactSnapshot.sellerContacts = [mockWechatContactSnapshotItem(ownerContact, 'carpool_owner')]")
+    expect(apiFacadeSource).toContain("buyerContacts: [mockContactSnapshotItem(buyerContact, 'buyer')]")
+    expect(apiFacadeSource).toContain("contactSnapshot.sellerContacts = [mockContactSnapshotItem(ownerContact, 'carpool_owner')]")
   })
 
   it('两个发布入口都使用后端经营等级决定是否可以开启接单', () => {
@@ -61,10 +61,11 @@ describe('API 纠纷发布与身份联系方式约束', () => {
   it('活动纠纷会隐藏订单普通交易动作和付款资料读取', () => {
     expect(orderDetailSource).toContain('const ordinaryActionsPaused = computed')
     expect(orderDetailSource).toContain("order.value.status === 'pending_payment' && !ordinaryActionsPaused.value")
-    for (const action of ['canSubmitPayment', 'canResubmitPayment', 'canConfirmPayment', 'canReportPaymentIssue', 'canSubmitDelivery', 'canConfirmComplete', 'canCancelOrder']) {
+    for (const action of ['canSubmitPayment', 'canResubmitPayment', 'canConfirmPayment', 'canReportPaymentIssue', 'canSubmitDelivery', 'canCancelOrder']) {
       expect(orderDetailSource).toContain(`const ${action} = computed(() => !ordinaryActionsPaused.value`)
     }
-    expect(orderDetailSource).toContain('付款、取消、核款、交付、确认完成及自动超时流程均已暂停')
+    expect(orderDetailSource).not.toContain('canConfirmComplete')
+    expect(orderDetailSource).toContain('付款、取消、核款、交付及自动超时流程均已暂停')
   })
 
   it('车源更新和联系方式配置为每次命令生成幂等键', () => {

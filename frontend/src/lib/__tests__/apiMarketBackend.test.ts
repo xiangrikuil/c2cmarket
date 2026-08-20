@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import type { Carpool, UserContactMethod } from '../api'
 import { apiQuotaOffers } from '../../data/mock'
+import { isTransactionContactEligible, transactionContactById } from '../transactionContacts'
 
 type ApiModule = typeof import('../api')
 type ApiMarketBackendModule = typeof import('../apiMarketBackend')
@@ -42,7 +43,6 @@ function buyerContact(overrides: Partial<UserContactMethod> = {}): UserContactMe
     label: '微信',
     maskedValue: 'student_***',
     displayValue: 'student-buyer',
-    usageScopes: ['buyer', 'dispute'],
     isDefault: false,
     enabled: true,
     verified: false,
@@ -71,46 +71,29 @@ afterEach(() => {
   vi.resetModules()
 })
 
-test('selects the enabled WeChat contact and ignores other contact types', async () => {
-  const { apiMarketBackend } = await loadAPIMarketModules()
+test('selects an enabled WeChat contact by its explicit ID', async () => {
   const linuxdo = buyerContact({ id: 'contact-linuxdo', type: 'linuxdo', label: 'linux.do', verified: true })
   const wechat = buyerContact({ isDefault: true })
 
-  assert.equal(apiMarketBackend.selectBuyerContactMethod([linuxdo, wechat]), wechat)
+  assert.equal(transactionContactById([linuxdo, wechat], wechat.id), wechat)
 })
 
-test('rejects a verified email contact for API purchases', async () => {
-  const { apiMarketBackend } = await loadAPIMarketModules()
+test('accepts a verified email contact for API purchases', () => {
   const email = buyerContact({ id: 'contact-email', type: 'email', label: '邮箱', verified: true })
 
-  assert.throws(
-    () => apiMarketBackend.selectBuyerContactMethod([email]),
-    /个人中心配置微信联系方式/,
-  )
+  assert.equal(transactionContactById([email], email.id), email)
 })
 
-test('rejects linux.do even when it is verified and eligible for buyer use', async () => {
-  const { apiMarketBackend } = await loadAPIMarketModules()
+test('rejects linux.do even when it is verified', () => {
   const email = buyerContact({ id: 'contact-email', type: 'email', label: '邮箱', verified: false, isDefault: true })
   const linuxdo = buyerContact({ id: 'contact-linuxdo', type: 'linuxdo', label: 'linux.do', verified: true })
 
-  assert.throws(
-    () => apiMarketBackend.selectBuyerContactMethod([email, linuxdo]),
-    /个人中心配置微信联系方式/,
-  )
+  assert.equal(transactionContactById([email, linuxdo], linuxdo.id), null)
 })
 
-test('explains how to configure a contact when no buyer contact is eligible', async () => {
-  const { apiMarketBackend } = await loadAPIMarketModules()
-
-  assert.throws(
-    () => apiMarketBackend.selectBuyerContactMethod([
-      buyerContact({ enabled: false }),
-      buyerContact({ id: 'contact-seller', type: 'email', usageScopes: ['api_merchant'] }),
-      buyerContact({ id: 'contact-email', type: 'email', verified: false }),
-    ]),
-    /个人中心配置微信联系方式/,
-  )
+test('rejects disabled contacts and unverified email contacts', () => {
+  assert.equal(isTransactionContactEligible(buyerContact({ enabled: false })), false)
+  assert.equal(isTransactionContactEligible(buyerContact({ id: 'contact-email', type: 'email', verified: false })), false)
 })
 
 function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
@@ -184,6 +167,18 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.declaredMaxConcurrency, 12)
   assert.equal(service.merchantRefundCommitment, true)
   assert.equal(service.merchantRefundPolicyVersion, 'api-merchant-refund-v1')
+  assert.equal(service.maxBuy, 400)
+})
+
+test('derives the maximum purchase amount from current seller inventory', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const service = apiMarketBackend.mapBackendAPIService(backendPublicAPIService({
+    availableUsdAllowance: '124.999000',
+    declaredCnyPerUsdAllowance: '0.8000',
+    maximumIntentCny: '300.00',
+  }))
+
+  assert.equal(service.maxBuy, 99.99)
 })
 
 test('preserves sold-out state for non-public service projections', async () => {
@@ -197,6 +192,8 @@ test('preserves sold-out state for non-public service projections', async () => 
   assert.equal(service.publiclyOrderable, false)
   assert.deepEqual(service.orderableReasons, ['package_sold_out'])
   assert.equal(service.warning, '短期流量包已售罄')
+  assert.equal(service.cnyPerUsdAllowance, undefined)
+  assert.equal(service.creditPerCny, 0)
 })
 
 test('keeps historical manual billing rows readable', async () => {

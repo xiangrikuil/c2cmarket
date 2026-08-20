@@ -3,7 +3,6 @@ package contact
 import (
 	"context"
 	"net/http"
-	"slices"
 	"testing"
 	"time"
 
@@ -33,22 +32,13 @@ func TestReadSessionChecksRoleBeforeWritingAccessLog(t *testing.T) {
 	now := time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC)
 	service := NewService(nil, func() time.Time { return now })
 	buyerMethod, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID:  "buyer-1",
-		Type:    "telegram",
-		Label:   "买家 Telegram",
-		Value:   "@buyer",
-		Enabled: true,
+		UserID: "buyer-1", Type: MethodTypeWechat, Label: "买家微信", Value: "buyer-wechat", Enabled: true,
 	})
 	if appErr != nil {
 		t.Fatalf("create buyer contact: %v", appErr)
 	}
 	sellerMethod, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID:      "seller-1",
-		Type:        "telegram",
-		Label:       "卖家 Telegram",
-		Value:       "@seller",
-		UsageScopes: []string{UsageScopeCarpoolOwner},
-		Enabled:     true,
+		UserID: "seller-1", Type: MethodTypeWechat, Label: "卖家微信", Value: "seller-wechat", Enabled: true,
 	})
 	if appErr != nil {
 		t.Fatalf("create seller contact: %v", appErr)
@@ -100,7 +90,7 @@ func TestEnsureLinuxDoMethodReusesIdentityManagedMapping(t *testing.T) {
 	now := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)
 	service := NewService(nil, func() time.Time { return now })
 	if _, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "user-1", Type: "wechat", Label: "微信", Value: "wechat-user-1", Enabled: true, IsDefault: true,
+		UserID: "user-1", Type: MethodTypeWechat, Label: "微信", Value: "wechat-user-1", Enabled: true, IsDefault: true,
 	}); appErr != nil {
 		t.Fatalf("create manual contact: %v", appErr)
 	}
@@ -116,8 +106,8 @@ func TestEnsureLinuxDoMethodReusesIdentityManagedMapping(t *testing.T) {
 	if first.ID != second.ID || second.DisplayValue != "@renamed-user" || second.Type != "linuxdo" {
 		t.Fatalf("identity mapping was not reused: first=%+v second=%+v", first, second)
 	}
-	if !slices.Equal(second.UsageScopes, AllUsageScopes()) {
-		t.Fatalf("linux.do mapping scopes = %v, want %v", second.UsageScopes, AllUsageScopes())
+	if _, _, ok := service.TransactionVersionForOwner(second.ID, "user-1"); ok {
+		t.Fatal("linux.do identity mapping must not be transaction eligible")
 	}
 
 	methods, appErr := service.ListMethods(context.Background(), "user-1")
@@ -135,142 +125,71 @@ func TestEnsureLinuxDoMethodReusesIdentityManagedMapping(t *testing.T) {
 	}
 }
 
-func TestContactUsageScopesAreCanonicalAndDurableInMemory(t *testing.T) {
+func TestTransactionContactEligibilityInMemory(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(nil, func() time.Time { return time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC) })
-	created, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "user-scopes", Type: "email", Label: "邮箱", Value: "scope-user@example.com", Enabled: true,
-		UsageScopes: []string{UsageScopeDispute, UsageScopeBuyer, UsageScopeDispute},
+	email, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "user-contact", Type: MethodTypeEmail, Label: "邮箱", Value: "user@example.com", Enabled: true,
 	})
 	if appErr != nil {
-		t.Fatalf("create scoped contact: %v", appErr)
+		t.Fatalf("create email contact: %v", appErr)
 	}
-	if want := []string{UsageScopeBuyer, UsageScopeDispute}; !slices.Equal(created.UsageScopes, want) {
-		t.Fatalf("created scopes = %v, want %v", created.UsageScopes, want)
+	if _, _, ok := service.TransactionVersionForOwner(email.ID, "user-contact"); ok {
+		t.Fatal("unverified email must not be transaction eligible")
 	}
-
-	updated, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
-		UserID: "user-scopes", MethodID: created.ID, Type: "email", Label: "工作邮箱", Value: "scope-user-2@example.com", Enabled: true,
-		UsageScopes: []string{UsageScopeBuyer, UsageScopeCarpoolOwner, UsageScopeAPIMerchant},
+	verifiedAt := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)
+	email, appErr = service.UpdateMethod(context.Background(), UpdateContactMethodInput{
+		UserID: "user-contact", MethodID: email.ID, Type: MethodTypeEmail, Label: "邮箱", Value: "user@example.com", Enabled: true, VerifiedAt: &verifiedAt,
 	})
 	if appErr != nil {
-		t.Fatalf("update scoped contact: %v", appErr)
+		t.Fatalf("mark account email verified: %v", appErr)
 	}
-	wantUpdated := []string{UsageScopeCarpoolOwner, UsageScopeAPIMerchant, UsageScopeBuyer}
-	if !slices.Equal(updated.UsageScopes, wantUpdated) {
-		t.Fatalf("updated scopes = %v, want %v", updated.UsageScopes, wantUpdated)
+	if _, _, ok := service.TransactionVersionForOwner(email.ID, "user-contact"); !ok {
+		t.Fatal("verified email must be transaction eligible")
 	}
-	preserved, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
-		UserID: "user-scopes", MethodID: created.ID, Type: "email", Label: "工作邮箱", Value: "scope-user-3@example.com", Enabled: true,
-	})
-	if appErr != nil || !slices.Equal(preserved.UsageScopes, wantUpdated) {
-		t.Fatalf("omitted update scopes must preserve the stored value: method=%+v error=%v", preserved, appErr)
-	}
-
-	methods, appErr := service.ListMethods(context.Background(), "user-scopes")
-	if appErr != nil || len(methods) != 1 || !slices.Equal(methods[0].UsageScopes, wantUpdated) {
-		t.Fatalf("listed methods did not retain scopes: methods=%+v error=%v", methods, appErr)
-	}
-}
-
-func TestRequiredWechatUsesAllScopesAndCannotBeDisabledConvertedOrDeleted(t *testing.T) {
-	t.Parallel()
-
-	service := NewService(nil, func() time.Time { return time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC) })
-	created, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "required-wechat", Type: "wechat", Label: "微信", Value: "required-wechat-id", Enabled: true,
-		UsageScopes: []string{UsageScopeBuyer},
-	})
-	if appErr != nil || !slices.Equal(created.UsageScopes, AllUsageScopes()) {
-		t.Fatalf("required wechat create = %+v error=%v", created, appErr)
-	}
-
-	updated, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
-		UserID: "required-wechat", MethodID: created.ID, Type: "wechat", Label: "微信", Value: "required-wechat-updated", Enabled: true,
-		UsageScopes: []string{UsageScopeDispute},
-	})
-	if appErr != nil || updated.DisplayValue != "required-wechat-updated" || !slices.Equal(updated.UsageScopes, AllUsageScopes()) {
-		t.Fatalf("required wechat update = %+v error=%v", updated, appErr)
-	}
-
-	for _, input := range []UpdateContactMethodInput{
-		{UserID: "required-wechat", MethodID: created.ID, Type: "wechat", Label: "微信", Value: "required-wechat-updated", Enabled: false},
-		{UserID: "required-wechat", MethodID: created.ID, Type: "email", Label: "邮箱", Value: "converted@example.com", Enabled: true},
-	} {
-		if _, appErr := service.UpdateMethod(context.Background(), input); appErr == nil || appErr.Status != 409 || appErr.Code != domain.CodeInvalidStateTransition {
-			t.Fatalf("required wechat mutation must be rejected: input=%+v error=%#v", input, appErr)
-		}
-	}
-	if _, appErr := service.DeleteMethod(context.Background(), "required-wechat", created.ID); appErr == nil || appErr.Status != 409 || appErr.Code != domain.CodeInvalidStateTransition {
-		t.Fatalf("required wechat delete error = %#v", appErr)
-	}
-}
-
-func TestContactUsageScopesDefaultAndValidation(t *testing.T) {
-	t.Parallel()
-
-	service := NewService(nil, nil)
-	defaulted, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "default-user", Type: "email", Label: "邮箱", Value: "buyer@example.com", Enabled: true,
-	})
-	if appErr != nil {
-		t.Fatalf("create default-scoped contact: %v", appErr)
-	}
-	if !slices.Equal(defaulted.UsageScopes, DefaultUsageScopes()) {
-		t.Fatalf("default scopes = %v, want %v", defaulted.UsageScopes, DefaultUsageScopes())
-	}
-
-	tests := []struct {
-		name   string
-		scopes []string
-		code   string
-	}{
-		{name: "empty", scopes: []string{}, code: "required"},
-		{name: "unknown", scopes: []string{"seller"}, code: "unsupported"},
-		{name: "whitespace is not repaired", scopes: []string{" buyer"}, code: "unsupported"},
-	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			_, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-				UserID: "invalid-user-" + test.name, Type: "email", Label: "邮箱", Value: "invalid@example.com", Enabled: true, UsageScopes: test.scopes,
-			})
-			if appErr == nil || appErr.Status != 422 || appErr.Code != domain.CodeValidationFailed {
-				t.Fatalf("expected 422 validation error, got %#v", appErr)
-			}
-			if len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "usageScopes" || appErr.FieldErrors[0].Code != test.code {
-				t.Fatalf("unexpected field error: %#v", appErr.FieldErrors)
-			}
-		})
-	}
-}
-
-func TestWechatScopesAreAutomaticAndOnlyOneCanBeEnabledInMemory(t *testing.T) {
-	t.Parallel()
-
-	service := NewService(nil, nil)
-	created, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "wechat-user", Type: MethodTypeWechat, Label: "微信", Value: "wechat-user", Enabled: true,
-		UsageScopes: []string{UsageScopeBuyer},
+	wechat, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "wechat-contact", Type: MethodTypeWechat, Label: "微信", Value: "wechat-user", Enabled: true,
 	})
 	if appErr != nil {
 		t.Fatalf("create WeChat contact: %v", appErr)
 	}
-	if !slices.Equal(created.UsageScopes, AllUsageScopes()) {
-		t.Fatalf("WeChat scopes = %v, want %v", created.UsageScopes, AllUsageScopes())
+	if _, _, ok := service.TransactionVersionForOwner(wechat.ID, "wechat-contact"); !ok {
+		t.Fatal("enabled WeChat must be transaction eligible")
+	}
+}
+
+func TestOptionalWechatCanBeUpdatedDisabledDeletedAndOnlyOneEnabled(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(nil, func() time.Time { return time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC) })
+	created, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "optional-wechat", Type: MethodTypeWechat, Label: "微信", Value: "wechat-id", Enabled: true,
+	})
+	if appErr != nil {
+		t.Fatalf("create optional WeChat: %v", appErr)
 	}
 	if _, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
-		UserID: "wechat-user", Type: MethodTypeWechat, Label: "另一个微信", Value: "wechat-user-2", Enabled: true,
+		UserID: "optional-wechat", Type: MethodTypeWechat, Label: "另一个微信", Value: "wechat-2", Enabled: true,
 	}); appErr == nil || appErr.Status != http.StatusConflict || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != "duplicate" {
 		t.Fatalf("duplicate enabled WeChat error = %#v", appErr)
 	}
-
 	updated, appErr := service.UpdateMethod(context.Background(), UpdateContactMethodInput{
-		UserID: "wechat-user", MethodID: created.ID, Type: MethodTypeWechat, Label: "常用微信", Value: "wechat-user-new", Enabled: true,
-		UsageScopes: []string{UsageScopeDispute},
+		UserID: "optional-wechat", MethodID: created.ID, Type: MethodTypeWechat, Label: "常用微信", Value: "wechat-updated", Enabled: false,
 	})
-	if appErr != nil || !slices.Equal(updated.UsageScopes, AllUsageScopes()) {
-		t.Fatalf("updated WeChat scopes = %v error=%v", updated.UsageScopes, appErr)
+	if appErr != nil || updated.Enabled || updated.DisplayValue != "wechat-updated" {
+		t.Fatalf("disable optional WeChat = %+v error=%v", updated, appErr)
+	}
+	if _, _, ok := service.TransactionVersionForOwner(created.ID, "optional-wechat"); ok {
+		t.Fatal("disabled WeChat must not be transaction eligible")
+	}
+	replacement, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "optional-wechat", Type: MethodTypeWechat, Label: "备用微信", Value: "wechat-2", Enabled: true,
+	})
+	if appErr != nil {
+		t.Fatalf("create replacement WeChat: %v", appErr)
+	}
+	if _, appErr := service.DeleteMethod(context.Background(), "optional-wechat", replacement.ID); appErr != nil {
+		t.Fatalf("delete optional WeChat: %v", appErr)
 	}
 }

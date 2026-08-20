@@ -90,7 +90,7 @@ async function createContact(auth, value, label) {
   return request('/api/v1/contact-methods', {
     method: 'POST',
     idempotencyPrefix: `search-smoke-contact-${label}`,
-    body: { type: 'telegram', label, value },
+    body: { type: 'wechat', label, value },
   }, auth)
 }
 
@@ -120,8 +120,7 @@ async function createOfficialPriceRecord(admin, keyword, plan) {
   }, admin)
 }
 
-async function createCarpool(owner, keyword, plan) {
-  const ownerContact = await createContact(owner, `@search_carpool_${runSuffix.replaceAll('-', '_')}`, 'Search smoke carpool owner')
+async function createCarpool(owner, keyword, plan, ownerContact) {
   const listing = await request('/api/v1/carpools', {
     method: 'POST',
     idempotencyPrefix: 'search-smoke-carpool-create',
@@ -172,11 +171,10 @@ async function createCarpool(owner, keyword, plan) {
   return published
 }
 
-async function createAPIService(owner, keyword) {
+async function createAPIService(owner, keyword, ownerContact) {
   const models = await request('/api/v1/api-models')
   const model = models.items[0]
   assert(model?.id, 'api model catalog is empty')
-  const ownerContact = await createContact(owner, `@search_api_${runSuffix.replaceAll('-', '_')}`, 'Search smoke API owner')
   const probeConnectionId = seedVerifiedProbeConnection(owner.user.id)
   const draft = await request('/api/v1/owner/api-services', {
     method: 'POST',
@@ -251,7 +249,7 @@ function findType(results, type, id) {
 
 function assertPublicSafe(results) {
   const text = JSON.stringify(results)
-  const forbidden = ['@search_api_', '@search_carpool_', 'ownerContactMethodId', 'ownerUserId', 'api key', 'password=', 'access_token=', 'cookie=']
+  const forbidden = ['@search_contact_', 'ownerContactMethodId', 'ownerUserId', 'api key', 'password=', 'access_token=', 'cookie=']
   for (const word of forbidden) {
     assert(!text.toLowerCase().includes(word.toLowerCase()), `search result leaked forbidden text: ${word}`)
   }
@@ -271,8 +269,9 @@ async function main() {
   assert(plan?.id, 'product plan catalog is empty')
 
   const officialRecord = await createOfficialPriceRecord(admin, keyword, plan)
-  const carpool = await createCarpool(owner, keyword, plan)
-  const apiService = await createAPIService(owner, keyword)
+  const ownerContact = await createContact(owner, `@search_contact_${runSuffix.replaceAll('-', '_')}`, 'Search smoke transaction contact')
+  const carpool = await createCarpool(owner, keyword, plan, ownerContact)
+  const apiService = await createAPIService(owner, keyword, ownerContact)
 
   const empty = await request('/api/v1/search')
   assert(Array.isArray(empty.items) && empty.items.length === 0, 'empty search should return empty list')

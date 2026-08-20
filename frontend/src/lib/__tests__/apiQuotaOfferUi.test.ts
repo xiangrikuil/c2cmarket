@@ -332,7 +332,9 @@ describe('API 额度包市场视图', () => {
     assert.match(marketPageSource, /onServerPrefetch\(async \(\) => \{[\s\S]*?await slotQuery\.suspense\(\)[\s\S]*?await rushQuery\.suspense\(\)/)
     assert.match(marketPageSource, /`明日 \$\{slotTime\(selectedSlot\)\} 场预告`/)
     assert.match(quotaOfferCardSource, /立即抢购 ¥\$\{formatDecimal\(props\.offer\.priceCny/)
-    assert.doesNotMatch(marketPageSource, /selectedOffer|confirmPurchase/)
+    assert.match(marketPageSource, /purchaseOfferDialogOpen/)
+    assert.match(marketPageSource, /<TransactionContactSelector v-model="buyerContactMethodId"/)
+    assert.match(marketPageSource, /buyerContactMethodId: buyerContactMethodId\.value/)
   })
 
   test('订单详情只展示购买时冻结的额度规则与到期语义', () => {

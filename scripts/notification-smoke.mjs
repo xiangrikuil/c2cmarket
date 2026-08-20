@@ -87,7 +87,7 @@ async function createContact(auth, label, value) {
     method: 'POST',
     idempotencyPrefix: `notification-smoke-contact-${label}`,
     body: {
-      type: 'telegram',
+      type: 'wechat',
       label,
       value,
     },

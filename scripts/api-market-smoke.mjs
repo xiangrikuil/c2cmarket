@@ -128,7 +128,7 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'smoke-owner-contact',
     body: {
-      type: 'telegram',
+      type: 'wechat',
       label: 'Smoke API owner',
       value: ownerContactValue,
     },
@@ -226,7 +226,7 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'smoke-buyer-contact',
     body: {
-      type: 'telegram',
+      type: 'wechat',
       label: 'Smoke API buyer',
       value: buyerContactValue,
     },
@@ -358,15 +358,8 @@ async function main() {
       instructions: '买家专属；提交后不可修改，后续更换请站外联系。',
     },
   }, owner)
-  assert(delivered.status === 'delivery_submitted', 'owner should submit structured delivery credentials')
-
-  const completed = await request(`/api/v1/me/api-orders/${order.id}/confirm-complete`, {
-    method: 'POST',
-    idempotencyPrefix: 'smoke-api-order-confirm-complete',
-    ifMatch: delivered.version,
-    body: {},
-  }, buyer)
-  assert(completed.status === 'completed', 'buyer should confirm order complete')
+	assert(delivered.status === 'completed', 'seller delivery should complete the order')
+	assert(delivered.completionSource === 'seller_delivered', 'seller delivery completion source should be explicit')
 
   const duplicateOrderProblem = await problemRequest(`/api/v1/me/api-purchase-intents/${intent.id}/orders`, {
     method: 'POST',

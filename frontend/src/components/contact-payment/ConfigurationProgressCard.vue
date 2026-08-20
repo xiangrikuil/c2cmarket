@@ -7,8 +7,7 @@ import { Card } from '@/components/ui/card'
 
 const props = withDefaults(defineProps<{
   completedCount: number
-  wechatComplete: boolean
-  emailComplete: boolean
+  contactComplete: boolean
   paymentComplete: boolean
   showPayment?: boolean
 }>(), { showPayment: true })
@@ -18,8 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const items = computed(() => [
-  { key: 'wechat', label: '微信' },
-  { key: 'email', label: '验证邮箱' },
+  { key: 'contact', label: '交易联系方式' },
   ...(props.showPayment ? [{ key: 'payment' as const, label: 'API 收款' }] : []),
 ])
 const totalCount = computed(() => items.value.length)
@@ -41,14 +39,14 @@ const totalCount = computed(() => items.value.length)
       <div v-for="item in items" :key="item.key" class="flex items-center justify-between gap-3 text-sm">
         <span class="flex items-center gap-2">
           <CheckCircle2
-            v-if="item.key === 'wechat' ? wechatComplete : item.key === 'email' ? emailComplete : paymentComplete"
+            v-if="item.key === 'contact' ? contactComplete : paymentComplete"
             class="h-4 w-4 text-success"
           />
           <Circle v-else class="h-4 w-4 text-muted-foreground" />
           {{ item.label }}
         </span>
         <span class="text-xs text-muted-foreground">
-          {{ (item.key === 'wechat' ? wechatComplete : item.key === 'email' ? emailComplete : paymentComplete) ? '已配置' : '待配置' }}
+          {{ (item.key === 'contact' ? contactComplete : paymentComplete) ? '已配置' : '待配置' }}
         </span>
       </div>
     </div>

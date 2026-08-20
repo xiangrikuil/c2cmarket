@@ -112,11 +112,6 @@ func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, route
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
 	}
-	usageScopes, appErr := normalizedUsageScopesForMethod(input.Type, input.UsageScopes)
-	if appErr != nil {
-		return ContactMethod{}, idempotency.Completion{}, false, appErr
-	}
-	input.UsageScopes = usageScopes
 	now := s.now()
 	method, version := NewMethodVersion(input, now)
 	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, strings.TrimSpace(key), requestHash)
@@ -155,7 +150,7 @@ func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, route
 	s.methods[method.ID] = cloneContactMethod(method)
 	s.versions[version.ID] = version
 	s.methodsByUserKey[methodKey(method.UserID, method.ID)] = method.ID
-	s.appendMethodAuditEventLocked(method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"})
+	s.appendMethodAuditEventLocked(method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "verifiedAt", "isDefault", "enabled"})
 	s.mu.Unlock()
 
 	completion, appErr := buildCompletion(method)
@@ -170,6 +165,15 @@ func (s *Service) CreateMethodWithIdempotency(ctx context.Context, userID, route
 	return method, completion, true, nil
 }
 
+func (s *Service) ReuseMethodWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, method ContactMethod, buildCompletion MethodCompletionBuilder) (ContactMethod, idempotency.Completion, bool, *domain.AppError) {
+	entry, completion, replay, appErr := s.beginMethodIdempotency(ctx, userID, routeKey, key, requestHash, buildCompletion)
+	if appErr != nil || replay {
+		return ContactMethod{}, completion, false, appErr
+	}
+	method, completion, _, appErr = s.completeMemoryMethodMutation(ctx, entry, method, buildCompletion)
+	return method, completion, false, appErr
+}
+
 func (s *Service) SetActionChecker(checker ActionChecker) {
 	s.actionChecker = checker
 }
@@ -179,12 +183,6 @@ func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (C
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
 	}
-	usageScopes, appErr := normalizedUsageScopesForMethod(input.Type, input.UsageScopes)
-	if appErr != nil {
-		return ContactMethod{}, appErr
-	}
-	input.UsageScopes = usageScopes
-
 	now := s.now()
 	method, version := NewMethodVersion(input, now)
 	if s.repo != nil {
@@ -214,7 +212,7 @@ func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (C
 	s.methods[method.ID] = cloneContactMethod(method)
 	s.versions[version.ID] = version
 	s.methodsByUserKey[methodKey(method.UserID, method.ID)] = method.ID
-	s.appendMethodAuditEventLocked(method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"})
+	s.appendMethodAuditEventLocked(method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "verifiedAt", "isDefault", "enabled"})
 	return cloneContactMethod(method), nil
 }
 
@@ -260,22 +258,20 @@ func (s *Service) EnsureLinuxDoMethod(ctx context.Context, userID, username stri
 		}
 	}
 	expectedValue := "@" + username
-	expectedUsageScopes := AllUsageScopes()
 	if current != nil {
 		if strings.EqualFold(strings.TrimSpace(current.DisplayValue), expectedValue) &&
-			strings.TrimSpace(current.Label) == "linux.do 私信" &&
-			equalUsageScopes(current.UsageScopes, expectedUsageScopes) {
+			strings.TrimSpace(current.Label) == "linux.do 私信" {
 			return *current, nil
 		}
 		return s.UpdateMethod(ctx, UpdateContactMethodInput{
 			UserID: userID, MethodID: current.ID, Type: "linuxdo", Label: "linux.do 私信",
-			Value: expectedValue, UsageScopes: expectedUsageScopes, IsDefault: current.IsDefault, Enabled: true,
+			Value: expectedValue, IsDefault: current.IsDefault, Enabled: true,
 		})
 	}
 
 	created, appErr := s.CreateMethod(ctx, ContactMethodInput{
 		UserID: userID, Type: "linuxdo", Label: "linux.do 私信", Value: expectedValue,
-		UsageScopes: expectedUsageScopes, IsDefault: !hasDefault, Enabled: true,
+		IsDefault: !hasDefault, Enabled: true,
 	})
 	if appErr == nil {
 		return created, nil
@@ -286,13 +282,12 @@ func (s *Service) EnsureLinuxDoMethod(ctx context.Context, userID, username stri
 		for _, method := range methods {
 			if method.Enabled && method.Type == "linuxdo" {
 				if strings.EqualFold(strings.TrimSpace(method.DisplayValue), expectedValue) &&
-					strings.TrimSpace(method.Label) == "linux.do 私信" &&
-					equalUsageScopes(method.UsageScopes, expectedUsageScopes) {
+					strings.TrimSpace(method.Label) == "linux.do 私信" {
 					return method, nil
 				}
 				return s.UpdateMethod(ctx, UpdateContactMethodInput{
 					UserID: userID, MethodID: method.ID, Type: "linuxdo", Label: "linux.do 私信",
-					Value: expectedValue, UsageScopes: expectedUsageScopes, IsDefault: method.IsDefault, Enabled: true,
+					Value: expectedValue, IsDefault: method.IsDefault, Enabled: true,
 				})
 			}
 		}
@@ -304,15 +299,6 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	input.Type, input.Value = normalizeMethodTypeAndValue(input.Type, input.Value)
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr
-	}
-	if input.Type == MethodTypeWechat {
-		input.UsageScopes = AllUsageScopes()
-	} else if input.UsageScopes != nil {
-		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
-		if appErr != nil {
-			return ContactMethod{}, appErr
-		}
-		input.UsageScopes = usageScopes
 	}
 	now := s.now()
 	method, version := NewUpdatedMethodVersion(input, now)
@@ -326,9 +312,6 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	current, ok := s.methods[input.MethodID]
 	if !ok || current.UserID != input.UserID {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
-	}
-	if appErr := validateRequiredWechatUpdate(current, input); appErr != nil {
-		return ContactMethod{}, appErr
 	}
 	if method.Enabled && method.Type == MethodTypeWechat && s.hasOtherEnabledWechatLocked(input.UserID, input.MethodID) {
 		return ContactMethod{}, DuplicateEnabledWechatError()
@@ -347,19 +330,20 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	method.ID = current.ID
 	method.UserID = current.UserID
 	method.CreatedAt = current.CreatedAt
-	if input.UsageScopes == nil {
-		method.UsageScopes = append([]string(nil), current.UsageScopes...)
-	}
 	method.Version = current.Version + 1
 	valueChanged := current.Type != method.Type || current.DisplayValue != method.DisplayValue
 	if valueChanged {
 		version.ContactMethodID = method.ID
 		method.CurrentVersionID = version.ID
-		method.VerifiedAt = nil
+		method.VerifiedAt = input.VerifiedAt
 		s.versions[version.ID] = version
 	} else {
 		method.CurrentVersionID = current.CurrentVersionID
 		method.VerifiedAt = current.VerifiedAt
+		if input.VerifiedAt != nil {
+			verifiedAt := *input.VerifiedAt
+			method.VerifiedAt = &verifiedAt
+		}
 		method.MaskedValue = current.MaskedValue
 		method.DisplayValue = current.DisplayValue
 	}
@@ -368,7 +352,7 @@ func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInp
 	if current.Enabled && !method.Enabled {
 		eventType = "contact_method.disabled"
 	}
-	s.appendMethodAuditEventLocked(method, eventType, input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"})
+	s.appendMethodAuditEventLocked(method, eventType, input.RequestID, []string{"type", "label", "value", "verifiedAt", "isDefault", "enabled"})
 	return cloneContactMethod(method), nil
 }
 
@@ -377,15 +361,6 @@ func (s *Service) UpdateMethodWithIdempotency(ctx context.Context, userID, route
 	input.Type, input.Value = normalizeMethodTypeAndValue(input.Type, input.Value)
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, idempotency.Completion{}, false, appErr
-	}
-	if input.Type == MethodTypeWechat {
-		input.UsageScopes = AllUsageScopes()
-	} else if input.UsageScopes != nil {
-		usageScopes, appErr := normalizeUsageScopes(input.UsageScopes)
-		if appErr != nil {
-			return ContactMethod{}, idempotency.Completion{}, false, appErr
-		}
-		input.UsageScopes = usageScopes
 	}
 	entry, completion, replay, appErr := s.beginMethodIdempotency(ctx, userID, routeKey, key, requestHash, buildCompletion)
 	if appErr != nil || replay {
@@ -425,7 +400,7 @@ func (s *Service) DeleteMethodWithRequestID(ctx context.Context, userID, methodI
 	if !ok || method.UserID != userID {
 		return ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
 	}
-	if method.Type == "linuxdo" || method.Type == "wechat" {
+	if method.Type == "linuxdo" {
 		return ContactMethod{}, protectedContactDeleteError(method.Type)
 	}
 	method.Enabled = false
@@ -701,13 +676,13 @@ func (s *Service) CreateSession(ctx context.Context, input CreateContactSessionI
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	buyerMethod, buyerVersion, ok := s.VersionForOwnerAndScopeLocked(input.BuyerContactMethodID, input.BuyerUserID, UsageScopeBuyer)
+	buyerMethod, buyerVersion, ok := s.TransactionVersionForOwnerLocked(input.BuyerContactMethodID, input.BuyerUserID)
 	if !ok || !buyerMethod.Enabled {
-		return ContactSession{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用、不属于当前用户或未允许买家用途。")
+		return ContactSession{}, TransactionContactRequiredError("buyerContactMethodId", "买家交易联系方式不可用。")
 	}
-	sellerMethod, sellerVersion, ok := s.VersionForOwnerAndScopeLocked(input.SellerContactMethodID, input.SellerUserID, UsageScopeCarpoolOwner)
+	sellerMethod, sellerVersion, ok := s.TransactionVersionForOwnerLocked(input.SellerContactMethodID, input.SellerUserID)
 	if !ok || !sellerMethod.Enabled {
-		return ContactSession{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "车主联系方式不可用、归属不正确或未允许拼车用途。")
+		return ContactSession{}, TransactionContactRequiredError("sellerContactMethodId", "卖家交易联系方式不可用。")
 	}
 
 	session.BuyerVersionID = buyerVersion.ID
@@ -845,22 +820,11 @@ func (s *Service) VersionForOwner(methodID, ownerID string) (ContactMethod, Cont
 	return s.VersionForOwnerLocked(methodID, ownerID)
 }
 
-// VersionForOwnerAndScope 只返回归属正确、已启用且明确允许指定业务用途的当前版本。
-func (s *Service) VersionForOwnerAndScope(methodID, ownerID, requiredScope string) (ContactMethod, ContactMethodVersion, bool) {
+// TransactionVersionForOwner returns the actor's enabled email or WeChat version for a new transaction.
+func (s *Service) TransactionVersionForOwner(methodID, ownerID string) (ContactMethod, ContactMethodVersion, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope)
-}
-
-// WechatVersionForOwnerAndScope only returns the actor's enabled WeChat version for a transaction scope.
-func (s *Service) WechatVersionForOwnerAndScope(methodID, ownerID, requiredScope string) (ContactMethod, ContactMethodVersion, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	method, version, ok := s.VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope)
-	if !ok || method.Type != MethodTypeWechat {
-		return ContactMethod{}, ContactMethodVersion{}, false
-	}
-	return method, version, true
+	return s.TransactionVersionForOwnerLocked(methodID, ownerID)
 }
 
 func (s *Service) VersionForOwnerLocked(methodID, ownerID string) (ContactMethod, ContactMethodVersion, bool) {
@@ -875,9 +839,9 @@ func (s *Service) VersionForOwnerLocked(methodID, ownerID string) (ContactMethod
 	return method, version, true
 }
 
-func (s *Service) VersionForOwnerAndScopeLocked(methodID, ownerID, requiredScope string) (ContactMethod, ContactMethodVersion, bool) {
+func (s *Service) TransactionVersionForOwnerLocked(methodID, ownerID string) (ContactMethod, ContactMethodVersion, bool) {
 	method, version, ok := s.VersionForOwnerLocked(methodID, ownerID)
-	if !ok || !method.Enabled || !HasUsageScope(method.UsageScopes, requiredScope) {
+	if !ok || !TransactionContactEligible(method) {
 		return ContactMethod{}, ContactMethodVersion{}, false
 	}
 	return method, version, true
@@ -924,9 +888,9 @@ func NewMethodVersion(input ContactMethodInput, now time.Time) (ContactMethod, C
 		Label:        strings.TrimSpace(input.Label),
 		MaskedValue:  MaskValue(input.Value),
 		DisplayValue: strings.TrimSpace(input.Value),
-		UsageScopes:  append([]string(nil), input.UsageScopes...),
 		Enabled:      input.Enabled,
 		IsDefault:    input.IsDefault,
+		VerifiedAt:   input.VerifiedAt,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		Version:      1,
@@ -951,9 +915,9 @@ func NewUpdatedMethodVersion(input UpdateContactMethodInput, now time.Time) (Con
 		Label:        strings.TrimSpace(input.Label),
 		MaskedValue:  MaskValue(input.Value),
 		DisplayValue: strings.TrimSpace(input.Value),
-		UsageScopes:  append([]string(nil), input.UsageScopes...),
 		Enabled:      input.Enabled,
 		IsDefault:    input.IsDefault,
+		VerifiedAt:   input.VerifiedAt,
 		UpdatedAt:    now,
 	}
 	version := ContactMethodVersion{
@@ -1058,43 +1022,19 @@ var (
 	contactEmailCodePattern = regexp.MustCompile(`^[0-9]{6}$`)
 )
 
-// DefaultUsageScopes 返回新建联系方式省略使用范围时的最小默认集合。
-func DefaultUsageScopes() []string {
-	return []string{UsageScopeBuyer, UsageScopeDispute}
-}
-
-// HasUsageScope 使用规范化后的精确值判断联系方式能否进入对应业务快照。
-func HasUsageScope(scopes []string, requiredScope string) bool {
-	requiredScope = strings.TrimSpace(requiredScope)
-	if requiredScope == "" {
+// TransactionContactEligible reports whether a method can be selected for a new transaction.
+func TransactionContactEligible(method ContactMethod) bool {
+	if !method.Enabled || strings.TrimSpace(method.CurrentVersionID) == "" {
+		return false
+	}
+	switch method.Type {
+	case MethodTypeWechat:
 		return true
+	case MethodTypeEmail:
+		return method.VerifiedAt != nil
+	default:
+		return false
 	}
-	for _, scope := range scopes {
-		if strings.TrimSpace(scope) == requiredScope {
-			return true
-		}
-	}
-	return false
-}
-
-// AllUsageScopes 返回账号级交易联系方式使用范围全集。
-func AllUsageScopes() []string {
-	return []string{
-		UsageScopeCarpoolOwner,
-		UsageScopeAPIMerchant,
-		UsageScopeBuyer,
-		UsageScopeDispute,
-	}
-}
-
-func normalizedUsageScopesForMethod(methodType string, input []string) ([]string, *domain.AppError) {
-	if methodType == MethodTypeWechat {
-		return AllUsageScopes(), nil
-	}
-	if input == nil {
-		return DefaultUsageScopes(), nil
-	}
-	return normalizeUsageScopes(input)
 }
 
 func (s *Service) hasOtherEnabledWechatLocked(userID, excludedMethodID string) bool {
@@ -1118,93 +1058,26 @@ func DuplicateEnabledWechatError() *domain.AppError {
 	)
 }
 
-func WechatRequiredError(field, detail string) *domain.AppError {
+func TransactionContactRequiredError(field, detail string) *domain.AppError {
 	if strings.TrimSpace(detail) == "" {
-		detail = "请先在个人中心配置微信联系方式。"
+		detail = "请选择已验证邮箱或微信作为交易联系方式。"
 	}
 	return domain.NewFieldError(
 		http.StatusUnprocessableEntity,
 		domain.CodeContactMethodRequired,
-		"WeChat contact required",
+		"Transaction contact required",
 		detail,
 		field,
-		"wechat_required",
-		"必须使用当前账号已启用的微信联系方式。",
+		"contact_required",
+		"请选择当前账号可用的交易联系方式。",
 	)
 }
 
-func normalizeUsageScopes(input []string) ([]string, *domain.AppError) {
-	if len(input) == 0 {
-		return nil, domain.NewFieldError(
-			http.StatusUnprocessableEntity,
-			domain.CodeValidationFailed,
-			"Contact usage scopes required",
-			"联系方式至少需要一个使用范围。",
-			"usageScopes",
-			"required",
-			"联系方式至少需要一个使用范围。",
-		)
-	}
-
-	seen := make(map[string]struct{}, len(input))
-	for _, scope := range input {
-		switch scope {
-		case UsageScopeCarpoolOwner, UsageScopeAPIMerchant, UsageScopeBuyer, UsageScopeDispute:
-			seen[scope] = struct{}{}
-		default:
-			return nil, domain.NewFieldError(
-				http.StatusUnprocessableEntity,
-				domain.CodeValidationFailed,
-				"Contact usage scope invalid",
-				"联系方式使用范围不支持。",
-				"usageScopes",
-				"unsupported",
-				scope,
-			)
-		}
-	}
-
-	canonical := AllUsageScopes()
-	result := make([]string, 0, len(seen))
-	for _, scope := range canonical {
-		if _, ok := seen[scope]; ok {
-			result = append(result, scope)
-		}
-	}
-	return result, nil
-}
-
-func validateRequiredWechatUpdate(current ContactMethod, input UpdateContactMethodInput) *domain.AppError {
-	if current.Type != "wechat" {
-		return nil
-	}
-	if strings.TrimSpace(input.Type) != "wechat" || !input.Enabled {
-		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能停用或改为其他联系方式。")
-	}
-	return nil
-}
-
 func protectedContactDeleteError(methodType string) *domain.AppError {
-	if methodType == "wechat" {
-		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "WeChat contact required", "微信是必填联系方式，只能修改微信号，不能解除绑定。")
-	}
 	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Contact method protected", "linux.do 绑定联系方式不能删除。")
 }
 
-func equalUsageScopes(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
 func cloneContactMethod(method ContactMethod) ContactMethod {
-	method.UsageScopes = append([]string(nil), method.UsageScopes...)
 	return method
 }
 

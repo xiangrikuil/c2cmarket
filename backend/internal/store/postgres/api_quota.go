@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apiquota"
-	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/google/uuid"
@@ -958,12 +958,7 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		  AND `+cursorCondition+`
 		  AND (
 		    NOT $7 OR (
-		      b.status = 'published' AND o.status = 'published'
-		      AND `+apiServiceFulfillmentReadyPredicate("s")+`
-		      AND $1 < b.sale_cutoff_at AND $1 < b.expires_at
-		      AND stock.available_copies > 0
-		      AND (o.sale_mode = 'continuous' OR (current_round.id IS NOT NULL AND (current_round.system_slot_key IS NULL OR current_round.fulfillment_confirmed_at IS NOT NULL)))
-		      AND (o.delivery_mode = 'manual' OR credentials.available_copies >= stock.available_copies)
+		      `+publicAPIQuotaOfferOrderablePredicate("$1")+`
 		    )
 		  )
 		  AND (
@@ -1038,6 +1033,23 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 			return item.UpdatedAt, item.ID
 		}), nil
 	}
+}
+
+func (s *Store) CountPublicOrderableAPIQuotaOffers(ctx context.Context, now time.Time) (int, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return 0, internalStoreError()
+	}
+	if appErr := s.MaterializeExpiredAPIQuotaInventory(ctx, now); appErr != nil {
+		return 0, appErr
+	}
+	query := `SELECT COUNT(*)::integer FROM (` + publicAPIQuotaOffersQuery + `
+		AND ` + publicAPIQuotaOfferOrderablePredicate("$1") + `
+	) AS public_orderable_offers`
+	var count int
+	if err := s.pool.QueryRow(ctx, query, now).Scan(&count); err != nil {
+		return 0, internalStoreError()
+	}
+	return count, nil
 }
 
 func (s *Store) GetPublicAPIQuotaOffer(ctx context.Context, offerID string, now time.Time) (apiquota.OfferCard, *domain.AppError) {
@@ -1625,7 +1637,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, orderContext.APIServiceID, now); appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
-	buyerMethod, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "购买额度包前必须先配置微信联系方式。")
+	buyerMethod, buyerVersion, appErr := lockTransactionContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
@@ -1822,6 +1834,10 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		CreatedAt:                     now,
 		UpdatedAt:                     now,
 		Version:                       1,
+	}
+	order.BuyerUsername, order.SellerUsername, appErr = loadAPITransactionParticipantUsernames(ctx, tx, order.BuyerUserID, order.SellerUserID)
+	if appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
 	if round.ID != "" {
 		order.QuotaRoundStartsAtSnapshot = &round.StartsAt
@@ -2224,6 +2240,19 @@ var publicAPIQuotaOffersQuery = `
 	  AND s.publication_status = 'online'
 	  AND s.moderation_status = 'clear'
 `
+
+func publicAPIQuotaOfferOrderablePredicate(currentTimeExpression string) string {
+	currentTimeExpression = strings.TrimSpace(currentTimeExpression)
+	if currentTimeExpression == "" {
+		currentTimeExpression = "now()"
+	}
+	return fmt.Sprintf(`b.status = 'published' AND o.status = 'published'
+		  AND %[1]s
+		  AND %[2]s < b.sale_cutoff_at AND %[2]s < b.expires_at
+		  AND stock.available_copies > 0
+		  AND (o.sale_mode = 'continuous' OR (current_round.id IS NOT NULL AND (current_round.system_slot_key IS NULL OR current_round.fulfillment_confirmed_at IS NOT NULL)))
+		  AND (o.delivery_mode = 'manual' OR credentials.available_copies >= stock.available_copies)`, apiServiceFulfillmentReadyPredicate("s"), currentTimeExpression)
+}
 
 func publicAPIQuotaOffersQueryWithSort(sortExpression string) string {
 	if strings.TrimSpace(sortExpression) == "" {

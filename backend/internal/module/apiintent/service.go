@@ -402,9 +402,9 @@ func (s *Manager) updateWithIdempotency(ctx context.Context, routeKey, key, requ
 }
 
 func (s *Manager) createInMemory(input CreateIntentInput, service apimarket.Service) (Intent, *domain.AppError) {
-	buyerMethod, buyerVersion, ok := s.contact.WechatVersionForOwnerAndScope(input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer)
+	buyerMethod, buyerVersion, ok := s.contact.TransactionVersionForOwner(input.BuyerContactMethodID, input.BuyerUserID)
 	if !ok {
-		return Intent{}, contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
+		return Intent{}, contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	ownerContactMethodIDs := service.OwnerContactMethodIDs
 	if len(ownerContactMethodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
@@ -413,9 +413,9 @@ func (s *Manager) createInMemory(input CreateIntentInput, service apimarket.Serv
 	ownerSnapshots := make([]OwnerContactSnapshot, 0, len(ownerContactMethodIDs))
 	merchantContacts := make([]contact.ContactItemView, 0, len(ownerContactMethodIDs))
 	for _, methodID := range ownerContactMethodIDs {
-		ownerMethod, ownerVersion, ok := s.contact.WechatVersionForOwnerAndScope(methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant)
+		ownerMethod, ownerVersion, ok := s.contact.TransactionVersionForOwner(methodID, service.OwnerUserID)
 		if !ok {
-			return Intent{}, contact.WechatRequiredError("ownerContactMethodIds", "商户尚未配置可用的微信联系方式。")
+			return Intent{}, contact.TransactionContactRequiredError("ownerContactMethodId", "商户交易联系方式不可用。")
 		}
 		ownerSnapshots = append(ownerSnapshots, OwnerContactSnapshot{
 			ContactMethodID:        ownerMethod.ID,
@@ -562,11 +562,12 @@ func (s *Manager) appendContactAccessLogLocked(intentID, viewerUserID, side, req
 }
 
 func validateCreateInput(input CreateIntentInput, service apimarket.Service) *domain.AppError {
+	service = apimarket.WithCurrentPurchaseMaximum(service)
 	if strings.TrimSpace(input.APIServiceID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "apiServiceId", "required", "必须提供 API 服务。")
 	}
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
+		return contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	if input.BuyerUserID == service.OwnerUserID {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "不能向自己的 API 服务提交购买意向。")
@@ -610,6 +611,14 @@ func validateCreateInput(input CreateIntentInput, service apimarket.Service) *do
 			if !ok || allowance.Cmp(maxAllowance) > 0 {
 				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance too high", "意向美元额度不能超过商户声明上限。", "requestedUsdAllowance", "too_high", "意向美元额度不能超过商户声明上限。")
 			}
+		}
+		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
+		if availableText == "" {
+			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+		}
+		available, ok := parsePositiveDecimal(availableText)
+		if !ok || allowance.Cmp(available) > 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance unavailable", "意向美元额度不能超过商户当前可售额度。", "requestedUsdAllowance", "too_high", "请刷新后按当前可售额度下单。")
 		}
 		rate, ok := parsePositiveDecimal(service.DeclaredCNYPerUSDAllowance)
 		if !ok {

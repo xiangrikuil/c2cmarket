@@ -143,7 +143,7 @@ test('定时额度包固定金额下单，取消释放库存但同轮不能重�
     'c2cmarket.apiQuotaOffers.v1': JSON.stringify([first, second]),
   })
 
-  const order = await api.createApiQuotaOrder({ offerId: first.id, saleRoundId: roundId })
+  const order = await api.createApiQuotaOrder({ offerId: first.id, saleRoundId: roundId, buyerContactMethodId: 'contact-wechat-orbit' })
   assert.equal(order.purchaseKind, 'limited_quota_offer')
   assert.equal(order.amountDecimal, first.priceCny)
   assert.equal(order.quotaSnapshot?.usdAllowance, first.usdAllowance)
@@ -156,12 +156,12 @@ test('定时额度包固定金额下单，取消释放库存但同轮不能重�
   assert.equal(released?.availableCopies, 1)
 
   await assert.rejects(
-    api.createApiQuotaOrder({ offerId: second.id, saleRoundId: roundId }),
+    api.createApiQuotaOrder({ offerId: second.id, saleRoundId: roundId, buyerContactMethodId: 'contact-wechat-orbit' }),
     /同一买家每轮最多购买 1 份额度包/,
   )
 })
 
-test('CSV mock 只保存摘要，并在确认收款后自动交付预导入凭据', async () => {
+test('CSV mock 只保存摘要，并在确认收款后交付预导入凭据并完成订单', async () => {
   const { api, session } = await loadMockAPI()
   const offer = (await api.getApiQuotaOffers()).find(item => item.deliveryMode === 'preimported' && item.isOrderable)
   assert.ok(offer)
@@ -174,14 +174,16 @@ test('CSV mock 只保存摘要，并在确认收款后自动交付预导入凭�
   assert.equal(imported.imported, 1)
   assert.equal(session.serialized().includes(rawKey), false)
 
-  const order = await api.createApiQuotaOrder({ offerId: offer.id })
+  const order = await api.createApiQuotaOrder({ offerId: offer.id, buyerContactMethodId: 'contact-wechat-orbit' })
   assert.equal(order.amountDecimal, offer.priceCny)
   assert.equal(order.quotaSnapshot?.priceCny, offer.priceCny)
   assert.equal(order.paymentWindowMinutes, 10)
   const submitted = await api.submitApiOrderPayment(order.id, '已付款，尾号 1234。', order.version)
   const delivered = await api.confirmApiOrderPayment(submitted.id, submitted.version)
 
-  assert.equal(delivered.status, 'delivery_submitted')
+  assert.equal(delivered.status, 'completed')
+  assert.equal(delivered.completionSource, 'seller_delivered')
+  assert.ok(delivered.completedAt)
   assert.equal(delivered.deliveryCredential?.deliveryKind, 'api_key_endpoint')
   assert.match(delivered.deliveryCredential?.apiKey ?? '', /^mock-api-order-quota-/)
   assert.notEqual(delivered.deliveryCredential?.apiKey, rawKey)

@@ -1,14 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { ClipboardList, ShoppingCart, WalletCards } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import type { ApiService } from '@/lib/api'
 import { formatDecimal } from '@/lib/decimal'
+import { getApiServicePricePresentation } from '@/lib/apiServicePricingPresentation'
 import {
   apiServiceAvailableUsdAllowance,
-  formatCnyPerUsdQuota,
 } from '@/components/api-service-detail/utils'
 
-defineProps<{ service: ApiService }>()
+const props = defineProps<{ service: ApiService }>()
+const pricing = computed(() => getApiServicePricePresentation(props.service))
 </script>
 
 <template>
@@ -18,11 +20,11 @@ defineProps<{ service: ApiService }>()
         <WalletCards class="h-6 w-6" />
       </span>
       <div class="min-w-0">
-        <div class="text-sm text-muted-foreground">可售额度</div>
+        <div class="text-sm text-muted-foreground">{{ pricing.fixedPackage ? '可售套餐' : '可售额度' }}</div>
         <div class="mt-1 text-[28px] leading-tight font-semibold">
-          ${{ formatDecimal(apiServiceAvailableUsdAllowance(service), 0, 6) }}
+          {{ pricing.fixedPackage ? `${pricing.packageCount} 款` : `$${formatDecimal(apiServiceAvailableUsdAllowance(service), 0, 6)}` }}
         </div>
-        <p class="mt-1 text-xs text-muted-foreground">当前可用于销售</p>
+        <p class="mt-1 text-xs text-muted-foreground">{{ pricing.fixedPackage ? `剩余 ${pricing.stockAvailable} 份` : '当前可用于销售' }}</p>
       </div>
     </Card>
 
@@ -31,9 +33,9 @@ defineProps<{ service: ApiService }>()
         <ShoppingCart class="h-6 w-6" />
       </span>
       <div class="min-w-0">
-        <div class="text-sm text-muted-foreground">销售价格</div>
-        <div class="mt-1 text-[28px] leading-tight font-semibold">{{ formatCnyPerUsdQuota(service) }}</div>
-        <p class="mt-1 text-xs text-muted-foreground">最低 ¥{{ formatDecimal(service.minimumPurchaseCny, 0, 2) }} 起购</p>
+        <div class="text-sm text-muted-foreground">{{ pricing.fixedPackage ? pricing.label : '销售价格' }}</div>
+        <div class="mt-1 text-[28px] leading-tight font-semibold">{{ pricing.value }}</div>
+        <p class="mt-1 text-xs text-muted-foreground">{{ pricing.secondary }}</p>
       </div>
     </Card>
 

@@ -63,10 +63,11 @@ Rationale: purchase intents remain internal tracking/audit records and may appea
 API order delivery credential wording:
 
 - Use `交付凭证`, `确认已交付`, `买家专属的接入信息`, and `提交后不可修改`; do not claim that delivery credentials can be revoked through the platform.
-- 参与方订单详情必须把 `买家付款 → 卖家确认收款 → 卖家交付 → 买家核验` 显示为连续流程，并在首屏提供当前参与方唯一的主操作。
-- 卖家提交凭证后，其履约任务立即结束；卖家侧显示 `已完成交付` 且没有催验收待办。订单仍以 `delivery_submitted` 进入 24 小时买家核验期，不得把买家是否点击确认表达为卖家的未完成任务。
-- 买家侧在核验期显示 `待核验凭证`、后端返回的截止时间、`确认凭证可用` 和 `凭证存在问题`。买家确认可提前完成；开放纠纷暂停自动完成；未反馈且无开放纠纷时系统在截止时间自动完成。
-- `completed` 必须区分 `buyer_confirmed` 与 `auto_completed`。两者都可进入完成交易与评价资格，但自动完成不得被描述为买家认可、正面评价或平台验真。
+- 参与方订单详情必须把 `买家付款 → 卖家确认收款 → 卖家交付并完成` 显示为连续流程，并在首屏提供当前参与方唯一的主操作。
+- 卖家提交凭证后，订单立即写为 `completed/seller_delivered`；卖家侧显示 `交付完成，订单已完成`，且没有催验收待办。
+- 买家侧不再显示 `确认凭证可用` 或核验倒计时。完成后继续显示交付凭证、商家联系方式和 `凭证存在问题` 纠纷入口。
+- `deliveryReviewExpiresAt` 只作为没有明确服务有效期时的 24 小时纠纷截止时间，不触发提醒或自动完成；有明确有效期时按有效期结束后 24 小时计算纠纷截止。
+- 历史 `buyer_confirmed`、`auto_completed` 与 `remedy_confirmed` 完成来源必须继续可读，并使用真实文案；任何来源都不得被描述为平台验真或自动生成正面评价。
 - 管理员订单详情只读展示双方标识、订单快照、履约时间、核验截止时间、完成来源和纠纷入口，不得返回或渲染原始交付凭证和双方联系方式。
 - Do not use `自动发货`, `平台担保`, `平台验真`, `主账号密码`, `Cookie/Session/Token 交付`, or copy that implies C2CMarket tests the API.
 - The credential may be shown only in buyer/seller order detail and action responses. Public API service pages, lists, admin summaries, notifications, events, logs, and reports must not include raw API keys or passwords.
@@ -77,6 +78,7 @@ Sub2API quota vocabulary:
 - Internal mock fields such as `creditPerCny`, `availableCreditUsd`, `balance`, and historical `purchasedCredit` represent the merchant-declared dollar-denominated quota cap that a buyer may request to purchase.
 - User-facing UI must not describe this as platform-issued `Credits`, platform balance, cashback, prepaid value, or anything the platform grants after payment.
 - Use copy such as `¥0.80 / $1`, `可售 $500 美元额度`, `本次购买 $20 美元额度`.
+- 自选额度的最大购买金额必须随当前可售美元额度变化，按 `可售美元额度 × ¥/$1 售价` 向下保留两位人民币小数；不得用历史静态上限（例如 `¥300`）覆盖实时库存。短期流量包继续展示固定套餐价格。
 - Model price tables must only show models supported by the current service listing, not the whole platform model catalog.
 
 ## Subscription Carpool Product Classification

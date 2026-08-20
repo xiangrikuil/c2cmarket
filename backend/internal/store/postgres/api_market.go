@@ -363,6 +363,48 @@ func (s *Store) ListPublicAPIPackageFilterAvailability(ctx context.Context) (api
 	return availability, nil
 }
 
+func (s *Store) PublicAPIServiceInventoryCounts(ctx context.Context, now time.Time) (apimarket.PublicServiceInventoryCounts, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return apimarket.PublicServiceInventoryCounts{}, internalStoreError()
+	}
+	query := `
+		WITH orderable_services AS (
+			SELECT api_services.id, api_services.billing_mode
+			FROM api_services
+			WHERE ` + publicAPIServiceOrderablePredicateAt("api_services", "$1") + `
+		)
+		SELECT
+			(
+				SELECT COUNT(*)::integer
+				FROM api_service_packages package_row
+				JOIN orderable_services service ON service.id = package_row.api_service_id
+				WHERE service.billing_mode = 'fixed_package'
+				  AND package_row.enabled = true
+				  AND package_row.stock_available > 0
+				  AND EXISTS (
+					SELECT 1
+					FROM api_service_package_models package_model
+					JOIN api_service_models service_model
+					  ON service_model.id = package_model.api_service_model_id
+					 AND service_model.api_service_id = package_model.api_service_id
+					WHERE package_model.api_service_package_id = package_row.id
+					  AND package_model.api_service_id = package_row.api_service_id
+					  AND service_model.enabled = true
+				  )
+			),
+			(
+				SELECT COUNT(*)::integer
+				FROM orderable_services service
+				WHERE service.billing_mode = 'metered_usd_quota'
+			)
+	`
+	var counts apimarket.PublicServiceInventoryCounts
+	if err := s.pool.QueryRow(ctx, query, now).Scan(&counts.FixedPackages, &counts.MeteredServices); err != nil {
+		return apimarket.PublicServiceInventoryCounts{}, internalStoreError()
+	}
+	return counts, nil
+}
+
 func publicAPIServiceOrderablePredicate(alias string) string {
 	return publicAPIServiceOrderablePredicateAt(alias, "now()")
 }
@@ -404,7 +446,7 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		      AND (restriction.ends_at IS NULL OR restriction.ends_at > %[3]s)
 		  )
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
-		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
+			  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > %[3]s + interval '24 hours')
 		  AND (%[1]s.billing_mode <> 'fixed_package' OR EXISTS (
 		    SELECT 1
@@ -1211,8 +1253,10 @@ const apiServiceColumns = `
 `
 
 const apiPurchaseIntentColumns = `
-	id::text, purchase_kind, api_service_id::text, api_service_owner_user_id::text, buyer_user_id::text,
-	owner_user_id::text, buyer_contact_method_id::text, buyer_contact_method_version_id::text,
+		id::text, purchase_kind, api_service_id::text, api_service_owner_user_id::text, buyer_user_id::text,
+		COALESCE((SELECT username FROM users WHERE id = buyer_user_id), ''),
+		owner_user_id::text, COALESCE((SELECT username FROM users WHERE id = owner_user_id), ''),
+		buyer_contact_method_id::text, buyer_contact_method_version_id::text,
 	owner_contact_method_id::text, owner_contact_method_version_id::text, status,
 	requested_cny_amount::text, COALESCE(requested_usd_allowance::text, ''),
 	selected_access_mode, COALESCE(selected_package_id::text, ''), COALESCE(selected_package_snapshot::text, ''),
@@ -1648,7 +1692,7 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 		return apiintent.Intent{}, appErr
 	}
 
-	buyerMethod, buyerVersion, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
+	buyerMethod, buyerVersion, appErr := lockTransactionContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1658,6 +1702,10 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	}
 
 	intent, appErr := apiintent.NewIntentWithOwnerContacts(input, service, buyerMethod, buyerVersion, ownerSnapshots, now)
+	if appErr != nil {
+		return apiintent.Intent{}, appErr
+	}
+	intent.BuyerUsername, intent.OwnerUsername, appErr = loadAPITransactionParticipantUsernames(ctx, tx, intent.BuyerUserID, intent.OwnerUserID)
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1675,6 +1723,20 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 		return apiintent.Intent{}, appErr
 	}
 	return intent, nil
+}
+
+func loadAPITransactionParticipantUsernames(ctx context.Context, q queryer, buyerUserID, sellerUserID string) (string, string, *domain.AppError) {
+	var buyerUsername, sellerUsername string
+	err := q.QueryRow(ctx, `
+		SELECT buyer.username, seller.username
+		FROM users buyer
+		JOIN users seller ON seller.id = $2
+		WHERE buyer.id = $1
+	`, buyerUserID, sellerUserID).Scan(&buyerUsername, &sellerUsername)
+	if err != nil {
+		return "", "", internalStoreError()
+	}
+	return buyerUsername, sellerUsername, nil
 }
 
 func ensureAPIServiceCatalogActiveInTx(ctx context.Context, tx pgx.Tx, serviceID string) *domain.AppError {
@@ -2001,10 +2063,10 @@ func lockAPIServiceContacts(ctx context.Context, tx pgx.Tx, service apimarket.Se
 		methodIDs = []string{service.OwnerContactMethodID}
 	}
 	if len(methodIDs) != 1 {
-		return contact.WechatRequiredError("ownerContactMethodIds", "API 服务必须使用当前账号唯一的微信联系方式。")
+		return contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 	}
 	for _, methodID := range methodIDs {
-		if _, _, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, methodID, service.OwnerUserID, contact.UsageScopeAPIMerchant, "ownerContactMethodIds", detail); appErr != nil {
+		if _, _, appErr := lockTransactionContactVersionForOwner(ctx, tx, methodID, service.OwnerUserID, "ownerContactMethodId", detail); appErr != nil {
 			return appErr
 		}
 	}
@@ -2041,11 +2103,11 @@ func lockAPIServiceOwnerContactSnapshots(ctx context.Context, tx pgx.Tx, service
 		return nil, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", detail)
 	}
 	if len(methodIDs) != 1 {
-		return nil, contact.WechatRequiredError("ownerContactMethodIds", "API 服务必须使用当前账号唯一的微信联系方式。")
+		return nil, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 	}
 	snapshots := make([]apiintent.OwnerContactSnapshot, 0, len(methodIDs))
 	for _, methodID := range methodIDs {
-		method, version, appErr := lockWechatContactVersionForOwnerAndScope(ctx, tx, methodID, ownerUserID, contact.UsageScopeAPIMerchant, "ownerContactMethodIds", detail)
+		method, version, appErr := lockTransactionContactVersionForOwner(ctx, tx, methodID, ownerUserID, "ownerContactMethodId", detail)
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -2491,8 +2553,9 @@ func applyAPIServiceAdminAction(service apimarket.Service, input apimarket.Servi
 }
 
 func validateCreateAPIPurchaseIntentForStore(input apiintent.CreateIntentInput, service apimarket.Service) *domain.AppError {
+	service = apimarket.WithCurrentPurchaseMaximum(service)
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
-		return contact.WechatRequiredError("buyerContactMethodId", "提交购买意向前必须先配置微信联系方式。")
+		return contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	if input.BuyerUserID == service.OwnerUserID {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "不能向自己的 API 服务提交购买意向。")
@@ -2530,6 +2593,14 @@ func validateCreateAPIPurchaseIntentForStore(input apiintent.CreateIntentInput, 
 			if !ok || allowance.Cmp(maxAllowance) > 0 {
 				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance too high", "意向美元额度不能超过商户声明上限。", "requestedUsdAllowance", "too_high", "意向美元额度不能超过商户声明上限。")
 			}
+		}
+		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
+		if availableText == "" {
+			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+		}
+		available, ok := storeParsePositiveDecimal(availableText)
+		if !ok || allowance.Cmp(available) > 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance unavailable", "意向美元额度不能超过商户当前可售额度。", "requestedUsdAllowance", "too_high", "请刷新后按当前可售额度下单。")
 		}
 		rate, ok := storeParsePositiveDecimal(service.DeclaredCNYPerUSDAllowance)
 		if !ok {
@@ -2864,7 +2935,9 @@ func scanAPIPurchaseIntent(row scanner, intent *apiintent.Intent) error {
 		&intent.APIServiceID,
 		&intent.APIServiceOwnerUserID,
 		&intent.BuyerUserID,
+		&intent.BuyerUsername,
 		&intent.OwnerUserID,
+		&intent.OwnerUsername,
 		&intent.BuyerContactMethodID,
 		&intent.BuyerContactMethodVersionID,
 		&intent.OwnerContactMethodID,

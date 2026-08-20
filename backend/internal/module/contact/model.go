@@ -8,11 +8,8 @@ import (
 )
 
 const (
-	MethodTypeWechat       = "wechat"
-	UsageScopeCarpoolOwner = "carpool_owner"
-	UsageScopeAPIMerchant  = "api_merchant"
-	UsageScopeBuyer        = "buyer"
-	UsageScopeDispute      = "dispute"
+	MethodTypeWechat = "wechat"
+	MethodTypeEmail  = "email"
 )
 
 type ContactMethod struct {
@@ -22,7 +19,6 @@ type ContactMethod struct {
 	Label            string
 	MaskedValue      string
 	DisplayValue     string
-	UsageScopes      []string
 	Enabled          bool
 	IsDefault        bool
 	VerifiedAt       *time.Time
@@ -63,14 +59,14 @@ type ContactAccessLog struct {
 }
 
 type ContactMethodInput struct {
-	UserID      string
-	Type        string
-	Label       string
-	Value       string
-	UsageScopes []string
-	IsDefault   bool
-	Enabled     bool
-	RequestID   string
+	UserID     string
+	Type       string
+	Label      string
+	Value      string
+	IsDefault  bool
+	Enabled    bool
+	VerifiedAt *time.Time
+	RequestID  string
 }
 
 type ContactMethodAuditEvent struct {
@@ -116,15 +112,15 @@ type ConfirmContactEmailInput struct {
 type MethodCompletionBuilder func(ContactMethod) (idempotency.Completion, *domain.AppError)
 
 type UpdateContactMethodInput struct {
-	UserID      string
-	MethodID    string
-	Type        string
-	Label       string
-	Value       string
-	UsageScopes []string
-	IsDefault   bool
-	Enabled     bool
-	RequestID   string
+	UserID     string
+	MethodID   string
+	Type       string
+	Label      string
+	Value      string
+	IsDefault  bool
+	Enabled    bool
+	VerifiedAt *time.Time
+	RequestID  string
 }
 
 type CreateContactSessionInput struct {

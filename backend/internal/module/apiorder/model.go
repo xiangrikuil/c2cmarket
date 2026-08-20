@@ -55,6 +55,7 @@ const (
 
 	CompletionSourceBuyerConfirmed  = "buyer_confirmed"
 	CompletionSourceAutoCompleted   = "auto_completed"
+	CompletionSourceSellerDelivered = "seller_delivered"
 	CompletionSourceRemedyConfirmed = "remedy_confirmed"
 
 	CommercialOutcomePending              = "pending"
@@ -361,7 +362,9 @@ type Order struct {
 	APIPurchaseIntentID           string
 	APIServiceID                  string
 	BuyerUserID                   string
+	BuyerUsername                 string
 	SellerUserID                  string
+	SellerUsername                string
 	Status                        string
 	DisputeStatus                 string
 	DisputeCaseID                 string

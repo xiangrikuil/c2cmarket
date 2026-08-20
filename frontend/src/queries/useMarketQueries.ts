@@ -1,6 +1,7 @@
 import { computed, type Ref } from 'vue'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import type { CreateApiServicePromotionRequest } from '@/api/generated/openapi'
+import { apiMarketAvailabilityQueryKey } from '@/queries/useApiMarketAvailability'
 import {
   backendAdminAPIPromotions,
   backendAdminAPIServiceOptions,
@@ -21,7 +22,6 @@ import {
   createContactMethod,
   createContactReport,
   createPublicUserReport,
-  confirmApiOrderComplete,
   confirmApiOrderPayment,
   reportApiOrderPaymentIssue,
   reportLateApiOrderPayment,
@@ -557,6 +557,7 @@ function invalidateApiQuotaOwnerQueries(queryClient: ReturnType<typeof useQueryC
   queryClient.invalidateQueries({ queryKey: ['api-quota-offers'] })
   queryClient.invalidateQueries({ queryKey: ['api-quota-sale-slots'] })
   queryClient.invalidateQueries({ queryKey: ['my-api-services'] })
+  queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey })
 }
 
 export function useCreateApiQuotaBatchMutation() {
@@ -934,6 +935,7 @@ function invalidateApiOrderQueries(queryClient: ReturnType<typeof useQueryClient
   queryClient.invalidateQueries({ queryKey: ['notifications'] })
   queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
   queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })
+  queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey })
   if (id) {
     queryClient.invalidateQueries({ queryKey: ['api-orders', 'buyer', id] })
     queryClient.invalidateQueries({ queryKey: ['api-orders', 'merchant', id] })
@@ -966,17 +968,6 @@ export function useCancelApiOrderMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, reason, version }: { id: string, reason: string, version: number }) => cancelApiOrder(id, reason, version),
-    onSuccess(data) {
-      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
-      invalidateApiOrderQueries(queryClient, data.id)
-    },
-  })
-}
-
-export function useConfirmApiOrderCompleteMutation() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, version }: { id: string, version: number }) => confirmApiOrderComplete(id, version),
     onSuccess(data) {
       queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
       invalidateApiOrderQueries(queryClient, data.id)
@@ -1069,6 +1060,7 @@ export function usePublishApiServiceMutation() {
       queryClient.invalidateQueries({ queryKey: ['api-market'] })
       queryClient.invalidateQueries({ queryKey: ['home-market'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+      queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey })
     },
   })
 }
@@ -1084,6 +1076,7 @@ export function usePauseApiServiceMutation() {
       queryClient.invalidateQueries({ queryKey: ['api-market'] })
       queryClient.invalidateQueries({ queryKey: ['home-market'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+      queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey })
     },
   })
 }
@@ -1099,6 +1092,7 @@ export function useResumeApiServiceMutation() {
       queryClient.invalidateQueries({ queryKey: ['api-market'] })
       queryClient.invalidateQueries({ queryKey: ['home-market'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+      queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey })
     },
   })
 }
@@ -1113,6 +1107,7 @@ export function useUpdateApiServiceProbeConnectionMutation() {
       queryClient.invalidateQueries({ queryKey: ['api-services'] })
       queryClient.invalidateQueries({ queryKey: ['api-market'] })
       queryClient.invalidateQueries({ queryKey: ['api-probe-connections'] })
+      queryClient.invalidateQueries({ queryKey: apiMarketAvailabilityQueryKey })
     },
   })
 }

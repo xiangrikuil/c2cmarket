@@ -640,7 +640,7 @@ function clearOrderFilters() {
             <SelectItem value="payment_submitted">待确认收款</SelectItem>
             <SelectItem value="payment_issue">等待买家补充</SelectItem>
             <SelectItem value="paid_confirmed">待商户交付</SelectItem>
-            <SelectItem value="delivery_submitted">买家核验期</SelectItem>
+						<SelectItem value="delivery_submitted">历史交付待完成</SelectItem>
             <SelectItem value="completed">已完成</SelectItem>
             <SelectItem value="cancelled">已取消</SelectItem>
           </SelectContent>

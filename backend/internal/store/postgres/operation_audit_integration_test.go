@@ -235,10 +235,10 @@ func seedOperationAuditPlanBaseFixture(t *testing.T, ctx context.Context, tx pgx
 	serviceID := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO contact_methods (
-		  id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at
+		  id, user_id, type, label, is_default, enabled, created_at, updated_at
 		) VALUES
-		  ($1, $2, 'linuxdo', 'linux.do owner', ARRAY['api_merchant']::text[], true, true, $5, $5),
-		  ($3, $4, 'linuxdo', 'linux.do buyer', ARRAY['buyer']::text[], true, true, $5, $5)
+		  ($1, $2, 'linuxdo', 'linux.do owner', true, true, $5, $5),
+		  ($3, $4, 'linuxdo', 'linux.do buyer', true, true, $5, $5)
 	`, ownerContactID, otherActorID, buyerContactID, actorID, now); err != nil {
 		t.Fatalf("insert explain contact methods: %v", err)
 	}

@@ -334,6 +334,18 @@ type PublicPackageFilterAvailability struct {
 	Facts []PublicPackageFilterAvailabilityFact
 }
 
+type PublicServiceInventoryCounts struct {
+	FixedPackages   int
+	MeteredServices int
+}
+
+type PublicMarketAvailability struct {
+	GeneratedAt     time.Time
+	LimitedOffers   int
+	FixedPackages   int
+	MeteredServices int
+}
+
 type PublicPackageFilterAvailabilityFact struct {
 	ModelCatalogID string
 	DurationDays   int

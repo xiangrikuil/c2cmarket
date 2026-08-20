@@ -525,6 +525,17 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 	return result, nil
 }
 
+func (m *Manager) PublicOrderableOfferCount(ctx context.Context) (int, *domain.AppError) {
+	if m.repo == nil {
+		return 0, nil
+	}
+	repo, ok := m.repo.(PublicOfferInventoryRepository)
+	if !ok {
+		return 0, domain.NewError(http.StatusServiceUnavailable, domain.CodeInternalError, "API quota inventory count unavailable", "限量额度包数量暂时不可用。")
+	}
+	return repo.CountPublicOrderableAPIQuotaOffers(ctx, m.now().UTC())
+}
+
 func (filter PublicOfferFilter) NormalizedSort() string {
 	switch strings.TrimSpace(filter.Sort) {
 	case PublicOfferSortRecommended, PublicOfferSortReputationDesc, PublicOfferSortCompletedDesc,
@@ -840,10 +851,10 @@ func validateCreateOrderInput(input CreateOrderInput) *domain.AppError {
 	}
 	buyerContactMethodID := strings.TrimSpace(input.BuyerContactMethodID)
 	if buyerContactMethodID == "" {
-		return contact.WechatRequiredError("buyerContactMethodId", "购买额度包前必须先配置微信联系方式。")
+		return contact.TransactionContactRequiredError("buyerContactMethodId", "请选择有效的买家交易联系方式。")
 	}
 	if _, err := uuid.Parse(buyerContactMethodID); err != nil {
-		return fieldError("buyerContactMethodId", "微信联系方式无效，请刷新后重试。")
+		return fieldError("buyerContactMethodId", "交易联系方式无效，请刷新后重试。")
 	}
 	if strings.TrimSpace(input.SelectedAccessMode) == "" {
 		return fieldError("selectedAccessMode", "必须选择接入方式。")

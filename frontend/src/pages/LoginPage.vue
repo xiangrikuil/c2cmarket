@@ -14,7 +14,7 @@ import {
   type BackendSession,
   type EmailRegistrationConfig,
 } from '@/lib/backendClient'
-import { normalizeReturnTo, wechatOnboardingRoute } from '@/lib/authNavigation'
+import { normalizeReturnTo } from '@/lib/authNavigation'
 import { trackAnalytics } from '@/lib/analytics'
 import { captureReferralCode } from '@/lib/referralCapture'
 
@@ -83,8 +83,8 @@ const routeAuthenticatedSession = async (session: BackendSession) => {
       await router.push('/restricted-business')
       return
     }
-    toast.success('学生账号已创建，请绑定微信。')
-    await router.push(wechatOnboardingRoute(route.query.returnTo))
+    toast.success('学生账号已创建。')
+    await router.push(returnTo.value)
     return
   }
 

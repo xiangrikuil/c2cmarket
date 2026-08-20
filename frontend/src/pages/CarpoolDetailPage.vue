@@ -21,6 +21,7 @@ import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
+import TransactionContactSelector from '@/components/contact-payment/TransactionContactSelector.vue'
 import { createCarpoolApplication, getCarpoolAccessArrangementLabel, isHighRiskSubscriptionCarpool, runAdminModerationAction, type Carpool } from '@/lib/api'
 import { createCarpoolModerationRow } from '@/lib/carpoolModeration'
 import { trackAnalytics } from '@/lib/analytics'
@@ -49,6 +50,7 @@ const { data: favoriteStatus } = useFavoriteStatus('carpool', id, import.meta.cl
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const applyDialogOpen = ref(false)
 const rulesAccepted = ref(false)
+const buyerContactMethodId = ref('')
 const applyBusy = ref(false)
 const trackedCarpoolId = ref('')
 const adminDialogOpen = ref(false)
@@ -219,7 +221,14 @@ async function applyToJoin() {
   }
   applyBusy.value = true
   try {
-    const application = await createCarpoolApplication(carpool.value.id, { rulesAccepted: rulesAccepted.value })
+    if (!buyerContactMethodId.value) {
+      toast.warning('请选择一个有效的交易联系方式。')
+      return
+    }
+    const application = await createCarpoolApplication(carpool.value.id, {
+      rulesAccepted: rulesAccepted.value,
+      buyerContactMethodId: buyerContactMethodId.value,
+    })
     applyDialogOpen.value = false
     trackAnalytics('carpool_application_submit_success', carpoolAnalyticsProps(carpool.value))
     toast.success(`申请已提交，等待车主处理：${application.id}`)
@@ -425,6 +434,13 @@ async function shareCarpool() {
           <div class="border-t border-border pt-4">
             <ReputationSummaryCard :summary="carpool.sellerReputation" compact :framed="false" :show-source-author-verification="false" />
           </div>
+          <div class="border-t border-border pt-4">
+            <TransactionContactSelector
+              v-model="buyerContactMethodId"
+              title="申请联系方式"
+              description="车主接受申请并建立成员关系后，所选联系方式才会向车主展示。"
+            />
+          </div>
         </div>
       </Card>
     </div>
@@ -484,7 +500,7 @@ async function shareCarpool() {
         </div>
         <DialogFooter>
           <Button variant="outline" :disabled="applyBusy" @click="applyDialogOpen = false">取消</Button>
-          <Button :disabled="applyBusy || !rulesAccepted" @click="applyToJoin">提交申请</Button>
+          <Button :disabled="applyBusy || !rulesAccepted || !buyerContactMethodId" @click="applyToJoin">提交申请</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

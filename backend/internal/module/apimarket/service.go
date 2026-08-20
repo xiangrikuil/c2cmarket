@@ -400,6 +400,58 @@ func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter
 	return domain.PageItems(services, page)
 }
 
+func (s *Manager) PublicInventoryCounts(ctx context.Context) (PublicServiceInventoryCounts, *domain.AppError) {
+	now := s.now().UTC()
+	if s.repo != nil {
+		repo, ok := s.repo.(PublicServiceInventoryRepository)
+		if !ok {
+			return PublicServiceInventoryCounts{}, domain.NewError(http.StatusServiceUnavailable, domain.CodeInternalError, "API service inventory count unavailable", "API 市场数量暂时不可用。")
+		}
+		return repo.PublicAPIServiceInventoryCounts(ctx, now)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	counts := PublicServiceInventoryCounts{}
+	for _, id := range s.serviceOrder {
+		service := WithOrderabilityAt(s.services[id], now)
+		if !service.IsOrderable {
+			continue
+		}
+		switch service.BillingMode {
+		case ServiceBillingModeMetered:
+			counts.MeteredServices++
+		case ServiceBillingModeFixedPackage:
+			counts.FixedPackages += countOrderablePackages(service)
+		}
+	}
+	return counts, nil
+}
+
+func countOrderablePackages(service Service) int {
+	enabledModelIDs := make(map[string]struct{}, len(service.Models))
+	for _, model := range service.Models {
+		if model.Enabled {
+			enabledModelIDs[model.ID] = struct{}{}
+		}
+	}
+
+	count := 0
+	for _, pack := range service.Packages {
+		if !pack.Enabled || pack.StockAvailable <= 0 {
+			continue
+		}
+		for _, model := range pack.Models {
+			if _, ok := enabledModelIDs[model.ServiceModelID]; ok {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
 func (s *Manager) PublicPackageFilterOptions(ctx context.Context, billingMode string) (PublicPackageFilterOptions, *domain.AppError) {
 	if strings.TrimSpace(billingMode) != ServiceBillingModeFixedPackage {
 		return PublicPackageFilterOptions{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode invalid", "筛选选项仅支持短期流量包。", "billingMode", "invalid", "仅支持 fixed_package。")
@@ -1118,6 +1170,13 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		// 兼容迁移期客户端：旧字段只提供单笔上限时，以该值初始化真实可售额度。
 		input.AvailableUSDAllowance = input.DeclaredMaxUSDAllowancePerIntent
 	}
+	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered {
+		input.MaximumIntentCNY = CurrentMaximumIntentCNY(Service{
+			BillingMode:                input.BillingMode,
+			DeclaredCNYPerUSDAllowance: input.DeclaredCNYPerUSDAllowance,
+			AvailableUSDAllowance:      input.AvailableUSDAllowance,
+		})
+	}
 	if err := validateCreateInput(input, now); err != nil {
 		return Service{}, err
 	}
@@ -1557,28 +1616,28 @@ func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, 
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
-			return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+			return nil, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 		}
 		if _, exists := seen[value]; exists {
-			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodIds", "duplicate", "联系方式不能重复。")
+			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodId", "duplicate", "联系方式不能重复。")
 		}
 		seen[value] = struct{}{}
 		result = append(result, value)
 	}
 	if len(result) == 0 {
-		return nil, contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+		return nil, contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 	}
 	if len(result) != 1 {
-		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "One WeChat contact required", "API 服务只能使用当前账号唯一的微信联系方式。", "ownerContactMethodIds", "invalid_count", "只能提交一个微信联系方式。")
+		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "One contact required", "API 服务只能选择一个交易联系方式。", "ownerContactMethodId", "invalid_count", "只能提交一个交易联系方式。")
 	}
 	return result, nil
 }
 
 func (s *Manager) validateOwnerContacts(service Service, ownerUserID string) *domain.AppError {
 	for _, methodID := range service.OwnerContactMethodIDs {
-		method, _, ok := s.contact.WechatVersionForOwnerAndScope(methodID, ownerUserID, contact.UsageScopeAPIMerchant)
+		method, _, ok := s.contact.TransactionVersionForOwner(methodID, ownerUserID)
 		if !ok || !method.Enabled {
-			return contact.WechatRequiredError("ownerContactMethodIds", "发布 API 服务前必须先配置微信联系方式。")
+			return contact.TransactionContactRequiredError("ownerContactMethodId", "请选择有效的商户交易联系方式。")
 		}
 	}
 	return nil
@@ -1743,10 +1802,34 @@ func WithOrderability(service Service) Service {
 }
 
 func WithOrderabilityAt(service Service, now time.Time) Service {
+	service = WithCurrentPurchaseMaximum(service)
 	reasons := OrderableReasonsAt(service, now)
 	service.IsOrderable = len(reasons) == 0
 	service.OrderableReasons = reasons
 	return service
+}
+
+func WithCurrentPurchaseMaximum(service Service) Service {
+	if service.BillingMode == ServiceBillingModeMetered {
+		service.MaximumIntentCNY = CurrentMaximumIntentCNY(service)
+	}
+	return service
+}
+
+func CurrentMaximumIntentCNY(service Service) string {
+	if service.BillingMode != ServiceBillingModeMetered {
+		return strings.TrimSpace(service.MaximumIntentCNY)
+	}
+	availableText := strings.TrimSpace(service.AvailableUSDAllowance)
+	if availableText == "" {
+		availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+	}
+	available, availableOK := parseNonNegativeDecimal(availableText)
+	rate, rateOK := parsePositiveDecimal(service.DeclaredCNYPerUSDAllowance)
+	if !availableOK || !rateOK {
+		return ""
+	}
+	return decimalStringDown(new(big.Rat).Mul(available, rate), 2)
 }
 
 func OrderableReasons(service Service) []string {
@@ -2519,6 +2602,19 @@ func decimalString(value *big.Rat, places int) string {
 	rounded := roundRatHalfUp(scaled)
 	intPart := new(big.Int).Quo(rounded, scale)
 	frac := new(big.Int).Mod(rounded, scale)
+	fracText := frac.String()
+	for len(fracText) < places {
+		fracText = "0" + fracText
+	}
+	return fmt.Sprintf("%s.%s", intPart.String(), fracText)
+}
+
+func decimalStringDown(value *big.Rat, places int) string {
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(places)), nil)
+	scaled := new(big.Rat).Mul(value, new(big.Rat).SetInt(scale))
+	truncated := new(big.Int).Quo(scaled.Num(), scaled.Denom())
+	intPart := new(big.Int).Quo(truncated, scale)
+	frac := new(big.Int).Mod(truncated, scale)
 	fracText := frac.String()
 	for len(fracText) < places {
 		fracText = "0" + fracText

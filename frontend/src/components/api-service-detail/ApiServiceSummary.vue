@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { CalendarDays, Clock3, Layers3, Network, ShieldCheck, Tag, Users } from 'lucide-vue-next'
 import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
 import { Card } from '@/components/ui/card'
-import type { ApiService } from '@/lib/api'
-import { formatCny, formatCnyPerUsdQuota, formatCredit, formatMultiplier } from './utils'
+import type { ApiService, ApiServicePackage } from '@/lib/api'
+import { getApiServicePricePresentation } from '@/lib/apiServicePricingPresentation'
+import { formatCny, formatCredit, formatMultiplier } from './utils'
 
-defineProps<{
+const props = defineProps<{
   service: ApiService
+  selectedPackage?: ApiServicePackage | null
 }>()
+
+const pricing = computed(() => getApiServicePricePresentation(props.service, props.selectedPackage))
 </script>
 
 <template>
@@ -16,14 +21,22 @@ defineProps<{
       <h2 class="text-base font-semibold">核心信息</h2>
       <dl class="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div>
-          <dt class="text-xs font-medium text-muted-foreground">购买价格</dt>
-          <dd class="mt-1.5 whitespace-nowrap text-2xl font-semibold text-primary">{{ formatCnyPerUsdQuota(service) }}</dd>
+          <dt class="text-xs font-medium text-muted-foreground">{{ pricing.label }}</dt>
+          <dd class="mt-1.5 whitespace-nowrap text-2xl font-semibold text-primary">{{ pricing.value }}</dd>
         </div>
-        <div>
+        <div v-if="pricing.fixedPackage">
+          <dt class="text-xs font-medium text-muted-foreground">面板额度</dt>
+          <dd class="mt-1.5 text-2xl font-semibold">{{ selectedPackage ? formatCredit(selectedPackage.panelAllowance) : '选择套餐后显示' }}</dd>
+        </div>
+        <div v-else>
           <dt class="text-xs font-medium text-muted-foreground">可售额度</dt>
           <dd class="mt-1.5 text-2xl font-semibold">{{ formatCredit(service.balance) }}</dd>
         </div>
-        <div>
+        <div v-if="pricing.fixedPackage">
+          <dt class="text-xs font-medium text-muted-foreground">套餐有效期</dt>
+          <dd class="mt-1.5 text-2xl font-semibold">{{ selectedPackage ? `${selectedPackage.durationDays} 天` : '选择套餐后显示' }}</dd>
+        </div>
+        <div v-else>
           <dt class="text-xs font-medium text-muted-foreground">最低购买</dt>
           <dd class="mt-1.5 text-2xl font-semibold">{{ formatCny(service.minimumPurchaseCny) }}</dd>
         </div>

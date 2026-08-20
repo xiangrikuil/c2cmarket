@@ -83,7 +83,6 @@ import {
   useCreateApiQuotaRushOfferMutation,
   useModelCatalog,
   useMyApiServices,
-	useMyContactMethodsQuery,
   useMyProfileQuery,
   useSellerCommerceStatus,
 } from '@/queries/useMarketQueries'
@@ -117,7 +116,6 @@ const publishSteps = [
 ]
 
 const myServicesQuery = useMyApiServices('all')
-const contactMethodsQuery = useMyContactMethodsQuery()
 const commerceStatusQuery = useSellerCommerceStatus()
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const slotQuery = useApiQuotaSaleSlots()
@@ -171,7 +169,7 @@ watch([eligibleServices, requestedServiceId, () => myServicesQuery.isSuccess.val
 
 const baseForm = reactive<ApiServicePublishForm>({
   probeConnectionId: '',
-	ownerContactMethodIds: [],
+	ownerContactMethodId: '',
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -196,7 +194,7 @@ const baseForm = reactive<ApiServicePublishForm>({
   quotaExpiresAt: defaultQuotaExpiresAtInput(),
   quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   minimumPurchaseCny: 10,
-  maximumPurchaseCny: 300,
+  maximumPurchaseCny: null,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
   declaredMaxConcurrency: 1,
@@ -232,9 +230,6 @@ const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, i
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === baseForm.providerCategory))
 const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
-const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
-  contact.enabled && contact.type === 'wechat' && contact.usageScopes.includes('api_merchant')
-)))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === baseForm.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
   selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
@@ -252,10 +247,6 @@ const profileErrorMessage = computed(() =>
 
 watch(() => myProfile.value, profile => {
   baseForm.merchantDisplayName = profile?.displayName.trim() || profile?.username.trim() || ''
-}, { immediate: true })
-
-watch(availableOwnerContacts, contacts => {
-  baseForm.ownerContactMethodIds = contacts[0] ? [contacts[0].id] : []
 }, { immediate: true })
 
 watch(accountSettingsValue, settings => {
@@ -464,7 +455,7 @@ function validateBaseService() {
     return false
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
-  if (baseForm.ownerContactMethodIds.length !== 1) baseErrors.ownerContactMethods = '请先在个人中心配置微信联系方式。'
+  if (!baseForm.ownerContactMethodId) baseErrors.ownerContactMethods = '请选择一个有效的交易联系方式。'
   if (!baseForm.probeConnectionId) baseErrors.probeConnection = '请选择已验证且启用的探针连接。'
   else if (!probeConnectionReady.value) baseErrors.probeConnection = '所选探针连接当前不可用，请重新选择。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
@@ -752,8 +743,6 @@ function preview() {
                 />
                 <MerchantContactMethodsSection
                   :form="baseForm"
-                  :contacts="availableOwnerContacts"
-                  :loading="contactMethodsQuery.isLoading.value"
                   :error="baseErrors.ownerContactMethods"
                 />
                 <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" :catalog="catalog" @update:model-value="setProviderCategory" />

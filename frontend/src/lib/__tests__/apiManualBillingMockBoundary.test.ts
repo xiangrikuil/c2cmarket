@@ -93,10 +93,12 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
   const requiredServiceDeclarations = {
     declaredMaxConcurrency: 1,
     promptAuditEnabled: false,
-    ownerContactMethodIds: ['contact-wechat-orbit'],
+    ownerContactMethodId: 'contact-wechat-orbit',
   }
   const metered = await settle(api.submitApiService({
     billingMode: 'metered_credit',
+    availableCreditUsd: 124.999,
+    cnyPerUsdCredit: 0.8,
     quotaUsagePolicy: writableQuotaPolicy,
     ...requiredServiceDeclarations,
   }))
@@ -106,6 +108,7 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
     ...requiredServiceDeclarations,
   }))
   assert.equal(metered.billingMode, 'metered_credit')
+  assert.equal(metered.maxBuy, 99.99)
   assert.equal(fixed.billingMode, 'fixed_package')
 })
 
@@ -161,6 +164,7 @@ test('rejects unsupported billing when creating an intent or an order from a his
 
   await expectRejection(api.createApiPurchaseIntent({
     serviceId: unknown.id,
+    buyerContactMethodId: 'contact-wechat-orbit',
     purchaseAmountCny: 20,
     deliveryMode: 'api_key_endpoint',
     targetModel: 'GPT-5 mini',
@@ -169,6 +173,7 @@ test('rejects unsupported billing when creating an intent or an order from a his
 
   const supportedIntent = await settle(api.createApiPurchaseIntent({
     serviceId: 'a1',
+    buyerContactMethodId: 'contact-wechat-orbit',
     purchaseAmountCny: 20,
     deliveryMode: 'api_key_endpoint',
     targetModel: 'GPT-5 mini',

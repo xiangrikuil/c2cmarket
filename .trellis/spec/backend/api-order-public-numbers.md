@@ -110,3 +110,8 @@ INSERT INTO api_orders (..., order_no)
 VALUES (..., $41)
 ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING;
 ```
+## Participant Identity Projection
+
+- API purchase-intent and order read models resolve the current `users.username` alongside participant UUIDs; usernames are presentation data and never replace UUID authorization, routing, filtering, or audit keys.
+- Buyer views expose the merchant username, merchant views expose the buyer username, and administrator views expose both usernames while retaining full copyable user IDs.
+- Frontend participant labels prefer `@username` and fall back to the existing shortened UUID only when a username is unavailable. Pages must not issue per-row profile requests.

@@ -47,6 +47,11 @@ afterEach(() => {
 })
 
 describe('私有纠纷图片证据适配器', () => {
+  it('为数组模型使用工厂默认值，保持 Vue 类型推断稳定', () => {
+    assert.match(pickerSource, /defineModel<DisputeEvidenceAsset\[\]>\(\{ default: \(\) => \[\] \}\)/)
+    assert.doesNotMatch(pickerSource, /defineModel<DisputeEvidenceAsset\[\]>\(\{ default: \[\] \}\)/)
+  })
+
   it('上传前要求显式脱敏确认，并把确认值提交给后端', () => {
     assert.match(pickerSource, /<Checkbox v-model="redactionConfirmed"/)
     assert.match(pickerSource, /remaining === 0 \|\| !redactionConfirmed/)

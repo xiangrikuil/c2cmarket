@@ -6,6 +6,7 @@ import { toast } from 'vue-sonner'
 import ApiPurchasePanel from '@/components/api-service-detail/ApiPurchasePanel.vue'
 import ApiServiceDetailsTabs from '@/components/api-service-detail/ApiServiceDetailsTabs.vue'
 import ApiServiceHeader from '@/components/api-service-detail/ApiServiceHeader.vue'
+import TransactionContactSelector from '@/components/contact-payment/TransactionContactSelector.vue'
 import ApiServiceSummary from '@/components/api-service-detail/ApiServiceSummary.vue'
 import { Button } from '@/components/ui/button'
 import EmptyState from '@/components/market/EmptyState.vue'
@@ -23,6 +24,7 @@ import {
 } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
+import { getApiServicePricePresentation } from '@/lib/apiServicePricingPresentation'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useMyApiServices, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
@@ -49,6 +51,7 @@ const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices('a
 const amount = ref(10)
 const selectedPackageId = ref('')
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
+const buyerContactMethodId = ref('')
 const { data: favoriteStatus } = useFavoriteStatus('api-service', id, import.meta.client)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const favorited = computed(() => Boolean(favoriteStatus.value))
@@ -65,11 +68,12 @@ const availablePackages = computed(() => (service.value?.packages ?? []).filter(
 const selectedPackage = computed<ApiServicePackage | null>(() => availablePackages.value.find(item => item.id === selectedPackageId.value) ?? null)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const serviceIconSrc = computed(() => service.value ? getApiServiceProductIconSrc(service.value, categoryIconByCode.value) : null)
+const servicePrice = computed(() => service.value ? getApiServicePricePresentation(service.value) : null)
 
 useEntitySeo({
   indexable: computed(() => Boolean(service.value)),
   title: computed(() => service.value ? `${service.value.title}｜API 服务｜C2CMarket` : 'API 服务详情｜C2CMarket'),
-  description: computed(() => service.value ? `${service.value.title}，支持 ${service.value.models.join('、')}，最低 ¥${service.value.minimumPurchaseCny} 起，查看交付方式与商户说明。` : '查看公开 API 服务详情。'),
+  description: computed(() => service.value && servicePrice.value ? `${service.value.title}，支持 ${service.value.models.join('、')}，${servicePrice.value.label} ${servicePrice.value.value}，查看交付方式与商户说明。` : '查看公开 API 服务详情。'),
   schema: computed(() => service.value ? {
     '@type': 'Service',
     name: service.value.title,
@@ -77,7 +81,7 @@ useEntitySeo({
     offers: {
       '@type': 'Offer',
       priceCurrency: 'CNY',
-      price: service.value.minimumPurchaseCny,
+      price: servicePrice.value?.minimumPriceCny,
       availability: service.value.publiclyOrderable ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
     },
   } : null),
@@ -138,6 +142,7 @@ const createOrderMutation = useMutation({
     if (!service.value) throw new Error('API 服务不存在。')
     const paymentMethod = getApiServiceDefaultPaymentMethod(service.value)
     if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
+    if (!buyerContactMethodId.value) throw new Error('请选择一个有效的交易联系方式。')
     if (service.value.billingMode === 'fixed_package' && !selectedPackage.value) throw new Error('请选择有库存的短期流量包。')
     const intent = await createApiPurchaseIntent({
       serviceId: service.value.id,
@@ -145,6 +150,7 @@ const createOrderMutation = useMutation({
       deliveryMode: selectedDeliveryMode.value,
       targetModel: selectedPackage.value?.models[0]?.modelName ?? service.value.models[0],
       selectedPackageId: selectedPackage.value?.id,
+      buyerContactMethodId: buyerContactMethodId.value,
     })
     const order = await createApiOrderFromIntent(intent.id, paymentMethod)
     return { intent, order }
@@ -209,7 +215,7 @@ function createOrder() {
 
     <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,65fr)_minmax(340px,35fr)] lg:items-start">
       <div class="min-w-0 space-y-4">
-        <ApiServiceSummary :service="service" />
+        <ApiServiceSummary :service="service" :selected-package="selectedPackage" />
         <ApiServiceDetailsTabs :service="service" />
       </div>
 
@@ -231,16 +237,24 @@ function createOrder() {
         <Button as-child class="mt-4 w-full"><RouterLink :to="loginRoute(route.fullPath)">前往登录</RouterLink></Button>
       </Card>
 
-      <ApiPurchasePanel
-        v-else
-        v-model:amount="amount"
-        v-model:selected-package-id="selectedPackageId"
-        :service="service"
-        :submitting="createOrderMutation.isPending.value"
-        :favorited="favorited"
-        @toggle-favorite="toggleFavorite"
-        @confirm="createOrder"
-      />
+      <div v-else class="min-w-0 space-y-4">
+        <Card class="p-4">
+          <TransactionContactSelector
+            v-model="buyerContactMethodId"
+            title="订单联系方式"
+            description="创建订单时锁定当前版本，并按订单联系窗口向商户展示。"
+          />
+        </Card>
+        <ApiPurchasePanel
+          v-model:amount="amount"
+          v-model:selected-package-id="selectedPackageId"
+          :service="service"
+          :submitting="createOrderMutation.isPending.value"
+          :favorited="favorited"
+          @toggle-favorite="toggleFavorite"
+          @confirm="createOrder"
+        />
+      </div>
     </div>
   </div>
 </template>

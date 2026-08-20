@@ -144,9 +144,9 @@ func TestPostgresRestrictedCarpoolMembershipRequiresCurrentPreservedDisposition(
 	effectiveAt := now.Add(-time.Hour)
 	joinedAt := now.Add(-24 * time.Hour)
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'telegram', 'buyer', ARRAY['buyer']::text[], true, true, $5, $5),
-		       ($3, $4, 'telegram', 'owner', ARRAY['carpool_owner']::text[], true, true, $5, $5)
+		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'telegram', 'buyer', true, true, $5, $5),
+		       ($3, $4, 'telegram', 'owner', true, true, $5, $5)
 	`, buyerContactID, buyer.ID, ownerContactID, owner.ID, joinedAt); err != nil {
 		t.Fatalf("insert restricted carpool contacts: %v", err)
 	}
@@ -288,14 +288,14 @@ func TestPostgresRestrictedAPIOrderRequiresCurrentPreservedDisposition(t *testin
 	if _, err := store.pool.Exec(ctx, `UPDATE users SET account_status = 'suspended', governance_version = 2, current_governance_action_id = $1 WHERE id = $2`, actionID, buyerID); err != nil {
 		t.Fatalf("activate restricted order action: %v", err)
 	}
-	if _, err := store.pool.Exec(ctx, `UPDATE api_orders SET status = 'delivery_submitted', payment_summary = '站外付款已提交', payment_submitted_at = $2, paid_confirmed_at = $2, delivery_note = '买家专属接入信息', delivery_submitted_at = $2, delivery_review_expires_at = $3, updated_at = $2 WHERE id = $1`, orderID, now.Add(-30*time.Minute), now.Add(24*time.Hour)); err != nil {
+	if _, err := store.pool.Exec(ctx, `UPDATE api_orders SET status = 'completed', payment_summary = '站外付款已提交', payment_submitted_at = $2, paid_confirmed_at = $2, delivery_note = '买家专属接入信息', delivery_submitted_at = $2, delivery_review_expires_at = $3, completion_source = 'seller_delivered', completed_at = $2, commercial_outcome = 'normal_fulfillment', commercial_outcome_updated_at = $2, updated_at = $2 WHERE id = $1`, orderID, now.Add(-30*time.Minute), now.Add(24*time.Hour)); err != nil {
 		t.Fatalf("make restricted order actionable: %v", err)
 	}
 	if _, err := store.pool.Exec(ctx, `
 		INSERT INTO account_governance_resource_dispositions (
 			id, resource_type, resource_id, result, reason_code, trigger_roles,
 			before_status, after_status, governance_effective_at, created_at, updated_at
-		) VALUES ($1, 'api_order', $2, 'preserved', 'ACCOUNT_GOVERNANCE_CANCELLED', ARRAY['buyer'], 'delivery_submitted', 'delivery_submitted', $3, $4, $4)
+		) VALUES ($1, 'api_order', $2, 'preserved', 'ACCOUNT_GOVERNANCE_CANCELLED', ARRAY['buyer'], 'completed', 'completed', $3, $4, $4)
 	`, dispositionID, orderID, effectiveAt, now); err != nil {
 		t.Fatalf("insert preserved order disposition: %v", err)
 	}
@@ -334,30 +334,6 @@ func TestPostgresRestrictedAPIOrderRequiresCurrentPreservedDisposition(t *testin
 	}
 	if _, appErr := store.GetAPIOrderForActor(ctx, actor, fixture.otherOrderID, "buyer", now); appErr == nil || appErr.Code != "OBJECT_NOT_FOUND" {
 		t.Fatalf("unlinked restricted order was visible: %v", appErr)
-	}
-
-	entryID := uuid.NewString()
-	entry := idempotency.Entry{UserID: buyerID, RouteKey: "restricted-confirm", Key: "restricted-confirm", RequestHash: "restricted-confirm", State: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
-	if _, err := store.pool.Exec(ctx, `INSERT INTO idempotency_keys (id, user_id, route_key, idempotency_key, request_hash, status, response_body_cache_allowed, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, 'processing', false, $6, $7)`, entryID, entry.UserID, entry.RouteKey, entry.Key, entry.RequestHash, entry.ExpiresAt, now); err != nil {
-		t.Fatalf("insert restricted order idempotency: %v", err)
-	}
-	completionBuilder := func(order apiorder.Order) (idempotency.Completion, *domain.AppError) {
-		return idempotency.Completion{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{}`), ResourceType: "api_order", ResourceID: order.ID}, nil
-	}
-	input := apiorder.ActionInput{
-		OrderID:                orderID,
-		ActorUserID:            buyerID,
-		ActorAudience:          auth.SessionAudienceRestrictedBusiness,
-		ParticipantRole:        "buyer",
-		GovernanceActionID:     actionID,
-		GovernanceVersion:      2,
-		RestrictionEffectiveAt: effectiveAt,
-		ExpectedVersion:        order.Version,
-		RequestID:              "restricted-confirm",
-	}
-	completed, _, appErr := store.ConfirmAPIOrderCompleteWithIdempotency(ctx, entry, input, now, completionBuilder)
-	if appErr != nil || completed.Status != apiorder.StatusCompleted {
-		t.Fatalf("restricted order completion=%+v err=%v", completed, appErr)
 	}
 
 	stale := actor

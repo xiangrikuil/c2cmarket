@@ -88,7 +88,7 @@ async function createContact(auth, value, label) {
     method: 'POST',
     idempotencyPrefix: `review-smoke-contact-${label}`,
     body: {
-      type: 'telegram',
+      type: 'wechat',
       label,
       value,
     },
@@ -213,14 +213,9 @@ async function createCompletedAPIOrder(owner, buyer) {
       instructions: '买家专属接入信息；提交后不可修改。',
     },
   }, owner)
-  const completed = await request(`/api/v1/me/api-orders/${order.id}/confirm-complete`, {
-    method: 'POST',
-    idempotencyPrefix: 'review-smoke-confirm-complete',
-    ifMatch: delivered.version,
-    body: {},
-  }, buyer)
-  assert(completed.status === 'completed', 'API order should be completed')
-  return { service: orderable, order: completed }
+	assert(delivered.status === 'completed', 'seller delivery should complete the API order')
+	assert(delivered.completionSource === 'seller_delivered', 'seller delivery completion source should be explicit')
+	return { service: orderable, order: delivered }
 }
 
 async function main() {

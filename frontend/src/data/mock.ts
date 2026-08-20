@@ -315,7 +315,7 @@ export type PublicUserProfile = {
 }
 
 export type ContactMethodType = 'linuxdo' | 'wechat' | 'email' | 'telegram' | 'other'
-export type ContactUsageScope = 'carpool_owner' | 'api_merchant' | 'buyer' | 'dispute'
+export type TransactionContactPurpose = 'carpool_owner' | 'api_merchant' | 'buyer' | 'dispute'
 
 export type UserContactMethod = {
   id: string
@@ -324,7 +324,6 @@ export type UserContactMethod = {
   label: string
   maskedValue: string
   displayValue: string
-  usageScopes: ContactUsageScope[]
   isDefault: boolean
   enabled: boolean
   verified: boolean
@@ -338,7 +337,7 @@ export type OrderContactSnapshotItem = {
   maskedValue: string
   displayValue?: string
   verified: boolean
-  usageScope: ContactUsageScope
+  usageScope: TransactionContactPurpose
   actionUrl?: string
 }
 
@@ -1123,7 +1122,6 @@ export const myContactMethods: UserContactMethod[] = [
     label: 'linux.do 私信',
     maskedValue: '@orbit',
     displayValue: '@orbit',
-    usageScopes: ['carpool_owner', 'api_merchant', 'buyer', 'dispute'],
     isDefault: true,
     enabled: true,
     verified: true,
@@ -1137,7 +1135,6 @@ export const myContactMethods: UserContactMethod[] = [
     label: '微信',
     maskedValue: 'c2c_***',
     displayValue: 'c2c_orbit',
-    usageScopes: ['carpool_owner', 'api_merchant', 'buyer', 'dispute'],
     isDefault: true,
     enabled: true,
     verified: false,
@@ -1151,7 +1148,6 @@ export const myContactMethods: UserContactMethod[] = [
     label: '联系窗口邮箱',
     maskedValue: 'he***@example.com',
     displayValue: 'hello@example.com',
-    usageScopes: ['api_merchant', 'dispute'],
     isDefault: false,
     enabled: true,
     verified: true,
@@ -1818,7 +1814,7 @@ export const apiServices: ApiService[] = [
     defaultMultiplier: 1,
     creditPerCny: 1,
     minimumPurchaseCny: 20,
-    maxBuy: 300,
+    maxBuy: 320,
     balance: 320,
     delivery: 'Sub2API',
     billingMode: 'metered_credit',
@@ -2034,7 +2030,7 @@ export const apiServices: ApiService[] = [
     defaultMultiplier: 1,
     creditPerCny: 1,
     minimumPurchaseCny: 50,
-    maxBuy: 1000,
+    maxBuy: 1200,
     balance: 1200,
     delivery: 'Sub2API',
     billingMode: 'metered_credit',

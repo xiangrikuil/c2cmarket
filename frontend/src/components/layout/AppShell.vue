@@ -31,7 +31,6 @@ import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,13 +39,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyContactMethodsQuery, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+import { useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+import { useApiMarketAvailability } from '@/queries/useApiMarketAvailability'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { loginRoute } from '@/lib/authNavigation'
-import { apiMarketPath, apiMarketViewFromPath } from '@/lib/apiMarketRoutes'
+import { apiMarketPath, apiMarketViewFromPath, type ApiMarketView } from '@/lib/apiMarketRoutes'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
 import { LIMITED_API_QUOTA_OFFERS_ENABLED } from '@/lib/featureFlags'
@@ -63,13 +63,11 @@ const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
 const { data: myProfile, isPending: profilePending } = useMyProfileQuery(import.meta.client)
 const isAuthenticated = computed(() => Boolean(myProfile.value))
-const authenticatedUserId = computed(() => myProfile.value?.id ?? '')
-const contactMethodsQuery = useMyContactMethodsQuery(isAuthenticated, authenticatedUserId)
-const wechatOnboardingOpen = ref(false)
 const authResolved = computed(() => import.meta.client && !profilePending.value)
 const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
 const { data: notifications } = useNotifications(isAuthenticated)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
+const { data: apiMarketAvailability } = useApiMarketAvailability()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
@@ -95,43 +93,11 @@ const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
 
-function wechatOnboardingStorageKey(userId: string) {
-  return `c2cmarket.wechat-onboarding-dismissed.v1:${userId}`
-}
-
-function wechatOnboardingDismissed(userId: string) {
-  try {
-    return window.sessionStorage.getItem(wechatOnboardingStorageKey(userId)) === '1'
-  } catch {
-    return false
-  }
-}
-
-function dismissWechatOnboarding() {
-  const userId = myProfile.value?.id
-  if (userId) {
-    try {
-      window.sessionStorage.setItem(wechatOnboardingStorageKey(userId), '1')
-    } catch {
-      // Browsing remains available when session storage is unavailable.
-    }
-  }
-  wechatOnboardingOpen.value = false
-}
-
-function updateWechatOnboardingOpen(open: boolean) {
-  if (!open) dismissWechatOnboarding()
-}
-
-async function configureWechat() {
-  dismissWechatOnboarding()
-  await router.push('/my/contacts')
-}
-const apiMarketNavItems = [
-  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited', path: apiMarketPath('limited') } as const] : []),
-  { label: '短期流量包', view: 'packages', path: apiMarketPath('packages') },
-  { label: '自选额度', view: 'free', path: apiMarketPath('free') },
-] as const
+const apiMarketNavItems = computed(() => [
+  ...(LIMITED_API_QUOTA_OFFERS_ENABLED ? [{ label: '限量额度包', view: 'limited', path: apiMarketPath('limited'), count: apiMarketAvailability.value?.limitedOffers ?? null } as const] : []),
+  { label: '短期流量包', view: 'packages', path: apiMarketPath('packages'), count: apiMarketAvailability.value?.fixedPackages ?? null },
+  { label: '自选额度', view: 'free', path: apiMarketPath('free'), count: apiMarketAvailability.value?.meteredServices ?? null },
+] as const)
 const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value, [
   CAPABILITY.carpoolPublish,
   CAPABILITY.apiServicePublish,
@@ -226,7 +192,7 @@ const activeNavItem = computed(() => {
 const currentTitle = computed(() => {
   if (route.meta.apiMarketView) {
     const currentView = apiMarketViewFromPath(route.path)
-    return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '自选额度'}`
+    return `API 市场 / ${apiMarketNavItems.value.find(item => item.view === currentView)?.label ?? '自选额度'}`
   }
   return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
 })
@@ -242,7 +208,7 @@ function matchesRoute(item: NavigationGroup['items'][number]) {
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
-function isApiMarketViewActive(view: typeof apiMarketNavItems[number]['view']) {
+function isApiMarketViewActive(view: ApiMarketView) {
   if (!route.meta.apiMarketView) return false
   const currentView = apiMarketViewFromPath(route.path)
   return currentView === view
@@ -255,19 +221,6 @@ watch(
   },
 )
 
-watch(
-  [isAuthenticated, contactMethodsQuery.isSuccess, contactMethodsQuery.data],
-  ([authenticated, contactsResolved, methods]) => {
-    const userId = myProfile.value?.id
-    if (!authenticated || !contactsResolved || !userId) {
-      wechatOnboardingOpen.value = false
-      return
-    }
-    const hasWechat = (methods ?? []).some(method => method.enabled && method.type === 'wechat')
-    wechatOnboardingOpen.value = !hasWechat && !wechatOnboardingDismissed(userId)
-  },
-  { immediate: true },
-)
 
 watch(
   () => [route.fullPath, accountRecoveryRequired.value] as const,
@@ -371,7 +324,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                   class="flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                 >
-                  {{ child.label }}
+                  <span class="truncate">{{ child.label }}</span>
+                  <Badge v-if="child.count !== null" variant="secondary" class="ml-auto h-5 min-w-5 justify-center px-1.5 text-[11px] text-muted-foreground">{{ formatBadgeCount(child.count) }}</Badge>
                 </RouterLink>
               </div>
             </div>
@@ -446,11 +400,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                   v-for="child in apiMarketNavItems"
                   :key="child.view"
                   :to="child.path"
-                  class="rounded-md px-3 py-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  class="flex items-center rounded-md px-3 py-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
                   @click="closeMenu"
                 >
-                  {{ child.label }}
+                  <span class="truncate">{{ child.label }}</span>
+                  <Badge v-if="child.count !== null" variant="secondary" class="ml-auto h-5 min-w-5 justify-center px-1.5 text-[11px] text-muted-foreground">{{ formatBadgeCount(child.count) }}</Badge>
                 </RouterLink>
               </div>
             </div>
@@ -628,18 +583,4 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
     </div>
   </div>
 
-  <Dialog :open="wechatOnboardingOpen" @update:open="updateWechatOnboardingOpen">
-    <DialogContent class="sm:max-w-md">
-      <DialogHeader>
-        <DialogTitle>配置微信联系方式</DialogTitle>
-        <DialogDescription>拼车和 API 额度交易使用微信联系。配置后会自动用于所有交易角色，但不代表平台已验证该微信号。</DialogDescription>
-      </DialogHeader>
-      <DialogFooter class="gap-2 sm:gap-0">
-        <Button type="button" variant="outline" @click="dismissWechatOnboarding">稍后填写</Button>
-        <Button type="button" @click="configureWechat">
-          <MessageSquarePlus class="h-4 w-4" />去配置微信
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
 </template>

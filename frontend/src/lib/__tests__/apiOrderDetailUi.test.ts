@@ -13,15 +13,17 @@ const refundEvidence = readFileSync(new URL('../../components/api-order/ApiRefun
 const router = readFileSync(new URL('../../router.ts', import.meta.url), 'utf8')
 
 describe('API 订单角色视图', () => {
-  it('gives the buyer a review window and explicit credential actions', () => {
+  it('shows completed delivery with contact and dispute actions', () => {
     expect(detail).toContain("'API 购买订单'")
-    expect(detail).toContain('凭证核验剩余时间')
+    expect(detail).not.toContain('凭证核验剩余时间')
     expect(detail).toContain('查看交付内容')
     expect(detail).not.toContain('credentialProblemOpen')
     expect(detail).not.toContain('window.confirm')
-    expect(buyerList).toContain("'待核验'")
-    expect(deliveryPage).toContain('确认凭证可用')
+    expect(deliveryPage).not.toContain('确认凭证可用')
+    expect(deliveryPage).toContain('联系商家')
     expect(deliveryPage).toContain('凭证存在问题')
+    expect(deliveryPage).toContain('v-model="credentialProblemOccurredAt"')
+    expect(deliveryPage).toContain(':max="credentialProblemOccurrenceMax"')
     expect(deliveryPage).toContain('API_ORDER_CREDENTIAL_PROBLEM_OPTIONS')
     expect(deliveryPage).toContain("import { Label } from '@/components/ui/label'")
     expect(deliveryPage).toContain(':for="`credential-problem-${option.value}`"')
@@ -45,7 +47,7 @@ describe('API 订单角色视图', () => {
 
   it('ends seller work immediately after credential delivery', () => {
     expect(detail).toContain("'API 销售订单'")
-    expect(detail).toContain('已完成交付，无需继续操作')
+    expect(detail).toContain('交付完成，订单已完成')
     expect(merchantList).toContain('提交凭证后你的履约任务即完成')
     expect(merchantList).not.toContain('等待买家确认完成')
   })
@@ -107,9 +109,9 @@ describe('API 订单详情 UI 契约', () => {
   })
 
   it('uses frozen contacts and the server-owned completed-order after-sales projection', () => {
-    expect(contactSelector).toContain('成交时锁定当前微信')
-    expect(contactSelector).toContain('微信自动用于 API 交易联系')
-    expect(contactSelector).not.toContain('type="checkbox"')
+    expect(contactSelector).toContain('<TransactionContactSelector')
+    expect(contactSelector).toContain('v-model="form.ownerContactMethodId"')
+    expect(contactSelector).toContain('linux.do 只作为身份信息')
     expect(backendAdapter).toContain('intent.merchantContacts.flatMap(contactToChannel)')
     expect(backendAdapter).toContain('afterSalesExpiresAt: order.afterSalesExpiresAt')
     expect(backendAdapter).toContain('canOpenDispute: order.canOpenDispute')
@@ -126,7 +128,7 @@ describe('API 订单详情 UI 契约', () => {
     expect(refundEvidence).toContain('平台交易边界')
   })
 
-  it('为五步流程提供可见且有状态的连接线', () => {
+  it('为四步流程提供可见且有状态的连接线', () => {
     expect(source).toMatch(/<StepperSeparator[\s\S]*?h-0\.5[\s\S]*?group-data-\[state=completed\]:bg-primary\/60/)
     expect(source).toContain('min-w-[112px]')
     expect(source).toContain('overflow-x-auto')

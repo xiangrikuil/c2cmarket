@@ -34,6 +34,20 @@ func TestCreateBatchEnforcesOneHourHardCutoff(t *testing.T) {
 	}
 }
 
+func TestPublicOrderableOfferCountUsesInventoryRepository(t *testing.T) {
+	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	repo := &fakeRepository{publicOrderableOfferCount: 7}
+	manager := NewManager(repo, func() time.Time { return now })
+
+	count, appErr := manager.PublicOrderableOfferCount(context.Background())
+	if appErr != nil {
+		t.Fatalf("count public orderable offers: %v", appErr)
+	}
+	if count != 7 || !repo.publicOfferCountAt.Equal(now) {
+		t.Fatalf("unexpected count result: count=%d at=%s", count, repo.publicOfferCountAt)
+	}
+}
+
 func TestCreateOfferAllowsSub2APIDeclaredMultiplier(t *testing.T) {
 	now := time.Date(2026, 7, 19, 9, 0, 0, 0, time.UTC)
 	repo := &fakeRepository{batch: validBatch(now)}
@@ -479,18 +493,20 @@ func TestSystemRushBatchCanArchiveBeforeRegistrationClosesAndCustomRoundsStayEdi
 }
 
 type fakeRepository struct {
-	batch               Batch
-	offers              []Offer
-	createdBatch        *Batch
-	createdOffer        *Offer
-	createdRoundRequest []RoundOfferInput
-	rushPublication     *RushOfferPublication
-	rounds              []SaleRound
-	updateStatusCalls   int
-	publishCalls        int
-	rushCredentials     []CredentialImportRow
-	rushCreateCalls     int
-	idempotencyEntry    *idempotency.Entry
+	batch                     Batch
+	offers                    []Offer
+	createdBatch              *Batch
+	createdOffer              *Offer
+	createdRoundRequest       []RoundOfferInput
+	rushPublication           *RushOfferPublication
+	rounds                    []SaleRound
+	updateStatusCalls         int
+	publishCalls              int
+	rushCredentials           []CredentialImportRow
+	rushCreateCalls           int
+	idempotencyEntry          *idempotency.Entry
+	publicOrderableOfferCount int
+	publicOfferCountAt        time.Time
 }
 
 func (f *fakeRepository) CreateAPIQuotaBatch(_ context.Context, batch Batch, _ string) (Batch, *domain.AppError) {
@@ -567,6 +583,11 @@ func (f *fakeRepository) UpdateAPIQuotaBatchStatusWithIdempotency(_ context.Cont
 
 func (f *fakeRepository) ListPublicAPIQuotaOffers(_ context.Context, _ PublicOfferFilter, _ domain.PageRequest, _ time.Time) (domain.Page[OfferCard], *domain.AppError) {
 	return domain.Page[OfferCard]{}, nil
+}
+
+func (f *fakeRepository) CountPublicOrderableAPIQuotaOffers(_ context.Context, now time.Time) (int, *domain.AppError) {
+	f.publicOfferCountAt = now
+	return f.publicOrderableOfferCount, nil
 }
 
 func (f *fakeRepository) GetPublicAPIQuotaOffer(_ context.Context, _ string, _ time.Time) (OfferCard, *domain.AppError) {

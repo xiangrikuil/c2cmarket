@@ -20,7 +20,6 @@ type apiServiceRequest struct {
 	MerchantProfileID                string                        `json:"merchantProfileId"`
 	MerchantIdentityMode             string                        `json:"merchantIdentityMode"`
 	OwnerContactMethodID             string                        `json:"ownerContactMethodId"`
-	OwnerContactMethodIDs            []string                      `json:"ownerContactMethodIds"`
 	ProbeConnectionID                string                        `json:"probeConnectionId"`
 	Title                            string                        `json:"title"`
 	ShortDescription                 string                        `json:"shortDescription"`
@@ -121,7 +120,6 @@ type apiServiceResponse struct {
 	MerchantProfileSlug              string                              `json:"merchantProfileSlug,omitempty"`
 	MerchantAvatarURL                string                              `json:"merchantAvatarUrl,omitempty"`
 	OwnerContactMethodID             string                              `json:"ownerContactMethodId,omitempty"`
-	OwnerContactMethodIDs            []string                            `json:"ownerContactMethodIds,omitempty"`
 	ProbeConnectionID                string                              `json:"probeConnectionId,omitempty"`
 	ProbeReady                       bool                                `json:"probeReady"`
 	Title                            string                              `json:"title"`
@@ -336,16 +334,19 @@ type apiPurchaseIntentCoreResponse struct {
 
 type apiPurchaseIntentListItemResponse struct {
 	apiPurchaseIntentCoreResponse
+	OwnerUsername string `json:"ownerUsername"`
 }
 
 type createAPIPurchaseIntentResponse struct {
 	apiPurchaseIntentCoreResponse
+	OwnerUsername    string                 `json:"ownerUsername"`
 	MerchantContact  *contactDisclosureDTO  `json:"merchantContact"`
 	MerchantContacts []contactDisclosureDTO `json:"merchantContacts"`
 }
 
 type buyerAPIPurchaseIntentDetailResponse struct {
 	apiPurchaseIntentCoreResponse
+	OwnerUsername    string                 `json:"ownerUsername"`
 	MerchantContact  *contactDisclosureDTO  `json:"merchantContact"`
 	MerchantContacts []contactDisclosureDTO `json:"merchantContacts"`
 }
@@ -353,6 +354,7 @@ type buyerAPIPurchaseIntentDetailResponse struct {
 type ownerAPIPurchaseIntentDetailResponse struct {
 	apiPurchaseIntentCoreResponse
 	BuyerUserID          string                `json:"buyerUserId,omitempty"`
+	BuyerUsername        string                `json:"buyerUsername"`
 	BuyerContactMethodID string                `json:"buyerContactMethodId,omitempty"`
 	BuyerContact         *contactDisclosureDTO `json:"buyerContact"`
 }
@@ -360,13 +362,16 @@ type ownerAPIPurchaseIntentDetailResponse struct {
 type ownerAPIPurchaseIntentListItemResponse struct {
 	apiPurchaseIntentCoreResponse
 	BuyerUserID          string `json:"buyerUserId,omitempty"`
+	BuyerUsername        string `json:"buyerUsername"`
 	BuyerContactMethodID string `json:"buyerContactMethodId,omitempty"`
 }
 
 type adminAPIPurchaseIntentDetailResponse struct {
 	apiPurchaseIntentCoreResponse
 	BuyerUserID          string `json:"buyerUserId,omitempty"`
+	BuyerUsername        string `json:"buyerUsername"`
 	OwnerUserID          string `json:"ownerUserId,omitempty"`
+	OwnerUsername        string `json:"ownerUsername"`
 	BuyerContactMethodID string `json:"buyerContactMethodId,omitempty"`
 	OwnerContactMethodID string `json:"ownerContactMethodId,omitempty"`
 }
@@ -429,6 +434,27 @@ type publicAPIPackageModelFilterOptionResponse struct {
 type publicAPIPackageFilterOptionsResponse struct {
 	Models    []publicAPIPackageModelFilterOptionResponse `json:"models"`
 	Durations []int                                       `json:"durations"`
+}
+
+type publicAPIMarketAvailabilityResponse struct {
+	GeneratedAt     string `json:"generatedAt"`
+	LimitedOffers   int    `json:"limitedOffers"`
+	FixedPackages   int    `json:"fixedPackages"`
+	MeteredServices int    `json:"meteredServices"`
+}
+
+func (s *Server) handlePublicAPIMarketAvailability(w http.ResponseWriter, r *http.Request) {
+	availability, appErr := s.app.PublicAPIMarketAvailability(r.Context())
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, publicAPIMarketAvailabilityResponse{
+		GeneratedAt:     availability.GeneratedAt.Format(time.RFC3339Nano),
+		LimitedOffers:   availability.LimitedOffers,
+		FixedPackages:   availability.FixedPackages,
+		MeteredServices: availability.MeteredServices,
+	})
 }
 
 func (s *Server) handlePublicAPIPackageFilterOptions(w http.ResponseWriter, r *http.Request) {
@@ -1102,7 +1128,6 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		MerchantProfileID:                req.MerchantProfileID,
 		MerchantIdentityMode:             req.MerchantIdentityMode,
 		OwnerContactMethodID:             req.OwnerContactMethodID,
-		OwnerContactMethodIDs:            append([]string(nil), req.OwnerContactMethodIDs...),
 		ProbeConnectionID:                req.ProbeConnectionID,
 		Title:                            req.Title,
 		ShortDescription:                 req.ShortDescription,
@@ -1136,7 +1161,6 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		MerchantProfileID:                base.MerchantProfileID,
 		MerchantIdentityMode:             base.MerchantIdentityMode,
 		OwnerContactMethodID:             base.OwnerContactMethodID,
-		OwnerContactMethodIDs:            append([]string(nil), base.OwnerContactMethodIDs...),
 		ProbeConnectionID:                base.ProbeConnectionID,
 		Title:                            base.Title,
 		ShortDescription:                 base.ShortDescription,
@@ -1241,6 +1265,7 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 }
 
 func toPublicAPIServiceResponseWithHealth(service apimarket.Service, health apihealth.Summary) publicAPIServiceResponse {
+	service = apimarket.WithCurrentPurchaseMaximum(service)
 	return publicAPIServiceResponse{
 		ID:                               service.ID,
 		MerchantIdentityMode:             service.MerchantIdentityMode,
@@ -1297,6 +1322,7 @@ func apiServiceIDs(services []apimarket.Service) []string {
 }
 
 func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
+	service = apimarket.WithCurrentPurchaseMaximum(service)
 	var approvedAt *string
 	if service.ApprovedAt != nil {
 		formatted := service.ApprovedAt.UTC().Format(time.RFC3339)
@@ -1311,7 +1337,6 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		MerchantProfileSlug:              service.MerchantProfileSlug,
 		MerchantAvatarURL:                service.MerchantAvatarURL,
 		OwnerContactMethodID:             service.OwnerContactMethodID,
-		OwnerContactMethodIDs:            append([]string(nil), service.OwnerContactMethodIDs...),
 		ProbeConnectionID:                service.ProbeConnectionID,
 		ProbeReady:                       service.ProbeReady,
 		Title:                            service.Title,
@@ -1546,6 +1571,7 @@ func toAPIPurchaseIntentCoreResponse(intent apiintent.Intent) apiPurchaseIntentC
 func toBuyerAPIPurchaseIntentListItemResponse(intent apiintent.Intent) apiPurchaseIntentListItemResponse {
 	return apiPurchaseIntentListItemResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
+		OwnerUsername:                 intent.OwnerUsername,
 	}
 }
 
@@ -1553,6 +1579,7 @@ func toOwnerAPIPurchaseIntentListItemResponse(intent apiintent.Intent) ownerAPIP
 	return ownerAPIPurchaseIntentListItemResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
 		BuyerUserID:                   intent.BuyerUserID,
+		BuyerUsername:                 intent.BuyerUsername,
 		BuyerContactMethodID:          intent.BuyerContactMethodID,
 	}
 }
@@ -1561,7 +1588,9 @@ func toAdminAPIPurchaseIntentDetailResponse(intent apiintent.Intent) adminAPIPur
 	return adminAPIPurchaseIntentDetailResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
 		BuyerUserID:                   intent.BuyerUserID,
+		BuyerUsername:                 intent.BuyerUsername,
 		OwnerUserID:                   intent.OwnerUserID,
+		OwnerUsername:                 intent.OwnerUsername,
 		BuyerContactMethodID:          intent.BuyerContactMethodID,
 		OwnerContactMethodID:          intent.OwnerContactMethodID,
 	}
@@ -1570,6 +1599,7 @@ func toAdminAPIPurchaseIntentDetailResponse(intent apiintent.Intent) adminAPIPur
 func toCreateAPIPurchaseIntentResponse(intent apiintent.Intent) createAPIPurchaseIntentResponse {
 	return createAPIPurchaseIntentResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
+		OwnerUsername:                 intent.OwnerUsername,
 		MerchantContact:               toContactDisclosureDTO(intent.MerchantContact),
 		MerchantContacts:              toContactDisclosureDTOs(intent.MerchantContacts),
 	}
@@ -1578,6 +1608,7 @@ func toCreateAPIPurchaseIntentResponse(intent apiintent.Intent) createAPIPurchas
 func toBuyerAPIPurchaseIntentDetailResponse(intent apiintent.Intent) buyerAPIPurchaseIntentDetailResponse {
 	return buyerAPIPurchaseIntentDetailResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
+		OwnerUsername:                 intent.OwnerUsername,
 		MerchantContact:               toContactDisclosureDTO(intent.MerchantContact),
 		MerchantContacts:              toContactDisclosureDTOs(intent.MerchantContacts),
 	}
@@ -1587,6 +1618,7 @@ func toOwnerAPIPurchaseIntentDetailResponse(intent apiintent.Intent) ownerAPIPur
 	return ownerAPIPurchaseIntentDetailResponse{
 		apiPurchaseIntentCoreResponse: toAPIPurchaseIntentCoreResponse(intent),
 		BuyerUserID:                   intent.BuyerUserID,
+		BuyerUsername:                 intent.BuyerUsername,
 		BuyerContactMethodID:          intent.BuyerContactMethodID,
 		BuyerContact:                  toContactDisclosureDTO(intent.BuyerContact),
 	}

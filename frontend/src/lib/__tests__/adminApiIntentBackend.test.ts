@@ -7,7 +7,9 @@ describe('管理员 API 购买意向适配', () => {
       id: 'intent-1',
       apiServiceId: 'service-1',
       buyerUserId: 'buyer-12345678',
+      buyerUsername: 'lin_buyer',
       ownerUserId: 'owner-12345678',
+      ownerUsername: 'api_merchant',
       status: 'open',
       requestedCnyAmount: '18.50',
       selectedAccessMode: 'api_key',
@@ -31,7 +33,7 @@ describe('管理员 API 购买意向适配', () => {
       targetType: 'api-intent',
       backendVersion: 3,
     })
-    expect(row.owner).toContain('buyer-12')
+    expect(row.owner).toBe('买家 @lin_buyer / 商户 @api_merchant')
     expect(row.detailItems?.map(item => item.label)).not.toContain('联系方式')
   })
 })

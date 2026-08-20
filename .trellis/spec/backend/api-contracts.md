@@ -82,7 +82,6 @@ GET  /api/v1/me/api-orders/{id}
 POST /api/v1/me/api-orders/{id}/payment-instructions
 POST /api/v1/me/api-orders/{id}/submit-payment
 POST /api/v1/me/api-orders/{id}/cancel
-POST /api/v1/me/api-orders/{id}/confirm-complete
 POST /api/v1/me/api-orders/{id}/dispute
 GET  /api/v1/me/notifications
 GET  /api/v1/me/notifications/unread-count
@@ -2310,23 +2309,22 @@ WHERE all filters -> keyset predicate for active sort -> ORDER BY scalar, id -> 
 canonical decimal text -> exact decimal comparison -> sort-bound opaque cursor
 ```
 
-## Scenario: API Order Delivery Review And Role Projection
+## Scenario: API Order Seller Delivery Completion And Role Projection
 
 ### 1. Scope / Trigger
 
-- Trigger: API order delivery, completion, disputes, reminders, maintenance materialization, participant detail, administrator tracking, completion statistics, or review eligibility.
-- Seller fulfillment ends when the immutable credential is submitted. The order remains `delivery_submitted` during a 24-hour buyer review window and then reaches `completed` through buyer confirmation or automatic materialization.
+- Trigger: API order delivery, completion, disputes, participant detail, administrator tracking, completion statistics, or review eligibility.
+- Seller fulfillment and the order both complete when the immutable credential is submitted. Buyer confirmation, delivery reminders, and automatic completion are no longer active workflow steps.
 
 ### 2. Signatures
 
 ```text
-POST /api/v1/me/api-orders/{id}/confirm-complete
 POST /api/v1/me/api-orders/{id}/dispute
 POST /api/v1/owner/api-orders/{id}/submit-delivery
 GET  /api/v1/admin/api-orders/{id}
 
 APIOrder.deliveryReviewExpiresAt?: RFC3339 timestamp
-APIOrder.completionSource?: buyer_confirmed | auto_completed
+APIOrder.completionSource?: buyer_confirmed | auto_completed | seller_delivered | remedy_confirmed
 
 api_orders.delivery_review_expires_at timestamptz
 api_orders.delivery_review_reminded_at timestamptz
@@ -2335,10 +2333,10 @@ api_orders.completion_source text
 
 ### 3. Contracts
 
-- Credential submission sets `deliveryReviewExpiresAt = submittedAt + 24 hours`; credentials remain one-time and immutable. `delivery_submitted` is a pending buyer-review state, not a pending seller task.
-- Buyer confirmation writes `completed`, `completedAt`, and `completionSource=buyer_confirmed`. When the deadline passes without an open dispute, lazy reads/actions and scheduled maintenance materialize `completed` with `completionSource=auto_completed` and use the deadline as `completedAt`.
-- `disputeStatus=open` pauses automatic completion without replacing the fulfillment state. The platform sends the buyer at most one reminder in the final two hours; the seller has no reminder action.
-- Completion statistics and review eligibility include both completion sources. `auto_completed` never creates a rating, buyer endorsement, or positive-review fact.
+- Credential submission atomically writes `completed`, `completedAt=submittedAt`, `completionSource=seller_delivered`, and normal fulfillment. Credentials remain one-time and immutable.
+- `deliveryReviewExpiresAt` remains a fallback dispute deadline for orders without an explicit service-validity end. It does not authorize buyer confirmation, reminders, or automatic completion.
+- Existing `delivery_submitted` rows migrate to `completed/seller_delivered`. Historical `buyer_confirmed`, `auto_completed`, and `remedy_confirmed` values remain readable and keep their truthful labels.
+- Completion statistics and review eligibility include all completion sources. No completion source creates a rating, buyer endorsement, or platform-verification fact.
 - `GET /api/v1/admin/api-orders/{id}` returns buyer/seller IDs, frozen service and amount snapshots, fulfillment timestamps, the review deadline, completion source, and dispute linkage. Admin list/detail responses omit `deliveryCredential`, payment/contact values, and participant contact details.
 - Participant responses that include the credential remain `private, no-store`, including after either completion source.
 - Participant detail responses expose credentials only during the configured
@@ -2351,28 +2349,27 @@ api_orders.completion_source text
 
 | Condition | HTTP / result | Stable code |
 | --- | --- | --- |
-| Buyer confirms before the deadline | `completed/buyer_confirmed` | n/a |
-| Deadline passes without an open dispute | `completed/auto_completed` | n/a |
-| Deadline passes with `disputeStatus=open` | Keep `delivery_submitted` | n/a |
+| Seller submits the immutable credential | `completed/seller_delivered` | n/a |
+| Buyer calls removed `confirm-complete` route | 404 | n/a |
+| Buyer reports a credential problem before the dispute deadline | Keep `completed/seller_delivered`; open dispute | n/a |
 | Seller submits delivery twice | 409 | `INVALID_STATE_TRANSITION` |
-| Non-buyer calls confirm or dispute | 403 | `PERMISSION_DENIED` |
+| Non-buyer calls dispute | 403 | `PERMISSION_DENIED` |
 | Non-admin reads admin detail | 403 | `PERMISSION_DENIED` |
 | Unknown admin order ID | 404 | `OBJECT_NOT_FOUND` |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: the seller submits the credential, immediately has no remaining fulfillment action, and the buyer confirms it as usable before the deadline.
-- Base: the buyer takes no action; the order completes once as `auto_completed`, remains eligible for review, and no endorsement is synthesized.
-- Base: the buyer opens a credential dispute during review; automatic completion remains paused while the dispute is open.
-- Bad: seller status says it is waiting for buyer confirmation, an open-dispute order auto-completes, or admin detail exposes a raw key/contact value.
+- Good: the seller submits the credential once, the order becomes `completed/seller_delivered`, and both participants can review it immediately.
+- Base: the buyer takes no action; the completed order stays complete and retains review and time-bounded dispute eligibility.
+- Base: the buyer opens a credential dispute after completion; the dispute lifecycle proceeds without reverting the completion fact.
+- Bad: seller status says it is waiting for buyer confirmation, the platform schedules delivery-review reminders, or admin detail exposes a raw key/contact value.
 
 ### 6. Tests Required
 
-- Service tests assert deadline creation, buyer-confirmed completion, final-two-hour reminder deduplication, automatic completion, and open-dispute pause.
-- PostgreSQL tests assert lazy/maintenance concurrency produces at most one reminder and one completion transition.
-- Router/OpenAPI tests assert the admin detail route, both participant IDs, review fields, completion source, `private, no-store`, and credential/contact omission.
-- Statistics/review tests assert both completion sources count as completed while no automatic rating is created.
-- Migration tests assert historical `delivery_submitted` rows receive a fresh 24-hour review window.
+- Service and PostgreSQL tests assert credential submission immediately creates `completed/seller_delivered`, preserves the dispute deadline, and emits one delivery event.
+- Router/OpenAPI tests assert the removed confirmation route is absent, submit-delivery returns the completed projection, and private credential responses remain `private, no-store`.
+- Statistics/review tests assert seller-delivered and historical completion sources count as completed without synthesizing a rating.
+- Migration tests assert historical `delivery_submitted` rows become `completed/seller_delivered` while their credential and deadline facts remain intact.
 
 ### 7. Wrong vs Correct
 
@@ -2536,7 +2533,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 116 (current repository target)
+  ExpectedMigrationVersion = 118 (current repository target)
 ```
 
 ### 3. Contracts
