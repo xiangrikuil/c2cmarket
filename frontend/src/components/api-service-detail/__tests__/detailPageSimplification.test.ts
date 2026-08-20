@@ -24,12 +24,14 @@ test('keeps merchant trust signals in the purchase card only', () => {
 
 test('prioritizes the actual quota price over the merchant multiplier', () => {
   const summary = componentSource('ApiServiceSummary')
-  const priceIndex = summary.indexOf('购买价格')
+  const priceIndex = summary.indexOf('pricing.label')
   const multiplierIndex = summary.indexOf('模型计费倍率')
 
   assert.ok(priceIndex >= 0)
   assert.ok(multiplierIndex > priceIndex)
   assert.match(summary, /可售额度/)
+  assert.match(summary, /面板额度/)
+  assert.match(summary, /套餐有效期/)
   assert.match(summary, /服务有效期/)
   assert.match(summary, /接入类型/)
   assert.match(summary, /<ApiServiceHealthPanel :summary="service\.healthSummary"/)

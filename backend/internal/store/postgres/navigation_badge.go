@@ -102,7 +102,6 @@ SELECT
      AND (
        (status = 'pending_payment' AND payment_expires_at > $2)
        OR status = 'payment_issue'
-       OR status = 'delivery_submitted'
        OR dispute_status IN (
          'negotiating', 'pending_seller_response', 'pending_applicant_decision',
          'open', 'awaiting_fulfillment', 'fulfillment_confirmation'

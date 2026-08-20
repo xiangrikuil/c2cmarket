@@ -31,6 +31,10 @@ export function multiplyDecimal(left: DecimalInput, right: DecimalInput, places:
   return decimal(left).mul(decimal(right)).toDecimalPlaces(places, Decimal.ROUND_HALF_UP).toFixed(places)
 }
 
+export function multiplyDecimalDown(left: DecimalInput, right: DecimalInput, places: number) {
+  return decimal(left).mul(decimal(right)).toDecimalPlaces(places, Decimal.ROUND_DOWN).toFixed(places)
+}
+
 export function compareDecimal(left: DecimalInput, right: DecimalInput) {
   return decimal(left).cmp(decimal(right))
 }

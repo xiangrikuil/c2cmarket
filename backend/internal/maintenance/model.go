@@ -31,8 +31,6 @@ type Result struct {
 	IdempotencyEntriesDeleted          int64
 	ContactSessionsExpired             int64
 	APIOrdersPaymentExpired            int64
-	APIOrderReviewReminders            int64
-	APIOrdersAutoCompleted             int64
 	DisputeRemedyConfirmationReminders int64
 	DisputeRemedyConfirmationsExpired  int64
 	AfterSalesApplicationsExpired      int64

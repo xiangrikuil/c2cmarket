@@ -161,7 +161,7 @@ test('定时额度包固定金额下单，取消释放库存但同轮不能重�
   )
 })
 
-test('CSV mock 只保存摘要，并在确认收款后自动交付预导入凭据', async () => {
+test('CSV mock 只保存摘要，并在确认收款后交付预导入凭据并完成订单', async () => {
   const { api, session } = await loadMockAPI()
   const offer = (await api.getApiQuotaOffers()).find(item => item.deliveryMode === 'preimported' && item.isOrderable)
   assert.ok(offer)
@@ -181,7 +181,9 @@ test('CSV mock 只保存摘要，并在确认收款后自动交付预导入凭�
   const submitted = await api.submitApiOrderPayment(order.id, '已付款，尾号 1234。', order.version)
   const delivered = await api.confirmApiOrderPayment(submitted.id, submitted.version)
 
-  assert.equal(delivered.status, 'delivery_submitted')
+  assert.equal(delivered.status, 'completed')
+  assert.equal(delivered.completionSource, 'seller_delivered')
+  assert.ok(delivered.completedAt)
   assert.equal(delivered.deliveryCredential?.deliveryKind, 'api_key_endpoint')
   assert.match(delivered.deliveryCredential?.apiKey ?? '', /^mock-api-order-quota-/)
   assert.notEqual(delivered.deliveryCredential?.apiKey, rawKey)

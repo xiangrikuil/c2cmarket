@@ -39,10 +39,6 @@ func (s *Store) CancelAPIOrderWithIdempotency(ctx context.Context, entry idempot
 	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "cancel")
 }
 
-func (s *Store) ConfirmAPIOrderCompleteWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
-	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "confirm_complete")
-}
-
 func (s *Store) OpenAPIOrderDisputeWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.ActionInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
 	return s.apiOrderWithIdempotency(ctx, entry, apiorder.CreateInput{}, input, now, buildCompletion, "open_dispute")
 }
@@ -759,11 +755,15 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		if deliveryErr != nil {
 			return apiorder.Order{}, deliveryErr
 		}
-		order.Status = apiorder.StatusDeliverySubmitted
 		order.DeliveryNote = apiorder.DeliverySummary(autoDeliveryKind)
 		order.DeliverySubmittedAt = &now
 		reviewExpiresAt := now.Add(apiorder.DeliveryReviewWindow)
 		order.DeliveryReviewExpiresAt = &reviewExpiresAt
+		order.Status = apiorder.StatusCompleted
+		order.CompletionSource = apiorder.CompletionSourceSellerDelivered
+		order.CompletedAt = &now
+		order.CommercialOutcome = apiorder.CommercialOutcomeNormalFulfillment
+		order.CommercialOutcomeUpdatedAt = &now
 		order.Version++
 	}
 	if appErr := updateAPIOrderInTx(ctx, tx, order); appErr != nil {
@@ -776,13 +776,17 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		confirmedOrder.DeliveryNote = ""
 		confirmedOrder.DeliverySubmittedAt = nil
 		confirmedOrder.DeliveryReviewExpiresAt = nil
+		confirmedOrder.CompletionSource = ""
+		confirmedOrder.CompletedAt = nil
+		confirmedOrder.CommercialOutcome = apiorder.CommercialOutcomePending
+		confirmedOrder.CommercialOutcomeUpdatedAt = nil
 		if appErr := insertAPIOrderEventInTx(ctx, tx, confirmedOrder, input.ActorUserID, apiorder.EventPaymentConfirmed, from, apiorder.StatusPaidConfirmed, "", input.RequestID, now); appErr != nil {
 			return apiorder.Order{}, appErr
 		}
 		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, confirmedOrder, input.ActorUserID, apiorder.EventPaymentConfirmed, input.RequestID, now); appErr != nil {
 			return apiorder.Order{}, appErr
 		}
-		if appErr := insertAPIOrderEventInTx(ctx, tx, order, input.ActorUserID, apiorder.EventDeliverySubmitted, apiorder.StatusPaidConfirmed, apiorder.StatusDeliverySubmitted, apiorder.DeliverySummary(autoDeliveryKind), input.RequestID, now); appErr != nil {
+		if appErr := insertAPIOrderEventInTx(ctx, tx, order, input.ActorUserID, apiorder.EventDeliverySubmitted, apiorder.StatusPaidConfirmed, apiorder.StatusCompleted, apiorder.DeliverySummary(autoDeliveryKind), input.RequestID, now); appErr != nil {
 			return apiorder.Order{}, appErr
 		}
 		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, input.ActorUserID, apiorder.EventDeliverySubmitted, input.RequestID, now); appErr != nil {
@@ -808,7 +812,7 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 func restrictedAPIOrderActionAllowed(action, participantRole string) bool {
 	switch participantRole {
 	case "buyer":
-		return action == "confirm_complete" || action == "open_dispute"
+		return action == "open_dispute"
 	case "seller":
 		return action == "confirm_payment" || action == "report_payment_issue" || action == "submit_delivery" || action == "open_dispute"
 	default:
@@ -872,15 +876,10 @@ func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) 
 			     status = 'paid_confirmed'
 			     AND dispute_status = 'none'
 			     AND delivery_due_at > $1
-			     AND delivery_due_at <= $1 + $3::interval
+			     AND delivery_due_at <= $1 + $2::interval
 			     AND delivery_due_reminded_at IS NULL
-			   )
-			   OR (
-			     status = 'delivery_submitted'
-			     AND dispute_status = 'none'
-			     AND delivery_review_expires_at <= $2
 			   ))
-		`, now, now.Add(apiorder.DeliveryReviewReminderLead), apiorder.DeliveryDueReminderLead.String())
+		`, now, apiorder.DeliveryDueReminderLead.String())
 	if err != nil {
 		return internalStoreError()
 	}
@@ -909,8 +908,6 @@ type apiOrderMaterializationResult struct {
 	PaymentReviewOverdue    bool
 	DeliveryDueReminded     bool
 	DeliveryOverdue         bool
-	DeliveryReviewReminded  bool
-	AutoCompleted           bool
 }
 
 func (s *Store) materializeExpiredAPIOrder(ctx context.Context, q queryer, orderID string, now time.Time) *domain.AppError {
@@ -1023,48 +1020,7 @@ func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, o
 		}
 		return apiOrderMaterializationResult{PaymentTimeoutCancelled: true}, nil
 	}
-	if order.Status != apiorder.StatusDeliverySubmitted || apiorder.IsDisputeActive(order.DisputeStatus) || order.DeliveryReviewExpiresAt == nil {
-		return apiOrderMaterializationResult{}, nil
-	}
-	if !now.Before(*order.DeliveryReviewExpiresAt) {
-		completedAt := *order.DeliveryReviewExpiresAt
-		order.Status = apiorder.StatusCompleted
-		order.CompletionSource = apiorder.CompletionSourceAutoCompleted
-		order.CompletedAt = &completedAt
-		order.CommercialOutcome = apiorder.CommercialOutcomeNormalFulfillment
-		order.CommercialOutcomeUpdatedAt = &completedAt
-		order.UpdatedAt = now
-		order.Version++
-		if appErr := updateAPIOrderInTx(ctx, tx, order); appErr != nil {
-			return apiOrderMaterializationResult{}, appErr
-		}
-		if appErr := insertAPIOrderEventInTx(ctx, tx, order, "", apiorder.EventAutoCompleted, apiorder.StatusDeliverySubmitted, apiorder.StatusCompleted, "", "delivery-review-auto-complete", now); appErr != nil {
-			return apiOrderMaterializationResult{}, appErr
-		}
-		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, "", apiorder.EventAutoCompleted, "delivery-review-auto-complete", now); appErr != nil {
-			return apiOrderMaterializationResult{}, appErr
-		}
-		return apiOrderMaterializationResult{AutoCompleted: true}, nil
-	}
-	reminderAt := order.DeliveryReviewExpiresAt.Add(-apiorder.DeliveryReviewReminderLead)
-	if order.DeliveryReviewRemindedAt != nil || now.Before(reminderAt) {
-		return apiOrderMaterializationResult{}, nil
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE api_orders
-		SET delivery_review_reminded_at = $2
-		WHERE id = $1 AND delivery_review_reminded_at IS NULL
-	`, order.ID, now); err != nil {
-		return apiOrderMaterializationResult{}, internalStoreError()
-	}
-	order.DeliveryReviewRemindedAt = &now
-	if appErr := insertAPIOrderEventInTx(ctx, tx, order, "", apiorder.EventDeliveryReviewReminder, order.Status, order.Status, "", "delivery-review-reminder", now); appErr != nil {
-		return apiOrderMaterializationResult{}, appErr
-	}
-	if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, "", apiorder.EventDeliveryReviewReminder, "delivery-review-reminder", now); appErr != nil {
-		return apiOrderMaterializationResult{}, appErr
-	}
-	return apiOrderMaterializationResult{DeliveryReviewReminded: true}, nil
+	return apiOrderMaterializationResult{}, nil
 }
 
 func reserveAPIOrderInventoryInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) *domain.AppError {
@@ -1343,8 +1299,9 @@ func (s *Store) deliverPreimportedAPIQuotaCredentialInTx(ctx context.Context, tx
 }
 
 const apiOrderColumns = `
-	id::text, purchase_kind, api_purchase_intent_id::text, api_service_id::text,
-	buyer_user_id::text, seller_user_id::text, status, dispute_status,
+		id::text, purchase_kind, api_purchase_intent_id::text, api_service_id::text,
+		buyer_user_id::text, COALESCE((SELECT username FROM users WHERE id = buyer_user_id), ''),
+		seller_user_id::text, COALESCE((SELECT username FROM users WHERE id = seller_user_id), ''), status, dispute_status,
 	COALESCE(dispute_case_id::text, ''), COALESCE(latest_dispute_case_id::text, ''),
 	COALESCE((SELECT next_actor FROM dispute_cases WHERE id = dispute_case_id), 'none'),
 	COALESCE((
@@ -1670,7 +1627,9 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.APIPurchaseIntentID,
 		&order.APIServiceID,
 		&order.BuyerUserID,
+		&order.BuyerUsername,
 		&order.SellerUserID,
+		&order.SellerUsername,
 		&order.Status,
 		&order.DisputeStatus,
 		&order.DisputeCaseID,
@@ -1786,7 +1745,9 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 		APIPurchaseIntentID:           intent.ID,
 		APIServiceID:                  intent.APIServiceID,
 		BuyerUserID:                   input.BuyerUserID,
+		BuyerUsername:                 intent.BuyerUsername,
 		SellerUserID:                  intent.OwnerUserID,
+		SellerUsername:                intent.OwnerUsername,
 		Status:                        apiorder.StatusPendingPayment,
 		DisputeStatus:                 apiorder.DisputeStatusNone,
 		CommercialOutcome:             apiorder.CommercialOutcomePending,
@@ -2228,7 +2189,7 @@ func storeResolveAPIOrderAmount(intent apiintent.Intent, service apimarket.Servi
 
 func storeCanActorAccessAPIOrder(order apiorder.Order, actorUserID, action string) bool {
 	switch action {
-	case "submit_payment", "cancel", "confirm_complete", "report_late_payment":
+	case "submit_payment", "cancel", "report_late_payment":
 		return order.BuyerUserID == actorUserID
 	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
@@ -2254,8 +2215,6 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 		return order.Status == apiorder.StatusPaymentSubmitted
 	case "submit_delivery":
 		return order.Status == apiorder.StatusPaidConfirmed
-	case "confirm_complete":
-		return order.Status == apiorder.StatusDeliverySubmitted
 	case "open_dispute":
 		return apiorder.WithAfterSalesProjection(order, now).CanOpenDispute
 	case "report_late_payment":
@@ -2333,14 +2292,12 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.DeliveryDueRemindedAt = nil
 		order.PackageStockReserved = false
 	case "submit_delivery":
-		order.Status = apiorder.StatusDeliverySubmitted
+		order.Status = apiorder.StatusCompleted
 		order.DeliveryNote = apiorder.DeliverySummary(input.DeliveryCredential.DeliveryKind)
 		order.DeliverySubmittedAt = &now
 		reviewExpiresAt := now.Add(apiorder.DeliveryReviewWindow)
 		order.DeliveryReviewExpiresAt = &reviewExpiresAt
-	case "confirm_complete":
-		order.Status = apiorder.StatusCompleted
-		order.CompletionSource = apiorder.CompletionSourceBuyerConfirmed
+		order.CompletionSource = apiorder.CompletionSourceSellerDelivered
 		order.CompletedAt = &now
 		order.CommercialOutcome = apiorder.CommercialOutcomeNormalFulfillment
 		order.CommercialOutcomeUpdatedAt = &now
@@ -2397,8 +2354,6 @@ func storeAPIOrderEventType(action string) string {
 		return apiorder.EventPaymentIssueReported
 	case "submit_delivery":
 		return apiorder.EventDeliverySubmitted
-	case "confirm_complete":
-		return apiorder.EventCompleted
 	case "open_dispute":
 		return apiorder.EventDisputeOpened
 	case "report_late_payment":

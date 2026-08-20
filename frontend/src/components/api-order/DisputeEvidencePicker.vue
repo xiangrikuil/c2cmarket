@@ -13,7 +13,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   visibility: 'participants_admin',
 })
-const model = defineModel<DisputeEvidenceAsset[]>({ default: [] })
+const model = defineModel<DisputeEvidenceAsset[]>({ default: () => [] })
 const input = ref<HTMLInputElement | null>(null)
 const kind = ref<DisputeEvidenceKind>('other_redacted_fact')
 const uploading = ref(false)

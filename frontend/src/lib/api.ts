@@ -120,6 +120,7 @@ export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
+import { maximumPurchaseCnyForInventory } from '@/lib/apiServicePricingPresentation'
 import {
   apiQuotaUsagePolicyFromInput,
   normalizeHistoricalApiQuotaUsagePolicy,
@@ -187,7 +188,6 @@ import {
   backendAdminAPIServiceRows,
   backendAdminAPIServiceRowsPage,
   backendCancelAPIOrder,
-  backendConfirmAPIOrderComplete,
   backendConfirmAPIOrderPayment,
   backendConfirmAPIQuotaRoundFulfillment,
   backendCreateAPIOrderFromIntent,
@@ -221,6 +221,7 @@ import {
   backendOpenAPIOrderDispute,
   backendPauseAPIService,
   backendPublishAPIService,
+  backendPublicAPIMarketAvailability,
   backendPublicAPIQuotaOffer,
   backendPublicAPIQuotaOffers,
   backendPublicAPIQuotaOffersPage,
@@ -582,7 +583,7 @@ export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
 export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
 export type ApiOrderLatePaymentStatus = 'reported' | 'not_received' | 'received_refund_pending'
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
-export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
+export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed' | 'seller_delivered' | 'remedy_confirmed'
 export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
 
 export type SellerCommerceRestrictionLevel = 'normal' | 'service_limited' | 'account_limited'
@@ -769,7 +770,9 @@ export type AdminApiOrderDetail = {
   apiPurchaseIntentId: string
   apiServiceId: string
   buyerUserId: string
+  buyerUsername: string
   sellerUserId: string
+  sellerUsername: string
   status: ApiOrderStatus
   disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
@@ -1211,18 +1214,23 @@ function mockDeliveryReviewDeadline(submittedAt?: string) {
 }
 
 function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
-	return orders.map(order => applyMockApiOrderAfterSales({
+	return orders.map(order => {
+		const sellerDelivered = order.status === 'delivery_submitted'
+		return applyMockApiOrderAfterSales({
     ...order,
+		status: sellerDelivered ? 'completed' : order.status,
     orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
 		purchaseKind: order.purchaseKind ?? 'api_service',
 			disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
 		hasDisputeHistory: order.hasDisputeHistory ?? Boolean(order.disputeCaseId || order.latestDisputeCaseId || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none'),
-		commercialOutcome: order.commercialOutcome ?? (order.status === 'completed' ? 'normal_fulfillment' : order.status === 'cancelled' ? 'cancelled_unpaid' : 'pending'),
-    completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
+		commercialOutcome: order.commercialOutcome ?? (order.status === 'completed' || sellerDelivered ? 'normal_fulfillment' : order.status === 'cancelled' ? 'cancelled_unpaid' : 'pending'),
+    completionSource: order.completionSource ?? (sellerDelivered ? 'seller_delivered' : order.status === 'completed' ? 'buyer_confirmed' : undefined),
+		completedAt: order.completedAt ?? (sellerDelivered ? order.deliverySubmittedAt : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
-      ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
+			?? ((sellerDelivered || order.status === 'completed') ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
     quotaUsagePolicySnapshot: normalizeHistoricalApiQuotaUsagePolicy(order.quotaUsagePolicySnapshot),
-  }))
+		})
+	})
 }
 
 function mockApiOrderValidityExpiresAt(order: ApiOrder) {
@@ -1240,7 +1248,10 @@ function applyMockApiOrderAfterSales(order: ApiOrder, currentTime = Date.now()) 
 	}
 	const validityExpiresAt = mockApiOrderValidityExpiresAt(order)
 	const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
-	const afterSalesTimestamp = Number.isFinite(validityTimestamp) ? validityTimestamp + 24 * 60 * 60 * 1000 : Number.NaN
+	const deliveryAfterSalesTimestamp = order.deliveryReviewExpiresAt ? Date.parse(order.deliveryReviewExpiresAt) : Number.NaN
+	const afterSalesTimestamp = Number.isFinite(validityTimestamp)
+		? validityTimestamp + 24 * 60 * 60 * 1000
+		: deliveryAfterSalesTimestamp
 	order.afterSalesExpiresAt = Number.isFinite(afterSalesTimestamp) ? new Date(afterSalesTimestamp).toISOString() : undefined
 	if (order.status === 'cancelled') {
 		order.canOpenDispute = false
@@ -1251,7 +1262,7 @@ function applyMockApiOrderAfterSales(order: ApiOrder, currentTime = Date.now()) 
 	} else if (Number.isFinite(afterSalesTimestamp) && currentTime >= afterSalesTimestamp) {
 		order.canOpenDispute = false
 		order.disputeEligibilityReason = 'after_sales_expired'
-	} else if (order.status === 'completed' && !Number.isFinite(validityTimestamp)) {
+	} else if (order.status === 'completed' && !Number.isFinite(afterSalesTimestamp)) {
 		order.canOpenDispute = false
 		order.disputeEligibilityReason = 'completed_validity_unknown'
 	} else {
@@ -1269,27 +1280,9 @@ function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQu
 }
 
 function materializeMockApiOrderReviews(currentTime = Date.now()) {
-  let changed = false
   for (const order of apiOrderStore) {
-		if (order.status !== 'delivery_submitted' || isApiOrderDisputeActive(order.disputeStatus) || !order.deliveryReviewExpiresAt) {
-			applyMockApiOrderAfterSales(order, currentTime)
-			continue
-    }
-    const deadline = Date.parse(order.deliveryReviewExpiresAt)
-		if (!Number.isFinite(deadline) || deadline > currentTime) {
-			applyMockApiOrderAfterSales(order, currentTime)
-			continue
-		}
-    const completedAt = new Date(deadline).toISOString()
-    order.status = 'completed'
-    order.completionSource = 'auto_completed'
-    order.completedAt = completedAt
-    order.updatedAt = completedAt
-    order.version += 1
-    changed = true
 		applyMockApiOrderAfterSales(order, currentTime)
   }
-  if (changed) persistApiOrderStore()
 }
 
 function createMockApiOrderNo(createdAt: string) {
@@ -1885,7 +1878,7 @@ export function getApiOrderStatusLabel(status: ApiOrderStatus, role: ApiOrderVie
     payment_submitted: '买家已付款',
     payment_issue: '付款待补充',
     paid_confirmed: '已确认收款',
-    delivery_submitted: role === 'buyer' ? '待核验凭证' : role === 'merchant' ? '已完成交付' : '买家核验期',
+    delivery_submitted: '已完成交付',
     completed: '已完成',
     cancelled: '已取消',
   }
@@ -1896,12 +1889,16 @@ export function getApiOrderDisplayStatus(order: ApiOrder, role: ApiOrderViewerRo
   if (order.status !== 'completed') return getApiOrderStatusLabel(order.status, role)
   if (order.completionSource === 'auto_completed') return '已自动完成'
   if (order.completionSource === 'buyer_confirmed') return role === 'buyer' ? '已确认凭证可用' : '买家已确认完成'
+	if (order.completionSource === 'seller_delivered') return '商家已交付，订单完成'
+	if (order.completionSource === 'remedy_confirmed') return '补救履行后完成'
   return '已完成'
 }
 
 export function getApiOrderCompletionSourceLabel(source?: ApiOrderCompletionSource) {
   if (source === 'buyer_confirmed') return '买家主动确认'
   if (source === 'auto_completed') return '核验期结束后系统自动完成'
+	if (source === 'seller_delivered') return '商家提交交付'
+	if (source === 'remedy_confirmed') return '补救履行确认'
   return '尚未完成'
 }
 
@@ -1947,10 +1944,10 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
         case 'open': return '等待平台处理凭证问题'
         case 'awaiting_fulfillment': return '等待裁决要求履行'
         case 'fulfillment_confirmation': return '确认履行结果'
-        default: return '核验凭证，或报告问题'
+        default: return '查看交付凭证；有问题可联系商家或发起纠纷'
       }
     }
-    if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '凭证已确认可用'
+		if (order.status === 'completed') return '查看交付凭证；有问题可联系商家或发起纠纷'
     if (order.status === 'cancelled') return '查看取消原因'
   }
   if (order.status === 'pending_payment') return '等待买家付款'
@@ -1958,12 +1955,12 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
   if (order.status === 'payment_issue') return '等待买家补充付款信息'
   if (order.status === 'paid_confirmed') return '填写交付信息'
   if (order.status === 'delivery_submitted') return '已完成交付，无需操作'
-  if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '订单已完成'
+	if (order.status === 'completed') return '订单已完成，无需操作'
   return '查看详情'
 }
 
 export function isApiOrderBuyerActionRequired(order: ApiOrder) {
-  return order.status === 'pending_payment' || order.status === 'payment_issue' || order.status === 'delivery_submitted'
+  return order.status === 'pending_payment' || order.status === 'payment_issue'
 }
 
 export function isApiOrderMerchantActionRequired(order: ApiOrder) {
@@ -2983,6 +2980,33 @@ export async function getApiServicesPage(filters: ApiServiceFilters = {}, page: 
   if (shouldUseRealBackend()) return backendAPIServicesPage(filters, page)
   await wait()
   return clone(paginateCursorItems(filterApiServices(filters), page))
+}
+
+export async function getApiMarketAvailability() {
+  if (shouldUseRealBackend()) return backendPublicAPIMarketAvailability()
+  await wait()
+
+  const publicServices = apiServiceStore.filter(isApiServicePubliclyOrderable)
+  const fixedPackages = publicServices
+    .filter(service => service.billingMode === 'fixed_package')
+    .reduce((total, service) => {
+      const enabledModelIDs = new Set(service.modelPriceRows.map(model => model.modelId))
+      const availablePackages = (service.packages ?? []).filter(item => item.enabled
+        && item.stockAvailable > 0
+        && item.models.some(model => enabledModelIDs.has(model.modelCatalogId)))
+      return total + availablePackages.length
+    }, 0)
+  const limitedOffers = apiQuotaOfferStore
+    .map(item => projectMockSystemRushOffer(item))
+    .filter(item => item.status === 'published' && item.isOrderable)
+    .length
+
+  return {
+    generatedAt: new Date().toISOString(),
+    limitedOffers,
+    fixedPackages,
+    meteredServices: publicServices.filter(service => service.billingMode === 'metered_credit').length,
+  }
 }
 
 function packageProviderSortOrder(code: string) {
@@ -4184,7 +4208,9 @@ function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
     apiPurchaseIntentId: order.apiPurchaseIntentId,
     apiServiceId: order.apiServiceId,
     buyerUserId: order.buyerId,
+    buyerUsername: order.buyer.replace(/^@/, ''),
     sellerUserId: order.sellerId,
+    sellerUsername: order.seller.replace(/^@/, ''),
     status: order.status,
     disputeStatus: order.disputeStatus,
     disputeCaseId: order.disputeCaseId,
@@ -5115,6 +5141,14 @@ export async function submitApiService(payload: Record<string, unknown>) {
     : accountPoolType ? accountPoolLabels[accountPoolType] : ''
   const merchantRefundCommitment = (payload.warranty as { mode?: string } | undefined)?.mode === 'merchant_full_refund'
   const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
+  const availableCreditUsd = numberValue(payload.availableCreditUsd, 0)
+  const availablePackagePrices = rawPackages
+    .filter(item => item.enabled !== false)
+    .map(item => numberValue(item.priceCny, 0))
+    .filter(price => price > 0)
+  const maximumPurchaseCny = billing === 'fixed_package'
+    ? availablePackagePrices.length ? Math.max(...availablePackagePrices) : 0
+    : maximumPurchaseCnyForInventory(availableCreditUsd, cnyPerUsdCredit)
   const service: ApiService = {
     id,
     version: 1,
@@ -5136,8 +5170,8 @@ export async function submitApiService(payload: Record<string, unknown>) {
     defaultMultiplier,
     creditPerCny: cnyPerUsdCredit > 0 ? Number((1 / cnyPerUsdCredit).toFixed(2)) : 1,
     minimumPurchaseCny: numberValue(payload.minimumPurchaseCny, 10),
-    maxBuy: numberValue(payload.maximumPurchaseCny, 300),
-    balance: numberValue(payload.availableCreditUsd, 0),
+    maxBuy: maximumPurchaseCny,
+    balance: availableCreditUsd,
     delivery: gateway,
     billingMode: billing,
     deliveryModes,
@@ -5718,7 +5752,7 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     buyer: {
       carpoolActions: buyerCarpoolActions,
       apiOrderActions: buyerApiOrders
-        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted' || isApiOrderDisputeActive(item.disputeStatus))
+        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || isApiOrderDisputeActive(item.disputeStatus))
         .length,
       apiOrderDisputes: buyerApiOrders.filter(item => isApiOrderDisputeActive(item.disputeStatus)).length,
     },
@@ -6791,19 +6825,6 @@ export async function reportLateApiOrderPayment(id: string, note: string, versio
   })
 }
 
-export async function confirmApiOrderComplete(id: string, version: number) {
-  if (shouldUseRealBackend()) return backendConfirmAPIOrderComplete(id, version)
-  await wait()
-  return updateApiOrder(id, order => {
-    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
-    if (order.status !== 'delivery_submitted') throw new Error('只有待核验凭证的订单可以确认可用。')
-		if (isApiOrderDisputeActive(order.disputeStatus)) throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
-    order.status = 'completed'
-    order.completionSource = 'buyer_confirmed'
-    order.completedAt = nowText()
-  })
-}
-
 export async function openApiOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
   if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, input, version, perspective)
   await wait()
@@ -6856,9 +6877,13 @@ export async function confirmApiOrderPayment(id: string, version: number) {
     summary.reserved -= 1
     summary.delivered += 1
     shouldPersistQuota = true
-    order.status = 'delivery_submitted'
+		order.status = 'completed'
     order.deliverySubmittedAt = confirmedAt
     order.deliveryReviewExpiresAt = new Date(Date.parse(confirmedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
+		order.completionSource = 'seller_delivered'
+		order.completedAt = confirmedAt
+		order.commercialOutcome = 'normal_fulfillment'
+		order.commercialOutcomeUpdatedAt = confirmedAt
     order.deliveryNote = '确认收款后已分配预导入的买家专属接入信息。'
     order.deliveryCredential = order.selectedDeliveryMode === 'sub2api_panel_account'
       ? {
@@ -6930,9 +6955,13 @@ export async function submitApiOrderDeliveryCredential(id: string, payload: Subm
     if (order.deliveryCredential) throw new Error('交付信息已提交，不能再次修改。')
     validateMockDeliveryCredential(payload)
     const submittedAt = nowText()
-    order.status = 'delivery_submitted'
+		order.status = 'completed'
     order.deliverySubmittedAt = submittedAt
     order.deliveryReviewExpiresAt = new Date(Date.parse(submittedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
+		order.completionSource = 'seller_delivered'
+		order.completedAt = submittedAt
+		order.commercialOutcome = 'normal_fulfillment'
+		order.commercialOutcomeUpdatedAt = submittedAt
     if (order.packageSnapshot) {
       const expiresAt = new Date(new Date(submittedAt).getTime() + order.packageSnapshot.durationDays * 86_400_000)
       order.packageExpiresAt = expiresAt.toISOString()
@@ -7009,22 +7038,27 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
       actorRole: 'merchant',
       type: 'delivery_submitted',
       fromStatus: 'paid_confirmed',
-      toStatus: 'delivery_submitted',
+			toStatus: order.completionSource === 'seller_delivered' ? 'completed' : 'delivery_submitted',
       note: order.deliveryNote,
       createdAt: order.deliverySubmittedAt,
     })
   }
-  if (order.completedAt) {
+	if (order.completedAt && order.completionSource !== 'seller_delivered') {
     const automaticallyCompleted = order.completionSource === 'auto_completed'
+		const remedyConfirmed = order.completionSource === 'remedy_confirmed'
     events.push({
       id: `${order.id}-completed`,
       orderId: order.id,
-      actorLabel: automaticallyCompleted ? '系统' : order.buyer,
-      actorRole: automaticallyCompleted ? 'system' : 'buyer',
+			actorLabel: automaticallyCompleted ? '系统' : remedyConfirmed ? '纠纷处理' : order.buyer,
+			actorRole: automaticallyCompleted || remedyConfirmed ? 'system' : 'buyer',
       type: 'completed',
       fromStatus: 'delivery_submitted',
       toStatus: 'completed',
-      note: automaticallyCompleted ? '24 小时核验期结束，订单自动完成。' : '买家已确认凭证可用。',
+			note: automaticallyCompleted
+				? '24 小时核验期结束，订单自动完成。'
+				: remedyConfirmed
+					? '纠纷补救履行确认后，订单完成。'
+					: '买家已确认凭证可用。',
       createdAt: order.completedAt,
     })
   }

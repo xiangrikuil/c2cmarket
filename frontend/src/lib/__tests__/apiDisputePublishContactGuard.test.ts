@@ -61,10 +61,11 @@ describe('API 纠纷发布与身份联系方式约束', () => {
   it('活动纠纷会隐藏订单普通交易动作和付款资料读取', () => {
     expect(orderDetailSource).toContain('const ordinaryActionsPaused = computed')
     expect(orderDetailSource).toContain("order.value.status === 'pending_payment' && !ordinaryActionsPaused.value")
-    for (const action of ['canSubmitPayment', 'canResubmitPayment', 'canConfirmPayment', 'canReportPaymentIssue', 'canSubmitDelivery', 'canConfirmComplete', 'canCancelOrder']) {
+    for (const action of ['canSubmitPayment', 'canResubmitPayment', 'canConfirmPayment', 'canReportPaymentIssue', 'canSubmitDelivery', 'canCancelOrder']) {
       expect(orderDetailSource).toContain(`const ${action} = computed(() => !ordinaryActionsPaused.value`)
     }
-    expect(orderDetailSource).toContain('付款、取消、核款、交付、确认完成及自动超时流程均已暂停')
+    expect(orderDetailSource).not.toContain('canConfirmComplete')
+    expect(orderDetailSource).toContain('付款、取消、核款、交付及自动超时流程均已暂停')
   })
 
   it('车源更新和联系方式配置为每次命令生成幂等键', () => {

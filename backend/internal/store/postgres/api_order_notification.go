@@ -63,8 +63,8 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 	case apiorder.EventDeliverySubmitted:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,
-			Title:           "卖家已提交交付凭证",
-			Body:            apiOrderNotificationBody(order, "卖家已提交买家专属接入信息，请在核验期内确认可用或反馈问题。"),
+			Title:           "卖家已完成订单交付",
+			Body:            apiOrderNotificationBody(order, "卖家已提交买家专属接入信息，订单已完成。如凭证存在问题，请联系卖家或发起纠纷。"),
 			TargetURL:       buyerTarget,
 		}, true
 	case apiorder.EventDeliveryReviewReminder:

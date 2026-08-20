@@ -294,7 +294,7 @@ The server owns orderability and timing; copy drafts carry stable editable comme
 ### 2. Signatures
 
 ```ts
-type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
+type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed' | 'seller_delivered' | 'remedy_confirmed'
 
 type ApiPurchaseOrder = {
   merchantConfirmDueAt?: string
@@ -316,11 +316,11 @@ getAdminApiOrder(id: string): Promise<AdminApiOrder>
 
 ### 3. Contracts
 
-- `delivery_submitted` is role-projected from one backend fact. Buyer detail shows `待核验凭证`, the server deadline/countdown, `确认凭证可用`, and `凭证存在问题`; seller detail/list shows `已完成交付` and no reminder or pending action.
-- Buyer confirmation is an optional early completion action. `凭证存在问题` reuses the existing dispute mutation with a structured reason. The browser must not invent a second issue state or recompute the 24-hour deadline.
-- `completed/buyer_confirmed` and `completed/auto_completed` use distinct truthful copy. Automatic completion must not render as buyer approval, a rating, or platform verification.
-- The shared timeline keeps the same fulfillment events while role wording changes. Buyer pending badges may include `delivery_submitted`; seller pending badges must not.
-- Credential access remains available to participants after either completion source. Seller delivery remains immutable and the UI must not offer resubmission or editing.
+- Seller submission returns `completed/seller_delivered`. Buyer detail shows the completed delivery, `联系商家`, and `凭证存在问题`; seller detail/list shows that delivery and the order are complete with no reminder or pending action.
+- There is no buyer confirmation mutation or review countdown. `凭证存在问题` reuses the existing dispute mutation with a structured reason and server-owned occurrence time/deadline validation.
+- Historical `completed/buyer_confirmed` and `completed/auto_completed` values keep distinct truthful copy. Automatic completion must not render as buyer approval, a rating, or platform verification.
+- The shared timeline ends at seller delivery/completion. `delivery_submitted` remains a legacy read-compatible status but must not create a buyer or seller pending action.
+- Credential access remains available to participants after completion. Seller delivery remains immutable and the UI must not offer resubmission or editing.
 - Admin detail shows buyer/seller IDs, frozen commercial data, event times, deadline, completion source, and a dispute link when present. It renders no raw credential, payment/contact value, or participant contact detail.
 - Payment, merchant-confirmation, delivery, and review deadlines come from the order DTO. Device time may animate a countdown but never authorizes an action or synthesizes an overdue state.
 - While `pending_payment`, buyer detail persistently states that an off-platform transfer does not update the order and that the buyer must click `我已完成付款` before the deadline.
@@ -331,12 +331,13 @@ getAdminApiOrder(id: string): Promise<AdminApiOrder>
 
 | Condition | UI behavior |
 | --- | --- |
-| Buyer reviews `delivery_submitted` | Show countdown plus confirm/problem actions |
-| Seller reviews `delivery_submitted` | Show `已完成交付`; no pending action or reminder |
-| `disputeStatus=open` | Show dispute state; do not imply the countdown will finish normally |
+| Buyer reviews `completed/seller_delivered` | Show credential, merchant contact, and problem/dispute actions while eligible |
+| Seller reviews `completed/seller_delivered` | Show order complete; no pending action or reminder |
+| `disputeStatus=open` | Show dispute state without reverting the completed order fact |
+| Removed confirmation route or client function | Must stay absent |
 | `completionSource=buyer_confirmed` | Show buyer-confirmed completion copy |
 | `completionSource=auto_completed` | Show review-window-ended copy without endorsement semantics |
-| Deadline missing in `delivery_submitted` | Show stable state without fabricating a browser deadline |
+| Dispute deadline missing | Show stable completed state without fabricating a browser deadline |
 | `merchantConfirmOverdue=true` or `deliveryOverdue=true` | Show the matching server-projected overdue state and existing dispute entry; do not cancel or release inventory |
 | Timed-out cancellation has `canReportLatePayment=true` | Show report dialog; optional note contains no credential or full account data |
 | Seller sees `latePaymentStatus=reported` | Offer only `not_received` or `received_refund_pending` |
@@ -344,9 +345,9 @@ getAdminApiOrder(id: string): Promise<AdminApiOrder>
 
 ### 5. Good / Base / Bad Cases
 
-- Good: buyer and seller open the same delivered order; the buyer sees two review actions and the seller sees a completed delivery with no task.
+- Good: buyer and seller open the same delivered order; the buyer sees contact/problem actions and the seller sees a completed order with no task.
 - Good: an order cancelled for payment timeout exposes one late-payment report action for 24 hours, then renders the recorded seller outcome without implying refund completion.
-- Base: after automatic completion both participants can still read the delivered credential, while completion copy says the review window ended.
+- Base: historical automatic completion remains readable by both participants, while completion copy says the old review window ended.
 - Bad: seller detail says `等待买家确认`, the browser starts a fresh 24-hour timer, or admin detail renders a credential/contact section.
 
 ### 6. Tests Required

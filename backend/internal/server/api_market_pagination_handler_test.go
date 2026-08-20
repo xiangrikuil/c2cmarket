@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apimarket"
@@ -94,6 +95,28 @@ func TestPublicAPIServiceListRejectsInvalidPackageDuration(t *testing.T) {
 	}
 }
 
+func TestPublicAPIMarketAvailabilityReturnsAllSellableUnits(t *testing.T) {
+	generatedAt := time.Date(2026, 8, 20, 8, 30, 0, 0, time.UTC)
+	service := &apiMarketAvailabilityRouteService{availability: apimarket.PublicMarketAvailability{
+		GeneratedAt: generatedAt, LimitedOffers: 4, FixedPackages: 6, MeteredServices: 2,
+	}}
+	handler := NewServer(service)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/api-market/availability", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("availability status = %d body %s", response.Code, response.Body.String())
+	}
+	var body publicAPIMarketAvailabilityResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode availability: %v", err)
+	}
+	if body.GeneratedAt != generatedAt.Format(time.RFC3339Nano) || body.LimitedOffers != 4 || body.FixedPackages != 6 || body.MeteredServices != 2 {
+		t.Fatalf("unexpected availability response: %+v", body)
+	}
+}
+
 type apiMarketPaginationRequest struct {
 	Filter apimarket.PublicServiceFilter
 	Page   domain.PageRequest
@@ -103,6 +126,15 @@ type apiMarketPaginationRouteService struct {
 	ApplicationService
 	pages    map[string]domain.Page[apimarket.Service]
 	requests []apiMarketPaginationRequest
+}
+
+type apiMarketAvailabilityRouteService struct {
+	ApplicationService
+	availability apimarket.PublicMarketAvailability
+}
+
+func (s *apiMarketAvailabilityRouteService) PublicAPIMarketAvailability(context.Context) (apimarket.PublicMarketAvailability, *domain.AppError) {
+	return s.availability, nil
 }
 
 func (s *apiMarketPaginationRouteService) PublicAPIServices(_ context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {

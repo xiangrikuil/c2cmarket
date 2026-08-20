@@ -35,3 +35,7 @@ type Repository interface {
 	GetAPIQuotaCredentialSummary(ctx context.Context, ownerUserID, offerID string) (CredentialSummary, *domain.AppError)
 	CreateSystemRushOfferWithIdempotency(ctx context.Context, entry idempotency.Entry, publication RushOfferPublication, credentials []CredentialImportRow, now time.Time, buildCompletion RushOfferCompletionBuilder) (RushOfferPublication, idempotency.Completion, *domain.AppError)
 }
+
+type PublicOfferInventoryRepository interface {
+	CountPublicOrderableAPIQuotaOffers(ctx context.Context, now time.Time) (int, *domain.AppError)
+}

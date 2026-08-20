@@ -194,7 +194,7 @@ const baseForm = reactive<ApiServicePublishForm>({
   quotaExpiresAt: defaultQuotaExpiresAtInput(),
   quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   minimumPurchaseCny: 10,
-  maximumPurchaseCny: 300,
+  maximumPurchaseCny: null,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
   declaredMaxConcurrency: 1,

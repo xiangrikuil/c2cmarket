@@ -24,6 +24,7 @@ import {
 } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
+import { getApiServicePricePresentation } from '@/lib/apiServicePricingPresentation'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useMyApiServices, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
@@ -67,11 +68,12 @@ const availablePackages = computed(() => (service.value?.packages ?? []).filter(
 const selectedPackage = computed<ApiServicePackage | null>(() => availablePackages.value.find(item => item.id === selectedPackageId.value) ?? null)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const serviceIconSrc = computed(() => service.value ? getApiServiceProductIconSrc(service.value, categoryIconByCode.value) : null)
+const servicePrice = computed(() => service.value ? getApiServicePricePresentation(service.value) : null)
 
 useEntitySeo({
   indexable: computed(() => Boolean(service.value)),
   title: computed(() => service.value ? `${service.value.title}｜API 服务｜C2CMarket` : 'API 服务详情｜C2CMarket'),
-  description: computed(() => service.value ? `${service.value.title}，支持 ${service.value.models.join('、')}，最低 ¥${service.value.minimumPurchaseCny} 起，查看交付方式与商户说明。` : '查看公开 API 服务详情。'),
+  description: computed(() => service.value && servicePrice.value ? `${service.value.title}，支持 ${service.value.models.join('、')}，${servicePrice.value.label} ${servicePrice.value.value}，查看交付方式与商户说明。` : '查看公开 API 服务详情。'),
   schema: computed(() => service.value ? {
     '@type': 'Service',
     name: service.value.title,
@@ -79,7 +81,7 @@ useEntitySeo({
     offers: {
       '@type': 'Offer',
       priceCurrency: 'CNY',
-      price: service.value.minimumPurchaseCny,
+      price: servicePrice.value?.minimumPriceCny,
       availability: service.value.publiclyOrderable ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
     },
   } : null),
@@ -213,7 +215,7 @@ function createOrder() {
 
     <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,65fr)_minmax(340px,35fr)] lg:items-start">
       <div class="min-w-0 space-y-4">
-        <ApiServiceSummary :service="service" />
+        <ApiServiceSummary :service="service" :selected-package="selectedPackage" />
         <ApiServiceDetailsTabs :service="service" />
       </div>
 

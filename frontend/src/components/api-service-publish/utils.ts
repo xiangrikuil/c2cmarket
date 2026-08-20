@@ -1,5 +1,6 @@
 import type { ModelCatalogItem } from '@/lib/api'
 import { defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
+import { maximumPurchaseCnyForInventory } from '@/lib/apiServicePricingPresentation'
 import {
   apiPaymentMethodLabels,
   createDefaultApiPaymentOptions,
@@ -79,14 +80,13 @@ export const sub2ApiPricingPolicy = {
 
 export const simplifiedApiQuotaRules = {
   minimumPurchaseCny: 10,
-  maximumPurchaseCny: 300,
   validityDays: 30,
 } as const
 
 export const defaultPaymentWindowMinutes = defaultApiPaymentWindowMinutes
 export const paymentMethodLabels: Record<PublishPaymentMethod, string> = apiPaymentMethodLabels
 
-export const apiQuotaDefaultRuleText = `默认：最低订单 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，单笔最高 ¥${simplifiedApiQuotaRules.maximumPurchaseCny}；额度有效至商户填写的固定时间。`
+export const apiQuotaDefaultRuleText = `默认：最低订单 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，最大购买金额按当前可售额度计算；额度有效至商户填写的固定时间。`
 
 export const apiQuotaBoundaryNotice = 'C2CMarket 仅提供信息撮合，不托管支付、不保存 API Key、不担保交付、不代赔。买家创建订单后，双方站外确认接入细节和售后处理。'
 
@@ -122,8 +122,14 @@ export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {
   form.usageVisibility = form.billingMode === 'fixed_package' ? 'fixed_package_only' : 'merchant_confirmed'
   if (!Number.isFinite(form.defaultMultiplier) || form.defaultMultiplier <= 0) form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
   if (form.billingMode === 'metered_credit') {
+    const availableCreditUsd = form.availableCreditUsd
+    const cnyPerUsdCredit = form.cnyPerUsdCredit
     form.minimumPurchaseCny = simplifiedApiQuotaRules.minimumPurchaseCny
-    form.maximumPurchaseCny = simplifiedApiQuotaRules.maximumPurchaseCny
+    form.maximumPurchaseCny = typeof availableCreditUsd === 'number' && Number.isFinite(availableCreditUsd)
+      && typeof cnyPerUsdCredit === 'number' && Number.isFinite(cnyPerUsdCredit)
+      && availableCreditUsd > 0 && cnyPerUsdCredit > 0
+      ? maximumPurchaseCnyForInventory(availableCreditUsd, cnyPerUsdCredit)
+      : null
     if (!form.quotaExpiresAt) form.quotaExpiresAt = defaultQuotaExpiresAtInput()
   }
   form.validity = {

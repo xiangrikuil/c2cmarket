@@ -23,7 +23,9 @@ type Intent struct {
 	APIServiceID                             string
 	APIServiceOwnerUserID                    string
 	BuyerUserID                              string
+	BuyerUsername                            string
 	OwnerUserID                              string
+	OwnerUsername                            string
 	BuyerContactMethodID                     string
 	BuyerContactMethodVersionID              string
 	OwnerContactMethodID                     string

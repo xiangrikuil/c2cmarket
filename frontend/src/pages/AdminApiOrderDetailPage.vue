@@ -84,7 +84,7 @@ const timeline = computed(() => {
       ? { key: 'delivery', label: '完成交付', actor: '商户', time: order.value.deliverySubmittedAt, note: order.value.deliveryNote || '已提交一次性交付凭证' }
       : null,
     order.value.completedAt
-      ? { key: 'completed', label: '订单完成', actor: order.value.completionSource === 'auto_completed' ? '系统' : '买家', time: order.value.completedAt, note: getApiOrderCompletionSourceLabel(order.value.completionSource) }
+			? { key: 'completed', label: '订单完成', actor: order.value.completionSource === 'auto_completed' ? '系统' : order.value.completionSource === 'seller_delivered' ? '商家' : order.value.completionSource === 'remedy_confirmed' ? '纠纷处理' : '买家', time: order.value.completedAt, note: getApiOrderCompletionSourceLabel(order.value.completionSource) }
       : null,
     order.value.cancelledAt
       ? { key: 'cancelled', label: '订单取消', actor: '系统或买家', time: order.value.cancelledAt, note: order.value.cancelReason || '订单已取消' }
@@ -192,8 +192,8 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
         <Card class="p-5">
           <div class="flex items-center gap-2"><UsersRound class="h-4 w-4 text-primary" /><h2 class="font-semibold">订单参与方</h2></div>
           <dl class="mt-4 space-y-4 text-sm">
-            <div><dt class="text-xs text-muted-foreground">买家用户 ID</dt><dd class="mt-1"><ShortId :value="order.buyerUserId" prefix="BUY" copyable /></dd></div>
-            <div><dt class="text-xs text-muted-foreground">商户用户 ID</dt><dd class="mt-1"><ShortId :value="order.sellerUserId" prefix="SEL" copyable /></dd></div>
+            <div><dt class="text-xs text-muted-foreground">买家</dt><dd class="mt-1 font-medium">{{ order.buyerUsername ? `@${order.buyerUsername}` : '用户名不可用' }}</dd><dd class="mt-1 text-xs text-muted-foreground"><ShortId :value="order.buyerUserId" prefix="BUY" copyable /></dd></div>
+            <div><dt class="text-xs text-muted-foreground">商户</dt><dd class="mt-1 font-medium">{{ order.sellerUsername ? `@${order.sellerUsername}` : '用户名不可用' }}</dd><dd class="mt-1 text-xs text-muted-foreground"><ShortId :value="order.sellerUserId" prefix="SEL" copyable /></dd></div>
           </dl>
         </Card>
 

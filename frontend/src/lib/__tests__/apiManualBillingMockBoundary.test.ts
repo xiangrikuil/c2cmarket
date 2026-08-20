@@ -97,6 +97,8 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
   }
   const metered = await settle(api.submitApiService({
     billingMode: 'metered_credit',
+    availableCreditUsd: 124.999,
+    cnyPerUsdCredit: 0.8,
     quotaUsagePolicy: writableQuotaPolicy,
     ...requiredServiceDeclarations,
   }))
@@ -106,6 +108,7 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
     ...requiredServiceDeclarations,
   }))
   assert.equal(metered.billingMode, 'metered_credit')
+  assert.equal(metered.maxBuy, 99.99)
   assert.equal(fixed.billingMode, 'fixed_package')
 })
 

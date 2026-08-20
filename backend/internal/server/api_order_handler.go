@@ -66,7 +66,9 @@ type apiOrderResponse struct {
 	APIPurchaseIntentID           string                              `json:"apiPurchaseIntentId"`
 	APIServiceID                  string                              `json:"apiServiceId"`
 	BuyerUserID                   string                              `json:"buyerUserId,omitempty"`
+	BuyerUsername                 string                              `json:"buyerUsername,omitempty"`
 	SellerUserID                  string                              `json:"sellerUserId,omitempty"`
+	SellerUsername                string                              `json:"sellerUsername,omitempty"`
 	BuyerReputation               *reputationSummaryResponse          `json:"buyerReputation"`
 	SellerReputation              *reputationSummaryResponse          `json:"sellerReputation"`
 	Status                        string                              `json:"status"`
@@ -463,12 +465,6 @@ func (s *Server) handleCancelAPIOrder(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleConfirmAPIOrderComplete(w http.ResponseWriter, r *http.Request) {
-	s.handleContinuousAPIOrderAction(w, r, "buyer", "confirm-complete", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
-		return s.apiOrderContinuity.ConfirmAPIOrderCompleteForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
-	})
-}
-
 func (s *Server) handleOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
 	s.handleContinuousAPIOrderAction(w, r, "buyer", "dispute", func(ctx context.Context, actor auth.BusinessActor, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
 		return s.apiOrderContinuity.OpenAPIOrderDisputeForActorWithIdempotency(ctx, actor, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(false))
@@ -736,7 +732,9 @@ func toAdminAPIOrderResponses(orders []apiorder.Order) []apiOrderResponse {
 func toAdminAPIOrderResponse(order apiorder.Order) apiOrderResponse {
 	response := toAPIOrderResponse(order, false, false)
 	response.BuyerUserID = order.BuyerUserID
+	response.BuyerUsername = order.BuyerUsername
 	response.SellerUserID = order.SellerUserID
+	response.SellerUsername = order.SellerUsername
 	response.DeliveryCredential = nil
 	response.DisputeNeedsAction = false
 	response.DisputeAvailableActions = []string{}
@@ -847,8 +845,10 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 	}
 	if ownerView {
 		response.BuyerUserID = order.BuyerUserID
+		response.BuyerUsername = order.BuyerUsername
 	} else {
 		response.SellerUserID = order.SellerUserID
+		response.SellerUsername = order.SellerUsername
 	}
 	if includeCredential && order.DeliveryCredential != nil {
 		response.DeliveryCredential = toAPIOrderDeliveryCredentialResponse(*order.DeliveryCredential)

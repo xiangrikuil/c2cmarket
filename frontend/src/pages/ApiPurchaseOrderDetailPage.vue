@@ -160,7 +160,6 @@ const canReportPaymentIssue = computed(() => !ordinaryActionsPaused.value && isM
 const canReportLatePayment = computed(() => !isMerchantView.value && Boolean(order.value?.canReportLatePayment))
 const canResolveLatePayment = computed(() => isMerchantView.value && order.value?.latePaymentStatus === 'reported')
 const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
-const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
 const canOpenDispute = computed(() => Boolean(
   order.value
 	&& !isMerchantView.value
@@ -281,8 +280,8 @@ const paymentIssueOptions: Array<{ value: ApiOrderPaymentIssueReason, label: str
   { value: 'amount_mismatch', label: '金额不符', description: '实收金额与订单金额不一致。' },
   { value: 'remark_mismatch', label: '备注不符', description: '付款备注或订单识别信息不一致。' },
 ]
-const flowSteps = ['创建订单', '买家付款', '商户确认收款', '商户交付', '买家核验']
-const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '完成一次性交付', '确认可用或核验期自动结束']
+const flowSteps = ['创建订单', '买家付款', '商户确认收款', '交付并完成']
+const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '提交凭证后订单完成']
 const currentFlowIndex = computed(() => {
   if (!order.value || order.value.status === 'cancelled') return -1
   const indexes = {
@@ -290,8 +289,8 @@ const currentFlowIndex = computed(() => {
     payment_submitted: 2,
     payment_issue: 1,
     paid_confirmed: 3,
-    delivery_submitted: 4,
-    completed: 5,
+		delivery_submitted: 4,
+		completed: 4,
   } as const
   return indexes[order.value.status]
 })
@@ -302,20 +301,12 @@ const activeDeadline = computed(() => {
   if (order.value?.status === 'pending_payment') return order.value.paymentExpiresAt
   if (order.value?.status === 'payment_submitted') return order.value.merchantConfirmDueAt
   if (order.value?.status === 'paid_confirmed') return order.value.deliveryDueAt
-  if (!isMerchantView.value && order.value?.status === 'delivery_submitted') return order.value.deliveryReviewExpiresAt
   return null
 })
 const countdown = computed(() => orderCountdown(activeDeadline.value, now.value))
-const countdownLabel = computed(() => {
-  if (order.value?.status !== 'delivery_submitted') return countdown.value.label
-  const hours = String(Math.floor(countdown.value.totalSeconds / 3600)).padStart(2, '0')
-  const minutes = String(Math.floor((countdown.value.totalSeconds % 3600) / 60)).padStart(2, '0')
-  const seconds = String(countdown.value.totalSeconds % 60).padStart(2, '0')
-  return `${hours}:${minutes}:${seconds}`
-})
+const countdownLabel = computed(() => countdown.value.label)
 const countdownTitle = computed(() => {
   if (order.value?.status === 'pending_payment') return `请在 ${order.value.paymentWindowMinutes} 分钟内完成付款`
-  if (order.value?.status === 'delivery_submitted') return '凭证核验剩余时间'
   if (order.value?.status === 'payment_submitted') return '商户核对收款剩余时间'
   return '商户交付剩余时间'
 })
@@ -330,26 +321,28 @@ const showMerchantTimeout = computed(() => Boolean(order.value?.merchantConfirmO
 const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
-	if (order.value.catalogRiskHold?.status === 'active') return '关联模型目录被紧急阻断，付款、核款、交付、确认完成及自动超时均已暂停；仍可查看订单证据或发起纠纷。'
-	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请进入独立纠纷页面查看当前处理进度。'
+	if (order.value.catalogRiskHold?.status === 'active') return '关联模型目录被紧急阻断，付款、核款、交付及自动超时均已暂停；仍可查看订单证据或发起纠纷。'
+	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付及自动超时流程均已暂停；请进入独立纠纷页面查看当前处理进度。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
     if (order.value.status === 'payment_issue') return '已报告付款问题，正在等待买家补充付款信息。'
     if (order.value.status === 'paid_confirmed') return '收款已确认，请填写买家专属的接入信息。'
-    if (order.value.status === 'delivery_submitted') return '已完成交付，无需继续操作；买家可在核验期内确认可用或报告问题。'
+		if (order.value.status === 'delivery_submitted') return '已完成交付，无需继续操作；买家仍可联系你或发起纠纷。'
+		if (order.value.completionSource === 'seller_delivered') return '交付凭证已提交，这笔交易已经完成。'
     if (order.value.completionSource === 'auto_completed') return '核验期已结束，订单由系统自动完成。'
-    return '买家已确认凭证可用，这笔交易已完成。'
+		return '这笔交易已经完成。'
   }
   if (order.value.status === 'pending_payment') return '查看本次订单的收款信息，完成付款后确认付款状态。'
   if (order.value.status === 'payment_submitted') return '付款状态已提交，等待商户核对收款。'
   if (order.value.status === 'payment_issue') return '商户发现付款信息不匹配，请补充说明后重新提交。'
   if (order.value.status === 'paid_confirmed') return '商户已确认收款，等待商户提交交付凭证。'
   if (order.value.status === 'delivery_submitted') return isApiOrderDisputeActive(order.value.disputeStatus)
-    ? '凭证问题正在处理中，自动完成计时已暂停。'
-    : '请在核验期内确认凭证可用或报告问题；未反馈时订单将自动完成。'
+		? '凭证问题正在处理中，请进入纠纷页面查看进度。'
+		: '卖家已提交交付凭证，订单已完成；有问题可联系卖家或发起纠纷。'
+	if (order.value.completionSource === 'seller_delivered') return '卖家已提交交付凭证，订单已完成；有问题可联系卖家或发起纠纷。'
   if (order.value.completionSource === 'auto_completed') return '核验期内未报告问题，订单已自动完成；交付凭证仍可查看。'
-  return '你已确认凭证可用；交付凭证仍可在本页查看。'
+	return '订单已完成；交付凭证仍可在本页查看。'
 })
 
 function legacyRevocationCopy(value: string) {
@@ -664,14 +657,14 @@ onBeforeUnmount(() => {
       <ShieldAlert />
       <AlertTitle>目录风险暂停处理中</AlertTitle>
       <AlertDescription>
-        {{ order.catalogRiskHold.reason }} 付款、核款、交付、确认完成和自动超时已暂停；订单证据与纠纷入口保持可用。
+				{{ order.catalogRiskHold.reason }} 付款、核款、交付和自动超时已暂停；订单证据与纠纷入口保持可用。
       </AlertDescription>
     </Alert>
 
-    <Alert v-if="isMerchantView && order.status === 'delivery_submitted'" class="border-success/35 bg-success/10">
+		<Alert v-if="isMerchantView && order.status === 'completed' && order.completionSource === 'seller_delivered'" class="border-success/35 bg-success/10">
       <CheckCircle2 class="text-success" />
-      <AlertTitle>已完成交付</AlertTitle>
-      <AlertDescription>你的履约任务已经结束，无需等待买家点击确认。订单将在买家确认可用或 24 小时核验期结束后完成。</AlertDescription>
+			<AlertTitle>交付完成，订单已完成</AlertTitle>
+			<AlertDescription>交付凭证已保存，无需等待买家确认。买家仍可在售后期限内联系你或发起纠纷。</AlertDescription>
     </Alert>
 
     <section v-if="isMerchantView" class="border-y border-border bg-card px-4 py-5 sm:px-5" aria-labelledby="merchant-payment-check-title">
@@ -766,11 +759,6 @@ onBeforeUnmount(() => {
           <Button v-else-if="canSubmitDelivery" size="lg" :disabled="actionBusy" @click="scrollToDeliveryForm">
             <KeyRound class="h-4 w-4" />继续填写交付信息
           </Button>
-          <template v-else-if="canConfirmComplete">
-            <Button size="lg" @click="router.push(`/my/api-orders/${order.id}/delivery`)">
-              <KeyRound class="h-4 w-4" />查看交付内容
-            </Button>
-          </template>
           <Button v-else-if="canOpenReviewCenter" size="lg" :disabled="actionBusy" @click="openReviewCenter">
             <Star class="h-4 w-4" />{{ isMerchantView ? '评价买家' : '评价卖家' }}
           </Button>

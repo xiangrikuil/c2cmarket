@@ -57,7 +57,7 @@ func TestNavigationBadgeCountsActiveAPIOrderDisputesAsDistinctOrderActions(t *te
 	normalizedSQL := strings.Join(strings.Fields(navigationBadgeSummarySQL), " ")
 	activeStatuses := "dispute_status IN ( 'negotiating', 'pending_seller_response', 'pending_applicant_decision', 'open', 'awaiting_fulfillment', 'fulfillment_confirmation' )"
 	for _, want := range []string{
-		"status = 'delivery_submitted' OR " + activeStatuses,
+		"status = 'payment_issue' OR " + activeStatuses,
 		activeStatuses + ") AS buyer_api_order_disputes",
 		"status IN ('payment_submitted', 'paid_confirmed') OR " + activeStatuses,
 		activeStatuses + ") AS merchant_api_order_disputes",
@@ -65,6 +65,9 @@ func TestNavigationBadgeCountsActiveAPIOrderDisputesAsDistinctOrderActions(t *te
 		if !strings.Contains(normalizedSQL, want) {
 			t.Fatalf("navigation badge query is missing dispute action boundary %q: %s", want, normalizedSQL)
 		}
+	}
+	if strings.Contains(normalizedSQL, "status = 'delivery_submitted'") {
+		t.Fatalf("seller-delivered compatibility rows must not create buyer action badges: %s", normalizedSQL)
 	}
 	for _, terminal := range []string{"dispute_status = 'none'", "dispute_status = 'closed'"} {
 		if strings.Contains(normalizedSQL, terminal) {

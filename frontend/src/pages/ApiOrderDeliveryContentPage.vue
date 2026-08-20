@@ -13,6 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
@@ -28,45 +29,43 @@ import {
 } from '@/lib/apiOrderUi'
 import {
   useApiOrder,
-  useConfirmApiOrderCompleteMutation,
   useOpenApiOrderDisputeMutation,
 } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
 const { data: order, isLoading, error, refetch } = useApiOrder(id, 'buyer')
-const confirmCompleteMutation = useConfirmApiOrderCompleteMutation()
 const openDisputeMutation = useOpenApiOrderDisputeMutation()
 
-const completionConfirmOpen = ref(false)
 const credentialProblemOpen = ref(false)
 const credentialProblemReason = ref<ApiOrderCredentialProblemReason | ''>('')
+const credentialProblemOccurredAt = ref('')
 const credentialProblemNote = ref('')
 
 const disputeActive = computed(() => Boolean(order.value && isApiOrderDisputeActive(order.value.disputeStatus)))
 const catalogPaused = computed(() => order.value?.catalogRiskHold?.status === 'active')
-const canReviewCredential = computed(() => Boolean(
+const canReportCredentialProblem = computed(() => Boolean(
   order.value?.deliveryCredential
   && !order.value.deliveryCredential.destroyedAt
-  && order.value.status === 'delivery_submitted'
+  && order.value.status === 'completed'
+  && order.value.canOpenDispute
   && !disputeActive.value
   && !catalogPaused.value,
 ))
 const disputePanelId = computed(() => order.value?.disputeCaseId ?? order.value?.latestDisputeCaseId ?? '')
-const actionBusy = computed(() => confirmCompleteMutation.isPending.value || openDisputeMutation.isPending.value)
+const actionBusy = computed(() => openDisputeMutation.isPending.value)
+const credentialProblemOccurrenceMax = computed(() => {
+  const validityExpiresAt = order.value?.packageExpiresAt
+    ?? order.value?.quotaSnapshot?.expiresAt
+    ?? order.value?.intentSnapshot.serviceValidityExpiresAt
+  const validityTimestamp = validityExpiresAt ? Date.parse(validityExpiresAt) : Number.NaN
+  const value = new Date(Number.isFinite(validityTimestamp) ? Math.min(Date.now(), validityTimestamp) : Date.now())
+  value.setMinutes(value.getMinutes() - value.getTimezoneOffset())
+  return value.toISOString().slice(0, 16)
+})
 const credentialProblemSubmitDisabled = computed(() => !credentialProblemReason.value
+  || !credentialProblemOccurredAt.value
   || (credentialProblemReason.value === 'other' && !credentialProblemNote.value.trim()))
-
-async function confirmComplete() {
-  if (!order.value) return
-  try {
-    await confirmCompleteMutation.mutateAsync({ id: order.value.id, version: order.value.version })
-    completionConfirmOpen.value = false
-    toast.success('已确认凭证可用，订单完成。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '确认凭证可用失败。')
-  }
-}
 
 async function submitCredentialProblem() {
   if (!order.value || !credentialProblemReason.value) return
@@ -81,6 +80,7 @@ async function submitCredentialProblem() {
         issueCode: 'service_unavailable',
         requestedResolution: 'full_refund',
         requestedAmountCny: null,
+        issueOccurredAt: new Date(credentialProblemOccurredAt.value).toISOString(),
         reason,
       },
       version: order.value.version,
@@ -88,8 +88,9 @@ async function submitCredentialProblem() {
     })
     credentialProblemOpen.value = false
     credentialProblemReason.value = ''
+    credentialProblemOccurredAt.value = ''
     credentialProblemNote.value = ''
-    toast.success('凭证问题已提交，自动完成计时已暂停。')
+    toast.success('凭证问题已提交，请进入纠纷页面查看进度。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交凭证问题失败。')
   }
@@ -143,7 +144,7 @@ async function submitCredentialProblem() {
       <Alert v-if="catalogPaused" variant="destructive">
         <ShieldAlert />
         <AlertTitle>订单流程已暂停</AlertTitle>
-        <AlertDescription>关联模型目录正在处理风险问题，当前不能确认完成；交付内容仍可查看。</AlertDescription>
+        <AlertDescription>关联模型目录正在处理风险问题，交付内容仍可查看，普通售后操作暂时不可用。</AlertDescription>
       </Alert>
 
       <Alert v-else-if="disputeActive" class="border-warning/40 bg-warning/10">
@@ -157,21 +158,21 @@ async function submitCredentialProblem() {
         </AlertDescription>
       </Alert>
 
-      <section v-else-if="canReviewCredential" class="border-y border-border py-4" aria-labelledby="credential-review-title">
+      <section v-else-if="canReportCredentialProblem" class="border-y border-border py-4" aria-labelledby="credential-review-title">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 id="credential-review-title" class="font-semibold">核验交付内容</h2>
+            <h2 id="credential-review-title" class="font-semibold">订单已完成，交付内容可继续查看</h2>
             <p class="mt-1 text-sm leading-6 text-muted-foreground">
-              请实际测试接入地址、凭证、额度和权限。平台不会代替你验证 API。
-              <span v-if="order.deliveryReviewExpiresAt" class="block">核验截止：<LocalTime :value="order.deliveryReviewExpiresAt" /></span>
+							如接入地址、凭证、额度或权限存在问题，请联系商家或发起纠纷。平台不会代替你验证 API。
+							<span v-if="order.afterSalesExpiresAt" class="block">纠纷截止：<LocalTime :value="order.afterSalesExpiresAt" /></span>
             </p>
           </div>
           <div class="flex shrink-0 flex-col gap-2 sm:flex-row">
+						<Button as-child variant="outline">
+							<RouterLink :to="`/my/api-orders/${order.id}`"><Headphones class="h-4 w-4" />联系商家</RouterLink>
+						</Button>
             <Button variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="credentialProblemOpen = true">
               <ShieldAlert class="h-4 w-4" />凭证存在问题
-            </Button>
-            <Button :disabled="actionBusy" @click="completionConfirmOpen = true">
-              <CheckCircle2 class="h-4 w-4" />确认凭证可用
             </Button>
           </div>
         </div>
@@ -184,29 +185,11 @@ async function submitCredentialProblem() {
       </Alert>
     </template>
 
-    <Dialog v-model:open="completionConfirmOpen">
-      <DialogContent class="sm:max-w-[480px]">
-        <DialogHeader>
-          <DialogTitle>确认凭证可以使用？</DialogTitle>
-          <DialogDescription>确认后订单将立即完成并开放评价。交付凭证仅在平台保留期内可查看，请妥善保存买家专属接入信息。</DialogDescription>
-        </DialogHeader>
-        <Alert class="border-success/25 bg-success/10">
-          <CheckCircle2 class="text-success" />
-          <AlertTitle>请先完成实际核验</AlertTitle>
-          <AlertDescription>请确认接入地址、凭证、额度和权限均符合订单说明；平台不会代替你测试 API。</AlertDescription>
-        </Alert>
-        <DialogFooter>
-          <Button variant="outline" @click="completionConfirmOpen = false">返回核验</Button>
-          <Button :disabled="actionBusy" @click="confirmComplete">{{ actionBusy ? '提交中…' : '确认凭证可用' }}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
     <Dialog v-model:open="credentialProblemOpen">
       <DialogContent class="max-h-[92dvh] overflow-y-auto sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>凭证存在问题</DialogTitle>
-          <DialogDescription>选择最符合的原因。提交后订单进入问题处理，24 小时自动完成计时将暂停。</DialogDescription>
+          <DialogDescription>选择最符合的原因。提交后订单进入纠纷处理，订单完成事实不会阻止售后处理。</DialogDescription>
         </DialogHeader>
         <RadioGroup v-model="credentialProblemReason" class="space-y-2">
           <div
@@ -221,6 +204,11 @@ async function submitCredentialProblem() {
             </Label>
           </div>
         </RadioGroup>
+        <label class="block space-y-2">
+          <span class="text-sm font-medium">问题实际发生时间</span>
+          <Input v-model="credentialProblemOccurredAt" type="datetime-local" :max="credentialProblemOccurrenceMax" />
+          <span class="block text-xs leading-5 text-muted-foreground">必须发生在所购服务有效期内；售后补报期不会延长服务有效期。</span>
+        </label>
         <label class="block space-y-2">
           <span class="text-sm font-medium">补充说明{{ credentialProblemReason === 'other' ? '' : '（选填）' }}</span>
           <Textarea v-model="credentialProblemNote" class="min-h-24" maxlength="400" placeholder="说明实际表现和核验时间，不要填写 API Key、密码或验证码。" />

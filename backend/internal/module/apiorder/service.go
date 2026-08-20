@@ -422,22 +422,6 @@ func (s *Service) CancelWithIdempotency(ctx context.Context, userID, routeKey, k
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "cancel")
 }
 
-func (s *Service) ConfirmCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
-	input.ActorUserID = userID
-	if err := validateActionInput(input, "confirm_complete"); err != nil {
-		return idempotency.Completion{}, err
-	}
-	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "confirm_complete")
-}
-
-func (s *Service) ConfirmCompleteForActorWithIdempotency(ctx context.Context, actor auth.BusinessActor, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
-	input = withBusinessActor(input, actor)
-	if err := validateActionInput(input, "confirm_complete"); err != nil {
-		return idempotency.Completion{}, err
-	}
-	return s.createOrUpdateWithIdempotency(ctx, actor.UserID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "confirm_complete")
-}
-
 func (s *Service) OpenDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.ActorUserID = userID
 	if err := validateActionInput(input, "open_dispute"); err != nil {
@@ -676,8 +660,6 @@ func (s *Service) createOrUpdateWithIdempotencyResult(ctx context.Context, userI
 			order, completion, appErr = s.repo.SubmitAPIOrderPaymentWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
 		case "cancel":
 			order, completion, appErr = s.repo.CancelAPIOrderWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
-		case "confirm_complete":
-			order, completion, appErr = s.repo.ConfirmAPIOrderCompleteWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
 		case "open_dispute":
 			order, completion, appErr = s.repo.OpenAPIOrderDisputeWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
 		case "confirm_payment":
@@ -734,7 +716,7 @@ func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action st
 		return s.OrderForActor(ctx, actor, orderID, role)
 	}
 	switch action {
-	case "create", "submit_payment", "cancel", "confirm_complete", "report_late_payment":
+	case "create", "submit_payment", "cancel", "report_late_payment":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "open_dispute":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
@@ -930,28 +912,6 @@ func (s *Service) materializeTimeoutLockedAt(orderID string, now time.Time) Orde
 		s.orders[orderID] = order
 		s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
 		return WithAfterSalesProjection(order, now)
-	}
-	if order.Status != StatusDeliverySubmitted || IsDisputeActive(order.DisputeStatus) || order.DeliveryReviewExpiresAt == nil {
-		return WithAfterSalesProjection(order, now)
-	}
-	if !now.Before(*order.DeliveryReviewExpiresAt) {
-		completedAt := *order.DeliveryReviewExpiresAt
-		order.Status = StatusCompleted
-		order.CompletionSource = CompletionSourceAutoCompleted
-		order.CompletedAt = &completedAt
-		order.CommercialOutcome = CommercialOutcomeNormalFulfillment
-		order.CommercialOutcomeUpdatedAt = &completedAt
-		order.UpdatedAt = now
-		order.Version++
-		s.orders[orderID] = order
-		s.appendEventLocked(order, "", EventAutoCompleted, StatusDeliverySubmitted, StatusCompleted, "", "delivery-review-auto-complete")
-		return WithAfterSalesProjection(order, now)
-	}
-	reminderAt := order.DeliveryReviewExpiresAt.Add(-DeliveryReviewReminderLead)
-	if order.DeliveryReviewRemindedAt == nil && !now.Before(reminderAt) {
-		order.DeliveryReviewRemindedAt = &now
-		s.orders[orderID] = order
-		s.appendEventLocked(order, "", EventDeliveryReviewReminder, order.Status, order.Status, "", "delivery-review-reminder")
 	}
 	return WithAfterSalesProjection(order, now)
 }
@@ -1474,7 +1434,7 @@ func validateDeliverySecretField(field, value string) *domain.AppError {
 
 func canActorAccess(order Order, actorUserID, action string) bool {
 	switch action {
-	case "submit_payment", "cancel", "confirm_complete", "report_late_payment":
+	case "submit_payment", "cancel", "report_late_payment":
 		return order.BuyerUserID == actorUserID
 	case "confirm_payment", "report_payment_issue", "submit_delivery", "resolve_late_payment":
 		return order.SellerUserID == actorUserID
@@ -1500,8 +1460,6 @@ func canTransition(order Order, action string, now time.Time) bool {
 		return order.Status == StatusPaymentSubmitted
 	case "submit_delivery":
 		return order.Status == StatusPaidConfirmed
-	case "confirm_complete":
-		return order.Status == StatusDeliverySubmitted
 	case "open_dispute":
 		return WithAfterSalesProjection(order, now).CanOpenDispute
 	case "report_late_payment":
@@ -1542,14 +1500,12 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.DeliveryDueAt = &deliveryDueAt
 		order.PackageStockReserved = false
 	case "submit_delivery":
-		order.Status = StatusDeliverySubmitted
+		order.Status = StatusCompleted
 		order.DeliveryNote = strings.TrimSpace(input.DeliveryNote)
 		order.DeliverySubmittedAt = &now
 		reviewExpiresAt := now.Add(DeliveryReviewWindow)
 		order.DeliveryReviewExpiresAt = &reviewExpiresAt
-	case "confirm_complete":
-		order.Status = StatusCompleted
-		order.CompletionSource = CompletionSourceBuyerConfirmed
+		order.CompletionSource = CompletionSourceSellerDelivered
 		order.CompletedAt = &now
 		order.CommercialOutcome = CommercialOutcomeNormalFulfillment
 		order.CommercialOutcomeUpdatedAt = &now
@@ -1581,8 +1537,6 @@ func eventTypeForAction(action string) string {
 		return EventPaymentIssueReported
 	case "submit_delivery":
 		return EventDeliverySubmitted
-	case "confirm_complete":
-		return EventCompleted
 	case "open_dispute":
 		return EventDisputeOpened
 	case "report_late_payment":

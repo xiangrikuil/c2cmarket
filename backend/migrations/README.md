@@ -113,6 +113,7 @@ versions:
 | `000115_wechat_contact_single_mapping` | one enabled WeChat contact per user for new transaction snapshots |
 | `000116_required_wechat_contact` | required all-purpose WeChat contact scopes for account-level transaction communication |
 | `000117_optional_transaction_contacts` | explicit per-transaction selection of enabled WeChat or verified email contacts |
+| `000118_api_order_seller_delivery_completion` | seller delivery completes API orders while retaining the post-delivery dispute deadline |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -629,6 +630,14 @@ select one enabled WeChat or verified email explicitly and freeze its current
 version in the owning business record. Contact versions, contact windows, and the
 single-enabled-WeChat index remain intact. The down migration restores the former
 scope column with the complete scope set for existing contacts.
+
+Version 118 (`000118_api_order_seller_delivery_completion`) completes API orders
+in the same transaction that stores the seller's immutable delivery credential.
+Existing delivery-review orders are migrated to the seller-delivered completion
+source. The retained 24-hour timestamp is an after-sales deadline for orders
+without an explicit service validity end; it no longer drives reminders or
+automatic completion. The down migration restores seller-delivered orders to the
+former buyer-review state.
 
 ## Docker Compose
 

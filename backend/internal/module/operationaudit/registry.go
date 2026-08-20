@@ -108,7 +108,7 @@ var actionRegistry = []ActionDefinition{
 	{SourceAPIOrder, "api_order.payment_submitted", "api_order", DomainAPIOrder, "付款已提交", OutcomeStatusChanged, "买家提交了付款信息", "/admin/api-orders/{id}"},
 	{SourceAPIOrder, "api_order.payment_issue_reported", "api_order", DomainAPIOrder, "付款异常上报", OutcomeStatusChanged, "商家上报了付款异常", "/admin/api-orders/{id}"},
 	{SourceAPIOrder, "api_order.payment_confirmed", "api_order", DomainAPIOrder, "付款已确认", OutcomeStatusChanged, "商家确认了付款", "/admin/api-orders/{id}"},
-	{SourceAPIOrder, "api_order.delivery_submitted", "api_order", DomainAPIOrder, "交付已提交", OutcomeStatusChanged, "商家提交了订单交付", "/admin/api-orders/{id}"},
+	{SourceAPIOrder, "api_order.delivery_submitted", "api_order", DomainAPIOrder, "交付完成", OutcomeStatusChanged, "商家提交交付凭证并完成订单", "/admin/api-orders/{id}"},
 	{SourceAPIOrder, "api_order.completed", "api_order", DomainAPIOrder, "订单完成", OutcomeStatusChanged, "买家确认了订单完成", "/admin/api-orders/{id}"},
 	{SourceAPIOrder, "api_order.cancelled", "api_order", DomainAPIOrder, "订单取消", OutcomeStatusChanged, "订单已取消", "/admin/api-orders/{id}"},
 	{SourceAPIOrder, "api_order.payment_timeout_cancelled", "api_order", DomainAPIOrder, "付款超时取消", OutcomeStatusChanged, "系统因付款超时取消了订单", "/admin/api-orders/{id}"},

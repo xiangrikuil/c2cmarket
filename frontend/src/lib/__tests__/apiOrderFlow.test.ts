@@ -82,47 +82,47 @@ afterEach(() => {
   vi.resetModules()
 })
 
-test('treats buyer confirmation as an optional early completion action', async () => {
-  const api = await loadApiWithOrder('delivery_submitted')
-  const order = orderWithStatus('delivery_submitted')
+test('completes the order when the seller submits delivery', async () => {
+  const api = await loadApiWithOrder('paid_confirmed')
+  const order = orderWithStatus('paid_confirmed')
 
-  assert.equal(api.getApiOrderNextAction(order, 'buyer'), '核验凭证，或报告问题')
-  assert.equal(api.getApiOrderNextAction(order, 'merchant'), '已完成交付，无需操作')
-  assert.equal(api.getApiOrderDisplayStatus(order, 'buyer'), '待核验凭证')
-  assert.equal(api.getApiOrderDisplayStatus(order, 'merchant'), '已完成交付')
-  assert.equal(api.isApiOrderBuyerActionRequired(order), true)
-
-  const completed = await api.confirmApiOrderComplete(order.id, order.version)
+	const completed = await api.submitApiOrderDeliveryCredential(order.id, {
+		deliveryKind: 'api_key_endpoint',
+		apiBaseUrl: 'https://api.example.com/v1',
+		apiKey: 'sk-test',
+	}, order.version)
   assert.equal(completed.status, 'completed')
-  assert.equal(completed.completionSource, 'buyer_confirmed')
+	assert.equal(completed.completionSource, 'seller_delivered')
   assert.equal(completed.version, order.version + 1)
   assert.ok(completed.completedAt)
-  assert.equal(api.getApiOrderNextAction(completed, 'buyer'), '凭证已确认可用')
+	assert.equal(api.getApiOrderDisplayStatus(completed, 'buyer'), '商家已交付，订单完成')
+	assert.equal(api.getApiOrderNextAction(completed, 'buyer'), '查看交付凭证；有问题可联系商家或发起纠纷')
   assert.equal(api.isApiOrderBuyerActionRequired(completed), false)
 })
 
-test('automatically completes an expired review window and records a system event', async () => {
+test('keeps seller-delivered completion stable when the after-sales window expires', async () => {
   const expired = {
-    ...orderWithStatus('delivery_submitted'),
+		...orderWithStatus('completed'),
+		completionSource: 'seller_delivered' as const,
     deliverySubmittedAt: '2026-07-11T10:00:00Z',
     deliveryReviewExpiresAt: '2026-07-12T10:00:00Z',
+		completedAt: '2026-07-11T10:00:00Z',
   }
   const api = await loadApiWithStoredOrder(expired)
 
   const [completed] = await api.getMyApiOrders()
   assert.equal(completed.status, 'completed')
-  assert.equal(completed.completionSource, 'auto_completed')
-  assert.equal(Date.parse(completed.completedAt ?? ''), Date.parse(expired.deliveryReviewExpiresAt))
-  assert.equal(api.getApiOrderDisplayStatus(completed, 'buyer'), '已自动完成')
-  const event = api.getApiOrderEvents(completed).at(-1)
-  assert.equal(event?.actorRole, 'system')
-  assert.equal(event?.actorLabel, '系统')
-  assert.match(event?.note ?? '', /核验期结束/)
+	assert.equal(completed.completionSource, 'seller_delivered')
+	assert.equal(completed.canOpenDispute, false)
+	assert.equal(completed.disputeEligibilityReason, 'after_sales_expired')
+	assert.equal(api.getApiOrderEvents(completed).some(event => event.actorRole === 'system' && event.type === 'completed'), false)
 })
 
-test('keeps an expired delivered order open when a credential dispute exists', async () => {
+test('keeps a seller-delivered order completed when a credential dispute exists', async () => {
   const disputed = {
-    ...orderWithStatus('delivery_submitted'),
+		...orderWithStatus('completed'),
+		completionSource: 'seller_delivered' as const,
+		completedAt: '2026-07-11T10:00:00Z',
     disputeStatus: 'open',
     deliverySubmittedAt: '2026-07-11T10:00:00Z',
     deliveryReviewExpiresAt: '2026-07-12T10:00:00Z',
@@ -130,9 +130,25 @@ test('keeps an expired delivered order open when a credential dispute exists', a
   const api = await loadApiWithStoredOrder(disputed)
 
   const order = await api.getApiOrderById(disputed.id, 'buyer')
-  assert.equal(order.status, 'delivery_submitted')
-  assert.equal(order.completionSource, undefined)
-  assert.equal(api.getApiOrderNextAction(order, 'buyer'), '等待平台处理凭证问题')
+	assert.equal(order.status, 'completed')
+	assert.equal(order.completionSource, 'seller_delivered')
+	assert.equal(order.canOpenDispute, false)
+})
+
+test('keeps historical remedy completion attribution truthful', async () => {
+	const remedied = {
+		...orderWithStatus('completed'),
+		completionSource: 'remedy_confirmed' as const,
+		completedAt: '2026-07-11T11:00:00Z',
+		deliverySubmittedAt: '2026-07-11T10:00:00Z',
+		deliveryReviewExpiresAt: '2026-07-12T10:00:00Z',
+	}
+	const api = await loadApiWithStoredOrder(remedied)
+
+	const completedEvent = api.getApiOrderEvents(remedied).find(event => event.type === 'completed')
+	assert.equal(completedEvent?.actorLabel, '纠纷处理')
+	assert.equal(completedEvent?.actorRole, 'system')
+	assert.equal(completedEvent?.note, '纠纷补救履行确认后，订单完成。')
 })
 
 test('counts active disputes once in navigation actions and exposes their risk count', async () => {
@@ -160,15 +176,6 @@ test('keeps terminal dispute history out of navigation risk counts', async () =>
   const summary = await api.getNavigationBadges()
   assert.equal(summary.buyer.apiOrderDisputes, 0)
   assert.equal(summary.merchant.apiOrderDisputes, 0)
-})
-
-test('rejects completion before the seller submits delivery', async () => {
-  const api = await loadApiWithOrder('paid_confirmed')
-
-  await assert.rejects(
-    api.confirmApiOrderComplete('api-order-flow-1', 3),
-    /只有待核验凭证的订单可以确认可用/,
-  )
 })
 
 test('labels an order-backed purchase intent as ordered', async () => {

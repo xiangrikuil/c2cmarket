@@ -743,6 +743,36 @@ func testPublicPackageService(id, modelCatalogID string, durationDays int, updat
 	return service
 }
 
+func TestPublicInventoryCountsUsesPackagesAsTheFixedPackageUnit(t *testing.T) {
+	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	metered := testPublicService("metered-service", PaymentMethodWechat, now)
+	expiresAt := now.Add(48 * time.Hour)
+	metered.QuotaExpiresAt = &expiresAt
+	packages := testPublicPackageService("package-service", "model-1", 3, now)
+	packages.Packages = append(packages.Packages,
+		ServicePackage{
+			ID: "package-service-second", Enabled: true, StockAvailable: 3,
+			Models: []ServicePackageModel{{ServiceModelID: "package-service-model", ModelCatalogID: "model-1"}},
+		},
+		ServicePackage{
+			ID: "package-service-sold-out", Enabled: true, StockAvailable: 0,
+			Models: []ServicePackageModel{{ServiceModelID: "package-service-model", ModelCatalogID: "model-1"}},
+		},
+	)
+	manager.services[metered.ID] = metered
+	manager.services[packages.ID] = packages
+	manager.serviceOrder = []string{metered.ID, packages.ID}
+
+	counts, appErr := manager.PublicInventoryCounts(context.Background())
+	if appErr != nil {
+		t.Fatalf("count public inventory: %v", appErr)
+	}
+	if counts.MeteredServices != 1 || counts.FixedPackages != 2 {
+		t.Fatalf("unexpected public inventory counts: %+v", counts)
+	}
+}
+
 func TestValidateOrderSettingsRejectsUSDTPaymentMethod(t *testing.T) {
 	err := validateOrderSettingsInput(UpdateOrderSettingsInput{
 		AcceptingOrders:      true,
@@ -992,6 +1022,22 @@ func validMeteredCreateInput() CreateServiceInput {
 			MerchantMultiplier: "1.0000",
 			Enabled:            true,
 		}},
+	}
+}
+
+func TestCurrentMaximumIntentCNYTracksAvailableAllowance(t *testing.T) {
+	t.Parallel()
+
+	service := Service{
+		BillingMode:                      ServiceBillingModeMetered,
+		DeclaredCNYPerUSDAllowance:       "0.8",
+		DeclaredMaxUSDAllowancePerIntent: "500",
+		AvailableUSDAllowance:            "124.999",
+		MinimumIntentCNY:                 "10",
+		MaximumIntentCNY:                 "300",
+	}
+	if got := CurrentMaximumIntentCNY(service); got != "99.99" {
+		t.Fatalf("current maximum = %q, want 99.99", got)
 	}
 }
 

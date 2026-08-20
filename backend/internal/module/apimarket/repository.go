@@ -34,3 +34,7 @@ type Repository interface {
 	UpdateAPIServiceModeration(ctx context.Context, user auth.User, input ServiceAdminActionInput, now time.Time) (Service, *domain.AppError)
 	UpdateAPIServiceModerationWithIdempotency(ctx context.Context, entry idempotency.Entry, user auth.User, input ServiceAdminActionInput, now time.Time, buildCompletion ServiceCompletionBuilder) (Service, idempotency.Completion, *domain.AppError)
 }
+
+type PublicServiceInventoryRepository interface {
+	PublicAPIServiceInventoryCounts(ctx context.Context, now time.Time) (PublicServiceInventoryCounts, *domain.AppError)
+}

@@ -361,6 +361,52 @@ func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
 	}
 }
 
+func TestMeteredIntentUsesCurrentInventoryInsteadOfLegacyCNYMaximum(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	quotaExpiresAt := now.Add(48 * time.Hour)
+	service := apimarket.Service{
+		ID:                               "service-1",
+		OwnerUserID:                      "seller-1",
+		OwnerContactMethodID:             "owner-contact-1",
+		ProbeConnectionID:                "probe-1",
+		ProbeReady:                       true,
+		BillingMode:                      apimarket.ServiceBillingModeMetered,
+		DeclaredCNYPerUSDAllowance:       "0.8",
+		DeclaredMaxUSDAllowancePerIntent: "600",
+		AvailableUSDAllowance:            "500",
+		MinimumIntentCNY:                 "10",
+		MaximumIntentCNY:                 "300",
+		AcceptingOrders:                  true,
+		PaymentWindowMinutes:             10,
+		ReviewStatus:                     apimarket.ServiceReviewStatusApproved,
+		PublicationStatus:                apimarket.ServicePublicationStatusOnline,
+		ModerationStatus:                 apimarket.ServiceModerationStatusClear,
+		QuotaExpiresAt:                   &quotaExpiresAt,
+		AccessModes:                      []apimarket.ServiceAccessMode{{AccessMode: "buyer_dedicated_sub_key"}},
+		PaymentOptions:                   []apimarket.PaymentOption{{PaymentMethod: apimarket.PaymentMethodWechat, Enabled: true}},
+	}
+	input := CreateIntentInput{
+		APIServiceID:          service.ID,
+		BuyerUserID:           "buyer-1",
+		BuyerContactMethodID:  "buyer-contact-1",
+		RequestedCNYAmount:    "400.00",
+		RequestedUSDAllowance: "500.000000",
+		SelectedAccessMode:    "buyer_dedicated_sub_key",
+	}
+	if appErr := validateCreateInput(input, service); appErr != nil {
+		t.Fatalf("current inventory purchase rejected by legacy maximum: %+v", appErr)
+	}
+
+	input.RequestedCNYAmount = "400.01"
+	input.RequestedUSDAllowance = "500.012500"
+	appErr := validateCreateInput(input, service)
+	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "requestedCnyAmount" {
+		t.Fatalf("expected current maximum amount rejection, got %+v", appErr)
+	}
+}
+
 func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	duration := 3

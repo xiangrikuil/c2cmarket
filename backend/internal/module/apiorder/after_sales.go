@@ -51,6 +51,9 @@ func WithAfterSalesProjection(order Order, now time.Time) Order {
 	if validityExpiresAt != nil {
 		deadline := validityExpiresAt.Add(AfterSalesReportingGracePeriod)
 		order.AfterSalesExpiresAt = &deadline
+	} else if order.DeliveryReviewExpiresAt != nil {
+		deadline := order.DeliveryReviewExpiresAt.UTC()
+		order.AfterSalesExpiresAt = &deadline
 	}
 	order.CanOpenDispute = false
 	switch {
@@ -58,9 +61,9 @@ func WithAfterSalesProjection(order Order, now time.Time) Order {
 		order.DisputeEligibilityReason = DisputeEligibilityOrderCancelled
 	case order.DisputeStatus != DisputeStatusNone:
 		order.DisputeEligibilityReason = DisputeEligibilityDisputeExists
-	case validityExpiresAt != nil && !now.Before(validityExpiresAt.Add(AfterSalesReportingGracePeriod)):
+	case order.AfterSalesExpiresAt != nil && !now.Before(*order.AfterSalesExpiresAt):
 		order.DisputeEligibilityReason = DisputeEligibilityAfterSalesExpired
-	case order.Status == StatusCompleted && validityExpiresAt == nil:
+	case order.Status == StatusCompleted && order.AfterSalesExpiresAt == nil:
 		order.DisputeEligibilityReason = DisputeEligibilityCompletedValidityUnknown
 	default:
 		order.CanOpenDispute = true

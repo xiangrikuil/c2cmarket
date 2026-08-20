@@ -30,9 +30,10 @@ describe('API 服务卖家管理页结构', () => {
 
   test('三个经营指标合并最低起购规则并使用语义图标', () => {
     assert.match(metricsSource, /<WalletCards[\s\S]*?可售额度/)
-    assert.match(metricsSource, /<ShoppingCart[\s\S]*?销售价格/)
+    assert.match(metricsSource, /<ShoppingCart[\s\S]*?pricing\.fixedPackage \? pricing\.label : '销售价格'/)
     assert.match(metricsSource, /<ClipboardList[\s\S]*?今日订单/)
-    assert.match(metricsSource, /销售价格[\s\S]*?最低 ¥/)
+    assert.match(metricsSource, /pricing\.value[\s\S]*?pricing\.secondary/)
+    assert.match(metricsSource, /可售套餐/)
     assert.match(metricsSource, /今日订单[\s\S]*?已接单 \/ 每日上限/)
     assert.doesNotMatch(metricsSource, /最低订单金额/)
   })
