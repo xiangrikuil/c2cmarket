@@ -20,6 +20,8 @@ test('creates an independent default fixed package for selected models', () => {
   modelIds.push('gpt-5')
 
   assert.equal(item.name, '3 天短期流量包')
+  assert.equal(item.priceCny, 5)
+  assert.equal(item.panelAllowance, 50)
   assert.equal(item.durationDays, 3)
   assert.equal(item.enabled, true)
   assert.deepEqual(item.modelCatalogIds, ['gpt-5-mini'])

@@ -1,14 +1,31 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { CircleDollarSign } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import type { ApiServicePublishForm } from './types'
 
-defineProps<{
+const props = defineProps<{
   form: ApiServicePublishForm
   errors: Partial<Record<string, string>>
 }>()
+
+const cnyPerUsdCreditInput = ref(props.form.cnyPerUsdCredit === null ? '' : String(props.form.cnyPerUsdCredit))
+
+watch(() => props.form.cnyPerUsdCredit, value => {
+  const currentValue = cnyPerUsdCreditInput.value.trim()
+  const parsedCurrentValue = currentValue === '' ? null : Number(currentValue)
+  if (parsedCurrentValue === value) return
+  cnyPerUsdCreditInput.value = value === null ? '' : String(value)
+})
+
+const updateCnyPerUsdCredit = (value: string | number) => {
+  cnyPerUsdCreditInput.value = String(value)
+  const normalized = cnyPerUsdCreditInput.value.trim()
+  const parsed = normalized === '' ? null : Number(normalized)
+  props.form.cnyPerUsdCredit = parsed !== null && Number.isFinite(parsed) ? parsed : null
+}
 </script>
 
 <template>
@@ -32,17 +49,18 @@ defineProps<{
           <div class="flex overflow-hidden rounded-md border border-input bg-background">
             <Input
               id="api-publish-cny-per-usd"
-              :model-value="form.cnyPerUsdCredit ?? ''"
+              :model-value="cnyPerUsdCreditInput"
               :aria-invalid="Boolean(errors.cnyPerUsdCredit)"
               :aria-describedby="errors.cnyPerUsdCredit ? 'api-publish-cny-per-usd-error' : undefined"
               class="border-0 shadow-none focus-visible:ring-0"
-              placeholder="0.80"
-              @update:model-value="value => form.cnyPerUsdCredit = Number(value)"
+              inputmode="decimal"
+              placeholder="0.15"
+              @update:model-value="updateCnyPerUsdCredit"
             />
             <span class="grid w-14 place-items-center border-l border-border text-sm text-muted-foreground">元</span>
           </div>
           <p v-if="errors.cnyPerUsdCredit" id="api-publish-cny-per-usd-error" class="text-xs text-destructive">{{ errors.cnyPerUsdCredit }}</p>
-          <p v-else class="text-xs text-muted-foreground">例如 ¥0.80 / $1，买家按订单金额估算可购额度。</p>
+          <p v-else class="text-xs text-muted-foreground">例如 ¥0.15 / $1，买家按订单金额估算可购额度。</p>
         </label>
 
         <label class="space-y-2">
