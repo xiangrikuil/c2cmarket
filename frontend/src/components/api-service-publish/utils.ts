@@ -53,6 +53,17 @@ export const accountPoolLabels: Record<AccountPoolType, string> = {
   custom: '其他（自行填写）',
 }
 
+const gptAccountPoolOptions = ['gpt_pro_20x', 'gpt_pro_5x', 'gpt_plus', 'custom'] as const satisfies readonly AccountPoolType[]
+const customAccountPoolOption = ['custom'] as const satisfies readonly AccountPoolType[]
+
+export function accountPoolOptionsForProviderCategory(category: ApiProviderCategory): readonly AccountPoolType[] {
+  return category === 'gpt' ? gptAccountPoolOptions : customAccountPoolOption
+}
+
+export function isAccountPoolCompatibleWithProviderCategory(type: AccountPoolType | '', category: ApiProviderCategory) {
+  return type === '' || accountPoolOptionsForProviderCategory(category).includes(type as AccountPoolType)
+}
+
 export function accountPoolLabel(form: Pick<ApiServicePublishForm, 'accountPoolType' | 'accountPoolCustomName'>) {
   if (!form.accountPoolType) return '待选择'
   if (form.accountPoolType === 'custom') return form.accountPoolCustomName.trim() || '待填写其他号池'

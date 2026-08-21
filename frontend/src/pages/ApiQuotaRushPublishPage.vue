@@ -178,7 +178,7 @@ const baseForm = reactive<ApiServicePublishForm>({
   billingMode: 'metered_credit',
   deliveryModes: ['api_key_endpoint'],
   shortDescription: '建议首次小额测试',
-  cnyPerUsdCredit: 0.8,
+  cnyPerUsdCredit: 0.15,
   manualBillingNote: '',
   defaultMultiplier: 1,
   selectedModels: [],
@@ -197,7 +197,7 @@ const baseForm = reactive<ApiServicePublishForm>({
   maximumPurchaseCny: null,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
-  declaredMaxConcurrency: 1,
+  declaredMaxConcurrency: 2,
   promptAuditEnabled: null,
   packages: [],
   validity: { mode: 'days', days: 30, startsAt: 'delivered_at' },
@@ -438,6 +438,8 @@ function setDefaultMultiplier(value: string) {
 function setProviderCategory(value: ApiProviderCategory) {
   baseForm.providerCategory = value
   baseForm.selectedModels = []
+  baseForm.accountPoolType = ''
+  baseForm.accountPoolCustomName = ''
 }
 
 function toggleModel(id: string) {
@@ -747,7 +749,7 @@ function preview() {
                 />
                 <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" :catalog="catalog" @update:model-value="setProviderCategory" />
                 <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个 API 服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>
-                <MerchantNoteSection :form="baseForm" :errors="baseErrors" />
+                <MerchantNoteSection :form="baseForm" :errors="baseErrors" :provider-category="baseForm.providerCategory" />
               </template>
             </div>
             <p v-if="serviceError" class="text-sm text-destructive" role="alert">{{ serviceError }}</p>

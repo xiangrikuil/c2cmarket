@@ -139,7 +139,7 @@ const form = reactive<ApiServicePublishForm>({
   billingMode: initialSellingMode === 'package' ? 'fixed_package' : 'metered_credit',
   deliveryModes: ['api_key_endpoint'],
   shortDescription: '建议首次小额测试',
-  cnyPerUsdCredit: 0.8,
+  cnyPerUsdCredit: 0.15,
   manualBillingNote: '',
   defaultMultiplier: sub2ApiPricingPolicy.textModelMultiplier,
   selectedModels: [
@@ -160,7 +160,7 @@ const form = reactive<ApiServicePublishForm>({
   maximumPurchaseCny: null,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
-  declaredMaxConcurrency: 1,
+  declaredMaxConcurrency: 2,
   promptAuditEnabled: null,
   packages: initialSellingMode === 'package' ? [createDefaultApiServicePackage(['gpt-5-mini'])] : [],
   validity: {
@@ -765,6 +765,8 @@ function requestProviderCategory(value: ApiProviderCategory) {
 
 function applyProviderCategory(value: ApiProviderCategory) {
   form.providerCategory = value
+  form.accountPoolType = ''
+  form.accountPoolCustomName = ''
   form.selectedModels = form.selectedModels.filter(item => {
     const model = catalogById.value.get(item.modelId)
     return model ? modelProviderCategory(model.provider) === value : false
@@ -909,7 +911,7 @@ function confirmProviderCategoryChange() {
                 :form="form"
                 :error="errors.ownerContactMethods"
               />
-              <MerchantNoteSection :form="form" :errors="errors" />
+              <MerchantNoteSection :form="form" :errors="errors" :provider-category="form.providerCategory" />
               <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
             </template>
           </div>
@@ -935,7 +937,7 @@ function confirmProviderCategoryChange() {
               :form="form"
               :error="errors.ownerContactMethods"
             />
-            <MerchantNoteSection :form="form" :errors="errors" />
+            <MerchantNoteSection :form="form" :errors="errors" :provider-category="form.providerCategory" />
             <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
           </div>
         </PublishStepSection>
