@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, watch } from 'vue'
 import { FileText, Gauge, Layers3, ShieldAlert, ShieldCheck } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -6,20 +7,22 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
-import type { ApiServicePublishForm } from './types'
-import { accountPoolLabels, merchantNoteQuickInserts } from './utils'
+import type { ApiProviderCategory, ApiServicePublishForm } from './types'
+import { accountPoolLabels, accountPoolOptionsForProviderCategory, isAccountPoolCompatibleWithProviderCategory, merchantNoteQuickInserts } from './utils'
 
-const accountPoolOptions = [
-  'gpt_pro_20x',
-  'gpt_pro_5x',
-  'gpt_plus',
-  'custom',
-] as const
-
-defineProps<{
+const props = defineProps<{
   form: ApiServicePublishForm
   errors: Partial<Record<string, string>>
+  providerCategory: ApiProviderCategory
 }>()
+
+const accountPoolOptions = computed(() => accountPoolOptionsForProviderCategory(props.providerCategory))
+
+watch(() => props.providerCategory, category => {
+  if (isAccountPoolCompatibleWithProviderCategory(props.form.accountPoolType, category)) return
+  props.form.accountPoolType = ''
+  props.form.accountPoolCustomName = ''
+}, { immediate: true })
 
 const insertSnippet = (form: ApiServicePublishForm, value: string) => {
   if (form.merchantNote.includes(value)) return
